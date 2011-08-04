@@ -9,8 +9,8 @@ deploydir=$1
 slavenum=$2
 logpth=$3
 instancedir=$4
-slaveport=$5
-slavehost=$6
+slavehost=$5
+slaveport=$6
 hpcc_compname=$7
 hpcc_setenv=$8
 
