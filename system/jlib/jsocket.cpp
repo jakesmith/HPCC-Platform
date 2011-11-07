@@ -312,7 +312,7 @@ struct MCASTREQ
 #define BADSOCKERR(err) ((err==EBADF)||(err==ENOTSOCK))
 #define CHECKSOCKRANGE(s)
 #else
-#define XFD_SETSIZE 8192
+#define XFD_SETSIZE 32768
 struct xfd_set { __fd_mask fds_bits[XFD_SETSIZE / __NFDBITS]; }; // define our own
 // linux 64 bit
 #ifdef __linux__
@@ -326,7 +326,7 @@ struct xfd_set { __fd_mask fds_bits[XFD_SETSIZE / __NFDBITS]; }; // define our o
 #undef __FD_ISSET
 #define __FD_ISSET(d, s)   ((__FDS_BITS (s)[__FDELT(d)] & __FDMASK(d)) != 0)
 #endif
-#define CHECKSOCKRANGE(s) { if (s>=XFD_SETSIZE) THROWJSOCKEXCEPTION2(JSOCKERR_handle_too_large); }
+#define CHECKSOCKRANGE(s) { if (s>=XFD_SETSIZE) { PrintStackReport(); THROWJSOCKEXCEPTION2(JSOCKERR_handle_too_large); } }
 #endif
 // end 64 bit
 #define T_FD_SET xfd_set
