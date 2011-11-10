@@ -5367,8 +5367,8 @@ public:
         if (!file)
             return false;
         StringBuffer subname;
-        StringAttrArray subnames1;  // will be built reversed
-        StringAttrArray subnames2;  // will be built reversed
+        StringArray subnames1; // will be built reversed
+        StringArray subnames2; // will be built reversed
         unsigned pos = subfiles.ordinality();
         lockProperties(defaultTimeout);
         if (pos) {
@@ -5376,7 +5376,7 @@ public:
                 pos--;
                 unlinkSubFile(pos,transaction);
                 removeItem(pos,subname.clear());
-                subnames1.append(* new StringAttrItem(subname.str()));
+                subnames1.append(subname.str());
             } while (pos);
         }
         file->lockProperties(defaultTimeout);
@@ -5386,14 +5386,16 @@ public:
                 pos--;
                 file->unlinkSubFile(pos,transaction);
                 file->removeItem(pos,subname.clear());
-                subnames2.append(* new StringAttrItem(subname.str()));
+                subnames2.append(subname.str());
             } while (pos);
         }
         ForEachItemInRev(i1,subnames1) {
-            file->addSubFile(subnames1.item(i1).text.get());
+            Owned<IDistributedFile> sub = transaction ? transaction->lookupFile(subnames1.item(i1)) : parent->lookup(subnames1.item(i1),udesc,false,NULL,defaultTimeout);
+            file->doAddSubFile(LINK(sub), false, NULL, NULL);
         }
         ForEachItemInRev(i2,subnames2) {
-            addSubFile(subnames2.item(i2).text.get());
+            Owned<IDistributedFile> sub = transaction ? transaction->lookupFile(subnames2.item(i2)) : parent->lookup(subnames2.item(i2),udesc,false,NULL,defaultTimeout);
+            doAddSubFile(LINK(sub), false, NULL, NULL);
         }
         file->setModified();
         file->updateFileAttrs();
