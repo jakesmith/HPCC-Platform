@@ -42,6 +42,8 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
     Owned<IRowStream> out;
     rowcount_t limit;
     rowcount_t stopAfter;
+    unsigned headerLines, headerLinesRemaining;
+    bool doGetHeaderLines, doSendHeaderLines;
 
     class CCsvPartHandler : public CDiskPartHandlerBase
     {
@@ -121,17 +123,17 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
                     EXCLOG(e, NULL);
                 }
             }
-            if (0==pnum)
+            unsigned &headerLinesRemaining = activity.getHeaderLines();
+            if (headerLinesRemaining)
             {
-                //Skip header lines.... but only on the first part.
-                unsigned lines = activity.helper->queryCsvParameters()->queryHeaderLen();
-                while (lines--)
+                do
                 {
                     unsigned lineLength = splitLine();
                     if (0 == lineLength)
                         break;
                     inputStream->skip(lineLength);
                 }
+                while (--headerLinesRemaining);
             }
         }
         virtual void close(CRC32 &fileCRC)
@@ -162,10 +164,49 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
         }
 
         offset_t getLocalOffset() { return localOffset; }
-
-
     };
 
+    unsigned &getHeaderLines()
+    {
+        if (headerLinesRemaining)
+        {
+            if (doGetHeaderLines)
+            {
+                doGetHeaderLines = false;
+                CMessageBuffer msgMb;
+                if (!receiveMsg(msgMb, container.queryJob().queryMyRank()-1, mpTag))
+                    headerLinesRemaining = 0;
+                else
+                {
+                    msgMb.read(headerLinesRemaining);
+                    if (!headerLinesRemaining)
+                        sendHeaderLines();
+                }
+            }
+        }
+        return headerLinesRemaining;
+    }
+    void sendHeaderLines()
+    {
+        if (!doSendHeaderLines)
+            return;
+        doSendHeaderLines = false;
+        CMessageBuffer msgMb;
+        msgMb.append(headerLinesRemaining);
+        if (headerLinesRemaining)
+            container.queryJob().queryJobComm().send(msgMb, container.queryJob().queryMyRank()+1, mpTag);
+        else
+        {
+            // tell rest nothing more to wait for
+            unsigned s=container.queryJob().queryMyRank();
+            do
+            {
+                ++s;
+                container.queryJob().queryJobComm().send(msgMb, s, mpTag);
+            }
+            while (s<container.queryJob().querySlaves());
+        }
+    }
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -177,6 +218,7 @@ public:
             limit = RCMAX;
         else
             limit = (rowcount_t)helper->getRowLimit();
+        headerLines = helper->queryCsvParameters()->queryHeaderLen();
     }
 
 // IThorSlaveActivity
@@ -193,6 +235,8 @@ public:
             data.read(b);
             if (b) data.read(csvTerminate);
         }
+        if (headerLines)
+            mpTag = container.queryJob().deserializeMPTag(data);
         partHandler.setown(new CCsvPartHandler(*this));
         appendOutputLinked(this);
     }
@@ -215,32 +259,38 @@ public:
         }
         info = cachedMetaInfo;
     }
-
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities, NULL);
         OwnedConstThorRow row = out->nextRow();
-        if (!row)
-            return NULL;
-        rowcount_t c = getDataLinkCount();
-        if (stopAfter && (c >= stopAfter)) // NB: only slave limiter, global performed in chained choosen activity 
-            return NULL;
-        if (c >= limit) // NB: only slave limiter, global performed in chained limit activity
+        if (row)
         {
-            helper->onLimitExceeded();
-            return NULL;
+            rowcount_t c = getDataLinkCount();
+            if (0 == stopAfter || (c < stopAfter)) // NB: only slave limiter, global performed in chained choosen activity
+            {
+                if (c < limit) // NB: only slave limiter, global performed in chained limit activity
+                {
+                    dataLinkIncrement();
+                    return row.getClear();
+                }
+                helper->onLimitExceeded();
+            }
         }
-        dataLinkIncrement();
-        return row.getClear();
+        sendHeaderLines();
+        return NULL;
     }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
+        doGetHeaderLines = headerLines && !container.queryLocal() && (container.queryJob().queryMyRank() > 1);
+        doSendHeaderLines = headerLines && !container.queryLocal() && (container.queryJob().queryMyRank() < container.queryJob().querySlaves());
+        headerLinesRemaining = headerLines;
         out.setown(createSequentialPartHandler(partHandler, partDescs, false));
         dataLinkStart("CCsvReadSlaveActivity", container.queryId());
     }
     virtual void stop()
     {
+        sendHeaderLines();
         out.clear();
         dataLinkStop();
     }
