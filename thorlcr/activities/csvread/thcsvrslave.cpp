@@ -42,8 +42,11 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
     Owned<IRowStream> out;
     rowcount_t limit;
     rowcount_t stopAfter;
-    unsigned headerLines, headerLinesRemaining;
+    unsigned headerLines;
+    OwnedMalloc<unsigned> headerLinesRemaining;
     bool doGetHeaderLines, doSendHeaderLines;
+    ISuperFileDescriptor *superFDesc;
+    unsigned subFiles;
 
     class CCsvPartHandler : public CDiskPartHandlerBase
     {
@@ -109,31 +112,31 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
                 iFileIO.setown(iFile->open(IFOread));
 
             inputStream.setown(createFileSerialStream(iFileIO));
-            unsigned pnum = partDesc->queryPartIndex();
-            ISuperFileDescriptor *superFDesc = partDesc->queryOwner().querySuperFileDescriptor();
-            if (superFDesc)
+            unsigned subFile = 0;
+            if (activity.superFDesc)
             {
-                unsigned subfile;
+                unsigned pnum = partDesc->queryPartIndex();
                 unsigned lnum;
-                if (superFDesc->mapSubPart(pnum, subfile, lnum))
-                    pnum = lnum;
-                else
+                if (!activity.superFDesc->mapSubPart(pnum, subFile, lnum))
                 {
                     IThorException *e = MakeActivityWarning(&activity, 0, "mapSubPart failed, file=%s, partnum=%d", activity.logicalFilename.get(), pnum);
                     EXCLOG(e, NULL);
                 }
             }
-            unsigned &headerLinesRemaining = activity.getHeaderLines();
-            if (headerLinesRemaining)
+            if (activity.headerLines)
             {
-                do
+                unsigned &headerLinesRemaining = activity.getHeaderLines(subFile);
+                if (headerLinesRemaining)
                 {
-                    unsigned lineLength = splitLine();
-                    if (0 == lineLength)
-                        break;
-                    inputStream->skip(lineLength);
+                    do
+                    {
+                        unsigned lineLength = splitLine();
+                        if (0 == lineLength)
+                            break;
+                        inputStream->skip(lineLength);
+                    }
+                    while (--headerLinesRemaining);
                 }
-                while (--headerLinesRemaining);
             }
         }
         virtual void close(CRC32 &fileCRC)
@@ -141,7 +144,6 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
             inputStream.clear();
             fileCRC = inputCRC;
         }
-
         const void *nextRow()
         {
             RtlDynamicRowBuilder row(allocator);
@@ -162,29 +164,50 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
                 }
             }
         }
-
         offset_t getLocalOffset() { return localOffset; }
     };
 
-    unsigned &getHeaderLines()
+    unsigned &getHeaderLines(const unsigned &subFile)
     {
-        if (headerLinesRemaining)
+        if (headerLinesRemaining[subFile])
         {
             if (doGetHeaderLines)
             {
                 doGetHeaderLines = false;
                 CMessageBuffer msgMb;
                 if (!receiveMsg(msgMb, container.queryJob().queryMyRank()-1, mpTag))
-                    headerLinesRemaining = 0;
+                    headerLinesRemaining[subFile] = 0;
                 else
                 {
-                    msgMb.read(headerLinesRemaining);
-                    if (!headerLinesRemaining)
-                        sendHeaderLines();
+                    bool someLeft = 0 != msgMb.length();
+                    if (someLeft)
+                    {
+                        someLeft = false;
+                        unsigned sL=0;
+                        for (; sL<subFiles; sL++)
+                        {
+                            msgMb.read(headerLinesRemaining[sL]);
+                            if (headerLinesRemaining[sL])
+                                someLeft = true;
+                        }
+                    }
+                    if (!someLeft)
+                        sendHeaderDone();
                 }
             }
         }
-        return headerLinesRemaining;
+        return headerLinesRemaining[subFile];
+    }
+    void sendHeaderDone()
+    {
+        doSendHeaderLines = false;
+        CMessageBuffer msgMb;
+        unsigned s=container.queryJob().queryMyRank();
+        while (s<container.queryJob().querySlaves())
+        {
+            ++s;
+            container.queryJob().queryJobComm().send(msgMb, s, mpTag);
+        }
     }
     void sendHeaderLines()
     {
@@ -192,20 +215,18 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
             return;
         doSendHeaderLines = false;
         CMessageBuffer msgMb;
-        msgMb.append(headerLinesRemaining);
-        if (headerLinesRemaining)
+        bool someLeft=false;
+        unsigned sL=0;
+        for (; sL<subFiles; sL++)
+        {
+            if (0 != headerLinesRemaining[sL])
+                someLeft = true;
+            msgMb.append(headerLinesRemaining[sL]);
+        }
+        if (someLeft)
             container.queryJob().queryJobComm().send(msgMb, container.queryJob().queryMyRank()+1, mpTag);
         else
-        {
-            // tell rest nothing more to wait for
-            unsigned s=container.queryJob().queryMyRank();
-            do
-            {
-                ++s;
-                container.queryJob().queryJobComm().send(msgMb, s, mpTag);
-            }
-            while (s<container.queryJob().querySlaves());
-        }
+            sendHeaderDone();
     }
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
@@ -219,6 +240,9 @@ public:
         else
             limit = (rowcount_t)helper->getRowLimit();
         headerLines = helper->queryCsvParameters()->queryHeaderLen();
+        doGetHeaderLines = doSendHeaderLines = false;
+        superFDesc = NULL;
+        subFiles = 0;
     }
 
 // IThorSlaveActivity
@@ -236,7 +260,12 @@ public:
             if (b) data.read(csvTerminate);
         }
         if (headerLines)
+        {
             mpTag = container.queryJob().deserializeMPTag(data);
+            data.read(subFiles);
+            superFDesc = partDescs.ordinality() ? partDescs.item(0).queryOwner().querySuperFileDescriptor() : NULL;
+            headerLinesRemaining.allocateN(subFiles);
+        }
         partHandler.setown(new CCsvPartHandler(*this));
         appendOutputLinked(this);
     }
@@ -282,9 +311,14 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
-        doGetHeaderLines = headerLines && !container.queryLocal() && (container.queryJob().queryMyRank() > 1);
-        doSendHeaderLines = headerLines && !container.queryLocal() && (container.queryJob().queryMyRank() < container.queryJob().querySlaves());
-        headerLinesRemaining = headerLines;
+        if (headerLines)
+        {
+            doGetHeaderLines = !container.queryLocal() && (container.queryJob().queryMyRank() > 1);
+            doSendHeaderLines = !container.queryLocal() && (container.queryJob().queryMyRank() < container.queryJob().querySlaves());
+            unsigned hL = 0;
+            for (; hL<subFiles; hL++)
+                headerLinesRemaining[hL] = headerLines;
+        }
         out.setown(createSequentialPartHandler(partHandler, partDescs, false));
         dataLinkStart("CCsvReadSlaveActivity", container.queryId());
     }

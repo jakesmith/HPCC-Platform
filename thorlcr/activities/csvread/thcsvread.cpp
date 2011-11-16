@@ -49,7 +49,12 @@ public:
             else dst.append(false);
         }
         if (headerLines)
+        {
             dst.append((int)mpTag);
+            ISuperFileDescriptor *superFDesc = fileDesc->querySuperFileDescriptor();
+            unsigned subFiles = superFDesc ? superFDesc->querySubFiles() : 1;
+            dst.append(subFiles);
+        }
     }
 };
 
