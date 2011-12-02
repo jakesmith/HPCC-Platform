@@ -2052,6 +2052,7 @@ void CMasterGraph::serializeGraphInit(MemoryBuffer &mb)
 
 void CMasterGraph::executeSubGraph(size32_t parentExtractSz, const byte *parentExtract)
 {
+    assertex(!queryOwner() || isGlobal());
     if (job.queryResumed()) // skip complete subgraph if resuming. NB: temp spill have been tucked away for this purpose when paused.
     {
         if (!queryOwner())

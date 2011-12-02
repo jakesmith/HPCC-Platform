@@ -1700,6 +1700,25 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         tmpHandler.setown(queryJob().createTempHandler());
     }
     
+    bool localChild = false;
+    if (owner && parentActivityId)
+    {
+        CGraphElementBase *parentElement = owner->queryElement(parentActivityId);
+        parentElement->addAssociatedChildGraph(this);
+        switch (parentElement->getKind())
+        {
+            case TAKlooprow:
+            case TAKloopcount:
+            case TAKloopdataset:
+            case TAKgraphloop:
+            case TAKparallelgraphloop:
+                if (!parentElement->queryLocal())
+                    global = true;
+                break;
+            default:
+                localChild = true;
+        }
+    }
     Owned<IPropertyTreeIterator> nodes = xgmml->getElements("node");
     ForEach(*nodes)
     {
@@ -1715,29 +1734,12 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         }
         else
         {
-            if (owner && parentActivityId)
+            if (localChild && !e.getPropBool("att[@name=\"coLocal\"]/@value", false))
             {
-                CGraphElementBase *parentElement = owner->queryElement(parentActivityId);
-                parentElement->addAssociatedChildGraph(this);
-                switch (parentElement->getKind())
-                {
-                    case TAKlooprow:
-                    case TAKloopcount:
-                    case TAKloopdataset:
-                    case TAKgraphloop:
-                    case TAKparallelgraphloop:
-                        break;
-                    default:
-                        // not a loop graph, force it to be local child graph
-                        if (!e.getPropBool("att[@name=\"coLocal\"]/@value", false))
-                        {
-                            IPropertyTree *att = createPTree("att");
-                            att->setProp("@name", "coLocal");
-                            att->setPropBool("@value", true);
-                            e.addPropTree("att", att);
-                        }
-                        break;
-                }
+                IPropertyTree *att = createPTree("att");
+                att->setProp("@name", "coLocal");
+                att->setPropBool("@value", true);
+                e.addPropTree("att", att);
             }
             CGraphElementBase *act = createGraphElement(e, *this, resultsGraph);
             addActivity(act);
