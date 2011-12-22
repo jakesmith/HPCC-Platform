@@ -1678,6 +1678,11 @@ StringBuffer &CJobMaster::getWorkUnitValue(const char *prop, StringBuffer &str) 
     return str.append(scmStr.str());
 }
 
+__int64 CJobMaster::getOptionInt(const char *prop, __int64 defVal) const
+{
+    return queryWorkUnit().getDebugValueInt64(prop, globals->getPropInt64(prop, defVal));
+}
+
 IBarrier *CJobMaster::createBarrier(mptag_t tag)
 {
     return new CBarrierMaster(*jobComm, tag);

@@ -152,7 +152,7 @@ StringBuffer &ActPrintLogArgsPrep(StringBuffer &res, const CGraphElementBase *co
 
 void ActPrintLogArgs(const CGraphElementBase *container, const ActLogEnum flags, const LogMsgCategory &logCat, const char *format, va_list args)
 {
-    if ((0 == (flags & thorlog_all)) && (NULL != container->queryOwner().queryOwner() && !container->queryOwner().isGlobal()))
+    if ((0 == (flags & thorlog_all)) && !container->queryOwner().doLogging())
         return; // suppress logging child activities unless thorlog_all flag
     StringBuffer res;
     ActPrintLogArgsPrep(res, container, flags, format, args);
@@ -173,7 +173,7 @@ void ActPrintLogArgs(const CGraphElementBase *container, IException *e, const Ac
 
 void ActPrintLogEx(const CGraphElementBase *container, const ActLogEnum flags, const LogMsgCategory &logCat, const char *format, ...)
 {
-    if ((0 == (flags & thorlog_all)) && (NULL != container->queryOwner().queryOwner() && !container->queryOwner().isGlobal()))
+    if ((0 == (flags & thorlog_all)) && !container->queryOwner().doLogging())
         return; // suppress logging child activities unless thorlog_all flag
     StringBuffer res;
     va_list args;
@@ -208,7 +208,7 @@ void GraphPrintLogArgsPrep(StringBuffer &res, CGraphBase *graph, const ActLogEnu
 
 void GraphPrintLogArgs(CGraphBase *graph, const ActLogEnum flags, const LogMsgCategory &logCat, const char *format, va_list args)
 {
-    if ((0 == (flags & thorlog_all)) && (NULL != graph->queryOwner() && !graph->isGlobal()))
+    if ((0 == (flags & thorlog_all)) && !graph->doLogging())
         return; // suppress logging from child graph unless thorlog_all flag
     StringBuffer res;
     GraphPrintLogArgsPrep(res, graph, flags, logCat, format, args);
@@ -217,7 +217,7 @@ void GraphPrintLogArgs(CGraphBase *graph, const ActLogEnum flags, const LogMsgCa
 
 void GraphPrintLogArgs(CGraphBase *graph, IException *e, const ActLogEnum flags, const LogMsgCategory &logCat, const char *format, va_list args)
 {
-    if ((0 == (flags & thorlog_all)) && (NULL != graph->queryOwner() && !graph->isGlobal()))
+    if ((0 == (flags & thorlog_all)) && !graph->doLogging())
         return; // suppress logging from child graph unless thorlog_all flag
     StringBuffer res;
     GraphPrintLogArgsPrep(res, graph, flags, logCat, format, args);

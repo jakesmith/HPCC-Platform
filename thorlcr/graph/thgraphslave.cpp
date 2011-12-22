@@ -996,6 +996,11 @@ StringBuffer &CJobSlave::getWorkUnitValue(const char *prop, StringBuffer &str) c
     return str;
 }
 
+__int64 CJobSlave::getOptionInt(const char *prop, __int64 defVal) const
+{
+    return getWorkUnitValueInt(prop, globals->getPropInt64(prop, defVal));
+}
+
 IBarrier *CJobSlave::createBarrier(mptag_t tag)
 {
     return new CBarrierSlave(*jobComm, tag);

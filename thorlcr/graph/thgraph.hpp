@@ -533,6 +533,7 @@ protected:
     size32_t parentExtractSz; // keep track of sz when passed in, as may need to serialize later
     MemoryBuffer parentExtractMb; // retain copy, used if slave transmits to master (child graph 1st time initialization of global graph)
     unsigned counter;
+    bool suppressLogging;
 
     class CGraphGraphActElementIterator : public CInterface, implements IThorActivityIterator
     {
@@ -599,6 +600,7 @@ public:
     IThorActivityIterator *getTraverseIterator(bool all=false); // all traverses and includes conditionals, others traverses connected nodes only
     void GraphPrintLog(const char *msg, ...) __attribute__((format(printf, 2, 3)));
     void GraphPrintLog(IException *e, const char *msg, ...) __attribute__((format(printf, 3, 4)));
+    bool doLogging() const { return !suppressLogging; }
     void createFromXGMML(IPropertyTree *node, CGraphBase *owner, CGraphBase *parent, CGraphBase *resultsGraph);
     const bool &queryAborted() const { return aborted; }
     CJobBase &queryJob() const { return job; }
@@ -870,6 +872,7 @@ public:
     virtual void markWuDirty() { };
     virtual __int64 getWorkUnitValueInt(const char *prop, __int64 defVal) const = 0;
     virtual StringBuffer &getWorkUnitValue(const char *prop, StringBuffer &str) const = 0;
+    virtual __int64 getOptionInt(const char *prop, __int64 defVal) const = 0;
     const char *queryWuid() const { return wuid.str(); }
     const char *queryUser() const { return user.str(); }
     const char *queryScope() const { return scope.str(); }
