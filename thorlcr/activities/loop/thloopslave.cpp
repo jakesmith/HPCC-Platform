@@ -113,8 +113,6 @@ public:
     }
 };
 
-#define EMPTY_LOOP_LIMIT 1000
-
 class CLoopSlaveActivityBase : public CSlaveActivity, public CThorDataLink
 {
 protected:
@@ -125,25 +123,29 @@ protected:
     unsigned loopCounter;
     rtlRowBuilder extractBuilder;
 
-    void sendLoopingCount(unsigned n)
+    bool sendLoopingCount(unsigned n, unsigned emptyIterations)
     {
         if (!global || container.queryLocalOrGrouped())
-            return;
+            return true;
         CMessageBuffer msg; // inform master starting
         msg.append(n);
+        msg.append(emptyIterations);
         container.queryJob().queryJobComm().send(msg, 0, mpTag);
         receiveMsg(msg, 0, mpTag);
+        bool ok;
+        msg.read(ok);
+        return ok;
     }
     void sendStartLooping()
     {
-        sendLoopingCount(0);
+        sendLoopingCount(0, 0);
     }
     void sendEndLooping()
     {
         if (sentEndLooping)
             return;
         sentEndLooping = true;
-        sendLoopingCount(0);
+        sendLoopingCount(0, 0);
     }
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
@@ -202,6 +204,7 @@ class CLoopSlaveActivity : public CLoopSlaveActivityBase
     unsigned flags;
     IHThorLoopArg *helper;
     bool eof, finishedLooping;
+    unsigned maxEmptyLoopIterations;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
@@ -210,6 +213,7 @@ public:
     {
         helper = (IHThorLoopArg *) queryHelper();
         flags = helper->getFlags();
+        maxEmptyLoopIterations = (unsigned)container->queryJob().getOptionInt("@maxEmptyLoopIterations", 1000);
     }
 
 // IThorDataLink
@@ -321,13 +325,14 @@ public:
                 {
                     //note: any outputs which didn't go around the loop again, would return the record, reinitializing emptyIterations
                     emptyIterations++;
-                    if (emptyIterations > EMPTY_LOOP_LIMIT)
+                    if (container.queryLocalOrGrouped() && emptyIterations > maxEmptyLoopIterations)
                         throw MakeActivityException(this, 0, "Executed LOOP with empty input and output %u times", emptyIterations);
                     if (emptyIterations % 32 == 0)
                         ActPrintLog("Executing LOOP with empty input and output %u times", emptyIterations);
                 }
 
-                sendLoopingCount(loopCounter);
+                if (!sendLoopingCount(loopCounter, emptyIterations))
+                    return NULL;
                 loopPending->flush();
                 curInput.setown(queryContainer().queryLoopGraph()->execute(*this, (flags & IHThorLoopArg::LFcounter)?loopCounter:0, loopPending.getClear(), loopPendingCount, extractBuilder.size(), extractBuilder.getbytes()));
                 loopPending.setown(createOverflowableBuffer(this, LOOP_SMART_BUFFER_SIZE));
@@ -402,7 +407,7 @@ public:
             unsigned loopCounter=1;
             for (; loopCounter<=maxIterations; loopCounter++)
             {
-                sendLoopingCount(loopCounter);
+                sendLoopingCount(loopCounter, 0);
                 queryContainer().queryLoopGraph()->execute(*this, (flags & IHThorGraphLoopArg::GLFcounter)?loopCounter:0, loopResults, extractBuilder.size(), extractBuilder.getbytes());
             }
             int iNumResults = loopResults->count();

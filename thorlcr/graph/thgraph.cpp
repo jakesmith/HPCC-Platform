@@ -1050,6 +1050,7 @@ CGraphBase::CGraphBase(CJobBase &_job) : job(_job)
     poolThreadHandle = 0;
     parentExtractSz = 0;
     counter = 0; // loop/graph counter, will be set by loop/graph activity if needed
+    suppressLogging = false;
 }
 
 CGraphBase::~CGraphBase()
@@ -1223,6 +1224,9 @@ void CGraphBase::executeSubGraph(size32_t parentExtractSz, const byte *parentExt
         getSystemTraceInfo(memStr, PerfMonStandard | PerfMonExtended);
         GraphPrintLog("%s", memStr.str());
     }
+    // if child graph, suppress tracing for subsequent iterations
+    if (!suppressLogging && (NULL != queryOwner()) && (!globals->getPropBool("@allChildQueryTracing")))
+        suppressLogging = true;
     if (exception)
         throw exception.getClear();
 }
@@ -1663,7 +1667,6 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         graphContainer = resultsGraph; // JCSMORE is this right?
     graphCodeContext.setContext(graphContainer, (ICodeContextExt *)&job.queryCodeContext());
 
-
     unsigned numResults = xgmml->getPropInt("att[@name=\"_numResults\"]/@value", 0);
     if (numResults)
     {
@@ -1672,6 +1675,25 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         tmpHandler.setown(queryJob().createTempHandler());
     }
     
+    CGraphElementBase *parentElement = NULL;
+    bool localChild = false;
+    if (owner && parentActivityId)
+    {
+        parentElement = owner->queryElement(parentActivityId);
+        parentElement->addAssociatedChildGraph(this);
+        switch (parentElement->getKind())
+        {
+            case TAKlooprow:
+            case TAKloopcount:
+            case TAKloopdataset:
+            case TAKgraphloop:
+            case TAKparallelgraphloop:
+                break;
+            default:
+                parentElement = NULL;
+                localChild = true;
+        }
+    }
     Owned<IPropertyTreeIterator> nodes = xgmml->getElements("node");
     ForEach(*nodes)
     {
@@ -1687,29 +1709,12 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         }
         else
         {
-            if (owner && parentActivityId)
+            if (localChild && !e.getPropBool("att[@name=\"coLocal\"]/@value", false))
             {
-                CGraphElementBase *parentElement = owner->queryElement(parentActivityId);
-                parentElement->addAssociatedChildGraph(this);
-                switch (parentElement->getKind())
-                {
-                    case TAKlooprow:
-                    case TAKloopcount:
-                    case TAKloopdataset:
-                    case TAKgraphloop:
-                    case TAKparallelgraphloop:
-                        break;
-                    default:
-                        // not a loop graph, force it to be local child graph
-                        if (!e.getPropBool("att[@name=\"coLocal\"]/@value", false))
-                        {
-                            IPropertyTree *att = createPTree("att");
-                            att->setProp("@name", "coLocal");
-                            att->setPropBool("@value", true);
-                            e.addPropTree("att", att);
-                        }
-                        break;
-                }
+                IPropertyTree *att = createPTree("att");
+                att->setProp("@name", "coLocal");
+                att->setPropBool("@value", true);
+                e.addPropTree("att", att);
             }
             CGraphElementBase *act = createGraphElement(e, *this, resultsGraph);
             addActivity(act);
@@ -1717,6 +1722,8 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
                 global = isGlobalActivity(*act);
         }
     }
+    if (parentElement && !parentElement->queryLocal() && !isLocalOnly())
+        global = true;
     Owned<IPropertyTreeIterator> edges = xgmml->getElements("edge");
     ForEach(*edges)
     {

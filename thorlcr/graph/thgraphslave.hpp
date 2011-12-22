@@ -158,6 +158,7 @@ public:
 
     virtual __int64 getWorkUnitValueInt(const char *prop, __int64 defVal) const;
     virtual StringBuffer &getWorkUnitValue(const char *prop, StringBuffer &str) const;
+    virtual __int64 getOptionInt(const char *prop, __int64 defVal) const;
     virtual IGraphTempHandler *createTempHandler();
     virtual CGraphBase *createGraph()
     {
