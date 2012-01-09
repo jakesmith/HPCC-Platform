@@ -614,6 +614,7 @@ public:
     bool isStarted() const { return started; }
     bool isLocalOnly() const; // this graph and all upstream dependencies
     void setCompleteEx(bool tf=true) { complete = tf; }
+    void setCreated() { created = true; }
     const byte *setParentCtx(size32_t _parentExtractSz, const byte *parentExtract)
     {
         parentExtractSz = _parentExtractSz;

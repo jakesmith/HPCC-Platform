@@ -223,6 +223,7 @@ void CSlaveMessageHandler::main()
                         assertex(element);
                         element->doCreateActivity();
                         toSerialize.append(*LINK(element));
+                        graph->setCreated();
                     }
                     msg.clear();
                     CMessageBuffer replyMsg;
