@@ -25,11 +25,10 @@
 
 class CWorkUnitReadMaster : public CMasterActivity
 {
-public:
-    CWorkUnitReadMaster(CMasterGraphElement * info) : CMasterActivity(info) { }
-
-    virtual void handleSlaveMessage(CMessageBuffer &msg)
+    bool global;
+    size32_t getResult(MemoryBuffer &msg)
     {
+        MemoryBuffer resultBuffer;
         IHThorWorkunitReadArg *helper = (IHThorWorkunitReadArg *)queryHelper();
         size32_t lenData;
         void *tempData;
@@ -38,9 +37,33 @@ public:
             queryCodeContext()->getExternalResultRaw(lenData, tempData, wuid, helper->queryName(), helper->querySequence(), helper->queryXmlTransformer(), helper->queryCsvTransformer());
         else
             queryCodeContext()->getResultRaw(lenData, tempData, helper->queryName(), helper->querySequence(), helper->queryXmlTransformer(), helper->queryCsvTransformer());
-        msg.clear();
+        resultBuffer.setBuffer(lenData, tempData, true);
         msg.append(lenData, tempData);
+        return lenData;
+    }
+public:
+    CWorkUnitReadMaster(CMasterGraphElement * info) : CMasterActivity(info)
+    {
+        //global = !container.queryOwner().queryOwner() || container.queryOwner().isGlobal();
+        global = true; // even if part of a child graph, it should change, e.g. if repeatedly executed in loop
+    }
+
+    virtual void handleSlaveMessage(CMessageBuffer &msg)
+    {
+        assertex(!global);
+        msg.clear();
+        size32_t len = getResult(msg);
         container.queryJob().queryJobComm().reply(msg);
+    }
+    virtual void serializeSlaveData(MemoryBuffer &dst, unsigned slave)
+    {
+        if (global && 0 == slave)
+        {
+            size32_t pos = dst.length();
+            dst.append((size32_t)0); // placeholder
+            size32_t len = getResult(dst);
+            dst.writeDirect(pos, sizeof(len), &len);
+        }
     }
 };
 

@@ -28,13 +28,13 @@
 
 class CWuidReadSlaveActivity : public CSlaveActivity, public CThorDataLink
 {
-    Owned<ISerialStream> replyStream;
+    Owned<ISerialStream> resultStream;
     CThorStreamDeserializerSource rowSource;
     IHThorWorkunitReadArg *helper;
-    bool grouped;
+    bool grouped, global;
     bool eogPending;
     mptag_t replyTag;
-    CMessageBuffer masterReplyMsg;
+    MemoryBuffer resultBuff;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
@@ -43,14 +43,22 @@ public:
         : CSlaveActivity(_container), CThorDataLink(this)
     {
         replyTag = createReplyTag();
-        replyStream.setown(createMemoryBufferSerialStream(masterReplyMsg));
-        rowSource.setStream(replyStream);
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
         helper = (IHThorWorkunitReadArg *)queryHelper();
         grouped = helper->queryOutputMeta()->isGrouped();
+        //global = !container.queryOwner().queryOwner() || container.queryOwner().isGlobal();
+        global = true; // even if part of a child graph, it should change, e.g. if repeatedly executed in loop
+        if (global && firstNode())
+        {
+            size32_t len;
+            data.read(len);
+            resultBuff.append(len, data.readDirect(len));
+        }
+        resultStream.setown(createMemoryBufferSerialStream(resultBuff));
+        rowSource.setStream(resultStream);
     } 
     void start()
     {
@@ -58,7 +66,7 @@ public:
         dataLinkStart("WUIDREAD", container.queryId());
 
         eogPending = false;
-        if (container.queryLocal() || firstNode())
+        if (!global)
         {
             CMessageBuffer reqMsg;
             reqMsg.setReplyTag(replyTag);
@@ -69,7 +77,7 @@ public:
             if (!container.queryJob().queryJobComm().sendRecv(reqMsg, 0, container.queryJob().querySlaveMpTag(), LONGTIMEOUT))
                 throwUnexpected();
 
-            masterReplyMsg.swapWith(reqMsg);
+            resultBuff.swapWith(reqMsg); // NB: resultStream doesn't need reset
         }
     }
     void stop() { dataLinkStop(); }
