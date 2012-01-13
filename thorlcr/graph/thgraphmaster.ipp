@@ -69,6 +69,8 @@ public:
     bool serializeActivityInitData(unsigned slave, MemoryBuffer &mb, IThorActivityIterator &iter);
     void readActivityInitData(MemoryBuffer &mb, unsigned slave);
     bool deserializeStats(unsigned node, MemoryBuffer &mb);
+    void createCtxs(size32_t parentExtractSz, const byte *parentExtract);
+    void createActivities(IThorActivityIterator &iter);
     virtual void setComplete(bool tf=true);
     virtual bool prepare(size32_t parentExtractSz, const byte *parentExtract, bool checkDependencies, bool shortCircuit, bool async);
     virtual void create(size32_t parentExtractSz, const byte *parentExtract);

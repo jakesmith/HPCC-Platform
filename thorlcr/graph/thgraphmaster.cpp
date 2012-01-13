@@ -187,20 +187,11 @@ void CSlaveMessageHandler::main()
                     if (parentExtractSz)
                     {
                         parentExtract = msg.readDirect(parentExtractSz);
-                        StringBuffer msg("Graph(");
-                        msg.append(graph->queryGraphId()).append(") - initializing master graph with parentExtract ").append(parentExtractSz).append(" bytes");
-                        DBGLOG("%s", msg.str());
+                        StringBuffer logMsg("initializing master graph with parentExtract (");
+                        GraphPrintLog(graph, logMsg.append(parentExtractSz).append(") bytes, from slave ").append(sender-1).str());
                         parentExtract = graph->setParentCtx(parentExtractSz, parentExtract);
                     }
-                    Owned<IThorActivityIterator> iter = graph->getIterator();
-                    // onCreate all
-                    ForEach (*iter)
-                    {
-                        CMasterGraphElement &element = (CMasterGraphElement &)iter->query();
-                        element.onCreate();
-                        if (isDiskInput(element.getKind()))
-                            element.onStart(parentExtractSz, parentExtract);
-                    }
+                    graph->createCtxs(parentExtractSz, parentExtract);
                     msg.clear();
                     graph->serializeCreateContexts(msg);
                     job.queryJobComm().reply(msg);
@@ -221,16 +212,15 @@ void CSlaveMessageHandler::main()
                             break;
                         CMasterGraphElement *element = (CMasterGraphElement *)graph->queryElement(id);
                         assertex(element);
-                        element->doCreateActivity();
                         toSerialize.append(*LINK(element));
-                        graph->setCreated();
                     }
                     msg.clear();
+                    CGraphElementArrayIterator iter(toSerialize);
+                    graph->createActivities(iter);
                     CMessageBuffer replyMsg;
                     mptag_t replyTag = createReplyTag();
                     msg.append(replyTag); // second reply
                     replyMsg.setReplyTag(replyTag);
-                    CGraphElementArrayIterator iter(toSerialize);
                     graph->serializeActivityInitData(((unsigned)sender)-1, msg, iter);
                     job.queryJobComm().reply(msg);
                     if (!job.queryJobComm().recv(msg, sender, replyTag, NULL, MEDIUMTIMEOUT))
@@ -281,7 +271,6 @@ void CSlaveMessageHandler::main()
                 }
                 case smt_actMsg:
                 {
-                    LOG(MCdebugProgress, unknownJob, "smt_podata called from slave %d", sender-1);
                     graph_id gid;
                     msg.read(gid);
                     activity_id id;
@@ -290,6 +279,8 @@ void CSlaveMessageHandler::main()
                     assertex(graph);
                     CMasterGraphElement *container = (CMasterGraphElement *)graph->queryElement(id);
                     assertex(container);
+                    StringBuffer logMsg("smt_actMsg called from slave ");
+                    ActPrintLog(container, logMsg.append(sender-1).str());
                     CMasterActivity *activity = (CMasterActivity *)container->queryActivity();
                     assertex(activity);
                     activity->handleSlaveMessage(msg); // don't block
@@ -2408,6 +2399,34 @@ bool CMasterGraph::deserializeStats(unsigned node, MemoryBuffer &mb)
             return false;
     }
     return true;
+}
+
+void CMasterGraph::createCtxs(size32_t parentExtractSz, const byte *parentExtract)
+{
+    CriticalBlock b(createdCrit);
+    Owned<IThorActivityIterator> iter = getIterator();
+    ForEach (*iter)
+    {
+        CMasterGraphElement &element = (CMasterGraphElement &)iter->query();
+        element.onCreate();
+        if (isDiskInput(element.getKind()))
+            element.onStart(parentExtractSz, parentExtract);
+    }
+}
+
+void CMasterGraph::createActivities(IThorActivityIterator &iter)
+{
+    CriticalBlock b(createdCrit);
+    if (iter.first())
+    {
+        setCreated();
+        do
+        {
+            CMasterGraphElement &element = (CMasterGraphElement &)iter.query();
+            element.doCreateActivity();
+        }
+        while (iter.next());
+    }
 }
 
 ///////////////////////////////////////////////////

@@ -1722,8 +1722,17 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
                 global = isGlobalActivity(*act);
         }
     }
-    if (parentElement && !parentElement->queryLocal() && !isLocalOnly())
-        global = true;
+#if 0
+    if (parentElement && !parentElement->queryLocal())
+    {
+        unsigned loopId = parentElement->queryXGMML().getPropInt("att[@name=\"_loopid\"]/@value");
+        Owned<CGraphBase> childGraph = parentElement->queryOwner().getChildGraph(loopId);
+        if (childGraph->isGlobal())
+            global = true;
+        if (!isLocalOnly()) // perhaps should be checking loop graph isGlobal() only here, instead of isLocalOnly()
+            global = true;
+    }
+#endif
     Owned<IPropertyTreeIterator> edges = xgmml->getElements("edge");
     ForEach(*edges)
     {
