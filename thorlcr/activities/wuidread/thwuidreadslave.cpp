@@ -50,7 +50,7 @@ public:
         helper = (IHThorWorkunitReadArg *)queryHelper();
         grouped = helper->queryOutputMeta()->isGrouped();
         //global = !container.queryOwner().queryOwner() || container.queryOwner().isGlobal();
-        global = true; // even if part of a child graph, it should change, e.g. if repeatedly executed in loop
+        global = true; // even if part of a child graph, it shouldn't change, e.g. if repeatedly executed in loop
         if (global && firstNode())
         {
             size32_t len;
