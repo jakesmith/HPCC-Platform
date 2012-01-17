@@ -56,7 +56,7 @@ typedef volatile long atomic_t;
 #define atomic_cas(v,newvalue,expectedvalue)    (InterlockedCompareExchange(v,newvalue,expectedvalue)==expectedvalue)
 #define atomic_cas_ptr(v, newvalue,expectedvalue)       (InterlockedCompareExchangePointer(v,newvalue,expectedvalue)==expectedvalue)
 #endif      
-
+#define compiler_memory_barrier()           {}
 
 #elif defined(__GNUC__)
 
@@ -128,6 +128,8 @@ static __inline__ bool atomic_cas_ptr(void **v,void *newvalue, void *expectedval
     return __sync_bool_compare_and_swap((memsize_t *)v, (memsize_t)expectedvalue, (memsize_t)newvalue);
 }
 
+#define compiler_memory_barrier() asm volatile("": : :"memory")
+
 #else // other unix
 
 //Truely awful implementations of atomic operations...
@@ -154,6 +156,7 @@ bool   jlib_decl poor_atomic_cas_ptr(void ** v, void *newvalue, void *expectedva
 #define atomic_cas(v,newvalue,expectedvalue)    poor_atomic_cas(v,newvalue,expectedvalue)
 #define atomic_xchg_ptr(p, v)               poor_atomic_xchg_ptr(p, v)
 #define atomic_cas_ptr(v,newvalue,expectedvalue)    poor_atomic_cas_ptr(v,newvalue,expectedvalue)
+#define compiler_memory_barrier()       {}
 
 #endif
 

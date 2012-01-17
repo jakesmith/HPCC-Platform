@@ -342,6 +342,7 @@ public:
         if (nesting == 0)
         {
             owner.tid = 0;
+            compiler_memory_barrier();
             atomic_set(&value, 0);
         }
         else
@@ -399,11 +400,13 @@ public:
     { 
         assertex(GetCurrentThreadId()==owner.tid); // check for spurious leave
         owner.tid = 0;
+        compiler_memory_barrier();
         atomic_set(&value, 0); 
     }
 };
 
 #else
+
 class jlib_decl  NonReentrantSpinLock
 {
     atomic_t value;
@@ -420,6 +423,7 @@ public:
     }
     inline void leave()
     { 
+        compiler_memory_barrier();
         atomic_set(&value, 0); 
     }
 };
