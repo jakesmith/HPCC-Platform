@@ -1437,6 +1437,18 @@ public:
                 break;
             case DFUcmd_replicate:
                 {
+                    StringArray clusterNames;
+                    unsigned clusters = srcFile->getClusterNames(clusterNames);
+                    ForEachItemIn(c, clusterNames)
+                    {
+                        ClusterPartDiskMapSpec clusterSpec = srcFile->queryPartDiskMapping(c);
+                        if (clusterSpec.defaultCopies == 1)
+                        {
+                            WARNLOG("DFU Replicate, marking file (%s), in cluster(%s) as replicated", srcFile->queryLogicalName(), clusterNames.item(c));
+                            clusterSpec.defaultCopies = 2;
+                        }
+                        srcFile->updatePartDiskMapping(clusterNames.item(c), clusterSpec);
+                    }
                     runningconn.setown(setRunning(runningpath.str()));
                     DaftReplicateMode mode = DRMreplicatePrimary;
                     StringBuffer repcluster; 
