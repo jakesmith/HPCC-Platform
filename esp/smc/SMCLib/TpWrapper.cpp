@@ -85,17 +85,131 @@ bool CTpWrapper::getClusterLCR(const char* clusterType, const char* clusterName)
     return bLCR;
 }
 
+void CTpWrapper::updateThorMachineType(const char* clusterName, IArrayOf<IEspTpMachine> &machineList, bool& hasThorSpareProcess)
+{
+    if (!clusterName || !*clusterName || (machineList.length() < 1))
+        return;
+
+    StringBuffer groupName;
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory();
+    Owned<IConstEnvironment> constEnv = factory->openEnvironmentByFile();
+    Owned<IPropertyTree> root = &constEnv->getPTree();
+    if (!root)
+        throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Failed to get environment information.");
+
+    Owned<IPropertyTreeIterator> clusters= root->getElements("Software/ThorCluster");
+    if (clusters->first())
+    {
+        do
+        {
+            IPropertyTree &cluster = clusters->query();
+            const char* name = cluster.queryProp("@name");
+            const char* group = cluster.queryProp("@nodeGroup");
+            if (!name||!strieq(name, clusterName))
+                continue;
+
+            if (!group || !*group)
+                groupName = name;
+            else
+                groupName = group;
+            break;
+        } while (clusters->next());
+    }
+
+    if (groupName.length() < 1)
+        return;
+
+    Owned<IGroup> nodeGroup = queryNamedGroupStore().lookup(groupName.str());
+    if (!nodeGroup)
+        return;
+
+    hasThorSpareProcess = false;
+    ForEachItemIn(q, machineList)
+    {
+        IEspTpMachine& machineInfo = machineList.item(q);
+        const char* machineType = machineInfo.getType();
+        const char* machineAddress = machineInfo.getNetaddress();
+        if (!machineAddress  || !*machineAddress || !machineType || strieq(machineType, eqThorMasterProcess))
+            continue;
+
+        Owned<INode> node = createINode(machineAddress);
+        if (nodeGroup->isMember(node))
+            machineInfo.setType(eqThorSlaveProcess);
+        else
+        {
+            hasThorSpareProcess = true;
+            machineInfo.setType(eqThorSpareProcess);
+        }
+    }
+    return;
+}
+
+void CTpWrapper::selectThorSpareMachines(const char* clusterName, IArrayOf<IEspTpMachine> &machineList)
+{
+    if (!clusterName || !*clusterName || (machineList.length() < 1))
+        return;
+
+    StringBuffer groupName;
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory();
+    Owned<IConstEnvironment> constEnv = factory->openEnvironmentByFile();
+    Owned<IPropertyTree> root = &constEnv->getPTree();
+    if (!root)
+        throw MakeStringException(ECLWATCH_CANNOT_GET_ENV_INFO, "Failed to get environment information.");
+
+    Owned<IPropertyTreeIterator> clusters= root->getElements("Software/ThorCluster");
+    if (clusters->first())
+    {
+        do
+        {
+            IPropertyTree &cluster = clusters->query();
+            const char* name = cluster.queryProp("@name");
+            const char* group = cluster.queryProp("@nodeGroup");
+            if (!name||!strieq(name, clusterName))
+                continue;
+
+            if (!group || !*group)
+                groupName = name;
+            else
+                groupName = group;
+            break;
+        } while (clusters->next());
+    }
+
+    if (groupName.length() < 1)
+        return;
+
+    Owned<IGroup> nodeGroup = queryNamedGroupStore().lookup(groupName.str());
+    if (!nodeGroup)
+        return;
+
+    ForEachItemInRev(i, machineList)
+    {
+        IEspTpMachine& machineInfo = machineList.item(i);
+        const char* machineAddress = machineInfo.getNetaddress();
+        if (!machineAddress || !*machineAddress)
+            continue;
+
+        Owned<INode> node = createINode(machineAddress);
+        if (nodeGroup->isMember(node))
+            machineList.remove(i);
+        else
+            machineInfo.setType(eqThorSpareProcess);
+    }
+    return;
+}
+
 void CTpWrapper::getClusterMachineList(const char* ClusterType,
                                        const char* ClusterPath,
-                                                     const char* ClusterDirectory,
+                                       const char* ClusterDirectory,
                                        IArrayOf<IEspTpMachine> &MachineList,
-                                                    bool& hasThorSpareProcess)
+                                       bool& hasThorSpareProcess,
+                                       const char* ClusterName)
 {
     try
     {
         StringBuffer returnStr,path;
         getAttPath(ClusterPath,path);
-      set<string> machineNames; //used for checking duplicates
+        set<string> machineNames; //used for checking duplicates
 
         if (strcmp(eqTHORMACHINES,ClusterType) == 0)
         {
@@ -105,6 +219,9 @@ void CTpWrapper::getClusterMachineList(const char* ClusterType,
             getMachineList(eqThorSpareProcess,path.str(),"", ClusterDirectory, MachineList);
             if (count < MachineList.length()) 
                 hasThorSpareProcess = true;
+
+            //Update machine types
+            updateThorMachineType(ClusterName, MachineList, hasThorSpareProcess);
         }
         else if (strcmp(eqHOLEMACHINES,ClusterType) == 0)
         {
@@ -138,9 +255,14 @@ void CTpWrapper::getClusterMachineList(const char* ClusterType,
             getMachineList(eqHoleStandbyProcess,path.str(),"", ClusterDirectory, MachineList);
         }
         else if (strcmp("THORSPARENODES",ClusterType) == 0)
-      {
+        {
+            //Read possible spare nodes from environment settings
+            getMachineList(eqThorSlaveProcess,path.str(),"", ClusterDirectory, MachineList);
             getMachineList(eqThorSpareProcess,path.str(),"", ClusterDirectory, MachineList);
-      }
+
+            //Filter out non-spare nodes and update machine type
+            selectThorSpareMachines(ClusterName, MachineList);
+        }
         else if (strcmp("HOLESTANDBYNODES",ClusterType) == 0)
       {
             getMachineList(eqHoleStandbyProcess,path.str(),"", ClusterDirectory, MachineList);
@@ -995,7 +1117,7 @@ void CTpWrapper::queryTargetClusterProcess(double version, const char* processNa
     {
         bool hasThorSpareProcess = false;
         IArrayOf<IEspTpMachine> machineList;
-        getClusterMachineList(clusterType0, tmpPath.str(), dirStr.str(), machineList, hasThorSpareProcess);
+        getClusterMachineList(clusterType0, tmpPath.str(), dirStr.str(), machineList, hasThorSpareProcess, processName);
         if (machineList.length() > 0)
             clusterInfo->setTpMachines(machineList);
         if (version > 1.14)

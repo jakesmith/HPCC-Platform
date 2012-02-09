@@ -150,7 +150,7 @@ public:
     void getGroupList(IArrayOf<IEspTpGroup> &Groups);
     void getCluster(const char* ClusterType,IPropertyTree& returnRoot);
     void getClusterMachineList(const char* ClusterType,const char* ClusterPath, const char* ClusterDirectory, 
-                                        IArrayOf<IEspTpMachine> &MachineList, bool& hasThorSpareProcess);
+                                        IArrayOf<IEspTpMachine> &MachineList, bool& hasThorSpareProcess, const char* ClusterName = NULL);
     void getMachineList( const char* MachineType,
                         const char* MachinePath,
                         const char* Status,
@@ -179,6 +179,8 @@ public:
     void queryTargetClusters(double version, const char* clusterType, const char* clusterName, IArrayOf<IEspTpTargetCluster>& clusterList);
     void getTargetClusterList(IArrayOf<IEspTpLogicalCluster>& clusters, const char* clusterType = NULL, const char* clusterName = NULL);
     void queryTargetClusterProcess(double version, const char* processName, const char* clusterType, IArrayOf<IConstTpCluster>& list);
+    void updateThorMachineType(const char* clusterName, IArrayOf<IEspTpMachine> &MachineList, bool& hasThorSpareProcess);
+    void selectThorSpareMachines(const char* clusterName, IArrayOf<IEspTpMachine> &machineList);
 
     IPropertyTree* getEnvironment(const char* xpath);
 };
