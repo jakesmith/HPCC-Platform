@@ -34,6 +34,7 @@ class AggregateSlaveBase : public CSlaveActivity, public CThorDataLink
 {
 protected:
     bool hadElement;
+    bool inputStopped;
     IThorDataLink *input;
 public:
     AggregateSlaveBase(CGraphElementBase *_container) 
@@ -135,7 +136,6 @@ class AggregateSlaveActivity : public AggregateSlaveBase
 {
     bool eof;
     IHThorAggregateArg * helper;
-    bool inputStopped;
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -225,7 +225,6 @@ class ThroughAggregateSlaveActivity : public AggregateSlaveBase
     IHThorThroughAggregateArg *helper;
     RtlDynamicRowBuilder partResult;
     size32_t partResultSize;
-    bool inputStopped;
     Owned<IRowInterfaces> aggrowif;
 
 public:
