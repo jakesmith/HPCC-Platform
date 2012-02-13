@@ -109,14 +109,19 @@ public:
         }
         container.queryJob().queryJobComm().send(mb, dst, mpTag);
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         if (!container.queryLocal())
             mpTag = container.queryJob().deserializeMPTag(data);
     }
-    void start()
+    virtual void start()
     {
         hadElement = false;
+        input = inputs.item(0);
+        inputStopped = false;
+        if (input->isGrouped())
+            ActPrintLog("Grouped mismatch");
+        startInput(input);
     }
     virtual void doStopInput()
     {
@@ -137,30 +142,26 @@ public:
     AggregateSlaveActivity(CGraphElementBase *container) : AggregateSlaveBase(container)
     {
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         AggregateSlaveBase::init(data, slaveData);
         appendOutputLinked(this);
         helper = (IHThorAggregateArg *)queryHelper();
     }
-    void abort()
+    virtual void abort()
     {
         AggregateSlaveBase::abort();
         if (firstNode())
             cancelReceiveMsg(1, mpTag);
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
         AggregateSlaveBase::start();
         eof = false;
-        inputStopped = false;
         dataLinkStart("AGGREGATE", container.queryId());
-        input = inputs.item(0);
-        startInput(input);
-        if (input->isGrouped()) ActPrintLog("AGGREGATE: Grouped mismatch");
     }
-    void stop()
+    virtual void stop()
     {
         if (!inputStopped)
         {
@@ -207,8 +208,8 @@ public:
         sz = helper->clearAggregate(resultcr);  
         return resultcr.finalizeRowClear(sz);
     }
-    bool isGrouped() { return false; }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual bool isGrouped() { return false; }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.singleRowOutput = true;
@@ -234,7 +235,7 @@ public:
     {
         partResultSize = 0;
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         AggregateSlaveBase::init(data, slaveData);
 
@@ -259,7 +260,7 @@ public:
             hadElement = true;
         }
     }
-    void doStopInput()
+    virtual void doStopInput()
     {
         if (inputStopped) 
             return;
@@ -280,14 +281,11 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
-        dataLinkStart("THROUGHAGGREGATE", container.queryId());
-        input = inputs.item(0);
-        inputStopped = false;
-        startInput(input);
-        if (input->isGrouped()) ActPrintLog("THROUGHAGGREGATE: Grouped mismatch");
+        AggregateSlaveBase::start();
         aggrowif.setown(createRowInterfaces(helper->queryAggregateRecordSize(),queryActivityId(),queryCodeContext()));
         partResult.setAllocator(aggrowif->queryRowAllocator()).ensureRow();
         helper->clearAggregate(partResult);
+        dataLinkStart("THROUGHAGGREGATE", container.queryId());
     }
 
     virtual void stop()
@@ -311,8 +309,8 @@ public:
         dataLinkIncrement();
         return row.getClear();
     }
-    bool isGrouped() { return false; }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual bool isGrouped() { return false; }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         inputs.item(0)->getMetaInfo(info);
     }
