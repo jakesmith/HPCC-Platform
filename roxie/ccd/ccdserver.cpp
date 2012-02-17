@@ -28118,7 +28118,7 @@ public:
         }
         allocator->queryOutputMeta()->destruct((byte *) row);
     }
-    virtual void checkValid(unsigned cacheId, void *row) const
+    virtual void checkValid(unsigned cacheId, const void *row) const
     {
         if (!RoxieRowCheckValid(cacheId, row))
         {
