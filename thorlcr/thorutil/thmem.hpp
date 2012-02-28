@@ -216,7 +216,7 @@ class graph_decl CThorRowArray
     MemoryBuffer ptrbuf;
     unsigned numelem;
     memsize_t totalsize;
-    memsize_t maxtotal;
+    memsize_t maxtotal, stepSize, minRemaining, lastAsz;
     size32_t overhead;
     Linked<IOutputRowSerializer> serializer;
     bool keepsize;
@@ -242,6 +242,9 @@ public:
             maxtotal = (unsigned)tmp;
         if (maxtotal<0x100000)
             maxtotal = 0x100000;
+        stepSize = 0x100000;
+        minRemaining = maxtotal/8;
+        lastAsz = 0;
     }
 
 
@@ -268,8 +271,10 @@ public:
             ptrbuf.setLength(0);
         if (sizing&&remn) 
             checkMultiThorMemoryThreshold(false);
+        stepSize = 0x100000;
         totalsize = 0;
         overhead = 0;
+        lastAsz = 0;
     }
 
     inline void clear() { reset(true); }
@@ -349,8 +354,28 @@ public:
 #endif
             return true;
         }
-        else
-            return false;
+        else if (sz > stepSize) { // periodic check
+            stepSize += 0x100000;
+            memsize_t asz = ThorRowMemoryAvailable();
+            StringBuffer str("Avail mem = ");
+            str.append((unsigned __int64)asz);
+            str.append(", maxtotal = ").append((unsigned __int64)maxtotal).append(", sz = ");
+            str.append((unsigned __int64)sz).append(", stepSize = ").append((unsigned __int64)stepSize);
+            PROGLOG("%s", str.str());
+            if (asz < minRemaining) {
+                // ok, so it's low
+                if (lastAsz &&(asz < (lastAsz-0x100000))) // but did it actually decrease by more than calculated?
+                {
+#ifdef _DEBUG
+                    StringBuffer msg("CThorRowArray isFull(), ThorMemoryManager remaining() : ");
+                    PROGLOG("%s", msg.append((unsigned __int64) asz).str());
+#endif
+                    return true;
+                }
+            }
+            lastAsz = asz;
+        }
+        return false;
     }
 
     void sort(ICompare & compare, bool stable, unsigned maxcores)
