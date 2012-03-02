@@ -321,9 +321,7 @@ public:
                 ret = createDiskWriteSlave(this);
                 break;
             case TAKsort:
-                if (queryGrouped())
-                    ret = createGroupSortSlave(this);
-                else if (queryLocal())
+                if (queryGrouped() || queryLocal())
                     ret = createLocalSortSlave(this);
                 else
                     ret = createMSortSlave(this);

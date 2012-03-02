@@ -15,7 +15,7 @@ enum MPSlaveFunctions
     FN_StartGather,
     FN_GetGatherInfo,
     FN_GetMinMax,
-    FN_GetMidPoint ,
+    FN_GetMidPoint,
     FN_GetMultiMidPoint,
     FN_GetMultiMidPointStart,
     FN_GetMultiMidPointStop,
@@ -106,14 +106,13 @@ void SortSlaveMP::StartGather()
     sendRecv(mb);
 }
 
-void SortSlaveMP::GetGatherInfo(rowmap_t &numlocal, memsize_t &totalsize, unsigned &overflowscale, bool hasserializer)
+void SortSlaveMP::GetGatherInfo(rowmap_t &numlocal, offset_t &totalsize, unsigned &overflowscale, bool hasserializer)
 {
     CMessageBuffer mb;
     mb.append((byte)FN_GetGatherInfo);
     mb.append(hasserializer);
     sendRecv(mb);
-    mb.read(numlocal).readMemSize(totalsize).read(overflowscale);
-
+    mb.read(numlocal).read(totalsize).read(overflowscale);
 }
 
 rowmap_t SortSlaveMP::GetMinMax(size32_t &keybuffsize,void *&keybuff, size32_t &avrecsizesize)
@@ -207,12 +206,12 @@ void SortSlaveMP::MultiBinChopStop(unsigned num,rowmap_t *pos)
     mb.read(num*sizeof(rowmap_t),pos);
 }
 
-void SortSlaveMP::OverflowAdjustMapStart( unsigned mapsize,rowmap_t *map,size32_t keybuffsize,const byte *keybuff, byte cmpfn) /* async */
+void SortSlaveMP::OverflowAdjustMapStart( unsigned mapsize,rowmap_t *map,size32_t keybuffsize,const byte *keybuff, byte cmpfn,bool useaux) /* async */
 {
     CMessageBuffer mb;
     mb.append((byte)FN_OverflowAdjustMapStart);
     mb.append(mapsize).append(mapsize*sizeof(rowmap_t),map);
-    serializeblk(mb,keybuffsize,keybuff).append(cmpfn);
+    serializeblk(mb,keybuffsize,keybuff).append(cmpfn).append(useaux);
     sendRecv(mb);
 
 }
@@ -355,9 +354,9 @@ bool SortSlaveMP::marshall(ISortSlaveMP &slave, ICommunicator* comm, mptag_t tag
                 mb.read(hasserializer);
                 rowmap_t numlocal;
                 unsigned overflowscale;
-                memsize_t totalsize;
+                offset_t totalsize;
                 slave.GetGatherInfo(numlocal,totalsize,overflowscale,hasserializer);
-                mbout.append(numlocal).appendMemSize(totalsize).append(overflowscale);
+                mbout.append(numlocal).append(totalsize).append(overflowscale);
             }
             break;
             case FN_GetMinMax: {
@@ -477,7 +476,9 @@ bool SortSlaveMP::marshall(ISortSlaveMP &slave, ICommunicator* comm, mptag_t tag
                 deserializeblk(mb,keybuffsize,keybuff);
                 byte cmpfn;
                 mb.read(cmpfn);
-                slave.OverflowAdjustMapStart(mapsize,(rowmap_t *)map,keybuffsize,(const byte *)keybuff,cmpfn);
+                bool useaux;
+                mb.read(useaux);
+                slave.OverflowAdjustMapStart(mapsize,(rowmap_t *)map,keybuffsize,(const byte *)keybuff,cmpfn,useaux);
                 free(keybuff);
             }
             break;

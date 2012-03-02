@@ -990,7 +990,6 @@ public:
             else
                 filter.append("uid=");
             filter.append(username);
-
             char* attrs[] = {"cn", NULL};
 
             Owned<ILdapConnection> lconn = m_connections->getConnection();
@@ -1008,7 +1007,6 @@ public:
                             &timeOut,
                             LDAP_NO_LIMIT,
                             &searchResult.msg);
-
             if(result != LDAP_SUCCESS)
             {
                 DBGLOG("ldap_search_ext_s error: %s, when searching %s under %s", ldap_err2string( result ), filter.str(), m_ldapconfig->getUserBasedn());

@@ -25,7 +25,7 @@
 #include "jqueue.tpp"
 #include "jbuff.hpp"
 #include "jcrc.hpp"
-#include "thmem.hpp"
+#include "thorcommon.hpp"
 
 
 #ifdef _WIN32
@@ -50,6 +50,7 @@ interface ISmartRowBuffer: extends IRowStream
     virtual IRowWriter *queryWriter() = 0;
 };
 
+class CActivityBase;
 extern graph_decl ISmartRowBuffer * createSmartBuffer(CActivityBase *activity, const char * tempname, 
                                                       size32_t buffsize, 
                                                       IRowInterfaces *rowif
@@ -85,7 +86,7 @@ interface IRowWriterMultiReader : extends IRowWriter
     virtual IRowStream *getReader() = 0;
 };
 
-extern graph_decl IRowWriterMultiReader *createOverflowableBuffer(IRowInterfaces *_rowif,size32_t sizebuf);
+extern graph_decl IRowWriterMultiReader *createOverflowableBuffer(CActivityBase &activity, IRowInterfaces *rowif, size32_t sizebuf);
 // NB first write all then read (not interleaved!)
 
 #endif

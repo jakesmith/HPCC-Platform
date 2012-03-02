@@ -37,10 +37,11 @@
 #include "jthread.hpp"
 #include "jlib.hpp"
 #include "jsort.hpp"
+
+//#include "roxiemem.hpp"
+
 #include "thexception.hpp"
 #include "thgraph.hpp"
-
-#define PROGNAME "tsort"
 
 #include "tsorts.hpp"
 #include "tsortmp.hpp"
@@ -58,7 +59,7 @@
 #include "tsorta.hpp"
 
 #ifdef _DEBUG
-//#define TRACE_PARTITION
+#define TRACE_PARTITION
 //#define TRACE_PARTITION2
 
 //#define _TRACE_SKEW_SPLIT
@@ -87,7 +88,7 @@ public:
     mptag_t         mpTagRPC;
     unsigned        beat;
     rowmap_t        numrecs;
-    memsize_t       memsize;
+    offset_t        slavesize;
     bool            overflow;
     unsigned        scale;     // num times overflowed
     
@@ -106,7 +107,7 @@ public:
         overflow = false;
         scale = 1;
         numrecs = 0;
-        memsize = 0;
+        slavesize = 0;
         assertex(_rank!=RANK_NULL);
         SortSlaveMP::init(comm,_rank,mpTagRPC);
     }
@@ -1026,7 +1027,7 @@ public:
         partitioninfo->numnodes = numnodes;
 #ifdef _DEBUG
         if (logging) {
-            for (i=0;i<numnodes;i++) {
+            for (unsigned i=0;i<numnodes;i++) {
                 StringBuffer str;
                 str.appendf("%d: ",i);
                 for (j=0;j<numnodes;j++) {
@@ -1198,8 +1199,9 @@ public:
     void Sort(unsigned __int64 threshold, double skewWarning, double skewError, size32_t _maxdeviance,bool canoptimizenullcolumns, bool usepartitionrow, bool betweensort, unsigned minisortthresholdmb)
     {
         memsize_t minisortthreshold = 1024*1024*(memsize_t)minisortthresholdmb;
-        if ((minisortthreshold>0)&&(ThorRowMemoryAvailable()/2<minisortthreshold))
-            minisortthreshold = ThorRowMemoryAvailable()/2;
+        // JCSMORE - size a bit arbitary
+        if ((minisortthreshold>0)&&(roxiemem::getTotalMemoryLimit()/2<minisortthreshold))
+            minisortthreshold = roxiemem::getTotalMemoryLimit()/2;
         if (skewError>0.0 && skewWarning > skewError)
         {
             ActPrintLog(activity, "WARNING: Skew warning %f > skew error %f", skewWarning, skewError);
@@ -1210,23 +1212,23 @@ public:
         maxdeviance = _maxdeviance;
         unsigned i;
         bool overflowed = false;
+        unsigned numnodes = slaves.ordinality();
         for (i=0;i<numnodes;i++) {
             CSortNode &slave = slaves.item(i);
-            slave.GetGatherInfo(slave.numrecs,slave.memsize,slave.scale,keyserializer!=NULL);
+            slave.GetGatherInfo(slave.numrecs,slave.slavesize,slave.scale,keyserializer!=NULL);
             assertex(slave.scale);
             slave.overflow = slave.scale>1;
             if (slave.overflow)
                 overflowed = true;
             total += slave.numrecs;
             stotal += slave.numrecs*slave.scale;
-            totalmem += slave.memsize;
+            totalmem += slave.slavesize;
             if (slave.numrecs>maxrecsonnode)
                 maxrecsonnode = slave.numrecs;
             if (slave.numrecs<minrecsonnode)
                 minrecsonnode = slave.numrecs;
         }
         ActPrintLog(activity,"Total recs in mem = %"RCPF"d scaled recs= %"RCPF"d size = %"CF"d bytes, minrecsonnode = %"RCPF"d, maxrecsonnode = %"RCPF"d",total,stotal,totalmem,minrecsonnode,maxrecsonnode);
-        unsigned numnodes = slaves.ordinality();
         if (!usepartitionrow&&!betweensort&&(totalmem<minisortthreshold)&&!overflowed) {
             sorted = MiniSort(total);
             return;
@@ -1234,20 +1236,24 @@ public:
 #ifdef USE_SAMPLE_PARTITIONING
         bool usesampling = true;        
 #endif
+        bool useAux = false; // JCSMORE using existing partioning and auxillary rowIf (only used if overflow)
         loop {
             OwnedMalloc<rowmap_t> splitMap, splitMapUpper;
             CTimer timer;
             if (numnodes>1) {
                 timer.start();
                 if (cosortfilenames) {
+                    useAux = true;
                     CalcExtPartition();
                     canoptimizenullcolumns = false;
                 }
                 if (usepartitionrow) {
+                    useAux = true;
                     CalcPreviousPartition();
                     canoptimizenullcolumns = false;
                 }
                 if (partitioninfo->IsOK()) {
+                    useAux = true;
                     splitMap.setown(UsePartitionInfo(*partitioninfo, betweensort));
                     if (betweensort) {
                         splitMapUpper.setown(UsePartitionInfo(*partitioninfo, false));
@@ -1329,7 +1335,7 @@ public:
                     for (i=0;i<numnodes;i++) {
                         CSortNode &slave = slaves.item(i);
                         if (slave.overflow) 
-                            slave.OverflowAdjustMapStart(numnodes,splitMap+i*numnodes,mbsk.length(),(const byte *)mbsk.bufferBase(),CMPFN_COLLATE);
+                            slave.OverflowAdjustMapStart(numnodes,splitMap+i*numnodes,mbsk.length(),(const byte *)mbsk.bufferBase(),CMPFN_COLLATE,useAux);
                     }
                     for (i=0;i<numnodes;i++) {
                         CSortNode &slave = slaves.item(i);
@@ -1340,7 +1346,7 @@ public:
                         for (i=0;i<numnodes;i++) {
                             CSortNode &slave = slaves.item(i);
                             if (slave.overflow) 
-                                slave.OverflowAdjustMapStart(numnodes,splitMapUpper+i*numnodes,mbsk.length(),(const byte *)mbsk.bufferBase(),CMPFN_UPPER);
+                                slave.OverflowAdjustMapStart(numnodes,splitMapUpper+i*numnodes,mbsk.length(),(const byte *)mbsk.bufferBase(),CMPFN_UPPER,useAux);
                         }
                         for (i=0;i<numnodes;i++) {
                             CSortNode &slave = slaves.item(i);

@@ -28,6 +28,7 @@
 #include "jlib.hpp"
 #include "jio.hpp"
 #include "jlzw.hpp"
+#include "thbuf.hpp"
 #include "thmem.hpp"
 
 
@@ -92,7 +93,20 @@ interface IThorRowSortedLoader: extends IInterface
     virtual unsigned numOverflowFiles()=0;
     virtual unsigned numOverflows()=0;
     virtual unsigned overflowScale()=0;
+};
 
+enum LoaderType { sl_mixed, sl_allDisk, sl_allDiskOrAllMem };
+class RoxieSimpleInputRowArray;
+interface IThorRowLoader : extends IRowWriter
+{
+    virtual void setup(IRowInterfaces *rowIf, ICompare *iCompare=NULL, bool isStable=false, unsigned spillPriority=50) = 0;
+    virtual IRowStream *load(IRowStream *in, bool grouped, LoaderType diskMemMix, roxiemem::RoxieSimpleInputRowArray *allMemRows, bool &abort) = 0;
+    virtual rowcount_t numRows() const = 0;
+    virtual unsigned numOverflows() const = 0;
+    virtual unsigned overflowScale() const = 0;
+    virtual void transferRowsOut(CThorRowFixedSizeArray &dst, bool sort=true) = 0;
+    virtual void transferRowsIn(CThorRowFixedSizeArray &src) = 0;
+    virtual IRowStream *getStream(LoaderType diskMemMix = sl_mixed) = 0;
 };
 
 class CThorKeyArray
@@ -152,6 +166,8 @@ public:
 extern void traceKey(IOutputRowSerializer *serializer,const char *prefix,const void *key);
 
 IThorRowSortedLoader *createThorRowSortedLoader(CThorRowArray &rows); // NB only contains all rows if hasOverflowed false
+IThorRowLoader *createThorRowLoader(CActivityBase &activity);
+IThorRowLoader *createThorRowLoader(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare=NULL, bool isStable=false, unsigned spillPriority=50);
 
 
 #endif

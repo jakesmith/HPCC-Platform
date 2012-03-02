@@ -217,7 +217,7 @@ public:
         const PtrElem *e = (const PtrElem *)r;
         size32_t ret = e->size(metasize);
         if (e->queryRow()) 
-            ret += thorRowMemoryFootprint(e->queryRow());
+            ret += thorRowMemoryFootprint(serializer, e->queryRow());
         return ret;
     }
 
@@ -2003,7 +2003,7 @@ public:
         IOutputMetaData* km = dedupargs->queryKeySize();
         if (km&&(km!=dedupargs->queryOutputMeta())) {
             ikeycompare = dedupargs->queryKeyCompare();
-            keyallocator.setown(createThorRowAllocator(km,queryActivityId()));
+            keyallocator.setown(queryJob().getRowAllocator(km,queryActivityId()));
             keyserializer.setown(km->createRowSerializer(queryCodeContext(),queryActivityId()));
             htabrows.setSizing(true,true);
         }
@@ -2226,8 +2226,6 @@ class HashJoinSlaveActivity : public CSlaveActivity, public CThorDataLink, imple
     bool eof;
     Owned<IRowStream> strmL;
     Owned<IRowStream> strmR;
-    Owned<IThorRowSortedLoader> loaderL;
-    Owned<IThorRowSortedLoader> loaderR;
     CriticalSection joinHelperCrit;
     CriticalSection stopsect;
     rowcount_t lhsProgressCount;
@@ -2237,7 +2235,6 @@ class HashJoinSlaveActivity : public CSlaveActivity, public CThorDataLink, imple
     bool leftdone;
     mptag_t mptag;
     mptag_t mptag2;
-    CThorRowArray rows;
 
 public:
 
@@ -2255,8 +2252,6 @@ public:
         strmL.clear();
         strmR.clear();
         joinhelper.clear();
-        loaderL.clear();
-        loaderR.clear();
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
@@ -2287,22 +2282,21 @@ public:
         Owned<IHashDistributor> distributor;
         distributor.setown(createHashDistributor(this, container.queryJob().queryJobComm(), mptag, queryRowInterfaces(inL), abortSoon,false, this));
         Owned<IRowStream> reader = distributor->connect(inL,ihashL,icompareL);
-        loaderL.setown(createThorRowSortedLoader(rows));
-        bool isemptylhs;
-        strmL.setown(loaderL->load(reader,queryRowInterfaces(inL),icompareL,true,abortSoon,isemptylhs,"HASHJOIN(L)",true,maxCores));
+        Owned<IThorRowLoader> loaderL = createThorRowLoader(*this, ::queryRowInterfaces(inL), icompareL, true, SPILL_PRIORITY_HASHJOIN);
+        strmL.setown(loaderL->load(reader, false, sl_allDisk, NULL, abortSoon));
+        loaderL.clear();
         reader.clear();
         stopInputL();
         distributor->disconnect(false);
         distributor->removetemp();
         distributor->join();
         distributor.clear();
-        rows.clear();
-        loaderR.setown(createThorRowSortedLoader(rows));
         leftdone = true;
         distributor.setown(createHashDistributor(this, container.queryJob().queryJobComm(), mptag2, queryRowInterfaces(inR), abortSoon,false, this));
         reader.setown(distributor->connect(inR,ihashR,icompareR));
-        bool isemptyrhs;
-        strmR.setown(loaderR->load(reader,queryRowInterfaces(inR),icompareR,false,abortSoon,isemptyrhs,"HASHJOIN(R)",true,maxCores));
+        Owned<IThorRowLoader> loaderR = createThorRowLoader(*this, ::queryRowInterfaces(inR), icompareR, true, SPILL_PRIORITY_HASHJOIN);;
+        strmR.setown(loaderR->load(reader, false, sl_mixed, NULL, abortSoon));
+        loaderR.clear();
         reader.clear();
         stopInputR();
         distributor->disconnect(false);
@@ -2368,7 +2362,6 @@ public:
     void kill()
     {
         ActPrintLog("HASHJOIN: kill");
-        rows.clear();
         CSlaveActivity::kill();
     }
     CATCH_NEXTROW()

@@ -35,6 +35,9 @@
 #include "thormisc.hpp"
 #include "eclhelper.hpp"
 #include "rtlread_imp.hpp"
+#include "roxiemem.hpp"
+#include "roxierowbuff.hpp"
+
 #define NO_BWD_COMPAT_MAXSIZE
 #include "thorcommon.hpp"
 #include "thorcommon.ipp"
@@ -44,13 +47,12 @@ interface ILargeMemLimitNotify;
 interface ISortKeySerializer;
 interface ICompare;
 
-#ifdef _DEBUG
-#define TEST_ROW_LINKS
-//#define PARANOID_TEST_ROW_LINKS
-#endif
+//#define INCLUDE_POINTER_ARRAY_SIZE
 
-//#define INCLUDE_POINTER_ARRAY_SIZE        
 
+#define ReleaseThorRow(row) ReleaseRoxieRow(row)
+#define ReleaseClearThorRow(row) ReleaseClearRoxieRow(row)
+#define LinkThorRow(row) LinkRoxieRow(row)
 
 
 
@@ -80,11 +82,6 @@ graph_decl void setThorInABox(unsigned num);
 #endif
 
 
-
-extern graph_decl void ReleaseThorRow(const void *ptr);
-extern graph_decl void ReleaseClearThorRow(const void *&ptr);
-extern graph_decl void LinkThorRow(const void *ptr);
-extern graph_decl bool isThorRowShared(const void *ptr);
 
 class OwnedConstThorRow 
 {
@@ -153,20 +150,14 @@ private:
     const void * ptr;
 };
 
-
-
-
-
-interface IThorRowAllocator: extends IEngineRowAllocator
+interface IThorAllocator : extends IInterface
 {
+    virtual IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, unsigned activityId) const = 0;
+    virtual roxiemem::IRowManager *queryRowManager() const = 0;
 };
 
+IThorAllocator *createThorAllocator(memsize_t memSize);
 
-
-extern graph_decl void initThorMemoryManager(size32_t sz, unsigned memtracelevel, unsigned memstatinterval);
-
-extern graph_decl void resetThorMemoryManager();
-extern graph_decl IThorRowAllocator *createThorRowAllocator(IOutputMetaData * _meta, unsigned _activityId);
 extern graph_decl IOutputMetaData *createOutputMetaDataWithExtra(IOutputMetaData *meta, size32_t sz);
 extern graph_decl IOutputMetaData *createOutputMetaDataWithChildRow(IEngineRowAllocator *childAllocator, size32_t extraSz);
 
@@ -429,11 +420,84 @@ public:
         if (size<=numelem) return;
         reserve(size-numelem);
     }
-
-
 };
 
+// JCSMORE
+enum {
+    InitialSortElements = 0,
+    //The number of rows that can be added without entering a critical section, and therefore also the number
+    //of rows that might not get freed when memory gets tight.
+    CommitStep=32
+};
 
+graph_decl StringBuffer &getRecordString(const void *key, IOutputRowSerializer *serializer, const char *prefix, StringBuffer &out);
+
+#define SPILL_PRIORITY_JOIN 10
+#define SPILL_PRIORITY_SELFJOIN 10
+#define SPILL_PRIORITY_HASHJOIN 10
+#define SPILL_PRIORITY_LARGESORT 10
+#define SPILL_PRIORITY_GROUPSORT 20
+#define SPILL_PRIORITY_OVERFLOWABLE_BUFFER 50
+#define SPILL_PRIORITY_SPILLABLE_STREAM 50
+
+class graph_decl CThorRowFixedSizeArray : public roxiemem::RoxieSimpleInputRowArray
+{
+    CActivityBase &activity;
+    IRowInterfaces *rowIf;
+    IEngineRowAllocator *allocator;
+    IOutputRowSerializer *serializer;
+
+public:
+    CThorRowFixedSizeArray(CActivityBase &_activity);
+    CThorRowFixedSizeArray(CActivityBase &_activity, IRowInterfaces *rowIf);
+    void setup(IRowInterfaces *_rowIf);
+
+    void swap(CThorRowFixedSizeArray &src);
+    void transferRows(roxiemem::rowidx_t &outNumRows, const void **&outRows);
+
+    void removeRows(roxiemem::rowidx_t start, roxiemem::rowidx_t n);
+
+    void partition(ICompare &compare, unsigned num, UnsignedArray &out); // returns num+1 points
+    IRowStream *createRowStream(unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
+    unsigned save(IFile &file, unsigned start=0, unsigned num=(unsigned)-1, bool streamowns=true);
+
+    offset_t serializedSize();
+    void serialize(IRowSerializerTarget &out);
+    void serialize(MemoryBuffer &mb,bool hasnulls);
+    unsigned serializeBlock(MemoryBuffer &mb,size32_t dstmax, unsigned idx, unsigned count);
+};
+
+class graph_decl CThorExpandingRowArray : public roxiemem::RoxieOutputRowArray
+{
+    CActivityBase &activity;
+    IRowInterfaces *rowIf;
+    IEngineRowAllocator *allocator;
+    IOutputRowDeserializer *deserializer;
+    roxiemem::rowidx_t initialSize;
+
+    void **stableSortTmp;
+    bool stableSort;
+
+protected:
+    virtual bool ensure(roxiemem::rowidx_t requiredRows);
+
+public:
+    CThorExpandingRowArray(CActivityBase &activity, roxiemem::rowidx_t initialSize=InitialSortElements, size32_t commitDelta=CommitStep);
+    CThorExpandingRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool stable=false, roxiemem::rowidx_t initialSize=InitialSortElements, size32_t commitDelta=CommitStep);
+    ~CThorExpandingRowArray();
+    void setup(IRowInterfaces *rowIf, bool stable=false);
+
+    void swap(CThorExpandingRowArray &src);
+	void transferFrom(CThorRowFixedSizeArray &src);
+    void removeRows(roxiemem::rowidx_t start, roxiemem::rowidx_t n);
+
+    void sort(ICompare & compare, unsigned maxcores);
+    unsigned save(IFile &file);
+    IRowStream *createRowStream();
+
+    void deserialize(size32_t sz,const void *buf,bool hasnulls);
+    void deserializeRow(IRowDeserializerSource &in); // NB single row not NULL
+};
 
 
 

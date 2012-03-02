@@ -56,7 +56,13 @@ public:
         if (numRows >= maxRows)
         {
             if (!ensure(numRows+1))
-                return false;
+            {
+                flush();
+                if (numRows >= maxRows)
+                    return false;
+            }
+//            if (!ensure(numRows+1))
+//                return false;
         }
 
         rows[numRows++] = row;
@@ -168,11 +174,13 @@ public:
 
     void kill();
     void transferFrom(RoxieOutputRowArray & donor);
+    rowidx_t ordinality() { return numRows-firstRow; }
 
 protected:
     const void * * rows;
     rowidx_t firstRow; // Only rows firstRow..numRows are considered initialized.
     rowidx_t numRows;
+friend class RoxieSimpleInputRowArray;
 };
 
 
