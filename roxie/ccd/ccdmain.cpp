@@ -26,6 +26,7 @@
 #include <jlog.hpp>
 #include <jprop.hpp>
 #include <jfile.hpp>
+#include "jutil.hpp"
 #include <build-config.h>
 
 #include "rmtfile.hpp"
@@ -150,6 +151,7 @@ StringBuffer pluginDirectory;
 StringBuffer queryDirectory;
 StringBuffer codeDirectory;
 StringBuffer baseDataDirectory;
+StringBuffer tempDirectory;
 
 ClientCertificate clientCert;
 bool useHardLink;
@@ -796,6 +798,8 @@ int STARTQUERY_API start_query(int argc, const char *argv[])
         else
             baseDataDirectory.append(topology->queryProp("@baseDataDir"));
         queryFileCache().start();
+
+        getTempFilePath(tempDirectory, "roxie", topology);
 
 #ifdef _WIN32
         topology->addPropBool("@linuxOS", false);

@@ -17,6 +17,7 @@
 ############################################################################## */
 
 #include "roxiemem.hpp"
+#include "roxierowbuff.hpp"
 #include "jlog.hpp"
 #include <new>
 
@@ -75,7 +76,6 @@ Some thoughts on improving this memory manager:
 
 #define HEAPERROR(a) throw MakeStringException(ROXIE_HEAP_ERROR, a)
 
-unsigned totalMemoryLimit = 0;   // in blocks
 #ifdef _DEBUG
 const unsigned maxLeakReport = 20;
 #else
@@ -85,9 +85,10 @@ const unsigned maxLeakReport = 4;
 static char *heapBase;
 static unsigned *heapBitmap;
 static unsigned heapBitmapSize;
+static unsigned heapTotalPages; // derived from heapBitmapSize - here for code clarity
 static unsigned heapLWM;
 static unsigned heapHWM;
-static bool heapExhausted = false;
+static unsigned heapAllocated;
 static unsigned __int64 lastStatsCycles;
 static unsigned __int64 statsCyclesInterval;
 
@@ -104,12 +105,13 @@ typedef MapBetween<unsigned, unsigned, memsize_t, memsize_t> MapActivityToMemsiz
 
 CriticalSection heapBitCrit;
 
-void initializeHeap(unsigned pages)
+static void initializeHeap(unsigned pages)
 {
     if (heapBase) return;
     // CriticalBlock b(heapBitCrit); // unnecessary - must call this exactly once before any allocations anyway!
     heapBitmapSize = (pages + UNSIGNED_BITS - 1) / UNSIGNED_BITS;
-    memsize_t memsize = memsize_t(heapBitmapSize) * UNSIGNED_BITS * HEAP_ALIGNMENT_SIZE;
+    heapTotalPages = heapBitmapSize * UNSIGNED_BITS;
+    memsize_t memsize = memsize_t(heapTotalPages) * HEAP_ALIGNMENT_SIZE;
 #ifdef _WIN32
     // Not the world's best code but will do 
     char *next = (char *) HEAP_ALIGNMENT_SIZE;
@@ -140,7 +142,7 @@ void initializeHeap(unsigned pages)
 
     if (memTraceLevel)
         DBGLOG("RoxieMemMgr: %u Pages successfully allocated for the pool - memsize=%"I64F"u base=%p alignment=%"I64F"u bitmapSize=%u", 
-                heapBitmapSize * UNSIGNED_BITS, (unsigned __int64) memsize, heapBase, (unsigned __int64) HEAP_ALIGNMENT_SIZE, heapBitmapSize);
+                heapTotalPages, (unsigned __int64) memsize, heapBase, (unsigned __int64) HEAP_ALIGNMENT_SIZE, heapBitmapSize);
 }
 
 extern void releaseRoxieHeap()
@@ -150,6 +152,7 @@ extern void releaseRoxieHeap()
         delete [] heapBitmap;
         heapBitmap = NULL;
         heapBitmapSize = 0;
+        heapTotalPages = 0;
 #ifdef _WIN32
         VirtualFree(heapBase, 0, MEM_RELEASE);
 #else
@@ -161,7 +164,7 @@ extern void releaseRoxieHeap()
 
 void memstats(unsigned &totalpg, unsigned &freepg, unsigned &maxblk)
 {
-    totalpg = heapBitmapSize * UNSIGNED_BITS;
+    totalpg = heapTotalPages;
     unsigned freePages = 0;
     unsigned maxBlock = 0;
     unsigned thisBlock = 0;
@@ -219,7 +222,7 @@ StringBuffer &memstats(StringBuffer &stats)
     unsigned freePages;
     unsigned maxBlock;
     memstats(totalPages, freePages, maxBlock);
-    return stats.appendf("Heap size %d pages, %d free, largest block %d", heapBitmapSize * UNSIGNED_BITS, freePages, maxBlock);
+    return stats.appendf("Heap size %u pages, %u free, largest block %u", heapTotalPages, freePages, maxBlock);
 }
 
 IPerfMonHook *createRoxieMemStatsPerfMonHook(IPerfMonHook *chain)
@@ -302,7 +305,7 @@ StringBuffer &memmap(StringBuffer &stats)
             }
         }
     }
-    return stats.appendf("\nHeap size %d pages, %d free, largest block %d", heapBitmapSize * UNSIGNED_BITS, freePages, maxBlock);
+    return stats.appendf("\nHeap size %u pages, %u free, largest block %u", heapTotalPages, freePages, maxBlock);
 }
 
 void *suballoc_aligned(size32_t pages)
@@ -326,11 +329,11 @@ void *suballoc_aligned(size32_t pages)
             DBGLOG("RoxieMemMgr: %s", s.str());
         }
     }
-    if (heapExhausted) {
-        DBGLOG("RoxieMemMgr: Memory pool (%u pages) exhausted", heapBitmapSize * UNSIGNED_BITS);
-        throw MakeStringException(ROXIE_MEMORY_POOL_EXHAUSTED, "Memory pool exhausted"); // MORE: use error codes
-    }
     CriticalBlock b(heapBitCrit);
+    if (heapAllocated + pages > heapTotalPages) {
+        DBGLOG("RoxieMemMgr: Memory pool (%u pages) exhausted requested %u", heapTotalPages, pages);
+        throw MakeStringException(ROXIE_MEMORY_POOL_EXHAUSTED, "Memory pool exhausted");
+    }
     if (pages == 1)
     {
         unsigned i;
@@ -348,6 +351,7 @@ void *suballoc_aligned(size32_t pages)
                 }
                 heapBitmap[i] = (hbi & ~mask);
                 heapLWM = i;
+                heapAllocated++;
                 if (memTraceLevel >= 2)
                     DBGLOG("RoxieMemMgr: suballoc_aligned() 1 page ok - addr=%p", ret);
                 return ret;
@@ -390,8 +394,9 @@ void *suballoc_aligned(size32_t pages)
                             }
                             heapBitmap[i] = hbi;
                             if (memTraceLevel >= 2)
-                                DBGLOG("RoxieMemMgr: suballoc_aligned() %d page ok - addr=%p", pages, ret);
+                                DBGLOG("RoxieMemMgr: suballoc_aligned() %u pages ok - addr=%p", pages, ret);
                             heapHWM = i+1;
+                            heapAllocated += pages;
                             return ret;
                         }
                     }
@@ -404,10 +409,8 @@ void *suballoc_aligned(size32_t pages)
                 matches = 0;
         }
     }
-    heapExhausted = true; 
-    DBGLOG("RoxieMemMgr: Memory pool (%u pages) exhausted", heapBitmapSize * UNSIGNED_BITS);
+    DBGLOG("RoxieMemMgr: Memory pool (%u pages) exhausted requested %u", heapTotalPages, pages);
     throw MakeStringException(ROXIE_MEMORY_POOL_EXHAUSTED, "Memory pool exhausted");  
-    // Arguably should fail process here. Or could wait a while and see if some gets freed.
 }
 
 void subfree_aligned(void *ptr, unsigned pages = 1)
@@ -415,17 +418,17 @@ void subfree_aligned(void *ptr, unsigned pages = 1)
     unsigned _pages = pages;
     memsize_t offset = (char *)ptr - heapBase;
     memsize_t pageOffset = offset / HEAP_ALIGNMENT_SIZE;
-    if (!pages) 
+    if (!pages)
     {
         DBGLOG("RoxieMemMgr: Invalid parameter (pages=%u) to subfree_aligned", pages);
         HEAPERROR("RoxieMemMgr: Invalid parameter (num pages) to subfree_aligned");
     }
-    if (pageOffset + pages > heapBitmapSize*UNSIGNED_BITS) 
+    if (pageOffset + pages > heapTotalPages)
     {
         DBGLOG("RoxieMemMgr: Freed area not in heap (ptr=%p)", ptr);
         HEAPERROR("RoxieMemMgr: Freed area not in heap");
     }
-    if (pageOffset*HEAP_ALIGNMENT_SIZE != offset) 
+    if (pageOffset*HEAP_ALIGNMENT_SIZE != offset)
     {
         DBGLOG("RoxieMemMgr: Incorrect alignment of freed area (ptr=%p)", ptr);
         HEAPERROR("RoxieMemMgr: Incorrect alignment of freed area");
@@ -442,6 +445,7 @@ void subfree_aligned(void *ptr, unsigned pages = 1)
     unsigned nextPageOffset = (pageOffset+pages + (UNSIGNED_BITS-1)) / UNSIGNED_BITS;
     {
         CriticalBlock b(heapBitCrit);
+        heapAllocated -= pages;
         if (wordOffset < heapLWM)
             heapLWM = wordOffset;
         if (nextPageOffset > heapHWM)
@@ -463,14 +467,9 @@ void subfree_aligned(void *ptr, unsigned pages = 1)
             else
                 mask <<= 1;
         }
-        if (heapExhausted)
-        {
-            DBGLOG("RoxieMemMgr: Memory pool is NOT exhausted now");
-            heapExhausted = false;
-        }
     }
     if (memTraceLevel >= 2)
-        DBGLOG("RoxieMemMgr: subfree_aligned() %d pages ok - addr=%p heapLWM=%u..%u totalPages=%d", _pages, ptr, heapLWM, heapHWM, heapBitmapSize * UNSIGNED_BITS);
+        DBGLOG("RoxieMemMgr: subfree_aligned() %u pages ok - addr=%p heapLWM=%u..%u totalPages=%u", _pages, ptr, heapLWM, heapHWM, heapTotalPages);
 }
 
 static inline unsigned getRealActivityId(unsigned allocatorId, const IRowAllocatorCache *allocatorCache)
@@ -1618,10 +1617,17 @@ public:
     }
 
     //Release buffers will ensure that the rows are attmpted to be cleaned up before returning
-    bool releaseBuffers(const bool critical, const unsigned minSuccess)
+    bool releaseBuffers(const bool critical, const unsigned minSuccess, bool checkSequence, unsigned prevReleaseSeq)
     {
         CriticalBlock block(callbackCrit);
-        if (doReleaseBuffers(critical, minSuccess))
+        //While we were waiting check if something freed some memory up
+        //if so try again otherwise we might end up calling more callbacks than we need to.
+        if (checkSequence && (prevReleaseSeq != getReleaseSeq()))
+            return true;
+
+        //Call non critical first, then critical - if applicable.
+        //Should there be more levels of importance than critical/non critical?
+        if (doReleaseBuffers(false, minSuccess) || (critical && doReleaseBuffers(true, minSuccess)))
         {
             //Increment first so that any called knows some rows may have been freed
             atomic_inc(&releaseSeq);
@@ -1641,7 +1647,7 @@ public:
             releaseBuffersSem.wait();
             if (abortBufferThread)
                 break;
-            releaseBuffers(false, 1);
+            releaseBuffers(false, 1, false, 0);
             atomic_set(&releasingBuffers, 0);
         }
     }
@@ -1688,6 +1694,15 @@ protected:
     atomic_t releaseSeq;
     volatile bool abortBufferThread;
 };
+
+//Constants are here to ensure they can all be constant folded
+const unsigned roundupDoubleLimit = 2048;  // Values up to this limit are rounded to the nearest power of 2
+const unsigned roundupStepSize = 4096;  // Above the roundupDoubleLimit memory for a row is allocated in this size step
+const unsigned limitStepBlock = FixedSizeHeaplet::maxHeapSize()/20;  // until it gets to this size
+const unsigned numStepBlocks = pages_pow2(limitStepBlock, roundupStepSize); // how many step blocks are there?
+const unsigned maxStepSize = numStepBlocks * roundupStepSize;
+const bool hasAnyStepBlocks = roundupDoubleLimit <= roundupStepSize;
+const unsigned firstFractionalHeap = (FixedSizeHeaplet::dataAreaSize()/(maxStepSize+1))+1;
 
 class CChunkingRowManager : public CInterface, implements IRowManager
 {
@@ -1925,34 +1940,40 @@ public:
             if (size<=64)
             {
                 if (size<=32)
-                    return ROUNDED(0, 32);
-                return ROUNDED(1, 64);
+                {
+                    if (size<=16)
+                        return ROUNDED(0, 16);
+                    return ROUNDED(1, 32);
+                }
+                return ROUNDED(2, 64);
             }
             if (size<=128)
-                return ROUNDED(2, 128);
-            return ROUNDED(3, 256);
+                return ROUNDED(3, 128);
+            return ROUNDED(4, 256);
         }
         if (size<=1024)
         {
             if (size<=512)
-                return ROUNDED(4, 512);
-            return ROUNDED(5, 1024);
+                return ROUNDED(5, 512);
+            return ROUNDED(6, 1024);
         }
         if (size<=2048)
-            return ROUNDED(6, 2048);
+            return ROUNDED(7, 2048);
 
-        if (size <= FixedSizeHeaplet::maxHeapSize()/20)
+        if (size <= maxStepSize)
         {
-            size32_t blocks = ((size+4095) / 4096);
-            return ROUNDED(6 + blocks, blocks * 4096);
+            size32_t blocks = pages_pow2(size, roundupStepSize);
+            return ROUNDED(7 + blocks, blocks * roundupStepSize);
         }
 
-        unsigned baseBlock = 6 + (FixedSizeHeaplet::maxHeapSize()/20 + 4095) / 4096;
+        unsigned baseBlock = 7;
+        if (hasAnyStepBlocks)
+            baseBlock += numStepBlocks;
 
         // Round up to nearest whole fraction of available heap space
         unsigned frac = FixedSizeHeaplet::dataAreaSize()/size;
         unsigned usesize = FixedSizeHeaplet::dataAreaSize()/frac;
-        return ROUNDED(baseBlock + (20-frac), usesize);
+        return ROUNDED(baseBlock + (firstFractionalHeap-frac), usesize);
     }
 
     inline void beforeAllocate(unsigned _size, unsigned activityId)
@@ -1987,8 +2008,13 @@ public:
 
     virtual void setMemoryLimit(memsize_t bytes, memsize_t spillSize)
     {
-        pageLimit = (unsigned) (bytes / HEAP_ALIGNMENT_SIZE);
-        spillPageLimit = (unsigned) (spillSize / HEAP_ALIGNMENT_SIZE);
+        memsize_t systemMemoryLimit = getTotalMemoryLimit();
+        if (bytes > systemMemoryLimit)
+            bytes = systemMemoryLimit;
+        if (spillSize > systemMemoryLimit)
+            spillSize = systemMemoryLimit;
+        pageLimit = (unsigned) pages_pow2(bytes, HEAP_ALIGNMENT_SIZE);
+        spillPageLimit = (unsigned) pages_pow2(spillSize, HEAP_ALIGNMENT_SIZE);
 
         //The test allows no limit on memory, but spill above a certain amount.  Not sure if useful...
         if (spillPageLimit && (pageLimit != spillPageLimit))
@@ -2145,7 +2171,10 @@ public:
 
             //Try and directly free up some buffers.  It is worth trying again if one of the release functions thinks it
             //freed up some memory.
-            if (!callbacks.releaseBuffers(true, 1))
+            //The following reduces the nubmer of times the callback is called, but I'm not sure how this affects
+            //performance.  I think better if a single free is likely to free up some memory, and worse if not.
+            const bool skipReleaseIfAnotherThreadReleases = true;
+            if (!callbacks.releaseBuffers(true, 1, skipReleaseIfAnotherThreadReleases, lastReleaseSeq))
             {
                 //Check if a background thread has freed up some memory.  That can be checked by a comparing value of a counter
                 //which is incremented each time releaseBuffers is successful.
@@ -2156,7 +2185,7 @@ public:
                     releaseEmptyPages();
                     if (numHeapPages == atomic_read(&totalHeapPages))
                     {
-                        logctx.CTXLOG("RoxieMemMgr: Memory limit exceeded - current %d, requested %d, limit %d", pageCount, numRequested, pageLimit);
+                        logctx.CTXLOG("RoxieMemMgr: Memory limit exceeded - current %u, requested %u, limit %u", pageCount, numRequested, pageLimit);
                         throw MakeStringException(ROXIE_MEMORY_LIMIT_EXCEEDED, "memory limit exceeded");
                     }
                 }
@@ -2214,8 +2243,17 @@ protected:
     {
         dbgassertex(!(flags & RHFpacked));
         size32_t rounded = roundup(size + FixedSizeHeaplet::chunkHeaderSize);
-        size32_t chunkSize = ROUNDEDSIZE(rounded);
 
+        //If not unique I think it is quite possibly better to reuse one of the existing heaps used for variable length
+        //Advantage is fewer pages uses.  Disadvantage is greater likelihood of fragementation being unable to copy
+        //rows to consolidate them.  Almost certainly packed or unique will be set in that situation though.
+        if (!(flags & RHFunique))
+        {
+            size32_t whichHeap = ROUNDEDHEAP(rounded);
+            return LINK(&normalHeaps.item(whichHeap));
+        }
+
+        size32_t chunkSize = ROUNDEDSIZE(rounded);
         //Not time critical, so don't worry about the scope of the spinblock around the new
         SpinBlock block(fixedCrit);
         if (!(flags & RHFunique))
@@ -2734,64 +2772,6 @@ size32_t DataBufferBottom::_capacity() const { throwUnexpected(); }
 void DataBufferBottom::_setDestructorFlag(const void *ptr) { throwUnexpected(); }
 
 //================================================================================
-
-void RoxieRowArray::set(const void * row, unsigned i)
-{
-    while (rows.ordinality() < i)
-        rows.append(NULL);
-    rows.add(row, i);
-}
-
-//A very simple implementation of a buffered rows class - far from efficient.  Too much overhead adding rows.
-class SimpleRowBuffer : implements IBufferedRowCallback
-{
-public:
-    SimpleRowBuffer(unsigned _priority) : priority(_priority), locked(false)
-    {
-    }
-
-//interface IBufferedRowCallback
-    virtual unsigned getPriority() const { return priority; }
-    virtual bool freeBufferedRows(bool critical)
-    {
-        CriticalBlock block(cs);
-        if (locked || (rows.ordinality() == 0))
-            return false;
-        rows.kill();
-        return true;
-    }
-
-    void addRow(const void * row)
-    {
-        CriticalBlock block(cs);
-        rows.append(row);
-    }
-
-    void kill()
-    {
-        CriticalBlock block(cs);
-        rows.kill();
-    }
-
-    void lockRows()
-    {
-        CriticalBlock block(cs);
-        locked = true;
-    }
-    void unlockRows()
-    {
-        CriticalBlock block(cs);
-        locked = false;
-    }
-
-protected:
-    RoxieRowArray rows;
-    CriticalSection cs;
-    unsigned priority;
-    bool locked;
-};
-
-//================================================================================
 //
 
 #ifdef __new_was_defined
@@ -2811,20 +2791,22 @@ extern void setMemoryStatsInterval(unsigned secs)
 
 extern void setTotalMemoryLimit(memsize_t max)
 {
-    totalMemoryLimit = (unsigned) (max / HEAP_ALIGNMENT_SIZE);
+    unsigned totalMemoryLimit = (unsigned) (max / HEAP_ALIGNMENT_SIZE);
+    if ((max != 0) && (totalMemoryLimit == 0))
+        totalMemoryLimit = 1;
     if (memTraceLevel)
-        DBGLOG("RoxieMemMgr: Setting memory limit to %"I64F"d bytes (%d pages)", (unsigned __int64) max, totalMemoryLimit);
+        DBGLOG("RoxieMemMgr: Setting memory limit to %"I64F"d bytes (%u pages)", (unsigned __int64) max, totalMemoryLimit);
     initializeHeap(totalMemoryLimit);
 }
 
 extern memsize_t getTotalMemoryLimit()
 {
-    return totalMemoryLimit;
+    return (memsize_t)heapTotalPages * HEAP_ALIGNMENT_SIZE;
 }
 
 extern bool memPoolExhausted()
 {
-   return(heapExhausted);
+   return (heapAllocated == heapTotalPages);
 }
 
 
@@ -2841,7 +2823,7 @@ extern void setDataAlignmentSize(unsigned size)
     if (size==0x400 || size==0x2000)
         DATA_ALIGNMENT_SIZE = size;
     else
-        throw MakeStringException(ROXIE_INVALID_MEMORY_ALIGNMENT, "Invalid parameter to setDataAlignmentSize %d", size);
+        throw MakeStringException(ROXIE_INVALID_MEMORY_ALIGNMENT, "Invalid parameter to setDataAlignmentSize %u", size);
 }
 
 } // namespace roxiemem
@@ -2852,6 +2834,61 @@ extern void setDataAlignmentSize(unsigned size)
 #define ASSERT(a) { if (!(a)) CPPUNIT_ASSERT(a); }
 
 namespace roxiemem {
+
+//================================================================================
+
+//A simple implementation of a buffered rows class - used for testing
+class SimpleRowBuffer : implements IBufferedRowCallback
+{
+public:
+    SimpleRowBuffer(IRowManager * rowManager, unsigned _priority) : priority(_priority), rows(rowManager, 0, 1)
+    {
+    }
+
+//interface IBufferedRowCallback
+    virtual unsigned getPriority() const { return priority; }
+    virtual bool freeBufferedRows(bool critical)
+    {
+        RoxieOutputRowArrayLock block(rows);
+        return spillRows();
+    }
+
+    void addRow(const void * row)
+    {
+        if (!rows.append(row))
+        {
+            {
+                roxiemem::RoxieOutputRowArrayLock block(rows);
+                spillRows();
+                rows.flush();
+            }
+            if (!rows.append(row))
+                throwUnexpected();
+        }
+    }
+
+    bool spillRows()
+    {
+        unsigned numCommitted = rows.numCommitted();
+        if (numCommitted == 0)
+            return false;
+        const void * * committed = rows.getBlock(numCommitted);
+        for (unsigned i=0; i < numCommitted; i++)
+            ReleaseRoxieRow(committed[i]);
+        rows.noteSpilled(numCommitted);
+        return true;
+    }
+
+    void kill()
+    {
+        RoxieOutputRowArrayLock block(rows);
+        rows.kill();
+    }
+
+protected:
+    DynamicRoxieOutputRowArray rows;
+    unsigned priority;
+};
 
 class IStdException : extends std::exception
 {
@@ -2981,25 +3018,28 @@ protected:
             _heapBase = heapBase;
             _heapBitmap = heapBitmap;
             _heapBitmapSize = heapBitmapSize;
+            _heapTotalPages = heapTotalPages;
             _heapLWM = heapLWM;
             _heapHWM = heapHWM;
-            _heapExhausted = heapExhausted;
+            _heapAllocated = heapAllocated;
         }
         ~HeapPreserver()
         {
             heapBase = _heapBase;
             heapBitmap = _heapBitmap;
             heapBitmapSize = _heapBitmapSize;
+            heapTotalPages = _heapTotalPages;
             heapLWM = _heapLWM;
             heapHWM = _heapHWM;
-            heapExhausted = _heapExhausted;
+            heapAllocated = _heapAllocated;
         }
         char *_heapBase;
         unsigned *_heapBitmap;
         unsigned _heapBitmapSize;
+        unsigned _heapTotalPages;
         unsigned _heapLWM;
         unsigned _heapHWM;
-        bool _heapExhausted;
+        unsigned _heapAllocated;
     };
     void initBitmap(unsigned size)
     {
@@ -3007,9 +3047,10 @@ protected:
         heapBitmap = new unsigned[size];
         memset(heapBitmap, 0xff, size*sizeof(unsigned));
         heapBitmapSize = size;
+        heapTotalPages = heapBitmapSize * UNSIGNED_BITS;
         heapLWM = 0;
         heapHWM = size;
-        heapExhausted = false;
+        heapAllocated = 0;
     }
 
     void testBitmap()
@@ -3475,18 +3516,18 @@ protected:
     class CasAllocatorThread : public Thread
     {
     public:
-        CasAllocatorThread(Semaphore & _sem) : Thread("AllocatorThread"), sem(_sem), rm(NULL), priority(0)
+        CasAllocatorThread(Semaphore & _sem, IRowManager * _rm) : Thread("AllocatorThread"), sem(_sem), rm(_rm), priority(0)
         {
         }
 
         virtual void * allocate() = 0;
         virtual void * finalize(void * ptr) = 0;
 
-        void setPriority(IRowManager * _rm, unsigned _priority) { rm = _rm; priority = _priority; }
+        void setPriority(unsigned _priority) { priority = _priority; }
 
         int run()
         {
-            SimpleRowBuffer saved(priority);
+            SimpleRowBuffer saved(rm, priority);
             if (rm)
                 rm->addRowBuffer(&saved);
             sem.wait();
@@ -3545,7 +3586,7 @@ protected:
     class HeapletCasAllocatorThread : public CasAllocatorThread
     {
     public:
-        HeapletCasAllocatorThread(FixedSizeHeaplet * _heaplet, Semaphore & _sem) : CasAllocatorThread(_sem), heaplet(_heaplet)
+        HeapletCasAllocatorThread(FixedSizeHeaplet * _heaplet, Semaphore & _sem, IRowManager * _rm) : CasAllocatorThread(_sem, _rm), heaplet(_heaplet)
         {
         }
 
@@ -3557,12 +3598,13 @@ protected:
     };
     void testHeapletCas()
     {
+        Owned<IRowManager> rowManager = createRowManager(0, NULL, logctx, NULL);
         CountingRowAllocatorCache rowCache;
         FixedSizeHeaplet * heaplet = new FixedSizeHeaplet(&rowCache, 32);
         Semaphore sem;
         CasAllocatorThread * threads[numCasThreads];
         for (unsigned i1 = 0; i1 < numCasThreads; i1++)
-            threads[i1] = new HeapletCasAllocatorThread(heaplet, sem);
+            threads[i1] = new HeapletCasAllocatorThread(heaplet, sem, rowManager);
 
         runCasTest("heaplet", sem, threads);
 
@@ -3572,7 +3614,7 @@ protected:
     class FixedCasAllocatorThread : public CasAllocatorThread
     {
     public:
-        FixedCasAllocatorThread(IFixedRowHeap * _rowHeap, Semaphore & _sem) : CasAllocatorThread(_sem), rowHeap(_rowHeap)
+        FixedCasAllocatorThread(IFixedRowHeap * _rowHeap, Semaphore & _sem, IRowManager * _rm) : CasAllocatorThread(_sem, _rm), rowHeap(_rowHeap)
         {
         }
 
@@ -3590,7 +3632,7 @@ protected:
         Semaphore sem;
         CasAllocatorThread * threads[numCasThreads];
         for (unsigned i1 = 0; i1 < numCasThreads; i1++)
-            threads[i1] = new FixedCasAllocatorThread(rowHeap, sem);
+            threads[i1] = new FixedCasAllocatorThread(rowHeap, sem, rowManager);
 
         runCasTest("old fixed allocator", sem, threads);
         ASSERT(atomic_read(&rowCache.counter) == 2 * numCasThreads * numCasIter * numCasAlloc);
@@ -3605,7 +3647,7 @@ protected:
         Semaphore sem;
         CasAllocatorThread * threads[numCasThreads];
         for (unsigned i1 = 0; i1 < numCasThreads; i1++)
-            threads[i1] = new FixedCasAllocatorThread(rowHeap, sem);
+            threads[i1] = new FixedCasAllocatorThread(rowHeap, sem, rowManager);
 
         runCasTest("shared fixed allocator", sem, threads);
         ASSERT(atomic_read(&rowCache.counter) == 2 * numCasThreads * numCasIter * numCasAlloc);
@@ -3619,7 +3661,7 @@ protected:
         for (unsigned i1 = 0; i1 < numCasThreads; i1++)
         {
             Owned<IFixedRowHeap> rowHeap = rowManager->createFixedRowHeap(8, ACTIVITY_FLAG_ISREGISTERED|0, RHFunique|RHFhasdestructor);
-            threads[i1] = new FixedCasAllocatorThread(rowHeap, sem);
+            threads[i1] = new FixedCasAllocatorThread(rowHeap, sem, rowManager);
         }
 
         runCasTest("separate fixed allocator", sem, threads);
@@ -3634,7 +3676,7 @@ protected:
         for (unsigned i1 = 0; i1 < numCasThreads; i1++)
         {
             Owned<IFixedRowHeap> rowHeap = rowManager->createFixedRowHeap(8, ACTIVITY_FLAG_ISREGISTERED|0, RHFunique|RHFpacked|RHFhasdestructor);
-            threads[i1] = new FixedCasAllocatorThread(rowHeap, sem);
+            threads[i1] = new FixedCasAllocatorThread(rowHeap, sem, rowManager);
         }
 
         runCasTest("separate packed allocator", sem, threads);
@@ -3643,7 +3685,7 @@ protected:
     class GeneralCasAllocatorThread : public CasAllocatorThread
     {
     public:
-        GeneralCasAllocatorThread(IRowManager * _rowManager, Semaphore & _sem) : CasAllocatorThread(_sem), rowManager(_rowManager)
+        GeneralCasAllocatorThread(IRowManager * _rowManager, Semaphore & _sem) : CasAllocatorThread(_sem, _rowManager), rowManager(_rowManager)
         {
         }
 
@@ -3668,7 +3710,7 @@ protected:
     class VariableCasAllocatorThread : public CasAllocatorThread
     {
     public:
-        VariableCasAllocatorThread(IRowManager * _rowManager, Semaphore & _sem, unsigned _seed) : CasAllocatorThread(_sem), rowManager(_rowManager), seed(_seed)
+        VariableCasAllocatorThread(IRowManager * _rowManager, Semaphore & _sem, unsigned _seed) : CasAllocatorThread(_sem, _rowManager), rowManager(_rowManager), seed(_seed)
         {
         }
 
@@ -3765,8 +3807,8 @@ protected:
         for (unsigned i1 = 0; i1 < numCasThreads; i1++)
         {
             Owned<IFixedRowHeap> rowHeap = rowManager->createFixedRowHeap(allocSize, ACTIVITY_FLAG_ISREGISTERED|0, RHFhasdestructor|flags);
-            FixedCasAllocatorThread * cur = new FixedCasAllocatorThread(rowHeap, sem);
-            cur->setPriority(rowManager, (unsigned)(i1*scale)+1);
+            FixedCasAllocatorThread * cur = new FixedCasAllocatorThread(rowHeap, sem, rowManager);
+            cur->setPriority((unsigned)(i1*scale)+1);
             threads[i1] = cur;
         }
         VStringBuffer title("callback(%u,%u,%u,%f,%x)", numPerPage,pages, spillPages, scale, flags);
