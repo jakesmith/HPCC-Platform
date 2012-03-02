@@ -142,7 +142,7 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
         CriticalBlock b2(fullCrit); // exclusivity for totSize / full
         if (stopped) return;
         rows.enqueue(row);
-        totSize += thorRowMemoryFootprint(row);
+        totSize += thorRowMemoryFootprint(activity.queryRowSerializer(), row);
         while (totSize > FUNNEL_MIN_BUFF_SIZE)
         {
             full = true;
@@ -251,7 +251,7 @@ public:
             rows.stop();
             return NULL;
         }
-        size32_t sz = thorRowMemoryFootprint(row.get());
+        size32_t sz = thorRowMemoryFootprint(activity.queryRowSerializer(), row.get());
         {
             CriticalBlock b(fullCrit);
             assertex(totSize>=sz);

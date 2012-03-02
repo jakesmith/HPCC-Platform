@@ -55,6 +55,7 @@ include_directories (
          ./../master 
          ./../../common/thorhelper 
          ./../../tools/swapnode
+         ./../../roxie/roxiemem
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
     )
@@ -87,6 +88,7 @@ target_link_libraries (  thormaster_lcr
          mfilemanager_lcr 
          graphmaster_lcr 
          activitymasters_lcr 
+         swapnodelib
          swapnodelib
     )
 

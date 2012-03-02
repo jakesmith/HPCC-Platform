@@ -93,6 +93,8 @@ protected:
         CMasterActivity::preStart(parentExtractSz, parentExtract);
         ActPrintLog("preStart");
         imaster = CreateThorSorterMaster(this);
+
+        // JCSMORE - some crazy setup stuff going on here.. rpc calls to every slave to tell it what it should know already
         unsigned s=0;
         for (; s<container.queryJob().querySlaves(); s++)
         {

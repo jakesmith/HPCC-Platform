@@ -21,6 +21,7 @@
 
 #define NO_BWD_COMPAT_MAXSIZE
 #include "thorcommon.ipp"
+#include "thmem.hpp"
 
 #include "thmfilemanager.hpp"
 #include "eclhelper.hpp"

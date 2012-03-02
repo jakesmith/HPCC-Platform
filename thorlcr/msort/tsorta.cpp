@@ -35,11 +35,11 @@
 #include "jlzw.hpp"
 #include "jflz.hpp"
 #include "thbufdef.hpp"
-
+#include "roxierowbuff.hpp"
+#include "thgraph.hpp"
 #include "tsorta.hpp"
 
 #include "eclhelper.hpp"
-#include "thmem.hpp"
 #include "thbuf.hpp"
 
 #ifdef _DEBUG
@@ -194,161 +194,6 @@ bool VarElemArray::isNull(unsigned idx)
     if (idx>rows.ordinality())
         return true;
     return rows.item(idx)==NULL;
-}
-
-
-class CThorRowSortedLoader : public CSimpleInterface, implements IThorRowSortedLoader
-{
-    IArrayOf<IRowStream> instrms;
-    IArrayOf<IFile> auxfiles;
-    CThorRowArray &rows;
-    Owned<IOutputRowSerializer> serializer;
-    unsigned numrows;
-    offset_t totalsize;
-    unsigned overflowcount;
-public:
-    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-
-    CThorRowSortedLoader(CThorRowArray &_rows)
-        : rows(_rows)
-    {
-        numrows = 0;
-        totalsize = 0;
-        overflowcount = 0;
-    }
-
-    ~CThorRowSortedLoader()
-    {
-        instrms.kill();
-        ForEachItemInRev(i,auxfiles) {
-            auxfiles.item(i).remove();
-        }
-    }
-
-    IRowStream *load(
-        IRowStream *in,
-        IRowInterfaces *rowif,
-        ICompare *icompare, 
-        bool alldisk, 
-        bool &abort, 
-        bool &isempty,
-        const char *tracename,
-        bool isstable, unsigned maxcores)
-    {
-        overflowcount = 0;
-        unsigned nrecs;
-        serializer.set(rowif->queryRowSerializer());
-        rows.setSizing(true,false);
-#ifdef _FULL_TRACE
-        PROGLOG("CThorRowSortedLoader load start");
-#endif
-        isempty = true;
-        while (!abort) {
-            rows.clear();
-            bool hasoverflowed = false;
-            nrecs = rows.load(*in,true,abort,&hasoverflowed);
-            if (nrecs)
-                isempty = false;
-            if (hasoverflowed) 
-                overflowcount++;
-#ifdef _FULL_TRACE
-            PROGLOG("rows loaded overflowed = %s",hasoverflowed?"true":"false");
-#endif
-            if (nrecs&&icompare)
-                rows.sort(*icompare,isstable,maxcores);
-            numrows += nrecs;
-            totalsize += rows.totalSize();
-            if (!hasoverflowed&&!alldisk) 
-                break;
-#ifdef _FULL_TRACE
-            PROGLOG("CThorRowSortedLoader spilling %u",(unsigned)rows.totalSize());
-#endif
-            alldisk = true; 
-            unsigned idx = newAuxFile();
-            Owned<IExtRowWriter> writer = createRowWriter(&auxfiles.item(idx),rowif->queryRowSerializer(),rowif->queryRowAllocator(),false,false,false); 
-            rows.save(writer);
-            writer->flush();
-#ifdef _FULL_TRACE
-            PROGLOG("CThorRowSortedLoader spilt");
-#endif
-            if (!hasoverflowed) 
-                break;
-        }
-        ForEachItemIn(i,auxfiles) {
-#ifdef _FULL_TRACE
-            PROGLOG("CThorRowSortedLoader spill file(%d) %s %"I64F"d",i,auxfiles.item(i).queryFilename(),auxfiles.item(i).size());
-#endif
-            instrms.append(*createSimpleRowStream(&auxfiles.item(i),rowif));
-        }
-        if (alldisk) {
-#ifdef _FULL_TRACE
-            PROGLOG("CThorRowSortedLoader clearing rows");
-#endif
-            rows.clear();
-        }
-        else
-            instrms.append(*rows.createRowStream());
-#ifdef _FULL_TRACE
-        PROGLOG("CThorRowSortedLoader rows gathered %d stream%c",instrms.ordinality(),(instrms.ordinality()==1)?' ':'s');
-#endif
-        if (instrms.ordinality()==1) 
-            return LINK(&instrms.item(0));
-        if (icompare)
-        {
-            Owned<IRowLinkCounter> linkcounter = new CThorRowLinkCounter;
-            return createRowStreamMerger(instrms.ordinality(),instrms.getArray(),icompare,false,linkcounter);
-        }
-        return createConcatRowStream(instrms.ordinality(),instrms.getArray());
-    }
-
-    unsigned newAuxFile() // only fixed size records currently supported
-    {
-        unsigned ret=auxfiles.ordinality();
-        StringBuffer tempname;
-        GetTempName(tempname,"srtspill",true);
-        auxfiles.append(*createIFile(tempname.str()));
-        return ret;
-    }
-
-    bool hasOverflowed()
-    {
-        return overflowcount!=0 ;
-    }
-
-
-    rowcount_t numRows()
-    {
-        return numrows;
-    }
-
-    offset_t totalSize()
-    {
-        return totalsize;
-    }
-
-    unsigned numOverflowFiles()
-    {
-        return auxfiles.ordinality();
-    }
-
-    unsigned numOverflows()
-    {
-        return overflowcount;
-    }
-
-    unsigned overflowScale()
-    {
-        // 1 if no spill
-        if (!overflowcount)
-            return 1;
-        return numOverflowFiles()*2+3; // bit arbitrary
-    }
-
-};
-
-IThorRowSortedLoader *createThorRowSortedLoader(CThorRowArray &rows)
-{
-    return new CThorRowSortedLoader(rows);
 }
 
 
@@ -831,54 +676,8 @@ offset_t CThorKeyArray::getFilePos(unsigned idx)
 
 void traceKey(IOutputRowSerializer *serializer, const char *prefix,const void *key)
 {
-    MemoryBuffer mb;
-    const byte *k = (const byte *)key;
-    size32_t sz = 0;
-    if (serializer&&k) {
-        CMemoryRowSerializer mbsz(mb);
-        serializer->serialize(mbsz,(const byte *)k);
-        k = (const byte *)mb.bufferBase();
-        sz = mb.length();
-    }
     StringBuffer out;
-    if (sz)
-        out.appendf("%s(%d): ",prefix,sz);
-    else {
-        out.append(prefix).append(": ");
-        if (k)
-            sz = 16;
-        else
-            out.append("NULL");
-    }
-    bool first=false;
-    while (sz) {
-        if (first)
-            first=false;
-        else
-            out.append(',');
-        if ((sz>=3)&&isprint(k[0])&&isprint(k[1])&&isprint(k[2])) {
-            out.append('"');
-            do {
-                out.append(*k);
-                sz--;
-                if (sz==0)
-                    break;
-                if (out.length()>1024)
-                    break;
-                k++;
-            } while (isprint(*k));
-            out.append('"');
-        }
-        if (out.length()>1024) {
-            out.append("...");
-            break;
-        }
-        if (sz) {
-            out.appendf("%2x",(unsigned)*k);
-            k++;
-            sz--;
-        }
-    }
+    getRecordString(key, serializer, prefix, out);
     PROGLOG("%s",out.str());
 }
 

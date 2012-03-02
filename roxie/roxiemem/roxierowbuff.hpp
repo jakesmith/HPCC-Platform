@@ -172,6 +172,7 @@ public:
 
     void kill();
     void transferFrom(RoxieOutputRowArray & donor);
+    rowidx_t ordinality() { return numRows-firstRow; }
 
 protected:
     const void * * rows;

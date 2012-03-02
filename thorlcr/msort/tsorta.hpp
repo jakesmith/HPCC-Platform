@@ -28,6 +28,7 @@
 #include "jlib.hpp"
 #include "jio.hpp"
 #include "jlzw.hpp"
+#include "thbuf.hpp"
 #include "thmem.hpp"
 
 
@@ -92,7 +93,6 @@ interface IThorRowSortedLoader: extends IInterface
     virtual unsigned numOverflowFiles()=0;
     virtual unsigned numOverflows()=0;
     virtual unsigned overflowScale()=0;
-
 };
 
 class CThorKeyArray
@@ -148,10 +148,7 @@ public:
     void traceKey(const char *prefix,unsigned idx);
 };
 
-
 extern void traceKey(IOutputRowSerializer *serializer,const char *prefix,const void *key);
-
-IThorRowSortedLoader *createThorRowSortedLoader(CThorRowArray &rows); // NB only contains all rows if hasOverflowed false
 
 
 #endif

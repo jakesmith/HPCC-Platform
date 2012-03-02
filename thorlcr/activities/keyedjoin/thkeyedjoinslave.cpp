@@ -35,7 +35,6 @@
 #include "thorport.hpp"
 #include "thsortu.hpp"
 #include "thactivityutil.ipp"
-#include "thmem.hpp"
 #include "thormisc.hpp"
 #include "thbufdef.hpp"
 #include "thexception.hpp"
@@ -553,7 +552,7 @@ class CKeyedJoinSlave : public CSlaveActivity, public CThorDataLink, implements 
     __int64 lastSeeks, lastScans;
     StringAttr indexName;
     bool localKey, keyHasTlk, onFailTransform;
-    Owned<IThorRowAllocator> joinFieldsAllocator, keyLookupAllocator, fetchInputAllocator, indexInputAllocator;
+    Owned<IEngineRowAllocator> joinFieldsAllocator, keyLookupAllocator, fetchInputAllocator, indexInputAllocator;
     Owned<IEngineRowAllocator> fetchInputMetaAllocator;
     Owned<IRowInterfaces> fetchInputMetaRowIf, fetchOutputRowIf;
     MemoryBuffer rawFetchMb;
@@ -1808,7 +1807,7 @@ public:
         node = container.queryJob().queryMyRank()-1;
         onFailTransform = (0 != (joinFlags & JFonfail)) && (0 == (joinFlags & JFmatchAbortLimitSkips));
 
-        joinFieldsAllocator.setown(createThorRowAllocator(helper->queryJoinFieldsRecordSize(), queryActivityId()));
+        joinFieldsAllocator.setown(queryJob().getRowAllocator(helper->queryJoinFieldsRecordSize(), queryActivityId()));
         if (onFailTransform || (joinFlags & JFleftouter))
         {
             RtlDynamicRowBuilder rr(joinFieldsAllocator);
@@ -1938,7 +1937,7 @@ public:
                 Owned<IOutputMetaData> fetchInputMeta;
                 if (0 != helper->queryFetchInputRecordSize()->getRecordSize(NULL))
                 {
-                    fetchInputAllocator.setown(createThorRowAllocator(helper->queryFetchInputRecordSize(), queryActivityId()));
+                    fetchInputAllocator.setown(queryJob().getRowAllocator(helper->queryFetchInputRecordSize(), queryActivityId()));
                     fetchInputMeta.setown(createOutputMetaDataWithChildRow(fetchInputAllocator, FETCHKEY_HEADER_SIZE));
                 }
                 else
@@ -1970,15 +1969,15 @@ public:
         if (needsDiskRead)
         {
             Owned<IOutputMetaData> meta = createFixedSizeMetaData(KEYLOOKUP_HEADER_SIZE);
-            keyLookupAllocator.setown(createThorRowAllocator(meta.getClear(), queryActivityId()));
+            keyLookupAllocator.setown(queryJob().getRowAllocator(meta.getClear(), queryActivityId()));
         }
         else
         {
             Owned<IOutputMetaData> meta = createOutputMetaDataWithChildRow(joinFieldsAllocator, KEYLOOKUP_HEADER_SIZE);
-            keyLookupAllocator.setown(createThorRowAllocator(meta.getClear(), queryActivityId()));
+            keyLookupAllocator.setown(queryJob().getRowAllocator(meta.getClear(), queryActivityId()));
         }
 
-        indexInputAllocator.setown(createThorRowAllocator(helper->queryIndexReadInputRecordSize(), queryActivityId()));
+        indexInputAllocator.setown(queryJob().getRowAllocator(helper->queryIndexReadInputRecordSize(), queryActivityId()));
 
         ////////////////////
 

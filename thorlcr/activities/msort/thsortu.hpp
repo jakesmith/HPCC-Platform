@@ -22,7 +22,7 @@
 #include "slave.hpp"
 #include "jio.hpp"
 #include "thcrc.hpp"
-#include "thmem.hpp"
+//#include "thmem.hpp"
 
 
 interface IHThorJoinArg;

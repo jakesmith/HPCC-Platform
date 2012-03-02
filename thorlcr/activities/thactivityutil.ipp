@@ -38,67 +38,6 @@
 #define OUTPUT_RECORDSIZE
 
 
-
-class CThorTransferGroup : public CSimpleInterface, implements IThreaded
-{
-    unsigned short rcvPort;
-    ISocket * acceptListener;
-    unsigned count;
-
-    void _receive(ISocket * rcv);
-    CriticalSection sect;
-    
-protected:
-    CThreaded threaded;
-    Linked<IEngineRowAllocator> allocator;
-    Linked<IOutputRowSerializer> serializer;
-    Linked<IOutputRowDeserializer> deserializer;
-    CGraphElementBase *owner;
-    bool aborted;
-    void abort();
-
-public:
-    CThorTransferGroup(CGraphElementBase *_owner, IEngineRowAllocator *_allocator,IOutputRowSerializer *_serializer,IOutputRowDeserializer *_deserializer,unsigned short _rcvPort,unsigned _count=1) 
-        : threaded("CThorTransferGroup"), owner(_owner), allocator(_allocator), serializer(_serializer), deserializer(_deserializer)
-    { 
-        aborted = false; 
-        rcvPort = _rcvPort; 
-        acceptListener = NULL; 
-        count = _count; 
-    } 
-    ~CThorTransferGroup()
-    {
-        if (acceptListener)
-            acceptListener->cancel_accept();
-    }
-
-// IThreaded
-    virtual void main();
-
-    void send(SocketEndpoint &ep,CThorRowArray & group);
-    virtual void receive(CThorRowArray *group) = 0; // called function must free group
-};
-
-
-class CGroupTransfer : public CThorTransferGroup
-{
-    CThorRowArray  *receiveArray;
-    Semaphore nextRowSem;
-    unsigned next;
-    bool firstGet;
-
-// CThorTransferGroup methods
-    virtual void receive(CThorRowArray * group);
-
-public:
-    CGroupTransfer(CGraphElementBase *_container, IEngineRowAllocator *_allocator,IOutputRowSerializer *_serializer,IOutputRowDeserializer *_deserializer, unsigned short receivePort);
-    ~CGroupTransfer();
-
-    const void * nextRow();
-    void abort();
-};
-
-
 //void startInput(CActivityBase *activity, IThorDataLink * i, const char *extra=NULL);
 //void stopInput(IThorDataLink * i, const char * activityName = NULL, activity_id activitiyId = 0);
 

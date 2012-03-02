@@ -27,7 +27,6 @@
 #include "dadfs.hpp"
 
 #include "thactivityutil.ipp"
-#include "thmem.hpp"
 #include "backup.hpp"
 
 #include "slave.ipp"
@@ -51,127 +50,6 @@
 
 #define TRANSFER_TIMEOUT (60*60*1000)
 #define JOIN_TIMEOUT (10*60*1000)
-
-void CThorTransferGroup::abort()
-{
-    {
-        CriticalBlock block(sect); // only cancels when accepting (or thread done)
-        if (!aborted) {
-            aborted = true;
-            if (acceptListener) 
-                acceptListener->cancel_accept();
-        }
-    }
-    threaded.join(JOIN_TIMEOUT);
-}
-
-
-
-void CThorTransferGroup::send(SocketEndpoint &ep, CThorRowArray & group)
-{
-    ISocket * sendSkt = ISocket::connect_wait(ep, 360*120*1000); // give it plenty of time, sequential in nature *could* be delayed in other side listening
-    sendSkt->set_block_mode(BF_SYNC_TRANSFER_PULL,0,TRANSFER_TIMEOUT);
-    MemoryBuffer mb;
-    group.serialize(serializer,mb,false);
-    sendSkt->send_block(mb.toByteArray(),mb.length());
-    sendSkt->close();
-    sendSkt->Release();
-}
-
-
-void CThorTransferGroup::main()
-{
-    CriticalBlock block(sect);
-    acceptListener = ISocket::create(rcvPort);
-
-    while (count&&!aborted)      // not yet!
-    {
-        ISocket *sock;
-        {
-            CriticalUnblock unblock(sect);
-            sock = acceptListener->accept(true);
-            if (!sock)
-                break;
-        }
-        if (aborted)
-            break;
-        _receive(sock);
-        count--;
-    }
-    acceptListener->Release();
-    acceptListener = NULL;
-}
-
-
-void CThorTransferGroup::_receive(ISocket * rcv)
-{
-    CThorRowArray *received = new CThorRowArray();
-    rcv->set_block_mode(BF_SYNC_TRANSFER_PULL,0,TRANSFER_TIMEOUT);
-    size32_t bufferSz = rcv->receive_block_size();
-    if (bufferSz) {
-        MemoryBuffer mb;
-        void * receiveBlock = mb.reserve(bufferSz);
-        rcv->receive_block(receiveBlock,bufferSz); 
-        received->deserialize(*allocator,deserializer,bufferSz,receiveBlock,false); 
-    }
-    rcv->close();
-    rcv->Release();
-    receive(received); // frees receiveArray
-}
-
-CGroupTransfer::CGroupTransfer(CGraphElementBase *owner, IEngineRowAllocator *_allocator,IOutputRowSerializer *_serializer,IOutputRowDeserializer *_deserializer, unsigned short receivePort) 
-   : CThorTransferGroup(owner, _allocator, _serializer, _deserializer, receivePort, 1)
-{
-    firstGet = true;
-    next = 0;
-    receiveArray = NULL;
-    threaded.init(this);
-}
-
-
-CGroupTransfer::~CGroupTransfer()
-{
-    abort();
-    delete receiveArray;
-}
-
-
-void CGroupTransfer::abort()
-{
-    CThorTransferGroup::abort();
-    nextRowSem.signal();
-}
-
-void CGroupTransfer::receive(CThorRowArray * group) //called when group is received and ready for processing
-{
-    receiveArray = group;                           // ok 'cause I only expect to get one
-    next = 0;
-    nextRowSem.signal();
-}
-
-const void * CGroupTransfer::nextRow()
-{
-    if(firstGet)
-    {
-#ifdef _TESTING
-        ActPrintLog(owner, "Waiting on GroupTransfer semaphore");
-#endif
-        nextRowSem.wait();
-#ifdef _TESTING
-        ActPrintLog(owner, "Passed GroupTransfer semaphore");
-        ActPrintLog(owner, "GroupTransfer received %d records", receiveArray->ordinality());
-#endif
-
-        firstGet = false;
-    }
-    assertex(receiveArray != NULL);
-    if(aborted || next >= receiveArray->ordinality())
-    {
-        return NULL;
-    }
-    return receiveArray->itemClear(next++);
-}
-
 
 
 #ifdef _MSC_VER

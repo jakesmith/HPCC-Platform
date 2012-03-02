@@ -68,10 +68,6 @@ class JoinSlaveActivity : public CSlaveActivity, public CThorDataLink, implement
     StringBuffer tempname;
 
     bool islocal;
-    CThorRowArray rowsL; // for local
-    CThorRowArray rowsR; // for local
-    Owned<IThorRowSortedLoader> iloaderL; // for local
-    Owned<IThorRowSortedLoader> iloaderR; // for local
     Owned<IBarrier> barrier;
     SocketEndpoint server;
     StringBuffer activityName;
@@ -396,8 +392,6 @@ public:
         sorter.clear();
         input1.clear();
         input2.clear();
-        rowsL.clear();
-        rowsR.clear();
         CSlaveActivity::kill();
     }
 
@@ -423,8 +417,8 @@ public:
     }
     void dolocaljoin()
     {
-        iloaderL.setown(createThorRowSortedLoader(rowsL));
-        iloaderR.setown(createThorRowSortedLoader(rowsR));
+        Owned<IThorRowLoader> iLoaderL = createThorRowLoader(*this, ::queryRowInterfaces(input1), compare1, true, SPILL_PRIORITY_JOIN);
+        Owned<IThorRowLoader> iLoaderR = createThorRowLoader(*this, ::queryRowInterfaces(input2), compare2, true, SPILL_PRIORITY_JOIN);
         bool isemptylhs = false;
         if (helper->isLeftAlreadySorted()) {
             ThorDataLinkMetaInfo info;
@@ -438,15 +432,8 @@ public:
         }
         else {
             StringBuffer tmpStr;
-            strm1.setown(iloaderL->load(
-                input1,
-                ::queryRowInterfaces(input1),
-                compare1,
-                true,
-                abortSoon,
-                isemptylhs,
-                tmpStr.append(activityName).append("(L)").str(),
-                true,maxCores));
+            strm1.setown(iLoaderL->load(input1, abortSoon, rc_allDisk));
+            isemptylhs = 0 == iLoaderL->numRows();
             stopInput1();
         }
         if (isemptylhs&&((helper->getJoinFlags()&JFrightouter)==0)) {
@@ -462,17 +449,7 @@ public:
                 strm2.set(input2.get()); // already ungrouped
         }
         else {
-            StringBuffer tmpStr;
-            bool isemptyrhs;
-            strm2.setown(iloaderR->load(
-                input2,
-                ::queryRowInterfaces(input2),
-                compare2,
-                true,
-                abortSoon,
-                isemptyrhs,
-                tmpStr.append(activityName).append("(R)").str(),
-                true,maxCores));
+            strm2.setown(iLoaderR->load(input2, abortSoon, rc_allDisk));
             stopInput2();
         }
     }
@@ -593,6 +570,9 @@ public:
                 ActPrintLog("JOIN barrier.1 raised");
                 Owned<IRowStream> rstrm1 = sorter->startMerge(totalrows);
 
+                // JCSMORE - spill whole of sorted input1 to disk.
+                // it could keep in memory until needed to spill..
+
                 GetTempName(tempname.clear(),"joinspill",false); // don't use alt temp dir
                 Owned<IFile> tempf = createIFile(tempname.str());
                 Owned<IRowWriter> tmpstrm = createRowWriter(tempf,rowif1->queryRowSerializer(),rowif1->queryRowAllocator());
@@ -662,7 +642,7 @@ public:
 class CMergeJoinSlaveBaseActivity : public CThorNarySlaveActivity, public CThorDataLink, public CThorSteppable
 {
     IHThorNWayMergeJoinArg *helper;
-    Owned<IThorRowAllocator> inputAllocator, outputAllocator;
+    Owned<IEngineRowAllocator> inputAllocator, outputAllocator;
 
 protected:
     CMergeJoinProcessor &processor;
@@ -676,8 +656,8 @@ public:
     CMergeJoinSlaveBaseActivity(CGraphElementBase *container, CMergeJoinProcessor &_processor) : CThorNarySlaveActivity(container), CThorDataLink(this), CThorSteppable(this), processor(_processor)
     {
         helper = (IHThorNWayMergeJoinArg *)queryHelper();
-        inputAllocator.setown(createThorRowAllocator(helper->queryInputMeta(), queryActivityId()));
-        outputAllocator.setown(createThorRowAllocator(helper->queryOutputMeta(), queryActivityId()));
+        inputAllocator.setown(queryJob().getRowAllocator(helper->queryInputMeta(), queryActivityId()));
+        outputAllocator.setown(queryJob().getRowAllocator(helper->queryOutputMeta(), queryActivityId()));
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {

@@ -20,6 +20,7 @@
 #include "mpbase.hpp"
 #include "mputil.hpp"
 
+#include "thmem.hpp"
 #include "thaggregate.ipp"
 #include "thexception.hpp"
 #define NO_BWD_COMPAT_MAXSIZE

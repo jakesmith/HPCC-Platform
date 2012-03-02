@@ -17,7 +17,7 @@
 ############################################################################## */
 
 #include "thmerge.ipp"
-#include "thmem.hpp"
+//#include "thmem.hpp"
 #include "tsorta.hpp"
 
 #ifdef _DEBUG
