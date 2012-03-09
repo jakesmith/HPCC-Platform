@@ -2003,7 +2003,7 @@ public:
         IOutputMetaData* km = dedupargs->queryKeySize();
         if (km&&(km!=dedupargs->queryOutputMeta())) {
             ikeycompare = dedupargs->queryKeyCompare();
-            keyallocator.setown(createThorRowAllocator(km,queryActivityId()));
+            keyallocator.setown(queryJob().getRowAllocator(km,queryActivityId()));
             keyserializer.setown(km->createRowSerializer(queryCodeContext(),queryActivityId()));
             htabrows.setSizing(true,true);
         }

@@ -31,6 +31,7 @@
 #include "jset.hpp"
 #include "jqueue.tpp"
 
+#include "thmem.hpp"
 #include "thalloc.hpp"
 #include "thbuf.hpp"
 #include "eclrtl.hpp"

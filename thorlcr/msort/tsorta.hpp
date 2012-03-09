@@ -28,6 +28,7 @@
 #include "jlib.hpp"
 #include "jio.hpp"
 #include "jlzw.hpp"
+#include "thbuf.hpp"
 #include "thmem.hpp"
 
 

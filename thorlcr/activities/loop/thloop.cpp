@@ -22,6 +22,7 @@
 #include "eclrtl_imp.hpp"
 #include "thdemonserver.hpp"
 #include "thcompressutil.hpp"
+#include "thmem.hpp"
 
 #include "thloop.ipp"
 

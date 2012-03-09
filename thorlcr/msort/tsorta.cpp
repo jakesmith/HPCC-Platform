@@ -39,7 +39,6 @@
 #include "tsorta.hpp"
 
 #include "eclhelper.hpp"
-#include "thmem.hpp"
 #include "thbuf.hpp"
 
 #ifdef _DEBUG

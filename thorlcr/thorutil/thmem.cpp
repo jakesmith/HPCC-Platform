@@ -33,6 +33,8 @@
 #define NO_BWD_COMPAT_MAXSIZE
 #include "thorcommon.ipp"
 #include "eclrtl.hpp"
+#include "roxiemem.hpp"
+#include "roxierow.hpp"
 
 #include "thmem.hpp"
 
@@ -54,7 +56,7 @@
 #else
 #define ASSERTEX(c)
 #endif
-static IThorRowManager *ThorMemoryManager;
+
 static memsize_t MTthreshold=0; 
 static CriticalSection MTcritsect;  // held when blocked 
 static Owned<ILargeMemLimitNotify> MTthresholdnotify;
@@ -80,41 +82,13 @@ public:
     MessageAudience errorAudience() const { return MSGAUD_user; }
 };
 
-class ThorEngineRowAllocator;
-
-static class CThorRowAllocatorCache : implements IThorRowAllocatorCache
-{
-    PointerArray ThorRowAllocators; 
-    mutable SpinLock ThorMMsect;
-
-public:
-    inline ThorEngineRowAllocator &item(unsigned cacheId) const
-    {
-        SpinBlock block(ThorMMsect);
-        ASSERTEX(cacheId<ThorRowAllocators.ordinality());
-        ThorEngineRowAllocator *ret = ((ThorEngineRowAllocator *)ThorRowAllocators.item(cacheId));
-        ASSERTEX(ret);
-        return *ret;
-    }
-
-    unsigned append(ThorEngineRowAllocator &a);
-    unsigned getActivityId(unsigned cacheId) const;
-    StringBuffer &getActivityDescriptor(unsigned cacheId, StringBuffer &out) const;
-    void onDestroy(unsigned cacheId, void *row) const;
-    virtual void checkValid(unsigned cacheId, const void *row) const;
-
-    void reset();  // resets allocators
-    void clear();
-    size32_t subSize(unsigned cacheId,const void *row) const;
-
-} ThorAllocatorCache;
 
 
 void checkMultiThorMemoryThreshold(bool inc)
 {
-    if (MTthresholdnotify.get())    {
+    if (MTthresholdnotify.get()) {
         CriticalBlock block(MTcritsect);
-        memsize_t used = ThorMemoryManager->allocated();
+        memsize_t used = 0; // JCSMORE - might work via callback in new scheme
         if (MTlocked) {
             if (used<MTthreshold/2) {
                 DBGLOG("Multi Thor threshold lock released: %"I64F"d",(offset_t)used);
@@ -692,71 +666,119 @@ public:
 };
 
 
-
-
-
 ILargeMemLimitNotify *createMultiThorResourceMutex(const char *grpname,CSDSServerStatus *_status)
 {
     return new cMultiThorResourceMutex(grpname,_status);
 }
 
 
-
-
-
-static class CThorRowCallbackHook : implements IRtlRowCallback
+class CThorAllocator : public CSimpleInterface, implements roxiemem::IRowAllocatorCache, implements IRtlRowCallback, implements IThorAllocator
 {
+    mutable IArrayOf<IEngineRowAllocator> allAllocators;
+    mutable SpinLock allAllocatorsLock;
+    Owned<roxiemem::IRowManager> rowManager;
 public:
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+
+    CThorAllocator(unsigned memSize)
+    {
+        rowManager.setown(roxiemem::createRowManager(memSize, NULL, queryDummyContextLogger(), this, false));
+        rtlSetReleaseRowHook(this);
+    }
+    ~CThorAllocator()
+    {
+        rowManager.clear();
+        allAllocators.kill();
+        rtlSetReleaseRowHook(NULL); // nothing should use it beyond this point anyway
+    }
+
+// IThorAllocator
+    virtual IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, unsigned activityId) const
+    {
+        // MORE - may need to do some caching/commoning up here otherwise GRAPH in a child query may use too many
+        SpinBlock b(allAllocatorsLock);
+        IEngineRowAllocator *ret = createRoxieRowAllocator(*rowManager, meta, activityId, allAllocators.ordinality(), false);
+        LINK(ret);
+        allAllocators.append(*ret);
+        return ret;
+    }
+// IRowAllocatorCache
+    virtual unsigned getActivityId(unsigned cacheId) const
+    {
+        SpinBlock b(allAllocatorsLock);
+        if (allAllocators.isItem(cacheId))
+            return allAllocators.item(cacheId).queryActivityId();
+        else
+        {
+            //assert(false);
+            return 12345678; // Used for tracing, better than a crash...
+        }
+    }
+    virtual StringBuffer &getActivityDescriptor(unsigned cacheId, StringBuffer &out) const
+    {
+        SpinBlock b(allAllocatorsLock);
+        if (allAllocators.isItem(cacheId))
+            return allAllocators.item(cacheId).getId(out);
+        else
+        {
+            assert(false);
+            return out.append("unknown"); // Used for tracing, better than a crash...
+        }
+    }
+    virtual void onDestroy(unsigned cacheId, void *row) const
+    {
+        IEngineRowAllocator *allocator;
+        {
+            SpinBlock b(allAllocatorsLock); // just protect the access to the array - don't keep locked for the call of destruct or may deadlock
+            if (allAllocators.isItem(cacheId))
+                allocator = &allAllocators.item(cacheId);
+            else
+            {
+                assert(false);
+                return;
+            }
+        }
+        allocator->queryOutputMeta()->destruct((byte *) row);
+    }
+    virtual void checkValid(unsigned cacheId, const void *row) const
+    {
+        // JCSMORE
+    }
+// IRtlRowCallback
     virtual void releaseRow(const void * row) const
     {
-        ReleaseThorRow(row);
+        ReleaseRoxieRow(row);
     }
     virtual void releaseRowset(unsigned count, byte * * rowset) const
     {
         if (rowset)
         {
-            /// NB not thread safe!
-            if (!isThorRowShared(rowset))
+            if (!roxiemem::HeapletBase::isShared(rowset))
             {
                 byte * * finger = rowset;
                 while (count--)
-                    ReleaseThorRow(*finger++);
+                    ReleaseRoxieRow(*finger++);
             }
-            ReleaseThorRow(rowset);
+            ReleaseRoxieRow(rowset);
         }
     }
-    virtual void * linkRow(const void * row) const
+    virtual void *linkRow(const void * row) const
     {
         if (row) 
-            LinkThorRow(row);
+            LinkRoxieRow(row);
         return const_cast<void *>(row);
     }
     virtual byte * * linkRowset(byte * * rowset) const
     {
         if (rowset)
-            LinkThorRow(rowset);
+            LinkRoxieRow(rowset);
         return const_cast<byte * *>(rowset);
     }
-} ThorRowCallbackHook;
+};
 
-static memsize_t ThorMemoryManagerMaxSize;
-
-void initThorMemoryManager(size32_t szMB, unsigned memtracelevel, unsigned memstatinterval)
+IThorAllocator *createThorAllocator(unsigned memSize)
 {
-    ASSERTEX(!ThorMemoryManager);
-    ThorMemoryManagerMaxSize = 1024*1024*(memsize_t)szMB;
-    ThorMemoryManager = createThorRowManager(ThorMemoryManagerMaxSize, &ThorAllocatorCache, false);
-    rtlSetReleaseRowHook(&ThorRowCallbackHook);
-}
-
-void resetThorMemoryManager()
-{
-    ThorAllocatorCache.reset(); // clears cached rows
-    if (ThorMemoryManager) {
-        ThorMemoryManager->Release();
-        ThorMemoryManager = NULL;
-    }
-    ThorAllocatorCache.clear(); // do after so that act ids still around
+    return new CThorAllocator(memSize);
 }
 
 
@@ -1034,246 +1056,6 @@ IOutputMetaData *createOutputMetaDataWithExtra(IOutputMetaData *meta, size32_t s
     return new COutputMetaWithExtra(meta, sz);
 }
 
-// mirroring MemoryBuffer 
-#define FIRST_CHUNK_SIZE     8
-
-
-class ThorEngineRowAllocator : public CSimpleInterface, implements IThorRowAllocator
-{
-protected:
-    IThorRowManager & rowManager;
-    CachedOutputMetaData meta;
-    unsigned activityId;
-    unsigned allocatorId;
-    size32_t minSize;
-    size32_t initSize;
-    unsigned destructmask;
-
-    void * doFinalizeRow(size32_t newSize, void * row)
-    {
-        if (newSize) {
-#ifdef _DEBUG
-            size32_t actualsize = meta.getRecordSize(row);
-            if (actualsize!=newSize) {
-                PrintStackReport();
-                ERRLOG("finalizeRow(%p) actual=%u newSize=%u",row,actualsize,newSize);
-                ASSERTEX(actualsize==newSize);
-            }
-#endif
-            unsigned id = allocatorId | ACTIVITY_FLAG_ISREGISTERED | destructmask;
-            assertex(newSize>=minSize);
-            void * ret = rowManager.finalizeRow(row, newSize, id, meta.isVariableSize()); 
-            if ((ret!=row)&&meta.isVariableSize())
-                ReleaseThorRow(row);
-            return ret;
-        }
-        if (row) 
-            ReleaseThorRow(row);
-        return NULL;
-    }
-
-
-public:
-    ThorEngineRowAllocator(IThorRowManager & _rowManager, IOutputMetaData * _meta, unsigned _activityId) 
-        : rowManager(_rowManager), meta(_meta) 
-    {
-        activityId = _activityId;
-        allocatorId = ThorAllocatorCache.append(*this);
-        initSize = meta.getInitialSize();
-        minSize = meta.getMinRecordSize();
-        destructmask = meta.needsDestruct()?ACTIVITY_FLAG_NEEDSDESTRUCTOR:0;
-    }
-    ~ThorEngineRowAllocator() 
-    {
-    }
-
-    IMPLEMENT_IINTERFACE_USING(CSimpleInterface)
-
-//interface IEngineRowsetAllocator
-    virtual byte * * createRowset(unsigned count)
-    {
-        if (count == 0)
-            return NULL;
-        return (byte **) rowManager.allocate(count * sizeof(void *), allocatorId | ACTIVITY_FLAG_ISREGISTERED);
-    }
-
-    virtual void releaseRowset(unsigned count, byte * * rowset)
-    {
-        rtlReleaseRowset(count, rowset);
-    }
-
-    virtual byte * * linkRowset(byte * * rowset)
-    {
-        return rtlLinkRowset(rowset);
-    }
-
-    virtual byte * * appendRowOwn(byte * * rowset, unsigned newRowCount, void * row)
-    {
-        if (!rowset)
-            rowset = createRowset(newRowCount);
-        else
-            rowset = (byte * *)rowManager.resizeRow(rowset, (newRowCount-1) * sizeof(void *), newRowCount * sizeof(void *), allocatorId | ACTIVITY_FLAG_ISREGISTERED);
-
-        rowset[newRowCount-1] = (byte *)row;
-        return rowset;
-    }
-
-    virtual byte * * reallocRows(byte * * rowset, unsigned oldRowCount, unsigned newRowCount)
-    {
-        if (!rowset)
-            rowset = createRowset(newRowCount);
-        else
-            rowset = (byte * *)rowManager.resizeRow(rowset, oldRowCount * sizeof(void *), newRowCount * sizeof(void *), allocatorId | ACTIVITY_FLAG_ISREGISTERED);
-
-        //New rows (if any) aren't cleared....
-        return rowset;
-    }
-//interface IEngineAnyRowAllocator
-    virtual void * createRow()
-    {
-        return rowManager.allocate(initSize<sizeof(void *)?sizeof(void*):initSize, allocatorId | ACTIVITY_FLAG_ISREGISTERED);
-    }
-
-    virtual void * createRow(size32_t & allocatedSize)
-    {
-        if (meta.isFixedSize())
-        {
-            allocatedSize = initSize;
-            return createRow();
-        }
-        // extensible row
-        return rowManager.allocateExt(initSize, allocatorId | ACTIVITY_FLAG_ISREGISTERED, allocatedSize);
-    }
-
-    virtual void releaseRow(const void * row)
-    {
-        ReleaseThorRow(row);
-    }
-
-    virtual void * linkRow(const void * row)
-    {
-        LinkThorRow(row);
-        return const_cast<void *>(row);
-    }
-
-    virtual void * finalizeRow(size32_t newSize, void * row, size32_t oldSize)
-    {
-        return doFinalizeRow(newSize, row);
-    }
-
-    virtual void * resizeRow(size32_t newSize, void * row, size32_t & size) // NB in 'size' == max
-    {
-        // assertex(!meta.isFixedSize()); // JCSMORE - cloneRow calls ensureCapacity->resizeRow....
-        // assertex(newSize >= size); // JCSMORE - if variable, this should always be true, but can be called from fixed (cloneRow again)
-        // this is used to extend row with slack
-        return rowManager.extendRow(row,newSize,allocatorId | ACTIVITY_FLAG_ISREGISTERED,size);
-    }
-
-    virtual IOutputMetaData * queryOutputMeta()
-    {
-        return meta.queryOriginal();
-    }
-    virtual unsigned queryActivityId()
-    {
-        return activityId;
-    }
-    virtual StringBuffer &getId(StringBuffer &idStr)
-    {
-        return idStr.append(activityId); // MORE - may want more context info in here
-    }
-    virtual IOutputRowSerializer *createRowSerializer(ICodeContext *ctx)
-    {
-        return meta.createRowSerializer(ctx, activityId);
-    }
-
-    virtual IOutputRowDeserializer *createRowDeserializer(ICodeContext *ctx)
-    {
-        return meta.createRowDeserializer(ctx, activityId);
-    }
-
-};
-
-unsigned CThorRowAllocatorCache::getActivityId(unsigned cacheId) const
-{
-    return item(cacheId).queryActivityId();
-}
-StringBuffer & CThorRowAllocatorCache::getActivityDescriptor(unsigned cacheId, StringBuffer &out) const
-{
-    return item(cacheId).getId(out);
-}
-void CThorRowAllocatorCache::onDestroy(unsigned cacheId, void *row) const
-{
-    item(cacheId).queryOutputMeta()->destruct((byte *) row); 
-}
-void CThorRowAllocatorCache::checkValid(unsigned cacheId, const void *row) const
-{
-}
-
-
-size32_t CThorRowAllocatorCache::subSize(unsigned cacheId, const void *row) const
-{
-    class cRowSubSizer: public IIndirectMemberVisitor
-    {
-    public:
-        size32_t size;
-        inline cRowSubSizer()
-        {
-            size = 0;
-        }
-        virtual void visitRowset(size32_t count, byte * * rows)
-        {
-            size += thorRowMemoryFootprint(rows);
-            while (count--) {
-                size += thorRowMemoryFootprint(*rows);
-                rows++;
-            }
-        }
-        virtual void visitRow(const byte * row)
-        {
-            size += thorRowMemoryFootprint(row);
-        }
-
-    } rss;
-    item(cacheId).queryOutputMeta()->walkIndirectMembers((const byte *)row,rss);
-    return rss.size;
-}
-
-unsigned CThorRowAllocatorCache::append(ThorEngineRowAllocator &a)
-{
-    a.Link();
-    SpinBlock block(ThorMMsect);
-    unsigned allocatorId = ThorRowAllocators.ordinality();
-    assertex(allocatorId<MAX_ACTIVITY_ID);
-    ForEachItemIn(i,ThorRowAllocators) 
-        if (ThorRowAllocators.item(i)==NULL) {
-            allocatorId = i;
-            break;
-        }
-    if (allocatorId==ThorRowAllocators.ordinality())
-        ThorRowAllocators.append(&a);
-    else
-        ThorRowAllocators.replace(&a,allocatorId);
-    return allocatorId;
-}
-
-void CThorRowAllocatorCache::clear()
-{
-    SpinBlock block(ThorMMsect);
-    ForEachItemIn(i,ThorRowAllocators) {
-        ((ThorEngineRowAllocator *)ThorRowAllocators.item(i))->Release();
-    }
-    ThorRowAllocators.kill();
-}
-
-void CThorRowAllocatorCache::reset()
-{
-}
-
-IThorRowAllocator *createThorRowAllocator(IOutputMetaData * _meta, unsigned _activityId)
-{
-    assertex(_activityId);
-    return new ThorEngineRowAllocator(*ThorMemoryManager,_meta,_activityId);
-}
 
 
 IPerfMonHook *createThorMemStatsPerfMonHook(IPerfMonHook *chain)
@@ -1283,12 +1065,14 @@ IPerfMonHook *createThorMemStatsPerfMonHook(IPerfMonHook *chain)
 
  memsize_t ThorRowMemoryAvailable()
 {
-    return ThorMemoryManager->remaining();
+    //JCSMORE!
+    return 1800*0x100000;
  }
 
 void setLCRrowCRCchecking(bool on)
 {
-    ThorMemoryManager->setLCRrowCRCchecking(on);
+    // JCSMORE!
+    assertex(!on);
 }
 
 

@@ -662,7 +662,7 @@ public:
 class CMergeJoinSlaveBaseActivity : public CThorNarySlaveActivity, public CThorDataLink, public CThorSteppable
 {
     IHThorNWayMergeJoinArg *helper;
-    Owned<IThorRowAllocator> inputAllocator, outputAllocator;
+    Owned<IEngineRowAllocator> inputAllocator, outputAllocator;
 
 protected:
     CMergeJoinProcessor &processor;
@@ -676,8 +676,8 @@ public:
     CMergeJoinSlaveBaseActivity(CGraphElementBase *container, CMergeJoinProcessor &_processor) : CThorNarySlaveActivity(container), CThorDataLink(this), CThorSteppable(this), processor(_processor)
     {
         helper = (IHThorNWayMergeJoinArg *)queryHelper();
-        inputAllocator.setown(createThorRowAllocator(helper->queryInputMeta(), queryActivityId()));
-        outputAllocator.setown(createThorRowAllocator(helper->queryOutputMeta(), queryActivityId()));
+        inputAllocator.setown(queryJob().getRowAllocator(helper->queryInputMeta(), queryActivityId()));
+        outputAllocator.setown(queryJob().getRowAllocator(helper->queryOutputMeta(), queryActivityId()));
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {

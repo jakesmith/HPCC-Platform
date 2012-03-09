@@ -35,7 +35,7 @@
 #include "slwatchdog.hpp"
 #include "thbuf.hpp"
 #include "thcrc.hpp"
-#include "thmem.hpp"
+//#include "thmem.hpp"
 #include "thexception.hpp"
 
 #include "backup.hpp"

@@ -26,6 +26,7 @@
 #include "thbuf.hpp"
 #include "thormisc.hpp"
 #include "thbufdef.hpp"
+#include "thmem.hpp"
 
 PointerArray createFuncs;
 void registerCreateFunc(CreateFunc func)
@@ -2342,7 +2343,7 @@ void CJobBase::init()
 
     unsigned gmemSize = getOptInt("@globalMemorySize"); // in MB
     // NB: gmemSize is permitted to be unset, meaning unbound
-    initThorMemoryManager(gmemSize, getOptInt("@memTraceLevel", 1), getOptInt("@memoryStatsInterval", 60));
+    thorAllocator.setown(createThorAllocator(gmemSize));
 
     unsigned defaultMemMB = gmemSize;
     if (!defaultMemMB)
@@ -2369,7 +2370,8 @@ CJobBase::~CJobBase()
 {
     clean();
     PROGLOG("CJobBase resetting memory manager");
-    resetThorMemoryManager();
+    thorAllocator.clear();
+
     ::Release(codeCtx);
     ::Release(userDesc);
     timeReporter->Release();
@@ -2573,6 +2575,11 @@ void CJobBase::runSubgraph(CGraphBase &graph, size32_t parentExtractSz, const by
     graph.executeSubGraph(parentExtractSz, parentExtract);
 }
 
+IEngineRowAllocator *CJobBase::getRowAllocator(IOutputMetaData * meta, unsigned activityId) const
+{
+    return thorAllocator->getRowAllocator(meta, activityId);
+}
+
 static IThorResource *iThorResource = NULL;
 void setIThorResource(IThorResource &r)
 {
@@ -2652,7 +2659,7 @@ IEngineRowAllocator * CActivityBase::queryRowAllocator()
 {
     if (CABallocatorlock.lock()) {
         if (!rowAllocator)
-            rowAllocator.setown(createThorRowAllocator(queryRowMetaData(),queryActivityId()));
+            rowAllocator.setown(queryJob().getRowAllocator(queryRowMetaData(),queryActivityId()));
         CABallocatorlock.unlock();
     }
     return rowAllocator;

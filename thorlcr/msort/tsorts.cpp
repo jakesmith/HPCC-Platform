@@ -32,7 +32,6 @@
 #include "tsortmp.hpp"
 #include "thbuf.hpp"
 #include "thcrc.hpp"
-#include "thmem.hpp"
 #include "thgraph.hpp"
 
 #define _TRACE

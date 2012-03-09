@@ -20,7 +20,6 @@
 #include "jiface.hpp"
 #include "slave.hpp"
 #include "jsort.hpp"
-#include "thmem.hpp"
 #include "thbufdef.hpp"
 #include "tsorta.hpp"
 
