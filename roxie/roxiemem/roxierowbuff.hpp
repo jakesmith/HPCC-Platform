@@ -77,6 +77,7 @@ public:
     void clearRows();
     void kill();
     void transferRows(rowidx_t & outNumRows, const void * * & outRows);
+    void removeBlock(rowidx_t start, rowidx_t n);
 
     //The block returned is only valid until the critical section is released
 
