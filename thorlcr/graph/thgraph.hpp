@@ -45,6 +45,7 @@
 
 #include "mptag.hpp"
 
+#include "roxiemem.hpp"
 #include "thormisc.hpp"
 #include "workunit.hpp"
 #include "thorcommon.hpp"
@@ -867,6 +868,7 @@ public:
     }
 
     IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, unsigned activityId) const;
+    roxiemem::IRowManager *queryRowManager() const;
     bool queryUseCheckpoints() const;
     const bool &queryPausing() const { return pausing; }
     const bool &queryResumed() const { return resumed; }

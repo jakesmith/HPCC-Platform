@@ -30,7 +30,8 @@
 #endif
 
 
-extern graph_decl size32_t thorRowMemoryFootprint(const void *ptr);
+interface IOutputRowSerializer;
+extern graph_decl size32_t thorRowMemoryFootprint(IOutputRowSerializer *serializer, const void *ptr);
 
 
 #endif

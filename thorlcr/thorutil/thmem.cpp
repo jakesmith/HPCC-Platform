@@ -37,6 +37,7 @@
 #include "roxierow.hpp"
 
 #include "thmem.hpp"
+#include "thgraph.hpp"
 
 #include "thalloc.hpp"
 
@@ -160,7 +161,7 @@ void CThorRowArray::adjSize(const void *row, bool inc)
 {
     if (!row)
         return;
-    size32_t size = thorRowMemoryFootprint(row);
+    size32_t size = thorRowMemoryFootprint(NULL, row);
     size32_t prevtot = totalsize;
     if (inc) {
         if (raiseexceptions) {
@@ -505,6 +506,265 @@ void CThorRowArray::reserve(unsigned n)
     numelem+=n;
 }
 
+// =================================
+
+
+CThorRowArray2::CThorRowArray2(CActivityBase *_activity, roxiemem::rowidx_t initialSize, size32_t commitDelta) : DynamicRoxieOutputRowArray(_activity->queryJob().queryRowManager(), initialSize, commitDelta), activity(_activity)
+{
+}
+
+void CThorRowArray2::setNull(unsigned idx)
+{
+    OwnedConstThorRow row = getClear(idx);
+}
+
+void CThorRowArray2::sort(ICompare & compare, bool stable, unsigned maxcores)
+{
+    unsigned n = numCommitted();
+    if (n>1) {
+        const void **res = getBlock(n);
+        if (stable) {
+            const void **ptrs;
+            MemoryAttr ma;
+            try
+            {
+                ptrs = (const void **)ma.allocate(numRows * sizeof(void *));
+                // JCSMORE - problematic, quite possibly sorting, at spillpoint, when mem full..
+                //ptrs = static_cast<const void * *>(rowManager->allocate(maxRows * sizeof(void*), activity->queryContainer().queryId()));
+            }
+            catch (IException * e)
+            {
+                //Pahological cases - not enough memory to reallocate the target row buffer, or no contiguous pages available.
+                unsigned code = e->errorCode();
+                if ((code == ROXIEMM_MEMORY_LIMIT_EXCEEDED) || (code == ROXIEMM_MEMORY_POOL_EXHAUSTED)) {
+                    throw; // JCSMORE ?
+                }
+                throw;
+            }
+            memcpy(ptrs, res, n*sizeof(void **));
+            parqsortvecstable((void **const)ptrs, n, compare, (void ***)res, maxcores); // use res for index
+            while (n--) {
+                *res = **((byte ***)res);
+                res++;
+            }
+        }
+        else
+            parqsortvec((void **const)res, n, compare, maxcores);
+    }
+}
+
+
+/*
+void CThorRowArray2::transfer(CThorRowArray2 &from)
+{
+    clear();
+    swapWith(from);
+
+}
+
+void CThorRowArray2::swapWith(CThorRowArray2 &from)
+{
+    ptrbuf.swapWith(from.ptrbuf);
+    unsigned t = numelem;
+    numelem = from.numelem;
+    from.numelem = t;
+    size32_t ts = totalsize;
+    totalsize = from.totalsize;
+    from.totalsize = ts;
+    ts = overhead;
+    overhead = from.overhead;
+    from.overhead = ts;
+    ts = maxtotal;
+    maxtotal = from.maxtotal;
+    from.maxtotal = ts;
+    IOutputRowSerializer *sz = serializer.getClear();
+    serializer.setown(from.serializer.getClear());
+    from.serializer.setown(sz);
+}
+*/
+
+
+void CThorRowArray2::serialize(IOutputRowSerializer *serializer,IRowSerializerTarget &out)
+{
+    bool warnnull = true;
+    assertex(serializer);
+    for (unsigned i=0;i<numCommitted();i++) {
+        const void *row = get(i);
+        if (row)
+            serializer->serialize(out,(const byte *)row);
+        else if (warnnull) {
+            WARNLOG("CThorRowArray2::serialize ignoring NULL row");
+            warnnull = false;
+        }
+    }
+}
+
+void CThorRowArray2::serialize(IOutputRowSerializer *serializer,MemoryBuffer &mb,bool hasnulls)
+{
+    assertex(serializer);
+    CMemoryRowSerializer s(mb);
+    if (!hasnulls)
+        serialize(serializer,s);
+    else {
+        unsigned short guard = 0x7631;
+        mb.append(guard);
+        for (unsigned i=0;i<numCommitted();i++) {
+            const void *row = get(i);
+            bool isnull = (row==NULL);
+            mb.append(isnull);
+            if (!isnull)
+                serializer->serialize(s,(const byte *)row);
+        }
+    }
+}
+
+unsigned CThorRowArray2::serializeblk(IOutputRowSerializer *serializer,MemoryBuffer &mb,size32_t dstmax, unsigned idx, unsigned count)
+{
+    assertex(serializer);
+    CMemoryRowSerializer out(mb);
+    bool warnnull = true;
+    unsigned num=numCommitted();
+    if (idx>=num)
+        return 0;
+    if (num-idx<count)
+        count = num-idx;
+    unsigned ret = 0;
+    for (unsigned i=0;i<count;i++) {
+        size32_t ln = mb.length();
+        const void *row = get(i+idx);
+        if (row)
+            serializer->serialize(out,(const byte *)row);
+        else if (warnnull) {
+            WARNLOG("CThorRowArray2::serialize ignoring NULL row");
+            warnnull = false;
+        }
+        if (mb.length()>dstmax) {
+            if (ln)
+                mb.setLength(ln);   // make sure one row
+            break;
+        }
+        ret++;
+    }
+    return ret;
+}
+
+
+void CThorRowArray2::deserializerow(IEngineRowAllocator &allocator,IOutputRowDeserializer *deserializer,IRowDeserializerSource &in)
+{
+    RtlDynamicRowBuilder rowBuilder(&allocator);
+    size32_t sz = deserializer->deserialize(rowBuilder,in);
+    append(rowBuilder.finalizeRowClear(sz));
+}
+
+
+void CThorRowArray2::deserialize(IEngineRowAllocator &allocator,IOutputRowDeserializer *deserializer,size32_t sz,const void *buf, bool hasnulls)
+{
+    if (hasnulls) {
+        ASSERTEX((sz>=sizeof(short))&&(*(unsigned short *)buf==0x7631)); // check for mismatch
+        buf = (const byte *)buf+sizeof(unsigned short);
+        sz -= sizeof(unsigned short);
+    }
+    CThorStreamDeserializerSource d(sz,buf);
+    while (!d.eos()) {
+        if (hasnulls) {
+            bool nullrow;
+            d.read(sizeof(bool),&nullrow);
+            if (nullrow) {
+                append(NULL);
+                continue;
+            }
+        }
+        deserializerow(allocator,deserializer,d);
+    }
+}
+
+
+
+IRowStream *CThorRowArray2::createRowStream(unsigned start,unsigned num, bool streamowns)
+{
+    class cStream: public CSimpleInterface, implements IRowStream
+    {
+    public:
+        unsigned pos;
+        unsigned num;
+        bool owns;
+        CThorRowArray2* parent;
+
+        IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+        const void *nextRow()
+        {
+            if (!num)
+                return NULL;
+            num--;
+            if (owns)
+                return parent->getClear(pos++);
+            else
+                return parent->link(pos++);
+        }
+
+        void stop()
+        {
+            num = 0;
+            // could remove rest possibly
+        }
+
+    } *ret = new cStream();
+    if (start>numCommitted()) {
+        start = numCommitted();
+        num = 0;
+    }
+    else if ((num==(unsigned)-1)||(start+num>numCommitted()))
+        num = numCommitted()-start;
+    ret->pos = start;
+    ret->num = num;
+    ret->owns = streamowns;
+    ret->parent = this;
+    return ret;
+}
+
+unsigned CThorRowArray2::save(IRowWriter *writer, unsigned pos, unsigned num, bool owns)
+{
+    if (pos>numCommitted()) { // JCSMORE why/how/when??
+        pos = numCommitted();
+        num = 0;
+    }
+    else if ((num==(unsigned)-1)||(pos+num>numCommitted()))
+        num = numCommitted()-pos;
+    if (!num)
+        return 0;
+    PROGLOG("CThorRowArray2::save %d rows",num);
+    unsigned ret = 0;
+    while (num--) {
+        OwnedConstThorRow row;
+        if (owns)
+            row.setown(getClear(pos++));
+        else
+            row.set(get(pos++));
+        writer->putRow(row.getClear());
+        ret++;
+    }
+    PROGLOG("CThorRowArray2::save done");
+    return ret;
+}
+
+/*
+void CThorRowArray2::reorder(unsigned start,unsigned num, unsigned *neworder)
+{
+    if (start>=ordinality())
+        return;
+    if (start+num>ordinality())
+        num = ordinality()-start;
+    if (!num)
+        return;
+    MemoryAttr ma;
+    byte **tmp = (byte **)ma.allocate(num*sizeof(void *));
+    byte **p = ((byte **)ptrbuf.toByteArray())+start;
+    memcpy(tmp,p,num*sizeof(void *));
+    for (unsigned i=0;i<num;i++)
+        p[i] = tmp[neworder[i]];
+}
+*/
+
 
 void setThorInABox(unsigned num)
 {
@@ -680,7 +940,7 @@ class CThorAllocator : public CSimpleInterface, implements roxiemem::IRowAllocat
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CThorAllocator(unsigned memSize)
+    CThorAllocator(memsize_t memSize)
     {
         rowManager.setown(roxiemem::createRowManager(memSize, NULL, queryDummyContextLogger(), this, false));
         rtlSetReleaseRowHook(this);
@@ -702,6 +962,11 @@ public:
         allAllocators.append(*ret);
         return ret;
     }
+    virtual roxiemem::IRowManager *queryRowManager() const
+    {
+        return rowManager;
+    }
+
 // IRowAllocatorCache
     virtual unsigned getActivityId(unsigned cacheId) const
     {
@@ -776,7 +1041,7 @@ public:
     }
 };
 
-IThorAllocator *createThorAllocator(unsigned memSize)
+IThorAllocator *createThorAllocator(memsize_t memSize)
 {
     return new CThorAllocator(memSize);
 }
@@ -1063,7 +1328,7 @@ IPerfMonHook *createThorMemStatsPerfMonHook(IPerfMonHook *chain)
     return LINK(chain);
 }
 
- memsize_t ThorRowMemoryAvailable()
+memsize_t ThorRowMemoryAvailable()
 {
     //JCSMORE!
     return 1800*0x100000;
@@ -1072,10 +1337,4 @@ IPerfMonHook *createThorMemStatsPerfMonHook(IPerfMonHook *chain)
 void setLCRrowCRCchecking(bool on)
 {
     // JCSMORE!
-    assertex(!on);
 }
-
-
-
-
-

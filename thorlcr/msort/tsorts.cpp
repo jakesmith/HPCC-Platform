@@ -1166,7 +1166,6 @@ public:
         PrintLog("StartMiniSort exit");
 
     }
-
 };
 
 

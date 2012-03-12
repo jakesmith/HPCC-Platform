@@ -155,7 +155,6 @@ class CLocalSortSlaveActivity : public CSlaveActivity, public CThorDataLink
     IHThorSortArg *helper;
     ICompare *icompare;
     Owned<IThorRowSortedLoader> iloader;
-    CThorRowArray rows;
     Owned<IRowStream> out;
     bool unstable;
 
@@ -164,9 +163,6 @@ public:
 
     CLocalSortSlaveActivity(CGraphElementBase *_container)
         : CSlaveActivity(_container), CThorDataLink(this)
-    {
-    }
-    ~CLocalSortSlaveActivity()
     {
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -182,11 +178,10 @@ public:
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
         dataLinkStart("LOCALSORT", container.queryId());
-        iloader.setown(createThorRowSortedLoader(rows));
         input = inputs.item(0);
         startInput(input);
-        bool isempty;
-        out.setown(iloader->load(input,queryRowInterfaces(input), icompare,false,abortSoon,isempty,"LOCALSORT",!unstable,maxCores));
+        iloader.setown(createThorRowSortedLoader2(*this, queryRowInterfaces(input), icompare, !unstable, maxCores));
+        out.setown(iloader->load(input, false, abortSoon));
     }
     void stop()
     {

@@ -35,7 +35,7 @@
 #include "slwatchdog.hpp"
 #include "thbuf.hpp"
 #include "thcrc.hpp"
-//#include "thmem.hpp"
+#include "thmem.hpp"
 #include "thexception.hpp"
 
 #include "backup.hpp"
@@ -536,6 +536,9 @@ public:
 
 void slaveMain()
 {
+    memsize_t gmemSize = globals->getPropInt("@globalMemorySize"); // in MB
+    roxiemem::setTotalMemoryLimit(gmemSize * 0x100000);
+
     CJobListener jobListener;
     CThorResourceSlave slaveResource;
     setIThorResource(slaveResource);

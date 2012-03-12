@@ -36,6 +36,7 @@
 #include "eclhelper.hpp"
 #include "rtlread_imp.hpp"
 #include "roxiemem.hpp"
+#include "roxierowbuff.hpp"
 
 #define NO_BWD_COMPAT_MAXSIZE
 #include "thorcommon.hpp"
@@ -151,10 +152,11 @@ private:
 
 interface IThorAllocator : extends IInterface
 {
-    virtual IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, unsigned activityId) const;
+    virtual IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, unsigned activityId) const = 0;
+    virtual roxiemem::IRowManager *queryRowManager() const = 0;
 };
 
-IThorAllocator *createThorAllocator(unsigned memSize);
+IThorAllocator *createThorAllocator(memsize_t memSize);
 
 extern graph_decl IOutputMetaData *createOutputMetaDataWithExtra(IOutputMetaData *meta, size32_t sz);
 extern graph_decl IOutputMetaData *createOutputMetaDataWithChildRow(IEngineRowAllocator *childAllocator, size32_t extraSz);
@@ -418,10 +420,68 @@ public:
         if (size<=numelem) return;
         reserve(size-numelem);
     }
-
-
 };
 
+
+class graph_decl CThorRowArray2 : public roxiemem::DynamicRoxieOutputRowArray
+{
+    CActivityBase *activity;
+    Linked<IOutputRowSerializer> serializer;
+
+public:
+    CThorRowArray2(CActivityBase *_activity, roxiemem::rowidx_t initialSize, size32_t commitDelta);
+
+    void removeRows(unsigned i,unsigned n);
+
+    void sort(ICompare & compare, bool stable, unsigned maxcores);
+    void partition(ICompare &compare, unsigned num, UnsignedArray &out) // returns num+1 points
+    {
+        unsigned p=0;
+        unsigned n = numCommitted();
+        const void **ptrs = getBlock(n);
+        while (num) {
+            out.append(p);
+            if (p<n) {
+                unsigned q = p+(n-p)/num;
+                if (p==q) { // skip to next group
+                    while (q<n) {
+                        q++;
+                        if ((q<n)&&(compare.docompare(ptrs[p],ptrs[q])!=0)) // ensure at next group
+                            break;
+                    }
+                }
+                else {
+                    while ((q<n)&&(q!=p)&&(compare.docompare(ptrs[q-1],ptrs[q])==0)) // ensure at start of group
+                        q--;
+                }
+                p = q;
+            }
+            num--;
+        }
+        out.append(n);
+    }
+
+    IRowStream *createRowStream(unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
+    unsigned save(IRowWriter *writer,unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
+    void setNull(unsigned idx);
+//    void transfer(CThorRowArray &from);
+//    void swapWith(CThorRowArray &from);
+
+    void serialize(IOutputRowSerializer *_serializer,IRowSerializerTarget &out);
+    void serialize(IOutputRowSerializer *_serializer,MemoryBuffer &mb,bool hasnulls);
+    unsigned serializeblk(IOutputRowSerializer *_serializer,MemoryBuffer &mb,size32_t dstmax, unsigned idx, unsigned count);
+    void deserialize(IEngineRowAllocator &allocator,IOutputRowDeserializer *deserializer,size32_t sz,const void *buf,bool hasnulls);
+    void deserializerow(IEngineRowAllocator &allocator,IOutputRowDeserializer *deserializer,IRowDeserializerSource &in); // NB single row not NULL
+
+//    void reorder(unsigned start,unsigned num, unsigned *neworder);
+
+    void setRow(unsigned idx, const void *row) // takes ownership of row
+    {
+        assertex(idx<numCommitted());
+        OwnedConstThorRow old = rows[idx];
+        rows[idx] = row;
+    }
+};
 
 
 

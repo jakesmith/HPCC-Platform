@@ -290,7 +290,7 @@ public:
     void putRow(const void *row)
     {
         REENTRANCY_CHECK(putrecheck)
-        size32_t sz = thorRowMemoryFootprint(row);
+        size32_t sz = thorRowMemoryFootprint(serializer, row);
         SpinBlock block(lock);
         if (eoi) {
             ReleaseThorRow(row);
@@ -368,7 +368,7 @@ public:
                     if (in->ordinality()) {
                         ret = in->dequeue();
                         if (ret) {
-                            size32_t sz = thorRowMemoryFootprint(ret);
+                            size32_t sz = thorRowMemoryFootprint(serializer, ret);
                             assertex(insz>=sz);
                             insz -= sz;
                         }
@@ -481,7 +481,7 @@ public:
             if (srbrowif)
                 sz = srbrowif->rowMemSize(row);
             else
-                sz = thorRowMemoryFootprint(row);
+                sz = thorRowMemoryFootprint(activity->queryRowSerializer(), row);
 #ifdef _DEBUG
             assertex(sz<0x1000000);
 #endif
@@ -539,7 +539,7 @@ public:
                     if (srbrowif)
                         sz = srbrowif->rowMemSize(ret);
                     else
-                        sz = thorRowMemoryFootprint(ret);
+                        sz = thorRowMemoryFootprint(activity->queryRowSerializer(), ret);
 #ifdef _TRACE_SMART_PUTGET
                     ActPrintLog(activity, "***dequeueRow(%x) %d insize=%d {%x}",(unsigned)ret,sz,insz,*(const unsigned *)ret);
 #endif

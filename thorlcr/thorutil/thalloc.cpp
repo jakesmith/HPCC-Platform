@@ -24,7 +24,7 @@
 #include "jmutex.hpp"
 #include "jcrc.hpp"
 #include "thexception.hpp"
-
+#include "thorcommon.hpp"
 #include "thalloc.hpp"
 
 
@@ -70,11 +70,14 @@ public:
 };
 
 
-size32_t thorRowMemoryFootprint(const void *ptr)
+size32_t thorRowMemoryFootprint(IOutputRowSerializer *serializer, const void *row)
 {
-    if (!ptr)
+    if (!row)
         return 0;
-    size32_t ret = 100; // JCSMORE!!
-    if (ret)
-        return ret;
+    // JCSMORE
+    if (!serializer)
+        return 100;
+    CSizingSerializer ssz;
+    serializer->serialize(ssz, (const byte *)row);
+    return ssz.size();
 }

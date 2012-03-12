@@ -35,7 +35,7 @@
 #include "jlzw.hpp"
 #include "jflz.hpp"
 #include "thbufdef.hpp"
-
+#include "thgraph.hpp"
 #include "tsorta.hpp"
 
 #include "eclhelper.hpp"
@@ -223,7 +223,6 @@ public:
             auxfiles.item(i).remove();
         }
     }
-
     IRowStream *load(
         IRowStream *in,
         IRowInterfaces *rowif,
@@ -342,12 +341,185 @@ public:
             return 1;
         return numOverflowFiles()*2+3; // bit arbitrary
     }
-
+// ==============
+    virtual IRowStream *load(IRowStream *in, bool alldisk, bool &abort)
+    {
+        throwUnexpected();
+    }
 };
 
 IThorRowSortedLoader *createThorRowSortedLoader(CThorRowArray &rows)
 {
     return new CThorRowSortedLoader(rows);
+}
+
+class CThorRowSortedLoader2 : public CSimpleInterface, implements IThorRowSortedLoader, implements roxiemem::IBufferedRowCallback
+{
+    // JCSMORE
+    enum {
+        InitialSortElements = 0,
+        //The number of rows that can be added without entering a critical section, and therefore also the number
+        //of rows that might not get freed when memory gets tight.
+        CommitStep=32
+    };
+    CActivityBase &activity;
+    IRowInterfaces *rowif;
+    CThorRowArray2 rowsToSort;
+    IArrayOf<IRowStream> instrms;
+    IArrayOf<IFile> auxfiles;
+    Owned<IOutputRowSerializer> serializer;
+    unsigned totalRows;
+    unsigned overflowCount;
+    unsigned maxCores;
+    ICompare *iCompare;
+    bool isStable;
+
+    unsigned newAuxFile() // only fixed size records currently supported
+    {
+        unsigned ret=auxfiles.ordinality();
+        StringBuffer tempname;
+        GetTempName(tempname,"srtspill",true);
+        auxfiles.append(*createIFile(tempname.str()));
+        return ret;
+    }
+    bool spillRows()
+    {
+        unsigned numRows = rowsToSort.numCommitted();
+        if (numRows == 0)
+            return false;
+
+        totalRows += rowsToSort.numCommitted();
+        rowsToSort.sort(*iCompare, isStable, maxCores);
+
+        unsigned idx = newAuxFile();
+        Owned<IExtRowWriter> writer = createRowWriter(&auxfiles.item(idx),rowif->queryRowSerializer(),rowif->queryRowAllocator(),false,false,false);
+        rowsToSort.save(writer);
+        writer->flush();
+        ++overflowCount;
+
+        rowsToSort.noteSpilled(numRows);
+//        rowsToSort.clearRows();
+        return true;
+    }
+
+public:
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+
+    CThorRowSortedLoader2(CActivityBase &_activity, IRowInterfaces *_rowif, ICompare *_iCompare, bool _isStable, unsigned _maxCores)
+        : activity(_activity), rowif(_rowif), iCompare(_iCompare), isStable(_isStable), maxCores(_maxCores),
+          rowsToSort(&activity, InitialSortElements, CommitStep)
+    {
+        totalRows = 0;
+        overflowCount = 0;
+        activity.queryJob().queryRowManager()->addRowBuffer(this);
+    }
+    ~CThorRowSortedLoader2()
+    {
+        instrms.kill();
+        ForEachItemInRev(i,auxfiles) {
+            auxfiles.item(i).remove();
+        }
+        activity.queryJob().queryRowManager()->removeRowBuffer(this);
+    }
+    virtual IRowStream *load(IRowStream *in, bool alldisk, bool &abort)
+    {
+        loop
+        {
+            const void * next = in->nextRow();
+            if (!next)
+                break;
+            if (!rowsToSort.append(next))
+            {
+                {
+                    roxiemem::RoxieOutputRowArrayLock block(rowsToSort);
+                    //Ensure any pending rows are appended
+                    rowsToSort.flush();
+                    spillRows();
+                    //Ensure new rows are written to the head of the array.  It needs to be a separate call because
+                    //spillRows() cannot shift active row pointer since it can be called from any thread
+                    rowsToSort.flush();
+                }
+                if (!rowsToSort.append(next))
+                {
+                    ReleaseThorRow(next);
+                    throw MakeStringException(ROXIEMM_MEMORY_LIMIT_EXCEEDED, "Insufficient memory to append sort row");
+                }
+            }
+        }
+        rowsToSort.flush();
+        if (0 == overflowCount && alldisk && rowsToSort.numCommitted())
+        {
+            unsigned idx = newAuxFile();
+            Owned<IExtRowWriter> writer = createRowWriter(&auxfiles.item(idx),rowif->queryRowSerializer(),rowif->queryRowAllocator(),false,false,true);
+            rowsToSort.save(writer);
+        }
+
+        ForEachItemIn(i, auxfiles)
+            instrms.append(*createSimpleRowStream(&auxfiles.item(i), rowif));
+        if (alldisk)
+            rowsToSort.kill();
+        else
+            instrms.append(*rowsToSort.createRowStream());
+        if (instrms.ordinality()==1)
+            return LINK(&instrms.item(0));
+        if (iCompare)
+        {
+            Owned<IRowLinkCounter> linkcounter = new CThorRowLinkCounter;
+            return createRowStreamMerger(instrms.ordinality(), instrms.getArray(), iCompare, false, linkcounter);
+        }
+        else
+            return createConcatRowStream(instrms.ordinality(),instrms.getArray());
+    }
+    bool hasOverflowed()
+    {
+        return 0 != overflowCount;
+    }
+    rowcount_t numRows()
+    {
+        return totalRows;
+    }
+    unsigned numOverflowFiles()
+    {
+        return auxfiles.ordinality();
+    }
+    unsigned numOverflows()
+    {
+        return overflowCount;
+    }
+    unsigned overflowScale()
+    {
+        // 1 if no spill
+        if (!overflowCount)
+            return 1;
+        return numOverflowFiles()*2+3; // bit arbitrary
+    }
+// IBufferedRowCallback
+    virtual unsigned getPriority() const
+    {
+        //Spill global sorts before grouped sorts
+//        if (rowMeta->isGrouped())
+//            return 20;
+        return 10;
+    }
+    virtual bool freeBufferedRows(bool critical)
+    {
+        roxiemem::RoxieOutputRowArrayLock block(rowsToSort);
+        return spillRows();
+    }
+// =====================
+    virtual IRowStream *load(IRowStream *in, IRowInterfaces *rowif, ICompare *icompare, bool alldisk, bool &abort, bool &isempty, const char *tracename, bool isstable, unsigned maxcores)
+    {
+        throwUnexpected();
+    }
+    virtual offset_t totalSize()
+    {
+        throwUnexpected();
+    }
+};
+
+IThorRowSortedLoader *createThorRowSortedLoader2(CActivityBase &activity, IRowInterfaces *rowif, ICompare *iCompare, bool isStable, unsigned maxCores)
+{
+    return new CThorRowSortedLoader2(activity, rowif, iCompare, isStable, maxCores);
 }
 
 

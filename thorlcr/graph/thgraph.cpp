@@ -2341,14 +2341,10 @@ void CJobBase::init()
     pausing = false;
     resumed = false;
 
-    unsigned gmemSize = getOptInt("@globalMemorySize"); // in MB
-    // NB: gmemSize is permitted to be unset, meaning unbound
-    thorAllocator.setown(createThorAllocator(gmemSize));
+    thorAllocator.setown(createThorAllocator(0));
 
-    unsigned defaultMemMB = gmemSize;
-    if (!defaultMemMB)
-        defaultMemMB = 2048; // JCSMORE - should really be based on physical ram and take into account slavesPerNode.
-    defaultMemMB = defaultMemMB*3/4;
+    unsigned gmemSize = globals->getPropInt("@globalMemorySize"); // in MB
+    unsigned defaultMemMB = gmemSize*3/4;
     unsigned largeMemSize = getOptInt("@largeMemSize", defaultMemMB);
     if (gmemSize && largeMemSize >= gmemSize)
         throw MakeStringException(0, "largeMemSize(%d) can not exceed globalMemorySize(%d)", largeMemSize, gmemSize);
@@ -2578,6 +2574,11 @@ void CJobBase::runSubgraph(CGraphBase &graph, size32_t parentExtractSz, const by
 IEngineRowAllocator *CJobBase::getRowAllocator(IOutputMetaData * meta, unsigned activityId) const
 {
     return thorAllocator->getRowAllocator(meta, activityId);
+}
+
+roxiemem::IRowManager *CJobBase::queryRowManager() const
+{
+    return thorAllocator->queryRowManager();
 }
 
 static IThorResource *iThorResource = NULL;

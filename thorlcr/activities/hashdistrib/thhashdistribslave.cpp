@@ -217,7 +217,7 @@ public:
         const PtrElem *e = (const PtrElem *)r;
         size32_t ret = e->size(metasize);
         if (e->queryRow()) 
-            ret += thorRowMemoryFootprint(e->queryRow());
+            ret += thorRowMemoryFootprint(serializer, e->queryRow());
         return ret;
     }
 
