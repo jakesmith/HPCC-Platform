@@ -25,7 +25,6 @@
 #include "slave.ipp"
 
 
-activityslaves_decl CActivityBase *createGroupSortSlave(CGraphElementBase *container);
 activityslaves_decl CActivityBase *createLocalSortSlave(CGraphElementBase *container);
 activityslaves_decl CActivityBase *createSortedSlave(CGraphElementBase *container);
 ;

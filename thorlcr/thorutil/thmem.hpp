@@ -481,6 +481,7 @@ public:
         OwnedConstThorRow old = rows[idx];
         rows[idx] = row;
     }
+    unsigned ordinality() { return numCommitted(); }} // JCSMORE
 };
 
 

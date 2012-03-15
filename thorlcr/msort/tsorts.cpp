@@ -218,7 +218,7 @@ private:
     Semaphore       closedownsem;
     rowcount_t      totalrows;
     mptag_t         mpTagRPC;
-    CThorRowArray rowArray;
+    CThorRowArray2  rowArray;
     Linked<IRowInterfaces> auxrowif;
     bool stopping;
     Owned<IException> closeexc; 
@@ -357,7 +357,7 @@ public:
         ICompare* icmp=queryCmpFn(cmpfn);
         while (l<r) {
             unsigned m = (l+r)/2;
-            const byte *p = rowArray.item(m);
+            const byte *p = rowArray.get(m);
             int cmp = icmp->docompare(row, p);
             if (cmp < 0)
                 r = m;
@@ -365,11 +365,11 @@ public:
                 l = m+1;
             else {
                 if (firstdup) {
-                    while ((m>0)&&(icmp->docompare(row,rowArray.item(m-1))==0))
+                    while ((m>0)&&(icmp->docompare(row,rowArray.get(m-1))==0))
                         m--;
                 }
                 else {
-                    while ((m+1<n)&&(icmp->docompare(row,rowArray.item(m+1))==0))
+                    while ((m+1<n)&&(icmp->docompare(row,rowArray.get(m+1))==0))
                         m++;
                 }
                 return m;
@@ -445,12 +445,12 @@ public:
         VarElemArray ret(rowif,keyserializer);
         avrecsize = 0;
         if (rowArray.ordinality()>0) {
-            const byte *kp=rowArray.item(0);
+            const byte *kp=rowArray.get(0);
 #ifdef _TRACE
             TraceKey("Min =",kp);
 #endif
             ret.appendLink(kp);
-            kp=rowArray.item(rowArray.ordinality()-1);
+            kp=rowArray.get(rowArray.ordinality()-1);
 #ifdef _TRACE
             TraceKey("Max =",kp);
 #endif
@@ -487,7 +487,7 @@ public:
                 p2 = rowArray.ordinality()-1;
             if (p1<=p2) {
                 unsigned pm=(p1+p2+1)/2;
-                const byte *kp=rowArray.item(pm);
+                const byte *kp=rowArray.get(pm);
                 if ((icompare->docompare(lkey,kp)<=0)&&
                         (icompare->docompare(hkey,kp)>=0)) { // paranoia
                     MemoryBuffer mb;
@@ -529,7 +529,7 @@ public:
                     p2 = rowArray.ordinality()-1;
                 if (p1<=p2) { 
                     unsigned pm=(p1+p2+1)/2;
-                    const byte *kp = rowArray.item(pm);
+                    const byte *kp = rowArray.get(pm);
                     if ((icompare->docompare(low.item(i),kp)<=0)&&
                         (icompare->docompare(high.item(i),kp)>=0)) { // paranoia
                         mid.appendLink(kp);
@@ -720,12 +720,11 @@ public:
         icollate = _icollate?_icollate:_icompare;
         icollateupper = _icollateupper?_icollateupper:icollate;
 
-        Linked<IThorRowSortedLoader> sortedloader;
-        sortedloader.setown(createThorRowSortedLoader(rowArray));
+        Linked<IThorRowSortedLoader2> sortedloader = createThorRowSortedLoader2(*this, rowArray, iCompare, false, false, isstable, activity->queryMaxCores());
         Owned<IRowStream> overflowstream;
         try {
             bool isempty;
-            overflowstream.setown(sortedloader->load(in,rowif,nosort?NULL:icompare,false,abort,isempty,"SORT",isstable,activity->queryMaxCores()));
+            overflowstream.setown(sortedloader->load(in, rowif, sl_alldiskifoverflow, abort);
             ActPrintLog(activity, "Local run sort(s) done");
         }
         catch (IException *e) {
@@ -739,7 +738,8 @@ public:
             bool overflowed = sortedloader->hasOverflowed();
             unsigned numoverflows = sortedloader->numOverflows();
             ActPrintLog(activity, "Sort done, rows sorted = %"RCPF"d, bytes sorted = %"I64F"d overflowed to disk %d time%c",grandtotal,grandtotalsize,numoverflows,(numoverflows==1)?' ':'s');
-            partitionrow.set(_partitionrow);
+            if (_partitionrow)
+                partitionrow.set(_partitionrow);
 
             if (overflowed) { // need to write to file
                 assertex(!overflowfile.get());
@@ -757,7 +757,10 @@ public:
                 PROGLOG("Local Overflow Merge done: overflow file %s size %"I64F"d",overflowfile->queryFilename(),overflowfile->size());
             }
             else
+            {
                 overflowinterval = 1;
+
+            }
         }
         ActPrintLog(activity, "Gather finished %s",abort?"ABORTED":"");
         gatherdone = true;
@@ -842,7 +845,7 @@ public:
                 count_t pos = ((i*2+1)*(count_t)numrows)/(2*(count_t)numsplits);
                 if (pos>=numrows) 
                     pos = numrows-1;
-                const byte *kp=rowArray.item((unsigned)pos);
+                const byte *kp=rowArray.get((unsigned)pos);
                 ret.appendLink(kp);
             }
         }
@@ -1124,6 +1127,10 @@ public:
 #ifdef  _FULL_TRACE
             PROGLOG("MiniSort got %d rows %"I64F"d bytes",rowArray.ordinality(),(__int64)(rowArray.totalSize()));
 #endif
+            // JCSMORE - the blocks send from other nodes were already sorted..
+            // appended to local sorted chunk, and resorting whole lot..
+            // It's sorting on remote side, before it knows how big..
+            // But shouldn't it merge sort here instead?
             rowArray.sort(*icompare,isstable,activity->queryMaxCores());
             UnsignedArray points; 
             rowArray.partition(*icompare,numnodes,points);

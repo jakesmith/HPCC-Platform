@@ -87,16 +87,23 @@ interface IThorRowSortedLoader: extends IInterface
         bool isstable,
         unsigned maxcores
     )=0;
-    virtual IRowStream *load(
-        IRowStream *in,
-        bool alldisk,
-        bool &abort) = 0;
     virtual bool hasOverflowed()=0;
     virtual rowcount_t numRows()=0;
     virtual offset_t totalSize()=0;
     virtual unsigned numOverflowFiles()=0;
     virtual unsigned numOverflows()=0;
     virtual unsigned overflowScale()=0;
+};
+
+enum SortedLoaderType { sl_mixed, sl_alldisk, sl_alldiskifoverflow };
+interface IThorRowSortedLoader2: extends IInterface
+{
+    virtual IRowStream *load(IRowStream *in, IRowInterfaces *rowIf, SortedLoaderType diskMix, bool &abort) = 0;
+    virtual bool hasOverflowed() const = 0;
+    virtual rowcount_t numRows() const = 0;
+    virtual unsigned numOverflowFiles() const = 0;
+    virtual unsigned numOverflows() const = 0;
+    virtual unsigned overflowScale() const = 0;
 };
 
 class CThorKeyArray
@@ -156,7 +163,8 @@ public:
 extern void traceKey(IOutputRowSerializer *serializer,const char *prefix,const void *key);
 
 IThorRowSortedLoader *createThorRowSortedLoader(CThorRowArray &rows); // NB only contains all rows if hasOverflowed false
-IThorRowSortedLoader *createThorRowSortedLoader2(CActivityBase &activity, IRowInterfaces *rowif, ICompare *iCompare, bool isStable, unsigned maxCores);
+IThorRowSortedLoader2 *createThorRowSortedLoader2(CActivityBase &activity, ICompare *iCompare, bool grouped, bool isStable, unsigned maxCores);
+IThorRowSortedLoader2 *createThorRowSortedLoader2(CActivityBase &activity, CThorRowArray2 &rows, ICompare *iCompare, bool grouped, bool isStable, unsigned maxCores);
 
 
 #endif
