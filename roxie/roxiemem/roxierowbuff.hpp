@@ -67,9 +67,9 @@ public:
     void flush();
 
     //The following can be accessed from the reader without any need to lock
+    const void * query(rowidx_t i) const;
     const void * get(rowidx_t i) const;
     const void * getClear(rowidx_t i);
-    const void * link(rowidx_t i) const;
 
     //A thread calling the following functions must own the lock, or guarantee no other thread will access
     const void * * getBlock(rowidx_t readRows);
@@ -77,7 +77,6 @@ public:
     void clearRows();
     void kill();
     void transferRows(rowidx_t & outNumRows, const void * * & outRows);
-    void removeBlock(rowidx_t start, rowidx_t n);
 
     //The block returned is only valid until the critical section is released
 
@@ -129,7 +128,7 @@ class roxiemem_decl RoxieSimpleInputRowArray
 {
 public:
     RoxieSimpleInputRowArray() { rows = NULL; firstRow = 0; numRows = 0; }
-    RoxieSimpleInputRowArray(const void * * _rows, size32_t _numRows);
+    RoxieSimpleInputRowArray(const void * * _rows, size32_t _numRows) rows(_rows), numRows(_numRows) { }
     inline ~RoxieSimpleInputRowArray() { kill(); }
 
     //The following are threadsafe, if only think called.
@@ -169,11 +168,13 @@ public:
 
     void kill();
     void transferFrom(RoxieOutputRowArray & donor);
+    rowidx_t ordinality() { return numRows-firstRow; }
 
 protected:
     const void * * rows;
     rowidx_t firstRow; // Only rows firstRow..numRows are considered initialized.
     rowidx_t numRows;
+friend class RoxieSimpleInputRowArray;
 };
 
 

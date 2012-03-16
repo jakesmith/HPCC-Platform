@@ -152,29 +152,6 @@ const void * * RoxieOutputRowArray::getBlock(rowidx_t readRows)
     return rows + firstRow;
 }
 
-void RoxieOutputRowArray::removeBlock(rowidx_t start, rowidx_t n)
-{
-    unsigned o = numCommitted();
-    if (start>=o)
-        return;
-    if (n==0)
-        return;
-    if (start+n>o)
-        n = o-start; // JCSMORE - when is n past end??
-    if (n==o) {
-        clearRows();
-        return;
-    }
-    const void **from = rows+start;
-    for (unsigned j=0; j<n; j++)
-    {
-        OwnedConstRoxieRow row = from[j];
-    }
-    memmove(from, rows+n, n * sizeof(void *));
-    numRows -= n;
-    commitRows -= n;
-}
-
 
 void RoxieOutputRowArray::noteSpilled(rowidx_t spilledRows)
 {

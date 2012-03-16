@@ -63,7 +63,7 @@ public:
         input = inputs.item(0);
         startInput(input);
         eoi = false;
-        out.setown(iLoader->load(input, queryRowInterfaces(input), abortSoon));
+        out.setown(iLoader->load(input, queryRowInterfaces(input), sl_mixed, abortSoon));
         if (0 == iLoader->numRows())
             eoi = true;
     }
@@ -84,7 +84,7 @@ public:
         {
             if (!container.queryGrouped())
                 return NULL;
-            out.setown(iLoader->load(input, queryRowInterfaces(input), abortSoon));
+            out.setown(iLoader->load(input, queryRowInterfaces(input), sl_mixed, abortSoon));
             if (0 == iLoader->numRows())
             {
                 eoi = true;

@@ -62,23 +62,29 @@ inline void traceWait(const char *name,Semaphore &sem,unsigned interval=60*1000)
 #define MPBLOCKTIMEOUT (1000*60*15)             
 
 
-
-class Cwriteintercept : public CSimpleInterface, public IRowWriter
+class CWriteIntercept : public CSimpleInterface, implements roxiemem::IBufferedRowCallback
 {
     // sampling adapter
-private:
-    Linked<IExtRowWriter> out;
-    Linked<IFileIOStream> outidx;
+
+    CActivityBase &activity;
+    CriticalSection crit;
+    IRowInterfaces *rowIf;
+    size32_t overflowidxfixed;
+    Owned<IFile> dataFile, idxFile;
+    Owned<IFileIO> dataFileIO, idxFileIO;
+    Owned<ISerialStream> dataFileStrm;
+    CThorStreamDeserializerSource dataFileDeserialzierSource;
     unsigned interval;
     unsigned idx;
-    CThorRowArray &rowArray;
-    bool flushdone;
-    bool overflowed;
-    offset_t overflowsize;
+    DynamicRoxieOutputRowArray sampleRows;
+    Linked<IFileIOStream> outidx;
     Owned<IFile> &outidxfile;
+    offset_t overflowsize;
     size32_t &fixedsize;
     offset_t lastofs;
 
+    // JCSMORE - writeidxofs is a NOP for fixed size records by the looks of it (at least if serializer writes fixed sizes)
+    // bit weird if always true, would look a lot clearer if explictly tested for var length case.
     void writeidxofs(offset_t o)
     {
         // lazy index write
@@ -116,69 +122,152 @@ private:
             fixedsize = (size32_t)(o-lastofs);
         lastofs = o;
     }
+    size32_t _readOverflowPos(rowmap_t pos, unsigned n, offset_t *ofs, bool closeIO)
+    {
+        if (overflowidxfixed)
+        {
+            offset_t o = (offset_t)overflowidxfixed*(offset_t)pos;
+            for(unsigned i=0;i<n;i++)
+            {
+                *(ofs++) = o;
+                o += overflowidxfixed;
+            }
+            return n*sizeof(offset_t);
+        }
+        if (!idxFileIO.get())
+        {
+            assertex(idxFile);
+            idxFileIO.setown(idxFile->open(IFOread));
+        }
+        size32_t rd = idxFileIO->read((offset_t)pos*(offset_t)sizeof(offset_t),sizeof(*ofs)*n,ofs);
+        if (closeIO)
+            idxFileIO.clear();
+        return rd;
+    }
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-    Cwriteintercept(IExtRowWriter *_out, Owned<IFile> &_outidxfile, size32_t &_fixedsize, unsigned _interval, CThorRowArray &_ra)
-        : out(_out), outidxfile(_outidxfile), fixedsize(_fixedsize), rowArray(_ra)
+
+    CWriteIntercept(CActivityBase &_activity, IRowInterfaces *_rowIf, unsigned _interval) : activity(_activity), rowIf(_rowIf), interval(_interval)
     {
         interval = _interval;
         idx = 0;
-        flushdone = false;
-        overflowed = false;
         overflowsize = 0;
         fixedsize = 0;      
         lastofs = 0;
     }
-    ~Cwriteintercept() 
+    ~CWriteIntercept()
     {
-        flush();
-        if (overflowed)
-            PROGLOG("Overflowed by %"I64F"d",overflowsize);
+        closeFiles();
+        if (dataFile)
+        {
+            dataFile->remove();
+            dataFile.clear();
+        }
+        if (idxFile)
+        {
+            idxFile->remove();
+            idxFile.clear();
+        }
     }
-
-    void putRow(const void *_row)
+    offset_t write(IRowStream *input)
     {
-        offset_t start = out->getPosition();
-        OwnedConstThorRow row = _row;
-        out->putRow(row.getLink());
-        idx++;
-        if (idx==interval) {
-            idx = 0;
-            if (overflowed||rowArray.isFull()) {  
-                overflowsize = out->getPosition();
-                if (!overflowed) {
-                    PROGLOG("Sample buffer full");
-                    overflowed = true;
+        StringBuffer tempname;
+        GetTempName(tempname,"srtmrg",false);
+        dataFile.setown(createIFile(tempname.str()));
+        Owned<IExtRowWriter> output = createRowWriter(dataFile,rowif->queryRowSerializer(),rowif->queryRowAllocator(),false,false,false);
+
+        bool overflowed = false;
+        PROGLOG("Local Overflow Merge start");
+        unsigned ret=0;
+        loop
+        {
+            const void *row = input->nextRow();
+            if (!row)
+                break;
+            ret ++;
+
+            offset_t start = output->getPosition();
+            OwnedConstThorRow row = _row;
+            output->putRow(row.getLink());
+            idx++;
+            if (idx==interval)
+            {
+                idx = 0;
+                // JCSMORE used to check if 'sampleRows.isFull()' here, but only to warn
+                if (!sampleRows.append(row.getClear()))
+                {
+                    overflowsize = output->getPosition();
+                    if (!overflowed)
+                    {
+                        PROGLOG("Sample buffer full");
+                        overflowed = true;
+                    }
                 }
             }
-            else 
-                rowArray.append(row.getClear());
+            writeidxofs(start);
         }
-        writeidxofs(start);
+        output->flush();
+        offset_t end = output->getPosition();
+        writeidxofs(end);
+        if (outidx)
+            outidx->flush();
+        output.clear();
+        if (overflowed)
+            PROGLOG("Overflowed by %"I64F"d", overflowsize);
+        PROGLOG("Local Overflow Merge done: overflow file %s size %"I64F"d", dataFile->queryFilename(), dataFile->size());
+        return end;
     }
-
-    virtual void flush()
+    IRowStream *getStream(offset_t startOffset, unsigned __int64 max)
     {
-        if (!flushdone) {
-            out->flush();
-            offset_t end = out->getPosition();
-            writeidxofs(end);
-            if (outidx)
-                outidx->flush();
-            flushdone = true;
+        return createRowStream(dataFile, rowIf, (offset_t)startOffset, (offset_t)-1, max, false, false);
+    }
+    void closeFiles()
+    {
+        dataFileStrm.clear();
+        dataFileIO.clear();
+        idxFileIO.clear();
+    }
+    size32_t readOverflowPos(rowmap_t pos, unsigned n, offset_t *ofs, bool closeIO)
+    {
+        CriticalBlock block(crit);
+        return _readOverflowPos(pos, n, ofs, closeIO);
+    }
+    const void *getRow(rowmap_t pos)
+    {
+        CriticalBlock block(crit);
+        offset_t ofs[2]; // JCSMORE doesn't really need 2, only to verify read right amount below
+        size32_t rd = _readOverflowPos(pos-1, 2, ofs, false);
+        assertex(rd==sizeof(ofs));
+        size32_t idxSz = (size32_t)(ofs[1]-ofs[0]);
+        if (!dataFileIO)
+        {
+            dataFileIO.setown(dataFile->open(IFOread));
+            dataFileStrm = createFileSerialStream(dataFileIO, 0);
+            dataFileDeserialzierSource.setStream(dataFileStrm);
         }
+        strm->reset(ofs[0], (offset_t)-1);
+        RtlDynamicRowBuilder rowBuilder(rowIf.queryRowAllocator());
+        size32_t sz = deserializer->deserialize(rowBuilder, dataFileDeserialzierSource);
+        assertex(sz == idxSz);
+        return rowBuilder.finalizeRowClear(sz);
+    }
+    void transferRows(CThorRowArray2 &rows)
+    {
+        rows.transferFrom(sampleRows);
     }
 
-    virtual offset_t getPosition() 
-    { 
-        return out->getPosition(); 
+// IBufferedRowCallback
+    virtual unsigned getPriority() const
+    {
+        return 0; // JCSMORE
     }
-
-
-
+    virtual bool freeBufferedRows(bool critical)
+    {
+        // JCSMORE - I don't think there's much you can do here, sample should fit in memory
+        return false;
+    }
 };
-
 
 
 class CSortSlaveBase :  implements ISortSlaveMP
@@ -193,11 +282,9 @@ private:
     rowmap_t *      overflowmap;
     bool            gatherdone;
     IDiskUsage *    iDiskUsage;
+    Owned<CWriteIntercept> intercept;
     Owned<IMergeTransferServer> transferserver;
-    Owned<IFile>    overflowfile;
-    Owned<IFile>    overflowidxfile;
     size32_t        overflowidxfixed;
-    CriticalSection overflowidxsect;
     ICompare*       icompare;
     bool            nosort;
     bool            isstable;
@@ -328,14 +415,7 @@ public:
 
     void clearOverflow()
     {
-        if (overflowfile) {
-            overflowfile->remove();
-            overflowfile.clear();
-        }
-        if (overflowidxfile) {
-            overflowidxfile->remove();
-            overflowidxfile.clear();
-        }
+        intercept.clear();
     }
 
     ICompare *queryCmpFn(byte cmpfn)
@@ -564,24 +644,6 @@ public:
         midkeybuf = NULL;
     }
 
-    size32_t readOverflowPos(Owned<IFileIO> &oioi, rowmap_t pos, unsigned n, offset_t *ofs)
-    {
-        if (overflowidxfixed) {
-            offset_t o = (offset_t)overflowidxfixed*(offset_t)pos;
-            for(unsigned i=0;i<n;i++) {
-                *(ofs++) = o;
-                o += overflowidxfixed;
-            }
-            return n*sizeof(offset_t);
-        }
-        if (!oioi.get()) {
-            assertex(overflowidxfile);
-            oioi.setown(overflowidxfile->open(IFOread));
-        }
-        return oioi->read((offset_t)pos*(offset_t)sizeof(offset_t),sizeof(*ofs)*n,ofs);
-    }
-        
-
     void AdjustOverflow(rowmap_t &apos,const byte *key, byte cmpfn)
     {
 #ifdef TRACE_PARTITION_OVERFLOW
@@ -591,21 +653,10 @@ public:
         rowmap_t pos = (rowmap_t)(apos+1)*(rowmap_t)overflowinterval;
         if (pos>grandtotal)
             pos = (rowmap_t)grandtotal;
-        assertex(overflowfile);
-        Owned<IFileIO> oio = overflowfile->open(IFOread);
-        Owned<IFileIO> oioi;
+        assertex(intercept);
         MemoryBuffer bufma;
         while (pos>0) {
-            CriticalBlock block(overflowidxsect);
-            offset_t ofs[2];                
-            size32_t rd = readOverflowPos(oioi,pos-1,2,ofs);
-            assertex(rd==sizeof(ofs));
-            size32_t rs = (size32_t)(ofs[1]-ofs[0]);
-            byte *buf = (byte *)bufma.clear().reserve(rs);
-            rd = oio->read(ofs[0],rs,buf);
-            assertex(rd==rs);
-            OwnedConstThorRow row;
-            row.deserialize(rowif,rs,buf);
+            OwnedConstThorRow row = intercept->getRow(pos-1);
 #ifdef TRACE_PARTITION_OVERFLOW
             ActPrintLog(activity, "Compare to (%"RMF"d)",pos-1);
             TraceKey(" ",(const byte *)row.get());
@@ -614,6 +665,7 @@ public:
                 break;
             pos--;
         }
+        intercept->closeFiles();
         apos = pos;
 #ifdef TRACE_PARTITION_OVERFLOW
         ActPrintLog(activity, "AdjustOverflow: out (%"RMF"d)",apos);
@@ -624,7 +676,7 @@ public:
     void OverflowAdjustMapStart(unsigned mapsize, rowmap_t * map,
                                size32_t keybufsize, const byte * keybuf, byte cmpfn)
     {
-        assertex(overflowfile);
+        assertex(intercept);
         overflowmap = (rowmap_t *)malloc(mapsize*sizeof(rowmap_t));
         memcpy(overflowmap,map,mapsize*sizeof(rowmap_t));
         unsigned i;
@@ -720,7 +772,7 @@ public:
         icollate = _icollate?_icollate:_icompare;
         icollateupper = _icollateupper?_icollateupper:icollate;
 
-        Linked<IThorRowSortedLoader2> sortedloader = createThorRowSortedLoader2(*this, rowArray, iCompare, false, false, isstable, activity->queryMaxCores());
+        Linked<IThorRowSortedLoader2> sortedloader = createThorRowSortedLoader2(*this, iCompare, false, false, isstable, activity->queryMaxCores());
         Owned<IRowStream> overflowstream;
         try {
             bool isempty;
@@ -734,39 +786,30 @@ public:
         if (!abort) {
             transferblocksize = TRANSFERBLOCKSIZE;
             grandtotal = sortedloader->numRows();
-            grandtotalsize = sortedloader->totalSize();
-            bool overflowed = sortedloader->hasOverflowed();
             unsigned numoverflows = sortedloader->numOverflows();
             ActPrintLog(activity, "Sort done, rows sorted = %"RCPF"d, bytes sorted = %"I64F"d overflowed to disk %d time%c",grandtotal,grandtotalsize,numoverflows,(numoverflows==1)?' ':'s');
             if (_partitionrow)
                 partitionrow.set(_partitionrow);
 
-            if (overflowed) { // need to write to file
-                assertex(!overflowfile.get());
-                assertex(!overflowidxfile.get());
-                StringBuffer tempname;
-                GetTempName(tempname,"srtmrg",false);
-                overflowfile.setown(createIFile(tempname.str()));
-                Owned<IExtRowWriter> writer = createRowWriter(overflowfile,rowif->queryRowSerializer(),rowif->queryRowAllocator(),false,false,false);
+            if (sortedloader->hasOverflowed()) { // need to write to file
+                assertex(!intercept);
                 overflowinterval=sortedloader->overflowScale();
-                Owned<Cwriteintercept> streamout = new Cwriteintercept(writer,overflowidxfile,overflowidxfixed,overflowinterval,rowArray);
-                PROGLOG("Local Overflow Merge start");
-                copyRowStream(overflowstream,streamout);
-                streamout->flush();
-                streamout.clear();
-                PROGLOG("Local Overflow Merge done: overflow file %s size %"I64F"d",overflowfile->queryFilename(),overflowfile->size());
+                intercept.setown(new CWriteIntercept(this, rowif, overflowinterval));
+                grandtotalsize = intercept->write(overflowstream);
+                intercept->transferRows(rowArray); // get sample rows
             }
             else
             {
                 overflowinterval = 1;
-
+                sortedloader->transferRows(rowArray);
+                grandtotalsize = rowArray.serializedSize(); // expensive, all in mem, need to know size
             }
         }
         ActPrintLog(activity, "Gather finished %s",abort?"ABORTED":"");
         gatherdone = true;
     }
 
-    virtual void GetGatherInfo(rowmap_t &numlocal, memsize_t &totalsize, unsigned &_overflowscale,bool haskeyserializer)
+    virtual void GetGatherInfo(rowmap_t &numlocal, memsize_t &totalsize, unsigned &_overflowscale, bool haskeyserializer)
     {
         if (!gatherdone)
             ERRLOG("GetGatherInfo:***Error called before gather complete");
@@ -777,9 +820,9 @@ public:
         else if (haskeyserializer&&!keyserializer) {
             WARNLOG("Mismatched key serializer (master has, slave doesn't");
         }
-        numlocal = rowArray.ordinality();
+        numlocal = rowArray.ordinality(); // JCSMORE - this is sample total, why not return actuall spill total?
         _overflowscale = overflowinterval;
-        totalsize = rowArray.totalSize();
+        totalsize = grandtotalsize; // used by master, if nothing overflowed to see if can MiniSort
     }
 
     IRowStream * startMerge(rowcount_t &_totalrows)
@@ -896,8 +939,8 @@ public:
     void MultiMergeBetween(unsigned mapsize, rowmap_t * map, rowmap_t * mapupper, unsigned num, SocketEndpoint * endpoints)
     {
         assertex(transferserver.get()!=NULL);
-        if (overflowfile)
-            rowArray.reset(true);   // don't need samples any more
+        if (intercept)
+            rowArray.kill();   // don't need samples any more
         transferserver->merge(mapsize,map,mapupper,num,endpoints,partno);
     }
 
@@ -936,17 +979,15 @@ public:
             throw closeexc.getClear();
     }
 
-    IRowStream *createMergeInputStream(rowmap_t sstart,rowcount_t snum)
+    IRowStream *createMergeInputStream(rowmap_t sstart, rowcount_t snum)
     {
         unsigned _snum = (unsigned)snum;    // only support 2^32 rows locally
         assertex(snum==_snum);
-        if (overflowfile) {
-            CriticalBlock block(overflowidxsect);
-            Owned<IFileIO> oioi;
+        if (intercept) {
             offset_t startofs;  
-            size32_t rd = readOverflowPos(oioi,sstart,1,&startofs);
+            size32_t rd = intercept->readOverflowPos(sstart, 1, &startofs, true);
             assertex(rd==sizeof(startofs));
-            return createRowStream(overflowfile,rowif,(offset_t)startofs,(offset_t)-1,snum,false,false);
+            return intercept->createRowStream(startofs, snum);
         }
         return rowArray.createRowStream((unsigned)sstart, _snum, false); // must be false as rows may overlap (between join)
     }
@@ -1097,7 +1138,7 @@ public:
                     break;
                 idx += done;
             }
-            rowArray.clear();
+            rowArray.kill();
             appendFromPrimaryNode();
         }
         else {
@@ -1127,8 +1168,8 @@ public:
 #ifdef  _FULL_TRACE
             PROGLOG("MiniSort got %d rows %"I64F"d bytes",rowArray.ordinality(),(__int64)(rowArray.totalSize()));
 #endif
-            // JCSMORE - the blocks send from other nodes were already sorted..
-            // appended to local sorted chunk, and resorting whole lot..
+            // JCSMORE - the blocks sent from other nodes were already sorted..
+            // appended to local sorted chunk, and this is resorting the whole lot..
             // It's sorting on remote side, before it knows how big..
             // But shouldn't it merge sort here instead?
             rowArray.sort(*icompare,isstable,activity->queryMaxCores());
@@ -1171,7 +1212,6 @@ public:
         merger.clear();
         clearOverflow();
         PrintLog("StartMiniSort exit");
-
     }
 };
 
@@ -1224,8 +1264,6 @@ public:
 
 
 };
-
-
 
 
 

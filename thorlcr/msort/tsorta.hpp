@@ -96,6 +96,7 @@ interface IThorRowSortedLoader: extends IInterface
 };
 
 enum SortedLoaderType { sl_mixed, sl_alldisk, sl_alldiskifoverflow };
+class RoxieSimpleInputRowArray;
 interface IThorRowSortedLoader2: extends IInterface
 {
     virtual IRowStream *load(IRowStream *in, IRowInterfaces *rowIf, SortedLoaderType diskMix, bool &abort) = 0;
@@ -104,6 +105,7 @@ interface IThorRowSortedLoader2: extends IInterface
     virtual unsigned numOverflowFiles() const = 0;
     virtual unsigned numOverflows() const = 0;
     virtual unsigned overflowScale() const = 0;
+    virtual void transferRows(RoxieSimpleInputRowArray &dst) const = 0;
 };
 
 class CThorKeyArray

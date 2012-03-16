@@ -35,6 +35,7 @@
 #include "jlzw.hpp"
 #include "jflz.hpp"
 #include "thbufdef.hpp"
+#include "roxierowbuff.hpp"
 #include "thgraph.hpp"
 #include "tsorta.hpp"
 
@@ -358,7 +359,7 @@ class CThorRowSortedLoader2 : public CSimpleInterface, implements IThorRowSorted
         CommitStep=32
     };
     CActivityBase &activity;
-    CThorRowArray &rows;
+    CThorExpandingRowArray rowsToSort;
     IArrayOf<IRowStream> instrms;
     IArrayOf<IFile> auxfiles;
     Owned<IOutputRowSerializer> serializer;
@@ -368,12 +369,11 @@ class CThorRowSortedLoader2 : public CSimpleInterface, implements IThorRowSorted
     ICompare *iCompare;
     bool isStable, grouped, allDisk, rowArrayOwned;
     IRowInterfaces *rowIf;
-    sortedLoaderType diskMemMix;
+    SortedLoaderType diskMemMix;
 
     void reset()
     {
-        if (rowArrayOwned)
-            rows.kill();
+        rowsToSort.kill();
         totalRows = overflowCount = 0;
         instrms.kill();
         ForEachItemInRev(i,auxfiles) {
@@ -390,47 +390,38 @@ class CThorRowSortedLoader2 : public CSimpleInterface, implements IThorRowSorted
     }
     bool spillRows()
     {
-        unsigned numRows = rows.numCommitted();
+        rowidx_t numRows = rowsToSort.numCommitted();
         if (numRows == 0)
             return false;
 
-        totalRows += rows.numCommitted();
-        rows.sort(*iCompare, isStable, maxCores);
+        totalRows += numRows;
+
+        // JCSMORE->GH is it really okay for qsort to manipulate ptrs in here?
+        CThorRowFixedSizeArray sortedRows;
+        rowsToSort.sort(*iCompare, isStable, maxCores, sortedRows);
 
         unsigned idx = newAuxFile();
         Owned<IExtRowWriter> writer = createRowWriter(&auxfiles.item(idx),rowIf->queryRowSerializer(),rowIf->queryRowAllocator(),false,false,false);
-        rows.save(writer);
+        sortedRows.save(writer);
         writer->flush();
         ++overflowCount;
 
-        rows.noteSpilled(numRows);
+        sortedRows.noteSpilled(numRows);
         return true;
     }
 
-    void init()
+public:
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+
+    CThorRowSortedLoader2(CActivityBase &_activity, ICompare *_iCompare, bool _grouped, bool _isStable, unsigned _maxCores)
+        : activity(_activity), iCompare(_iCompare), grouped(_grouped), isStable(_isStable), maxCores(_maxCores),
+          rowsToSort(InitialSortElements, CommitStep)
     {
         totalRows = 0;
         overflowCount = 0;
         rowIf = NULL;
         diskMemMix = sl_mixed;
         activity.queryJob().queryRowManager()->addRowBuffer(this);
-    }
-public:
-    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-
-    CThorRowSortedLoader2(CActivityBase &_activity, ICompare *_iCompare, bool _grouped, bool _isStable, unsigned _maxCores)
-        : activity(_activity), iCompare(_iCompare), grouped(_grouped), isStable(_isStable), maxCores(_maxCores),
-          rows(&activity, InitialSortElements, CommitStep)
-    {
-        init();
-        rowArrayOwned = true;
-    }
-    CThorRowSortedLoader2(CActivityBase &_activity, CThorRowArray2 &_rows, ICompare *_iCompare, bool _grouped, bool _isStable, unsigned _maxCores)
-        : activity(_activity), rows(_rows), iCompare(_iCompare), grouped(_grouped),isStable(_isStable), maxCores(_maxCores),
-          rows(&activity, InitialSortElements, CommitStep)
-    {
-        init();
-        rowArrayOwned = false;
     }
     ~CThorRowSortedLoader2()
     {
@@ -454,40 +445,42 @@ public:
             }
             if (!next)
                 break;
-            if (!rows.append(next))
+            if (!rowsToSort.append(next))
             {
                 {
-                    roxiemem::RoxieOutputRowArrayLock block(rows);
+                    roxiemem::RoxieOutputRowArrayLock block(rowsToSort);
                     //Ensure any pending rows are appended
-                    rows.flush();
+                    rowsToSort.flush();
                     spillRows();
                     //Ensure new rows are written to the head of the array.  It needs to be a separate call because
                     //spillRows() cannot shift active row pointer since it can be called from any thread
-                    rows.flush();
+                    rowsToSort.flush();
                 }
-                if (!rows.append(next))
+                if (!rowsToSort.append(next))
                 {
                     ReleaseThorRow(next);
                     throw MakeStringException(ROXIEMM_MEMORY_LIMIT_EXCEEDED, "Insufficient memory to append sort row");
                 }
             }
         }
-        rows.flush();
+        rowsToSort.flush();
         ForEachItemIn(i, auxfiles)
             instrms.append(*createSimpleRowStream(&auxfiles.item(i), rowIf));
         if (diskMemMix == sl_alldisk || ((diskMemMix == sl_alldiskifoverflow) && overflowCount))
         {
-            if (rows.numCommitted())
+            if (rowsToSort.numCommitted())
             {
+                roxiemem::RoxieOutputRowArrayLock block(rowsToSort);
                 spillRows();
-                rows.kill();
+                rowsToSort.kill();
             }
         }
         else
         {
-            totalRows += rows.numCommitted();
-            rows.sort(*iCompare, isStable, maxCores);
-            instrms.append(*rows.createRowStream());
+            roxiemem::RoxieOutputRowArrayLock block(rowsToSort);
+            totalRows += rowsToSort.numCommitted();
+            rowsToSort.sort(*iCompare, isStable, maxCores);
+            instrms.append(*rowsToSort.createRowStream());
         }
         if (instrms.ordinality()==1)
             return LINK(&instrms.item(0));
@@ -499,28 +492,33 @@ public:
         else
             return createConcatRowStream(instrms.ordinality(),instrms.getArray());
     }
-    bool hasOverflowed() const
+    virtual bool hasOverflowed() const
     {
         return 0 != overflowCount;
     }
-    rowcount_t numRows() const
+    virtual rowcount_t numRows() const
     {
         return totalRows;
     }
-    unsigned numOverflowFiles() const
+    virtual unsigned numOverflowFiles() const
     {
         return auxfiles.ordinality();
     }
-    unsigned numOverflows() const
+    virtual unsigned numOverflows() const
     {
         return overflowCount;
     }
-    unsigned overflowScale() const
+    virtual unsigned overflowScale() const
     {
         // 1 if no spill
         if (!overflowCount)
             return 1;
         return numOverflowFiles()*2+3; // bit arbitrary
+    }
+    virtual void transferRows(RoxieSimpleInputRowArray &dst) const
+    {
+        dst.transferFrom(rowsToSort);
+        kill();
     }
 // IBufferedRowCallback
     virtual unsigned getPriority() const
@@ -540,11 +538,6 @@ public:
 IThorRowSortedLoader2 *createThorRowSortedLoader2(CActivityBase &activity, ICompare *iCompare, bool grouped, bool isStable, unsigned maxCores)
 {
     return new CThorRowSortedLoader2(activity, iCompare, grouped, isStable, maxCores);
-}
-
-IThorRowSortedLoader2 *createThorRowSortedLoader2(CActivityBase &activity, CThorRowArray2 &rows, ICompare *iCompare, bool grouped, bool isStable, unsigned maxCores)
-{
-    return new CThorRowSortedLoader2(activity, rows, iCompare, grouped, isStable, maxCores);
 }
 
 
