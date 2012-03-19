@@ -66,6 +66,13 @@ class CWriteIntercept : public CSimpleInterface, implements roxiemem::IBufferedR
 {
     // sampling adapter
 
+    // JCSMORE
+    enum {
+        InitialSortElements = 0,
+        //The number of rows that can be added without entering a critical section, and therefore also the number
+        //of rows that might not get freed when memory gets tight.
+        CommitStep=32
+    };
     CActivityBase &activity;
     CriticalSection crit;
     IRowInterfaces *rowIf;
@@ -76,11 +83,10 @@ class CWriteIntercept : public CSimpleInterface, implements roxiemem::IBufferedR
     CThorStreamDeserializerSource dataFileDeserialzierSource;
     unsigned interval;
     unsigned idx;
-    DynamicRoxieOutputRowArray sampleRows;
+	roxiemem::DynamicRoxieOutputRowArray sampleRows;
     Linked<IFileIOStream> outidx;
-    Owned<IFile> &outidxfile;
     offset_t overflowsize;
-    size32_t &fixedsize;
+    size32_t fixedsize;
     offset_t lastofs;
 
     // JCSMORE - writeidxofs is a NOP for fixed size records by the looks of it (at least if serializer writes fixed sizes)
@@ -98,12 +104,12 @@ class CWriteIntercept : public CSimpleInterface, implements roxiemem::IBufferedR
                 // right create idx
                 StringBuffer tempname;
                 GetTempName(tempname.clear(),"srtidx",false);
-                outidxfile.setown(createIFile(tempname.str()));
-                Owned<IFileIO> fileioidx = outidxfile->open(IFOcreate);
+                idxFile.setown(createIFile(tempname.str()));
+                Owned<IFileIO> fileioidx = idxFile->open(IFOcreate);
                 outidx.setown(fileioidx?createBufferedIOStream(fileioidx,0x100000):NULL);
                 if (outidx.get()==NULL) {
                     StringBuffer err;
-                    err.append("Cannot create ").append(outidxfile->queryFilename());
+                    err.append("Cannot create ").append(idxFile->queryFilename());
                     LOG(MCerror, thorJob, "%s", err.str());
                     throw MakeStringException(-1, "%s", err.str());
                 }
@@ -148,7 +154,8 @@ class CWriteIntercept : public CSimpleInterface, implements roxiemem::IBufferedR
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CWriteIntercept(CActivityBase &_activity, IRowInterfaces *_rowIf, unsigned _interval) : activity(_activity), rowIf(_rowIf), interval(_interval)
+    CWriteIntercept(CActivityBase &_activity, IRowInterfaces *_rowIf, unsigned _interval)
+		: activity(_activity), rowIf(_rowIf), interval(_interval), sampleRows(activity.queryJob().queryRowManager(), InitialSortElements, CommitStep)
     {
         interval = _interval;
         idx = 0;
@@ -175,17 +182,17 @@ public:
         StringBuffer tempname;
         GetTempName(tempname,"srtmrg",false);
         dataFile.setown(createIFile(tempname.str()));
-        Owned<IExtRowWriter> output = createRowWriter(dataFile,rowif->queryRowSerializer(),rowif->queryRowAllocator(),false,false,false);
+        Owned<IExtRowWriter> output = createRowWriter(dataFile, rowIf->queryRowSerializer(), rowIf->queryRowAllocator(), false, false, false);
 
         bool overflowed = false;
         PROGLOG("Local Overflow Merge start");
         unsigned ret=0;
         loop
         {
-            const void *row = input->nextRow();
-            if (!row)
+            const void *_row = input->nextRow();
+            if (!_row)
                 break;
-            ret ++;
+            ret++;
 
             offset_t start = output->getPosition();
             OwnedConstThorRow row = _row;
@@ -243,16 +250,16 @@ public:
         if (!dataFileIO)
         {
             dataFileIO.setown(dataFile->open(IFOread));
-            dataFileStrm = createFileSerialStream(dataFileIO, 0);
+            dataFileStrm.setown(createFileSerialStream(dataFileIO, 0));
             dataFileDeserialzierSource.setStream(dataFileStrm);
         }
-        strm->reset(ofs[0], (offset_t)-1);
-        RtlDynamicRowBuilder rowBuilder(rowIf.queryRowAllocator());
-        size32_t sz = deserializer->deserialize(rowBuilder, dataFileDeserialzierSource);
+        dataFileStrm->reset(ofs[0], (offset_t)-1);
+        RtlDynamicRowBuilder rowBuilder(rowIf->queryRowAllocator());
+        size32_t sz = rowIf->queryRowDeserializer()->deserialize(rowBuilder, dataFileDeserialzierSource);
         assertex(sz == idxSz);
         return rowBuilder.finalizeRowClear(sz);
     }
-    void transferRows(CThorRowArray2 &rows)
+    void transferRows(CThorRowFixedSizeArray &rows)
     {
         rows.transferFrom(sampleRows);
     }
@@ -272,9 +279,16 @@ public:
 
 class CSortSlaveBase :  implements ISortSlaveMP
 {
+    // JCSMORE
+    enum {
+        InitialSortElements = 0,
+        //The number of rows that can be added without entering a critical section, and therefore also the number
+        //of rows that might not get freed when memory gets tight.
+        CommitStep=32
+    };
 private:
     byte *          recbufp;
-    unsigned        maxelem; // 
+    unsigned        maxelem;
 
     unsigned        overflowinterval; // aka overflowscale
     rowcount_t      grandtotal;
@@ -305,7 +319,7 @@ private:
     Semaphore       closedownsem;
     rowcount_t      totalrows;
     mptag_t         mpTagRPC;
-    CThorRowArray2  rowArray;
+    CThorRowFixedSizeArray rowArray;
     Linked<IRowInterfaces> auxrowif;
     bool stopping;
     Owned<IException> closeexc; 
@@ -336,7 +350,7 @@ public:
 
 
     CSortSlaveBase(CActivityBase *_activity, SocketEndpoint &ep,IDiskUsage *_iDiskUsage,ICommunicator *_clusterComm, mptag_t _mpTagRPC)
-        : activity(_activity), thread(*this), iDiskUsage(_iDiskUsage)
+        : activity(_activity), thread(*this), iDiskUsage(_iDiskUsage), rowArray(*activity)
     {
         clusterComm.set(_clusterComm);
         numnodes = 0;
@@ -437,7 +451,7 @@ public:
         ICompare* icmp=queryCmpFn(cmpfn);
         while (l<r) {
             unsigned m = (l+r)/2;
-            const byte *p = rowArray.get(m);
+            const void *p = rowArray.get(m);
             int cmp = icmp->docompare(row, p);
             if (cmp < 0)
                 r = m;
@@ -514,9 +528,9 @@ public:
 
 #ifdef _TRACE
 
-    void TraceKey(const char *s,const byte *k)
+    void TraceKey(const char *s, const void *k)
     {
-        traceKey(rowif->queryRowSerializer(),s,k);
+        traceKey(rowif->queryRowSerializer(), s, k);
     }
 #endif
 
@@ -525,14 +539,14 @@ public:
         VarElemArray ret(rowif,keyserializer);
         avrecsize = 0;
         if (rowArray.ordinality()>0) {
-            const byte *kp=rowArray.get(0);
+            const void *kp = rowArray.get(0);
 #ifdef _TRACE
-            TraceKey("Min =",kp);
+            TraceKey("Min =", kp);
 #endif
             ret.appendLink(kp);
-            kp=rowArray.get(rowArray.ordinality()-1);
+            kp = rowArray.get(rowArray.ordinality()-1);
 #ifdef _TRACE
-            TraceKey("Max =",kp);
+            TraceKey("Max =", kp);
 #endif
             ret.appendLink(kp);
             avrecsize = (size32_t)(grandtotalsize/grandtotal);
@@ -567,12 +581,12 @@ public:
                 p2 = rowArray.ordinality()-1;
             if (p1<=p2) {
                 unsigned pm=(p1+p2+1)/2;
-                const byte *kp=rowArray.get(pm);
+                const void *kp=rowArray.get(pm);
                 if ((icompare->docompare(lkey,kp)<=0)&&
                         (icompare->docompare(hkey,kp)>=0)) { // paranoia
                     MemoryBuffer mb;
                     CMemoryRowSerializer mbsz(mb);
-                    rowif->queryRowSerializer()->serialize(mbsz,kp);
+                    rowif->queryRowSerializer()->serialize(mbsz, (const byte *)kp);
                     msize = mb.length();
                     mkeymem = (byte *)mb.detach();;
                     return true;
@@ -609,7 +623,7 @@ public:
                     p2 = rowArray.ordinality()-1;
                 if (p1<=p2) { 
                     unsigned pm=(p1+p2+1)/2;
-                    const byte *kp = rowArray.get(pm);
+                    const void *kp = rowArray.get(pm);
                     if ((icompare->docompare(low.item(i),kp)<=0)&&
                         (icompare->docompare(high.item(i),kp)>=0)) { // paranoia
                         mid.appendLink(kp);
@@ -740,7 +754,7 @@ public:
     {
         ActPrintLog(activity, "Gather in");
         loop {
-            if (abort) 
+            if (abort)
                 return;
             if (startgathersem.wait(10000))
                 break;
@@ -772,11 +786,10 @@ public:
         icollate = _icollate?_icollate:_icompare;
         icollateupper = _icollateupper?_icollateupper:icollate;
 
-        Linked<IThorRowSortedLoader2> sortedloader = createThorRowSortedLoader2(*this, iCompare, false, false, isstable, activity->queryMaxCores());
+        Linked<IThorRowSortedLoader2> sortedloader = createThorRowSortedLoader2(*activity, icompare, false, isstable, activity->queryMaxCores());
         Owned<IRowStream> overflowstream;
         try {
-            bool isempty;
-            overflowstream.setown(sortedloader->load(in, rowif, sl_alldiskifoverflow, abort);
+            overflowstream.setown(sortedloader->load(in, rowif, sl_alldiskifoverflow, abort));
             ActPrintLog(activity, "Local run sort(s) done");
         }
         catch (IException *e) {
@@ -794,7 +807,7 @@ public:
             if (sortedloader->hasOverflowed()) { // need to write to file
                 assertex(!intercept);
                 overflowinterval=sortedloader->overflowScale();
-                intercept.setown(new CWriteIntercept(this, rowif, overflowinterval));
+                intercept.setown(new CWriteIntercept(*activity, rowif, overflowinterval));
                 grandtotalsize = intercept->write(overflowstream);
                 intercept->transferRows(rowArray); // get sample rows
             }
@@ -809,7 +822,7 @@ public:
         gatherdone = true;
     }
 
-    virtual void GetGatherInfo(rowmap_t &numlocal, memsize_t &totalsize, unsigned &_overflowscale, bool haskeyserializer)
+    virtual void GetGatherInfo(rowmap_t &numlocal, offset_t &totalsize, unsigned &_overflowscale, bool haskeyserializer)
     {
         if (!gatherdone)
             ERRLOG("GetGatherInfo:***Error called before gather complete");
@@ -888,7 +901,7 @@ public:
                 count_t pos = ((i*2+1)*(count_t)numrows)/(2*(count_t)numsplits);
                 if (pos>=numrows) 
                     pos = numrows-1;
-                const byte *kp=rowArray.get((unsigned)pos);
+                const void *kp = rowArray.get((unsigned)pos);
                 ret.appendLink(kp);
             }
         }
@@ -987,7 +1000,7 @@ public:
             offset_t startofs;  
             size32_t rd = intercept->readOverflowPos(sstart, 1, &startofs, true);
             assertex(rd==sizeof(startofs));
-            return intercept->createRowStream(startofs, snum);
+            return intercept->getStream(startofs, snum);
         }
         return rowArray.createRowStream((unsigned)sstart, _snum, false); // must be false as rows may overlap (between join)
     }
@@ -1033,7 +1046,6 @@ public:
         PROGLOG("MiniSort sendToPrimaryNode %u bytes",mb.length());
 #endif
         clusterComm->reply(mb);
-
     }
 
     void sendToSecondaryNode(rank_t node,unsigned from, unsigned to, CriticalSection &sect,size32_t blksize)
@@ -1062,7 +1074,7 @@ public:
     }
 
 
-    void appendFromPrimaryNode()
+    void appendFromPrimaryNode(CThorExpandingRowArray &dst)
     {
 #ifdef  _FULL_TRACE
         PROGLOG("MiniSort appending from primary node");
@@ -1090,11 +1102,11 @@ public:
 #endif
             if (mbin.length()==0)
                 break;
-            rowArray.deserialize(*rowif->queryRowAllocator(),rowif->queryRowDeserializer(),mbin.length(),mbin.bufferBase(),false);
+            dst.deserialize(*rowif->queryRowAllocator(),rowif->queryRowDeserializer(),mbin.length(),mbin.bufferBase(),false);
         }
     }
 
-    void appendFromSecondaryNode(rank_t node,Semaphore &sem)
+    void appendFromSecondaryNode(CThorExpandingRowArray &dst, rank_t node,Semaphore &sem)
     {
 #ifdef  _FULL_TRACE
         PROGLOG("MiniSort appending from node %d",(int)node);
@@ -1115,17 +1127,16 @@ public:
             }
             if (mbin.length()==0) // nb don't exit before wait!
                 break;
-            rowArray.deserialize(*rowif->queryRowAllocator(),rowif->queryRowDeserializer(),mbin.length(),mbin.bufferBase(),false);
+            dst.deserialize(*rowif->queryRowAllocator(),rowif->queryRowDeserializer(),mbin.length(),mbin.bufferBase(),false);
         }
     }
-
-
     void StartMiniSort(rowcount_t _totalrows)
     {
         PrintLog("Minisort started: %s, totalrows=%"RCPF"d", partno?"seconday node":"primary node",_totalrows);
         size32_t blksize = 0x100000;
 
-        if (partno) {
+		CThorExpandingRowArray rowsToSort(*activity, InitialSortElements, CommitStep, false);
+		if (partno) {
             CMessageBuffer mb;
             unsigned idx = 0;
             loop {
@@ -1139,10 +1150,11 @@ public:
                 idx += done;
             }
             rowArray.kill();
-            appendFromPrimaryNode();
+            appendFromPrimaryNode(rowsToSort);
         }
-        else {
-
+        else
+		{
+			rowsToSort.transferFrom(rowArray);
             class casyncfor: public CAsyncFor
             {
                 CSortSlaveBase &base;
@@ -1160,27 +1172,25 @@ public:
                 }
                 void Do(unsigned i)
                 {
-                    base.appendFromSecondaryNode((rank_t)(i+2),nextsem[i]); // +2 as master is 0 self is 1
+                    base.appendFromSecondaryNode(rowsToSort, (rank_t)(i+2),nextsem[i]); // +2 as master is 0 self is 1
                     nextsem[i+1].signal();
                 }
             } afor1(*this,numnodes);
             afor1.For(numnodes-1, MINISORT_PARALLEL_TRANSFER);          
-#ifdef  _FULL_TRACE
-            PROGLOG("MiniSort got %d rows %"I64F"d bytes",rowArray.ordinality(),(__int64)(rowArray.totalSize()));
-#endif
             // JCSMORE - the blocks sent from other nodes were already sorted..
             // appended to local sorted chunk, and this is resorting the whole lot..
             // It's sorting on remote side, before it knows how big..
             // But shouldn't it merge sort here instead?
-            rowArray.sort(*icompare,isstable,activity->queryMaxCores());
+            rowsToSort.sort(*icompare, isstable, activity->queryMaxCores(), rowArray);
+#ifdef  _FULL_TRACE
+            PROGLOG("MiniSort got %d rows %"I64F"d bytes",rowArray.ordinality(),(__int64)(rowArray.totalSize()));
+#endif
             UnsignedArray points; 
-            rowArray.partition(*icompare,numnodes,points);
+            rowArray.partition(*icompare, numnodes, points);
 #ifdef  _FULL_TRACE
             for (unsigned pi=0;pi<points.ordinality();pi++)
                 PROGLOG("points[%d] = %u",pi, points.item(pi));
 #endif
-
-
             class casyncfor2: public CAsyncFor
             {
                 CSortSlaveBase &base;

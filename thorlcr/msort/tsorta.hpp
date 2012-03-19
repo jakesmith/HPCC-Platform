@@ -99,13 +99,13 @@ enum SortedLoaderType { sl_mixed, sl_alldisk, sl_alldiskifoverflow };
 class RoxieSimpleInputRowArray;
 interface IThorRowSortedLoader2: extends IInterface
 {
-    virtual IRowStream *load(IRowStream *in, IRowInterfaces *rowIf, SortedLoaderType diskMix, bool &abort) = 0;
+    virtual IRowStream *load(IRowStream *in, IRowInterfaces *rowIf, SortedLoaderType diskMemMix, bool &abort) = 0;
     virtual bool hasOverflowed() const = 0;
     virtual rowcount_t numRows() const = 0;
     virtual unsigned numOverflowFiles() const = 0;
     virtual unsigned numOverflows() const = 0;
     virtual unsigned overflowScale() const = 0;
-    virtual void transferRows(RoxieSimpleInputRowArray &dst) const = 0;
+	virtual void transferRows(roxiemem::RoxieSimpleInputRowArray &dst) = 0;
 };
 
 class CThorKeyArray
@@ -162,11 +162,10 @@ public:
 };
 
 
-extern void traceKey(IOutputRowSerializer *serializer,const char *prefix,const void *key);
+extern void traceKey(IOutputRowSerializer *serializer,const char *prefix, const void *key);
 
 IThorRowSortedLoader *createThorRowSortedLoader(CThorRowArray &rows); // NB only contains all rows if hasOverflowed false
 IThorRowSortedLoader2 *createThorRowSortedLoader2(CActivityBase &activity, ICompare *iCompare, bool grouped, bool isStable, unsigned maxCores);
-IThorRowSortedLoader2 *createThorRowSortedLoader2(CActivityBase &activity, CThorRowArray2 &rows, ICompare *iCompare, bool grouped, bool isStable, unsigned maxCores);
 
 
 #endif

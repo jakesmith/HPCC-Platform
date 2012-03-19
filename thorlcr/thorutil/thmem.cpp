@@ -62,7 +62,7 @@ static memsize_t MTthreshold=0;
 static CriticalSection MTcritsect;  // held when blocked 
 static Owned<ILargeMemLimitNotify> MTthresholdnotify;
 static bool MTlocked = false;
-
+	
 
 class CThorRowArrayException: public CSimpleInterface, public IThorRowArrayException
 {
@@ -515,37 +515,18 @@ CThorRowFixedSizeArray::CThorRowFixedSizeArray(CActivityBase *_activity) : activ
 void CThorRowFixedSizeArray::set(const void *_rows, rowidx_t _numRows)
 {
     kill();
+	LinkThorRow(_rows);
     rows = _rows;
     numRows = _numRows;
 }
 
-void CThorRowFixedSizeArray::sort(ICompare & compare, bool stable, unsigned maxcores, CThorRowFixedSizeArray &result)
+void CThorRowFixedSizeArray::transferRows(roxiemem::rowidx_t &outNumRows, const **&outRows)
 {
-    unsigned n = ordinality();
-    const void **dstRows = NULL;
-    if (n>1)
-    {
-        const void **srcRows = getBlock(n);
-
-        MemoryAttr ma;
-        dstRows = (const void **)ma.allocate(numRows * sizeof(void *));
-        // JCSMORE - problematic, quite possibly sorting, at spillpoint, when mem full..
-        //ptrs = static_cast<const void * *>(rowManager->allocate(maxRows * sizeof(void*), activity->queryContainer().queryId()));
-
-        memcpy(dstRows, srcRows, n*sizeof(void **));
-        if (stable)
-        {
-            parqsortvecstable((void **const)dstRows, n, compare, (void ***)srcRows, maxcores); // use res for index
-            while (n--)
-            {
-                *res = **((byte ***)dstRows);
-                res++;
-            }
-        }
-        else
-            parqsortvec((void **const)dstRows, n, compare, maxcores);
-        result.set((const void **)ma.detach(), n);
-    }
+	assertex(0 == firstRow);
+    outNumRows = numRows;
+    outRows = rows;
+    numRows = 0;
+    rows = NULL;
 }
 
 offset_t CThorRowFixedSizeArray::serializedSize(IOutputRowSerializer *rowSerializer)
@@ -718,8 +699,20 @@ unsigned CThorRowFixedSizeArray::save(IRowWriter *writer, unsigned pos, unsigned
 
 //====
 
-CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase *_activity) : activity(_activity)
+CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IRowManager *rowManager, rowidx_t initialSize, size32_t commitDelta, bool _sorter) : DynamicRoxieOutputRowArray(_activity.queryJob().queryRowManager(), initialSize, commitDelta), activity(_activity), sorter(_sorter)
 {
+}
+
+CThorExpandingRowArray::~CThorExpandingRowArray()
+{
+	if (sortedRows)
+		ReleaseThorRow(sortedRows);
+}
+
+void CThorExpandingRowArray::transferFrom(CThorRowFixedSizeArray &donor)
+{
+	kill();
+	donor.transferRows(numRows, rows);
 }
 
 bool CThorExpandingRowArray::ensure(rowidx_t requiredRows)
@@ -755,6 +748,21 @@ bool CThorExpandingRowArray::ensure(rowidx_t requiredRows)
             return false;
         }
         throw;
+    }
+}
+
+void CThorExpandingRowArray::sort(ICompare & compare, bool stable, unsigned maxcores, CThorRowFixedSizeArray &result)
+{
+    unsigned n = ordinality();
+    if (n>1)
+    {
+        const void **srcRows = getBlock(n);
+        memcpy(sortedRows, srcRows, n*sizeof(void **));
+        if (stable)
+            parqsortvecstable((void **const)sortedRows, n, compare, (void ***)srcRows, maxcores); // use res for index
+        else
+            parqsortvec((void **const)sortedRows, n, compare, maxcores);
+        result.set(sortedRows, n);
     }
 }
 

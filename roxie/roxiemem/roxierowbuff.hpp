@@ -128,7 +128,7 @@ class roxiemem_decl RoxieSimpleInputRowArray
 {
 public:
     RoxieSimpleInputRowArray() { rows = NULL; firstRow = 0; numRows = 0; }
-    RoxieSimpleInputRowArray(const void * * _rows, size32_t _numRows) rows(_rows), numRows(_numRows) { }
+    RoxieSimpleInputRowArray(const void * * _rows, size32_t _numRows);
     inline ~RoxieSimpleInputRowArray() { kill(); }
 
     //The following are threadsafe, if only think called.

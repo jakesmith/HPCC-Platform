@@ -369,7 +369,6 @@ class CThorRowSortedLoader2 : public CSimpleInterface, implements IThorRowSorted
     ICompare *iCompare;
     bool isStable, grouped, allDisk, rowArrayOwned;
     IRowInterfaces *rowIf;
-    SortedLoaderType diskMemMix;
 
     void reset()
     {
@@ -390,14 +389,12 @@ class CThorRowSortedLoader2 : public CSimpleInterface, implements IThorRowSorted
     }
     bool spillRows()
     {
-        rowidx_t numRows = rowsToSort.numCommitted();
+		roxiemem::rowidx_t numRows = rowsToSort.numCommitted();
         if (numRows == 0)
             return false;
 
         totalRows += numRows;
-
-        // JCSMORE->GH is it really okay for qsort to manipulate ptrs in here?
-        CThorRowFixedSizeArray sortedRows;
+        CThorRowFixedSizeArray sortedRows(activity);
         rowsToSort.sort(*iCompare, isStable, maxCores, sortedRows);
 
         unsigned idx = newAuxFile();
@@ -406,7 +403,7 @@ class CThorRowSortedLoader2 : public CSimpleInterface, implements IThorRowSorted
         writer->flush();
         ++overflowCount;
 
-        sortedRows.noteSpilled(numRows);
+        rowsToSort.noteSpilled(numRows);
         return true;
     }
 
@@ -415,12 +412,11 @@ public:
 
     CThorRowSortedLoader2(CActivityBase &_activity, ICompare *_iCompare, bool _grouped, bool _isStable, unsigned _maxCores)
         : activity(_activity), iCompare(_iCompare), grouped(_grouped), isStable(_isStable), maxCores(_maxCores),
-          rowsToSort(InitialSortElements, CommitStep)
+          rowsToSort(activity, InitialSortElements, CommitStep, true)
     {
         totalRows = 0;
         overflowCount = 0;
         rowIf = NULL;
-        diskMemMix = sl_mixed;
         activity.queryJob().queryRowManager()->addRowBuffer(this);
     }
     ~CThorRowSortedLoader2()
@@ -429,7 +425,7 @@ public:
         activity.queryJob().queryRowManager()->removeRowBuffer(this);
     }
     // NB: previous loader, if overflowed, would force all to disk, i.e. last chunk was _NOT_ in memory
-    virtual IRowStream *load(IRowStream *in, IRowInterfaces *_rowIf, bool &abort)
+    virtual IRowStream *load(IRowStream *in, IRowInterfaces *_rowIf, SortedLoaderType diskMemMix, bool &abort)
     {
         rowIf = _rowIf; // can be used by IBufferedRowCallback
         reset();
@@ -479,8 +475,9 @@ public:
         {
             roxiemem::RoxieOutputRowArrayLock block(rowsToSort);
             totalRows += rowsToSort.numCommitted();
-            rowsToSort.sort(*iCompare, isStable, maxCores);
-            instrms.append(*rowsToSort.createRowStream());
+			CThorRowFixedSizeArray sortedRows(activity);
+			rowsToSort.sort(*iCompare, isStable, maxCores, sortedRows);
+            instrms.append(*sortedRows.createRowStream());
         }
         if (instrms.ordinality()==1)
             return LINK(&instrms.item(0));
@@ -515,10 +512,10 @@ public:
             return 1;
         return numOverflowFiles()*2+3; // bit arbitrary
     }
-    virtual void transferRows(RoxieSimpleInputRowArray &dst) const
+	virtual void transferRows(roxiemem::RoxieSimpleInputRowArray &dst)
     {
         dst.transferFrom(rowsToSort);
-        kill();
+        reset();
     }
 // IBufferedRowCallback
     virtual unsigned getPriority() const
@@ -530,7 +527,7 @@ public:
     }
     virtual bool freeBufferedRows(bool critical)
     {
-        roxiemem::RoxieOutputRowArrayLock block(rows);
+        roxiemem::RoxieOutputRowArrayLock block(rowsToSort);
         return spillRows();
     }
 };
@@ -1018,7 +1015,7 @@ offset_t CThorKeyArray::getFilePos(unsigned idx)
 }
 
 
-void traceKey(IOutputRowSerializer *serializer, const char *prefix,const void *key)
+void traceKey(IOutputRowSerializer *serializer, const char *prefix, const void *key)
 {
     MemoryBuffer mb;
     const byte *k = (const byte *)key;

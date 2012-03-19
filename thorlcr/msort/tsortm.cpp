@@ -87,7 +87,7 @@ public:
     mptag_t         mpTagRPC;
     unsigned        beat;
     rowmap_t        numrecs;
-    memsize_t       memsize;
+    offset_t        slavesize;
     bool            overflow;
     unsigned        scale;     // num times overflowed
     
@@ -106,7 +106,7 @@ public:
         overflow = false;
         scale = 1;
         numrecs = 0;
-        memsize = 0;
+        slavesize = 0;
         assertex(_rank!=RANK_NULL);
         SortSlaveMP::init(comm,_rank,mpTagRPC);
     }
@@ -1212,14 +1212,14 @@ public:
         bool overflowed = false;
         for (i=0;i<numnodes;i++) {
             CSortNode &slave = slaves.item(i);
-            slave.GetGatherInfo(slave.numrecs,slave.memsize,slave.scale,keyserializer!=NULL);
+            slave.GetGatherInfo(slave.numrecs,slave.slavesize,slave.scale,keyserializer!=NULL);
             assertex(slave.scale);
             slave.overflow = slave.scale>1;
             if (slave.overflow)
                 overflowed = true;
             total += slave.numrecs;
             stotal += slave.numrecs*slave.scale;
-            totalmem += slave.memsize;
+            totalmem += slave.slavesize;
             if (slave.numrecs>maxrecsonnode)
                 maxrecsonnode = slave.numrecs;
             if (slave.numrecs<minrecsonnode)

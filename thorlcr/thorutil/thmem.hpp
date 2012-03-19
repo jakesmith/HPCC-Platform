@@ -423,13 +423,14 @@ public:
 };
 
 
-class graph_decl CThorRowFixedSizeArray : public RoxieSimpleInputRowArray
+class graph_decl CThorRowFixedSizeArray : public roxiemem::RoxieSimpleInputRowArray
 {
-    CActivityBase *activity;
+    CActivityBase &activity;
 
 public:
-    CThorRowFixedSizeArray(CActivityBase *_activity);
-    void set(const void *_rows, rowidx_t _numRows);
+    CThorRowFixedSizeArray(CActivityBase &_activity);
+	void set(roxiemem::rowidx_t numRows, const void *rows);
+	void transferRows(roxiemem::rowidx_t numRows, const void **rows);
 
     void removeRows(unsigned i, unsigned n);
 
@@ -441,23 +442,22 @@ public:
     void serialize(IOutputRowSerializer *_serializer,IRowSerializerTarget &out);
     void serialize(IOutputRowSerializer *_serializer,MemoryBuffer &mb,bool hasnulls);
     unsigned serializeblk(IOutputRowSerializer *_serializer,MemoryBuffer &mb,size32_t dstmax, unsigned idx, unsigned count);
-    void deserialize(IEngineRowAllocator &allocator,IOutputRowDeserializer *deserializer,size32_t sz,const void *buf,bool hasnulls);
-    void deserializerow(IEngineRowAllocator &allocator,IOutputRowDeserializer *deserializer,IRowDeserializerSource &in); // NB single row not NULL
 };
 
-
-class graph_decl CThorExpandingRowArray : public DynamicRoxieOutputRowArray
+interface IRowManager;
+class graph_decl CThorExpandingRowArray : public roxiemem::DynamicRoxieOutputRowArray
 {
-    CActivityBase *activity;
+    CActivityBase &activity;
     const void **sortedRows;
     bool sorter;
 
 protected:
-    virtual bool ensure(rowidx_t requiredRows);
+    virtual bool ensure(roxiemem::rowidx_t requiredRows);
 
 public:
-    CThorExpandingRowArray(CActivityBase *_activity);
+	CThorExpandingRowArray(CActivityBase &activity, roxiemem::rowidx_t initialSize, size32_t commitDelta, bool sorter);
 
+	void transferFrom(CThorRowFixedSizeArray &src);
     void removeRows(unsigned i, unsigned n);
 
     void sort(ICompare & compare, bool stable, unsigned maxcores, CThorRowFixedSizeArray &result);

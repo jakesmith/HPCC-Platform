@@ -139,7 +139,8 @@ const void * RoxieOutputRowArray::link(rowidx_t i) const
     if (i < firstRow || i >= commitRows)
         return NULL;
 
-    const void * row = rows[i];
+    const void * row = 
+		[i];
     if (row)
         LinkRoxieRow(row);
     return row;
