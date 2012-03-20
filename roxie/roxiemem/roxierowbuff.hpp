@@ -132,13 +132,13 @@ public:
     inline ~RoxieSimpleInputRowArray() { kill(); }
 
     //The following are threadsafe, if only think called.
-    inline const void * get(rowidx_t i) const
+    inline const void * query(rowidx_t i) const
     {
         if ((i < firstRow) || (i >= numRows))
             return NULL;
         return rows[i];
     }
-    const void * link(rowidx_t i) const
+    const void * get(rowidx_t i) const
     {
         if ((i < firstRow) || (i >= numRows))
             return NULL;

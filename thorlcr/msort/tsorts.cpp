@@ -46,6 +46,14 @@
 
 #define MINISORT_PARALLEL_TRANSFER 16
 
+// JCSMORE
+enum {
+    InitialSortElements = 0,
+    //The number of rows that can be added without entering a critical section, and therefore also the number
+    //of rows that might not get freed when memory gets tight.
+    CommitStep=32
+};
+
 
 inline void traceWait(const char *name,Semaphore &sem,unsigned interval=60*1000)
 {
@@ -66,13 +74,6 @@ class CWriteIntercept : public CSimpleInterface, implements roxiemem::IBufferedR
 {
     // sampling adapter
 
-    // JCSMORE
-    enum {
-        InitialSortElements = 0,
-        //The number of rows that can be added without entering a critical section, and therefore also the number
-        //of rows that might not get freed when memory gets tight.
-        CommitStep=32
-    };
     CActivityBase &activity;
     CriticalSection crit;
     IRowInterfaces *rowIf;
@@ -83,7 +84,7 @@ class CWriteIntercept : public CSimpleInterface, implements roxiemem::IBufferedR
     CThorStreamDeserializerSource dataFileDeserialzierSource;
     unsigned interval;
     unsigned idx;
-	roxiemem::DynamicRoxieOutputRowArray sampleRows;
+    roxiemem::DynamicRoxieOutputRowArray sampleRows;
     Linked<IFileIOStream> outidx;
     offset_t overflowsize;
     size32_t fixedsize;
@@ -155,7 +156,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
     CWriteIntercept(CActivityBase &_activity, IRowInterfaces *_rowIf, unsigned _interval)
-		: activity(_activity), rowIf(_rowIf), interval(_interval), sampleRows(activity.queryJob().queryRowManager(), InitialSortElements, CommitStep)
+        : activity(_activity), rowIf(_rowIf), interval(_interval), sampleRows(activity.queryJob().queryRowManager(), InitialSortElements, CommitStep)
     {
         interval = _interval;
         idx = 0;
@@ -276,16 +277,223 @@ public:
     }
 };
 
+class CMiniSort
+{
+    CActivityBase &activity;
+    IRowInterfaces &rowIf;
+    ICommunicator &clusterComm;
+    unsigned partNo, numNodes;
+    mptag_t mpTag;
+    CThorExpandingRowArray rows;
+
+    void sendToPrimaryNode(CMessageBuffer &mb)
+    {
+        //compression TBD
+        CMessageBuffer mbin;
+#ifdef  _FULL_TRACE
+        PROGLOG("MiniSort sendToPrimaryNode waiting");
+#endif
+        clusterComm.recv(mbin,1,mpTag);
+#ifdef  _FULL_TRACE
+        PROGLOG("MiniSort sendToPrimaryNode continue",mbin.length());
+#endif
+        if (mbin.length()==0) {
+            PROGLOG("aborting sendToPrimaryNode");
+            // TBD?
+            return;
+        }
+        byte fn;
+        mbin.read(fn);
+        if (fn!=255)
+            throw MakeActivityException(&activity, -1, "MiniSort sendToPrimaryNode: Protocol error(1) %d",(int)fn);
+        mb.init(mbin.getSender(),mpTag,mbin.getReplyTag());
+#ifdef  _FULL_TRACE
+        PROGLOG("MiniSort sendToPrimaryNode %u bytes",mb.length());
+#endif
+        clusterComm.reply(mb);
+    }
+    void sendToSecondaryNode(CThorRowFixedSizeArray &rowArray, rank_t node, unsigned from, unsigned to, CriticalSection &sect, size32_t blksize)
+    {
+        //compression TBD
+        CMessageBuffer mbout;
+        unsigned done;
+        do {
+            done = rowArray.serializeblk(rowIf.queryRowSerializer(),mbout.clear(),blksize,from,to-from);
+#ifdef  _FULL_TRACE
+            PROGLOG("MiniSort serialized %u rows, %u bytes",done,mbout.length());
+#endif
+            from += done;
+#ifdef  _FULL_TRACE
+            PROGLOG("MiniSort sendToSecondaryNode(%d) send %u",(int)node,mbout.length());
+#endif
+            clusterComm.sendRecv(mbout,node,mpTag);
+#ifdef  _FULL_TRACE
+            PROGLOG("MiniSort sendToSecondaryNode(%d) got %u",(int)node,mbout.length());
+#endif
+            byte fn;
+            mbout.read(fn);
+            if (fn!=254)
+                throw MakeActivityException(&activity, -1, "MiniSort sendToPrimaryNode: Protocol error(2) %d",(int)fn);
+        } while (done!=0);
+    }
+    void appendFromPrimaryNode(CThorExpandingRowArray &rows)
+    {
+#ifdef  _FULL_TRACE
+        PROGLOG("MiniSort appending from primary node");
+#endif
+        CMessageBuffer mbin;
+        loop {
+            mbin.clear();
+#ifdef  _FULL_TRACE
+            PROGLOG("MiniSort appendFromPrimaryNode waiting");
+#endif
+            clusterComm.recv(mbin,1,mpTag);
+#ifdef  _FULL_TRACE
+            PROGLOG("MiniSort appendFromPrimaryNode continue",mbin.length());
+#endif
+            CMessageBuffer mbout;
+            mbout.init(mbin.getSender(),mpTag,mbin.getReplyTag());
+            byte fn=254;
+            mbout.append(fn);
+#ifdef  _FULL_TRACE
+            PROGLOG("MiniSort appendFromPrimaryNode reply",mbout.length());
+#endif
+            clusterComm.reply(mbout);
+#ifdef  _FULL_TRACE
+            PROGLOG("MiniSort got from primary node %d",mbin.length());
+#endif
+            if (mbin.length()==0)
+                break;
+            rows.deserialize(*rowIf.queryRowAllocator(), rowIf.queryRowDeserializer(), mbin.length(), mbin.bufferBase(), false);
+        }
+    }
+    void appendFromSecondaryNode(CThorExpandingRowArray &rows, rank_t node, Semaphore &sem)
+    {
+#ifdef  _FULL_TRACE
+        PROGLOG("MiniSort appending from node %d",(int)node);
+#endif
+        CMessageBuffer mbin;
+        bool first = true;
+        loop {
+            mbin.clear();
+            byte fn = 255;
+            mbin.append(fn);
+            clusterComm.sendRecv(mbin,node,mpTag);
+#ifdef  _FULL_TRACE
+            PROGLOG("MiniSort got %u from node %d",mbin.length(),(int)node);
+#endif
+            if (first)
+            {
+                sem.wait();
+                first = false;
+            }
+            if (mbin.length()==0) // nb don't exit before wait!
+                break;
+            rows.deserialize(*rowIf.queryRowAllocator(), rowIf.queryRowDeserializer(), mbin.length(), mbin.bufferBase(), false);
+        }
+    }
+
+public:
+    CMiniSort(CActivityBase &_activity, IRowInterfaces &_rowIf, ICommunicator &_clusterComm, unsigned _partNo, unsigned _numNodes, mptag_t _mpTag)
+        : activity(_activity), rowIf(_rowIf), clusterComm(_clusterComm), partNo(_partNo), numNodes(_numNodes), mpTag(_mpTag), rows(activity, InitialSortElements, CommitStep, false)
+    {
+    }
+    roxiemem::rowidx_t sort(CThorRowFixedSizeArray &localRows, ICompare &iCompare, bool isStable)
+    {
+        PrintLog("Minisort started: %s, totalrows=%"RCPF"d", partNo?"seconday node":"primary node", localRows.ordinality());
+        size32_t blksize = 0x100000;
+
+        if (partNo)
+        {
+            CMessageBuffer mb;
+            unsigned idx = 0;
+            loop
+            {
+                unsigned done = localRows.serializeblk(rowIf.queryRowSerializer(), mb.clear(), blksize, idx, (unsigned) -1);
+#ifdef  _FULL_TRACE
+                PROGLOG("MiniSort serialized %u rows, %u bytes",done,mb.length());
+#endif
+                sendToPrimaryNode(mb);
+                if (!done)
+                    break;
+                idx += done;
+            }
+            localRows.kill();
+            appendFromPrimaryNode(rows);
+            localRows.transferFrom(rows);
+        }
+        else
+        {
+            rows.transferFrom(localRows);
+            class casyncfor: public CAsyncFor
+            {
+                CMiniSort &base;
+                CThorExpandingRowArray &rows;
+                Semaphore *nextsem;
+            public:
+                casyncfor(CMiniSort &_base, CThorExpandingRowArray &_rows, unsigned numNodes)
+                    : base(_base), rows(_rows)
+                {
+                    nextsem = new Semaphore[numNodes];  // 1 extra
+                    nextsem[0].signal();
+                }
+                ~casyncfor()
+                {
+                    delete [] nextsem;
+                }
+                void Do(unsigned i)
+                {
+                    base.appendFromSecondaryNode(rows, (rank_t)(i+2),nextsem[i]); // +2 as master is 0 self is 1
+                    nextsem[i+1].signal();
+                }
+            } afor1(*this, rows, numNodes);
+            afor1.For(numNodes-1, MINISORT_PARALLEL_TRANSFER);
+            // JCSMORE - the blocks sent from other nodes were already sorted..
+            // appended to local sorted chunk, and this is resorting the whole lot..
+            // It's sorting on remote side, before it knows how big..
+            // But shouldn't it merge sort here instead?
+            CThorRowFixedSizeArray &globalRows = localRows; // localRows now contains global rows
+            rows.sort(iCompare, isStable, activity.queryMaxCores(), globalRows);
+#ifdef  _FULL_TRACE
+            PROGLOG("MiniSort got %d rows %"I64F"d bytes", globalRows.ordinality(),(__int64)(globalRows.totalSize()));
+#endif
+            UnsignedArray points;
+            localRows.partition(iCompare, numNodes, points);
+#ifdef  _FULL_TRACE
+            for (unsigned pi=0;pi<points.ordinality();pi++)
+                PROGLOG("points[%d] = %u",pi, points.item(pi));
+#endif
+            class casyncfor2: public CAsyncFor
+            {
+                CMiniSort &base;
+                CThorRowFixedSizeArray &globalRows;
+                unsigned *points;
+                size32_t blksize;
+                CriticalSection crit;
+            public:
+                casyncfor2(CMiniSort &_base, CThorRowFixedSizeArray &_globalRows, unsigned *_points, size32_t _blksize)
+                    : base(_base), globalRows(_globalRows)
+                {
+                    points = _points;
+                    blksize = _blksize;
+                }
+                void Do(unsigned i)
+                {
+                    base.sendToSecondaryNode(globalRows, (rank_t)(i+2), points[i+1], points[i+2], crit, blksize); // +2 as master is 0 self is 1
+                }
+            } afor2(*this, globalRows,  points.getArray(), blksize);
+            afor2.For(numNodes-1, MINISORT_PARALLEL_TRANSFER);
+            // get rid of rows sent
+            globalRows.removeRows(points.item(1),globalRows.ordinality()-points.item(1));
+            // NB localRows only left
+        }
+        return localRows.ordinality();
+    }
+};
+
 
 class CSortSlaveBase :  implements ISortSlaveMP
 {
-    // JCSMORE
-    enum {
-        InitialSortElements = 0,
-        //The number of rows that can be added without entering a critical section, and therefore also the number
-        //of rows that might not get freed when memory gets tight.
-        CommitStep=32
-    };
 private:
     byte *          recbufp;
     unsigned        maxelem;
@@ -451,7 +659,7 @@ public:
         ICompare* icmp=queryCmpFn(cmpfn);
         while (l<r) {
             unsigned m = (l+r)/2;
-            const void *p = rowArray.get(m);
+            const void *p = rowArray.query(m);
             int cmp = icmp->docompare(row, p);
             if (cmp < 0)
                 r = m;
@@ -459,11 +667,11 @@ public:
                 l = m+1;
             else {
                 if (firstdup) {
-                    while ((m>0)&&(icmp->docompare(row,rowArray.get(m-1))==0))
+                    while ((m>0)&&(icmp->docompare(row,rowArray.query(m-1))==0))
                         m--;
                 }
                 else {
-                    while ((m+1<n)&&(icmp->docompare(row,rowArray.get(m+1))==0))
+                    while ((m+1<n)&&(icmp->docompare(row,rowArray.query(m+1))==0))
                         m++;
                 }
                 return m;
@@ -539,12 +747,12 @@ public:
         VarElemArray ret(rowif,keyserializer);
         avrecsize = 0;
         if (rowArray.ordinality()>0) {
-            const void *kp = rowArray.get(0);
+            const void *kp = rowArray.query(0);
 #ifdef _TRACE
             TraceKey("Min =", kp);
 #endif
             ret.appendLink(kp);
-            kp = rowArray.get(rowArray.ordinality()-1);
+            kp = rowArray.query(rowArray.ordinality()-1);
 #ifdef _TRACE
             TraceKey("Max =", kp);
 #endif
@@ -581,7 +789,7 @@ public:
                 p2 = rowArray.ordinality()-1;
             if (p1<=p2) {
                 unsigned pm=(p1+p2+1)/2;
-                const void *kp=rowArray.get(pm);
+                const void *kp=rowArray.query(pm);
                 if ((icompare->docompare(lkey,kp)<=0)&&
                         (icompare->docompare(hkey,kp)>=0)) { // paranoia
                     MemoryBuffer mb;
@@ -623,7 +831,7 @@ public:
                     p2 = rowArray.ordinality()-1;
                 if (p1<=p2) { 
                     unsigned pm=(p1+p2+1)/2;
-                    const void *kp = rowArray.get(pm);
+                    const void *kp = rowArray.query(pm);
                     if ((icompare->docompare(low.item(i),kp)<=0)&&
                         (icompare->docompare(high.item(i),kp)>=0)) { // paranoia
                         mid.appendLink(kp);
@@ -815,7 +1023,7 @@ public:
             {
                 overflowinterval = 1;
                 sortedloader->transferRows(rowArray);
-                grandtotalsize = rowArray.serializedSize(); // expensive, all in mem, need to know size
+                grandtotalsize = rowArray.serializedSize(rowif->queryRowSerializer()); // expensive, all in mem, need to know size
             }
         }
         ActPrintLog(activity, "Gather finished %s",abort?"ABORTED":"");
@@ -901,7 +1109,7 @@ public:
                 count_t pos = ((i*2+1)*(count_t)numrows)/(2*(count_t)numsplits);
                 if (pos>=numrows) 
                     pos = numrows-1;
-                const void *kp = rowArray.get((unsigned)pos);
+                const void *kp = rowArray.query((unsigned)pos);
                 ret.appendLink(kp);
             }
         }
@@ -1017,204 +1225,12 @@ public:
         merger.clear();
         clearOverflow();
     }
-
-
-    virtual IMergeTransferServer *createTransferServer() = 0;
-
-    void sendToPrimaryNode(CMessageBuffer &mb)
+    void StartMiniSort(rowcount_t unused) // JCSMORE
     {
-        //compression TBD
-        CMessageBuffer mbin;
-#ifdef  _FULL_TRACE
-        PROGLOG("MiniSort sendToPrimaryNode waiting");
-#endif
-        clusterComm->recv(mbin,1,mpTagRPC);
-#ifdef  _FULL_TRACE
-        PROGLOG("MiniSort sendToPrimaryNode continue",mbin.length());
-#endif
-        if (mbin.length()==0) {
-            PROGLOG("aborting sendToPrimaryNode");
-            // TBD?
-            return;
-        }
-        byte fn;
-        mbin.read(fn);
-        if (fn!=255)
-            throw MakeStringException(-1,"MiniSort sendToPrimaryNode: Protocol error(1) %d",(int)fn);
-        mb.init(mbin.getSender(),mpTagRPC,mbin.getReplyTag());
-#ifdef  _FULL_TRACE
-        PROGLOG("MiniSort sendToPrimaryNode %u bytes",mb.length());
-#endif
-        clusterComm->reply(mb);
-    }
-
-    void sendToSecondaryNode(rank_t node,unsigned from, unsigned to, CriticalSection &sect,size32_t blksize)
-    {
-        //compression TBD
-        CMessageBuffer mbout;
-        unsigned done;
-        do {
-            done = rowArray.serializeblk(rowif->queryRowSerializer(),mbout.clear(),blksize,from,to-from);
-#ifdef  _FULL_TRACE
-            PROGLOG("MiniSort serialized %u rows, %u bytes",done,mbout.length());
-#endif
-            from += done;
-#ifdef  _FULL_TRACE
-            PROGLOG("MiniSort sendToSecondaryNode(%d) send %u",(int)node,mbout.length());
-#endif
-            clusterComm->sendRecv(mbout,node,mpTagRPC);
-#ifdef  _FULL_TRACE
-            PROGLOG("MiniSort sendToSecondaryNode(%d) got %u",(int)node,mbout.length());
-#endif
-            byte fn;
-            mbout.read(fn);
-            if (fn!=254)
-                throw MakeStringException(-1,"MiniSort sendToPrimaryNode: Protocol error(2) %d",(int)fn);
-        } while (done!=0);
-    }
-
-
-    void appendFromPrimaryNode(CThorExpandingRowArray &dst)
-    {
-#ifdef  _FULL_TRACE
-        PROGLOG("MiniSort appending from primary node");
-#endif
-        CMessageBuffer mbin;
-        loop {
-            mbin.clear();
-#ifdef  _FULL_TRACE
-            PROGLOG("MiniSort appendFromPrimaryNode waiting");
-#endif
-            clusterComm->recv(mbin,1,mpTagRPC);
-#ifdef  _FULL_TRACE
-            PROGLOG("MiniSort appendFromPrimaryNode continue",mbin.length());
-#endif
-            CMessageBuffer mbout;
-            mbout.init(mbin.getSender(),mpTagRPC,mbin.getReplyTag());
-            byte fn=254;
-            mbout.append(fn);
-#ifdef  _FULL_TRACE
-            PROGLOG("MiniSort appendFromPrimaryNode reply",mbout.length());
-#endif
-            clusterComm->reply(mbout);
-#ifdef  _FULL_TRACE
-            PROGLOG("MiniSort got from primary node %d",mbin.length());
-#endif
-            if (mbin.length()==0)
-                break;
-            dst.deserialize(*rowif->queryRowAllocator(),rowif->queryRowDeserializer(),mbin.length(),mbin.bufferBase(),false);
-        }
-    }
-
-    void appendFromSecondaryNode(CThorExpandingRowArray &dst, rank_t node,Semaphore &sem)
-    {
-#ifdef  _FULL_TRACE
-        PROGLOG("MiniSort appending from node %d",(int)node);
-#endif
-        CMessageBuffer mbin;
-        bool first = true;
-        loop {
-            mbin.clear();
-            byte fn = 255;
-            mbin.append(fn);
-            clusterComm->sendRecv(mbin,node,mpTagRPC);
-#ifdef  _FULL_TRACE
-            PROGLOG("MiniSort got %u from node %d",mbin.length(),(int)node);
-#endif
-            if (first) { 
-                sem.wait();
-                first = false;
-            }
-            if (mbin.length()==0) // nb don't exit before wait!
-                break;
-            dst.deserialize(*rowif->queryRowAllocator(),rowif->queryRowDeserializer(),mbin.length(),mbin.bufferBase(),false);
-        }
-    }
-    void StartMiniSort(rowcount_t _totalrows)
-    {
-        PrintLog("Minisort started: %s, totalrows=%"RCPF"d", partno?"seconday node":"primary node",_totalrows);
-        size32_t blksize = 0x100000;
-
-		CThorExpandingRowArray rowsToSort(*activity, InitialSortElements, CommitStep, false);
-		if (partno) {
-            CMessageBuffer mb;
-            unsigned idx = 0;
-            loop {
-                unsigned done = rowArray.serializeblk(rowif->queryRowSerializer(),mb.clear(),blksize,idx,(unsigned) -1);
-#ifdef  _FULL_TRACE
-                PROGLOG("MiniSort serialized %u rows, %u bytes",done,mb.length());
-#endif
-                sendToPrimaryNode(mb);
-                if (!done)
-                    break;
-                idx += done;
-            }
-            rowArray.kill();
-            appendFromPrimaryNode(rowsToSort);
-        }
-        else
-		{
-			rowsToSort.transferFrom(rowArray);
-            class casyncfor: public CAsyncFor
-            {
-                CSortSlaveBase &base;
-                Semaphore *nextsem;
-            public:
-                casyncfor(CSortSlaveBase &_base,unsigned numnodes) 
-                    : base(_base) 
-                { 
-                    nextsem = new Semaphore[numnodes];  // 1 extra
-                    nextsem[0].signal();
-                }
-                ~casyncfor()
-                {
-                    delete [] nextsem;
-                }
-                void Do(unsigned i)
-                {
-                    base.appendFromSecondaryNode(rowsToSort, (rank_t)(i+2),nextsem[i]); // +2 as master is 0 self is 1
-                    nextsem[i+1].signal();
-                }
-            } afor1(*this,numnodes);
-            afor1.For(numnodes-1, MINISORT_PARALLEL_TRANSFER);          
-            // JCSMORE - the blocks sent from other nodes were already sorted..
-            // appended to local sorted chunk, and this is resorting the whole lot..
-            // It's sorting on remote side, before it knows how big..
-            // But shouldn't it merge sort here instead?
-            rowsToSort.sort(*icompare, isstable, activity->queryMaxCores(), rowArray);
-#ifdef  _FULL_TRACE
-            PROGLOG("MiniSort got %d rows %"I64F"d bytes",rowArray.ordinality(),(__int64)(rowArray.totalSize()));
-#endif
-            UnsignedArray points; 
-            rowArray.partition(*icompare, numnodes, points);
-#ifdef  _FULL_TRACE
-            for (unsigned pi=0;pi<points.ordinality();pi++)
-                PROGLOG("points[%d] = %u",pi, points.item(pi));
-#endif
-            class casyncfor2: public CAsyncFor
-            {
-                CSortSlaveBase &base;
-                unsigned *points;
-                size32_t blksize;
-                CriticalSection crit;
-            public:
-                casyncfor2(CSortSlaveBase &_base,unsigned *_points,size32_t _blksize) 
-                    : base(_base) 
-                { 
-                    points = _points;
-                    blksize = _blksize;
-                }
-                void Do(unsigned i)
-                {
-                    base.sendToSecondaryNode((rank_t)(i+2),points[i+1],points[i+2],crit,blksize); // +2 as master is 0 self is 1
-                }
-            } afor2(*this,points.getArray(),blksize);
-            afor2.For(numnodes-1, MINISORT_PARALLEL_TRANSFER);          
-            // get rid of rows sent
-            rowArray.removeRows(points.item(1),rowArray.ordinality()-points.item(1));
-        }
+        // JCSMORE partno and numnodes should be implicit
+        CMiniSort miniSort(*activity, *rowif, *clusterComm, partno, numnodes, mpTagRPC);
+        totalrows = miniSort.sort(rowArray, *icompare, isstable); // local totalrows
         merger.setown(rowArray.createRowStream());
-        totalrows = rowArray.ordinality();
         startmergesem.signal();
         PROGLOG("StartMiniSort output started");
         traceWait("finishedmergesem(2)",finishedmergesem);
@@ -1223,6 +1239,7 @@ public:
         clearOverflow();
         PrintLog("StartMiniSort exit");
     }
+    virtual IMergeTransferServer *createTransferServer() = 0;
 };
 
 

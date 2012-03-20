@@ -429,8 +429,8 @@ class graph_decl CThorRowFixedSizeArray : public roxiemem::RoxieSimpleInputRowAr
 
 public:
     CThorRowFixedSizeArray(CActivityBase &_activity);
-	void set(roxiemem::rowidx_t numRows, const void *rows);
-	void transferRows(roxiemem::rowidx_t numRows, const void **rows);
+    void setown(roxiemem::rowidx_t numRows, const void *rows);
+    void transferRows(roxiemem::rowidx_t &outNumRows, const void **&outRows);
 
     void removeRows(unsigned i, unsigned n);
 
@@ -438,7 +438,7 @@ public:
     IRowStream *createRowStream(unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
     unsigned save(IRowWriter *writer,unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
 
-    offset_t serializedSize();
+    offset_t serializedSize(IOutputRowSerializer *rowSerializer);
     void serialize(IOutputRowSerializer *_serializer,IRowSerializerTarget &out);
     void serialize(IOutputRowSerializer *_serializer,MemoryBuffer &mb,bool hasnulls);
     unsigned serializeblk(IOutputRowSerializer *_serializer,MemoryBuffer &mb,size32_t dstmax, unsigned idx, unsigned count);
@@ -456,6 +456,7 @@ protected:
 
 public:
 	CThorExpandingRowArray(CActivityBase &activity, roxiemem::rowidx_t initialSize, size32_t commitDelta, bool sorter);
+    ~CThorExpandingRowArray();
 
 	void transferFrom(CThorRowFixedSizeArray &src);
     void removeRows(unsigned i, unsigned n);

@@ -508,19 +508,18 @@ void CThorRowArray::reserve(unsigned n)
 
 // =================================
 
-CThorRowFixedSizeArray::CThorRowFixedSizeArray(CActivityBase *_activity) : activity(_activity)
+CThorRowFixedSizeArray::CThorRowFixedSizeArray(CActivityBase &_activity) : activity(_activity)
 {
 }
 
-void CThorRowFixedSizeArray::set(const void *_rows, rowidx_t _numRows)
+void CThorRowFixedSizeArray::setown(const void *_rows, roxiemem::rowidx_t _numRows)
 {
     kill();
-	LinkThorRow(_rows);
     rows = _rows;
     numRows = _numRows;
 }
 
-void CThorRowFixedSizeArray::transferRows(roxiemem::rowidx_t &outNumRows, const **&outRows)
+void CThorRowFixedSizeArray::transferRows(roxiemem::rowidx_t &outNumRows, const void **&outRows)
 {
 	assertex(0 == firstRow);
     outNumRows = numRows;
@@ -531,11 +530,12 @@ void CThorRowFixedSizeArray::transferRows(roxiemem::rowidx_t &outNumRows, const 
 
 offset_t CThorRowFixedSizeArray::serializedSize(IOutputRowSerializer *rowSerializer)
 {
-    roxidx_t c = ordinality();
+    roxiemem::rowidx_t c = ordinality();
+    offset_t total = 0;
     for (unsigned i=0; i<c; i++)
     {
         CSizingSerializer ssz;
-        rowSerializer->serialize(ssz, rows[i]);
+        rowSerializer->serialize(ssz, (const byte *)rows[i]);
         total += ssz.size();
     }
     return total;
@@ -637,17 +637,16 @@ void CThorRowFixedSizeArray::partition(ICompare &compare, unsigned num, Unsigned
 
 IRowStream *CThorRowFixedSizeArray::createRowStream(unsigned start, unsigned num, bool streamowns)
 {
-    readOnly = true;
-    class cStream: public CSimpleInterface, implements IRowStream
+    class CStream : public CSimpleInterface, implements IRowStream
     {
         bool owns;
-        rowidx_t num, pos;
+        roxiemem::rowidx_t num, pos;
         Linked<CThorRowFixedSizeArray> parent;
 
     public:
         IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-        CStream(CThorRowFixedSizeArray *_parent, bool _owns, rowidx_t _start, rowidx_t _num)
+        CStream(CThorRowFixedSizeArray *_parent, bool _owns, roxiemem::rowidx_t _start, roxiemem::rowidx_t _num)
             : parent(_parent), owns(_owns), pos(_start), num(_num)
         {
         }
@@ -667,7 +666,7 @@ IRowStream *CThorRowFixedSizeArray::createRowStream(unsigned start, unsigned num
     else if ((num==(unsigned)-1)||(start+num>ordinality()))
         num = ordinality()-start;
 
-    return new cStream(*this, streamowns, start, num); // NB: links this
+    return new CStream(this, streamowns, start, num); // NB: links this
 }
 
 unsigned CThorRowFixedSizeArray::save(IRowWriter *writer, unsigned pos, unsigned num, bool owns)
@@ -695,11 +694,27 @@ unsigned CThorRowFixedSizeArray::save(IRowWriter *writer, unsigned pos, unsigned
     return ret;
 }
 
+void CThorRowFixedSizeArray::removeRows(roxiemem::rowidx_t start, roxiemem::rowidx_t n)
+{
+    assertex(start>=firstRow);
+    assertex(numRows-start >= n);
+    assertex(!n || !rows);
+    if (rows)
+    {
+        for (roxiemem::rowidx_t i = start; i < n; i++)
+            ReleaseRoxieRow(rows[i]);
+        //firstRow = 0;
+        numRows -= n;
+        const void **from = rows+start;
+        memmove(from, from+n, n * sizeof(void *));
+    }
+}
+
 
 
 //====
 
-CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IRowManager *rowManager, rowidx_t initialSize, size32_t commitDelta, bool _sorter) : DynamicRoxieOutputRowArray(_activity.queryJob().queryRowManager(), initialSize, commitDelta), activity(_activity), sorter(_sorter)
+CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, roxiemem::rowidx_t initialSize, size32_t commitDelta, bool _sorter) : DynamicRoxieOutputRowArray(_activity.queryJob().queryRowManager(), initialSize, commitDelta), activity(_activity), sorter(_sorter)
 {
 }
 
@@ -715,23 +730,25 @@ void CThorExpandingRowArray::transferFrom(CThorRowFixedSizeArray &donor)
 	donor.transferRows(numRows, rows);
 }
 
-bool CThorExpandingRowArray::ensure(rowidx_t requiredRows)
+bool CThorExpandingRowArray::ensure(roxiemem::rowidx_t requiredRows)
 {
     if (!sorter)
         return DynamicRoxieOutputRowArray::ensure(requiredRows);
-    LinkedThorRow oldRows = rows;
+    assertex(sortedRows);
+    OwnedConstThorRow oldRows;
+    oldRows.set(rows);
     if (!DynamicRoxieOutputRowArray::ensure(requiredRows))
         return false;
 
     // possibly move code in DynamicRoxieOutputRowArray::ensure to a reusable member method.
     try
     {
-        sortedRows = static_cast<const void * *>(rowManager->allocate(maxRows * sizeof(void*), RowArrayActivityId));
+        sortedRows = static_cast<const void * *>(rowManager->allocate(maxRows * sizeof(void*), activity.queryContainer().queryId()));
         if (!sortedRows)
         {
             // restore old rows
             ReleaseThorRow(rows);
-            rows = oldRows.getClear();
+            rows = (const void **)oldRows.getClear();
             return false;
         }
     }
@@ -739,7 +756,7 @@ bool CThorExpandingRowArray::ensure(rowidx_t requiredRows)
     {
         //Pahological cases - not enough memory to reallocate the target row buffer, or no contiguous pages available.
         ReleaseThorRow(rows);
-        rows = oldRows.getClear();
+        rows = (const void **)oldRows.getClear();
 
         unsigned code = e->errorCode();
         if ((code == ROXIEMM_MEMORY_LIMIT_EXCEEDED) || (code == ROXIEMM_MEMORY_POOL_EXHAUSTED))
@@ -753,7 +770,7 @@ bool CThorExpandingRowArray::ensure(rowidx_t requiredRows)
 
 void CThorExpandingRowArray::sort(ICompare & compare, bool stable, unsigned maxcores, CThorRowFixedSizeArray &result)
 {
-    unsigned n = ordinality();
+    unsigned n = numCommitted();
     if (n>1)
     {
         const void **srcRows = getBlock(n);
@@ -762,7 +779,8 @@ void CThorExpandingRowArray::sort(ICompare & compare, bool stable, unsigned maxc
             parqsortvecstable((void **const)sortedRows, n, compare, (void ***)srcRows, maxcores); // use res for index
         else
             parqsortvec((void **const)sortedRows, n, compare, maxcores);
-        result.set(sortedRows, n);
+        result.setown(sortedRows, n);
+        sortedRows = NULL;
     }
 }
 
@@ -796,7 +814,6 @@ void CThorExpandingRowArray::deserialize(IEngineRowAllocator &allocator,IOutputR
 
 void CThorExpandingRowArray::removeRows(rowidx_t start, rowidx_t n)
 {
-    assertex(!readOnly);
     assertex(start>=firstRow);
     assertex(numRows-start >= n);
     assertex(!n || !rows);

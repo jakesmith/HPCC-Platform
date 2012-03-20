@@ -115,7 +115,7 @@ bool RoxieOutputRowArray::set(const void * row, rowidx_t i)
 #endif
 
 //The following can be accessed from the reader without any need to lock
-const void * RoxieOutputRowArray::get(rowidx_t i) const
+const void * RoxieOutputRowArray::query(rowidx_t i) const
 {
     RoxieOutputRowArrayLock block(*this);
     if (i < firstRow || i >= commitRows)
@@ -133,14 +133,13 @@ const void * RoxieOutputRowArray::getClear(rowidx_t i)
     return row;
 }
 
-const void * RoxieOutputRowArray::link(rowidx_t i) const
+const void * RoxieOutputRowArray::get(rowidx_t i) const
 {
     RoxieOutputRowArrayLock block(*this);
     if (i < firstRow || i >= commitRows)
         return NULL;
 
-    const void * row = 
-		[i];
+    const void * row = rows[i];
     if (row)
         LinkRoxieRow(row);
     return row;
