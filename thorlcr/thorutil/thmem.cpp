@@ -252,39 +252,6 @@ unsigned CThorRowArray::load(IRowStream &stream, bool ungrouped, bool &abort, bo
     return n;
 }
 
-unsigned CThorRowArray::load2(IRowStream &stream, bool ungrouped, CThorRowArray &prev, IFile &savefile, IOutputRowSerializer *prevserializer, IEngineRowAllocator *prevallocator, bool &prevsaved, bool &overflowed)
-{
-    overflowed = false;
-    prevsaved = false;
-    size32_t prevsz = prev.totalMem();
-    unsigned n = 0;
-    loop {
-        if (totalMem()+prevsz>maxtotal) {
-            Owned<IExtRowWriter> writer = createRowWriter(&savefile,prevserializer,prevallocator,false,false,false); 
-            prev.save(writer);
-            writer->flush();
-            prev.clear();
-            prevsaved = true;
-        }
-        OwnedConstThorRow row = stream.nextRow();
-        if (!row) {
-            if (ungrouped)
-                row.setown(stream.nextRow());
-            if (!row)
-                break;
-        }
-        append(row.getLink());      // use getLink incase throws exception
-        n++;
-        if (isFull()) {
-            overflowed=true; 
-            break;
-        }
-    }       
-    return n;
-    
-}
-
-
 void CThorRowArray::transfer(CThorRowArray &from)
 {
     clear();

@@ -180,7 +180,6 @@ protected:
     const void * * rows;
     rowidx_t firstRow; // Only rows firstRow..numRows are considered initialized.
     rowidx_t numRows;
-friend class RoxieSimpleInputRowArray;
 };
 
 

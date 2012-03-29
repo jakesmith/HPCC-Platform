@@ -165,7 +165,6 @@ public:
 
 extern void traceKey(IOutputRowSerializer *serializer,const char *prefix,const void *key);
 
-IThorRowSortedLoader *createThorRowSortedLoader(CThorRowArray &rows); // NB only contains all rows if hasOverflowed false
 IThorRowLoader *createThorRowLoader(CActivityBase &activity);
 IThorRowLoader *createThorRowLoader(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare=NULL, bool isStable=false, unsigned spillPriority=50);
 

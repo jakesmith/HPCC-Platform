@@ -206,13 +206,15 @@ public:
             if (idx==interval)
             {
                 idx = 0;
-                // JCSMORE used to check if 'sampleRows.isFull()' here, but only to warn
                 if (!sampleRows.append(row.getClear()))
                 {
+                    // JCSMORE used to check if 'isFull()' here, but only to warn
+                    // I think this is bad news, if has run out of room here...
+                    // should at least warn in workunit I suspect
                     overflowsize = output->getPosition();
                     if (!overflowed)
                     {
-                        PROGLOG("Sample buffer full");
+                        WARNLOG("Sample buffer full");
                         overflowed = true;
                     }
                 }
@@ -226,7 +228,7 @@ public:
             idxFileStream->flush();
         output.clear();
         if (overflowed)
-            PROGLOG("Overflowed by %"I64F"d", overflowsize);
+            WARNLOG("Overflowed by %"I64F"d", overflowsize);
         PROGLOG("Local Overflow Merge done: overflow file %s size %"I64F"d", dataFile->queryFilename(), dataFile->size());
         return end;
     }

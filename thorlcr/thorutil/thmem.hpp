@@ -385,7 +385,6 @@ public:
 
     unsigned load(IRowStream &stream,bool ungroup); // doesn't check for overflow
     unsigned load(IRowStream &stream, bool ungroup, bool &abort, bool *overflowed=NULL);
-    unsigned load2(IRowStream &stream, bool ungroup, CThorRowArray &prev, IFile &savefile, IOutputRowSerializer *prevserializer, IEngineRowAllocator *preallocator, bool &prevsaved, bool &overflowed);
     
     IRowStream *createRowStream(unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
     unsigned save(IRowWriter *writer,unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
