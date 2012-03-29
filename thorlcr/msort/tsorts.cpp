@@ -432,7 +432,7 @@ public:
         deserializer = rowIf.queryRowDeserializer();
         allocator = rowIf.queryRowAllocator();
     }
-    IRowStream *sort(CThorRowFixedSizeArray &localRows, ICompare &iCompare, bool isStable, roxiemem::rowidx_t &rowCount)
+    IRowStream *sort(CThorRowFixedSizeArray &localRows, ICompare &iCompare, bool isStable, rowcount_t &rowCount)
     {
         PrintLog("Minisort started: %s, totalrows=%"RCPF"d", partNo?"seconday node":"primary node", localRows.ordinality());
         size32_t blksize = 0x100000;

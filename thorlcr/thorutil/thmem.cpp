@@ -685,13 +685,13 @@ IRowStream *CThorRowFixedSizeArray::createRowStream(unsigned start, unsigned num
     class CStream : public CSimpleInterface, implements IRowStream
     {
         bool owns;
-        roxiemem::rowidx_t pos, lastRow;
+        rowcount_t pos, lastRow;
         CThorRowFixedSizeArray &parent;
 
     public:
         IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-        CStream(CThorRowFixedSizeArray &_parent, bool _owns, roxiemem::rowidx_t firstRow, roxiemem::rowidx_t _lastRow)
+        CStream(CThorRowFixedSizeArray &_parent, bool _owns, rowcount_t firstRow, rowcount_t _lastRow)
             : parent(_parent), owns(_owns), pos(firstRow), lastRow(_lastRow)
         {
         }
@@ -708,7 +708,7 @@ IRowStream *CThorRowFixedSizeArray::createRowStream(unsigned start, unsigned num
     };
     if (start>ordinality())
         start = ordinality();
-    roxiemem::rowidx_t lastRow;
+    rowcount_t lastRow;
     if ((num==(unsigned)-1)||(start+num>ordinality()))
         lastRow = ordinality();
     else
@@ -898,7 +898,7 @@ void CThorExpandingRowArray::swap(CThorExpandingRowArray &other)
     roxiemem::IRowManager *otherRowManager = other.rowManager;
     IRowInterfaces *otherRowIf = other.rowIf;
     const void **otherRows = other.rows;
-    void **otherstableSortTmp = other.stableSortTmp;
+    void **otherStableSortTmp = other.stableSortTmp;
     bool otherStableSort = other.stableSort;
     roxiemem::rowidx_t otherMaxRows = other.maxRows;
     roxiemem::rowidx_t otherFirstRow = other.firstRow;
@@ -917,7 +917,7 @@ void CThorExpandingRowArray::swap(CThorExpandingRowArray &other)
     rowManager = otherRowManager;
     setup(otherRowIf, otherStableSort);
     rows = otherRows;
-    stableSortTmp = otherstableSortTmp;
+    stableSortTmp = otherStableSortTmp;
     maxRows = otherMaxRows;
     firstRow = otherFirstRow;
     numRows = otherNumRows;
