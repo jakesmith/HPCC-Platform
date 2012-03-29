@@ -252,39 +252,6 @@ unsigned CThorRowArray::load(IRowStream &stream, bool ungrouped, bool &abort, bo
     return n;
 }
 
-unsigned CThorRowArray::load2(IRowStream &stream, bool ungrouped, CThorRowArray &prev, IFile &savefile, IOutputRowSerializer *prevserializer, IEngineRowAllocator *prevallocator, bool &prevsaved, bool &overflowed)
-{
-    overflowed = false;
-    prevsaved = false;
-    size32_t prevsz = prev.totalMem();
-    unsigned n = 0;
-    loop {
-        if (totalMem()+prevsz>maxtotal) {
-            Owned<IExtRowWriter> writer = createRowWriter(&savefile,prevserializer,prevallocator,false,false,false); 
-            prev.save(writer);
-            writer->flush();
-            prev.clear();
-            prevsaved = true;
-        }
-        OwnedConstThorRow row = stream.nextRow();
-        if (!row) {
-            if (ungrouped)
-                row.setown(stream.nextRow());
-            if (!row)
-                break;
-        }
-        append(row.getLink());      // use getLink incase throws exception
-        n++;
-        if (isFull()) {
-            overflowed=true; 
-            break;
-        }
-    }       
-    return n;
-    
-}
-
-
 void CThorRowArray::transfer(CThorRowArray &from)
 {
     clear();
@@ -718,13 +685,13 @@ IRowStream *CThorRowFixedSizeArray::createRowStream(unsigned start, unsigned num
     class CStream : public CSimpleInterface, implements IRowStream
     {
         bool owns;
-        roxiemem::rowidx_t pos, lastRow;
+        rowcount_t pos, lastRow;
         CThorRowFixedSizeArray &parent;
 
     public:
         IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-        CStream(CThorRowFixedSizeArray &_parent, bool _owns, roxiemem::rowidx_t firstRow, roxiemem::rowidx_t _lastRow)
+        CStream(CThorRowFixedSizeArray &_parent, bool _owns, rowcount_t firstRow, rowcount_t _lastRow)
             : parent(_parent), owns(_owns), pos(firstRow), lastRow(_lastRow)
         {
         }
@@ -741,7 +708,7 @@ IRowStream *CThorRowFixedSizeArray::createRowStream(unsigned start, unsigned num
     };
     if (start>ordinality())
         start = ordinality();
-    roxiemem::rowidx_t lastRow;
+    rowcount_t lastRow;
     if ((num==(unsigned)-1)||(start+num>ordinality()))
         lastRow = ordinality();
     else
@@ -931,7 +898,7 @@ void CThorExpandingRowArray::swap(CThorExpandingRowArray &other)
     roxiemem::IRowManager *otherRowManager = other.rowManager;
     IRowInterfaces *otherRowIf = other.rowIf;
     const void **otherRows = other.rows;
-    void **otherstableSortTmp = other.stableSortTmp;
+    void **otherStableSortTmp = other.stableSortTmp;
     bool otherStableSort = other.stableSort;
     roxiemem::rowidx_t otherMaxRows = other.maxRows;
     roxiemem::rowidx_t otherFirstRow = other.firstRow;
@@ -950,7 +917,7 @@ void CThorExpandingRowArray::swap(CThorExpandingRowArray &other)
     rowManager = otherRowManager;
     setup(otherRowIf, otherStableSort);
     rows = otherRows;
-    stableSortTmp = otherstableSortTmp;
+    stableSortTmp = otherStableSortTmp;
     maxRows = otherMaxRows;
     firstRow = otherFirstRow;
     numRows = otherNumRows;
