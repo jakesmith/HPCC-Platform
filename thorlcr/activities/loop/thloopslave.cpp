@@ -221,7 +221,7 @@ public:
         helper->createParentExtract(extractBuilder);
         maxIterations = helper->numIterations();
         if ((int)maxIterations < 0) maxIterations = 0;
-        loopPending.setown(createOverflowableBuffer(*this, this, LOOP_SMART_BUFFER_SIZE));
+        loopPending.setown(createOverflowableBuffer(*this, this, false));
         loopPendingCount = 0;
         finishedLooping = ((container.getKind() == TAKloopcount) && (maxIterations == 0));
         curInput.set(input);
@@ -330,7 +330,7 @@ public:
                 sendLoopingCount(loopCounter);
                 loopPending->flush();
                 curInput.setown(queryContainer().queryLoopGraph()->execute(*this, (flags & IHThorLoopArg::LFcounter)?loopCounter:0, loopPending.getClear(), loopPendingCount, extractBuilder.size(), extractBuilder.getbytes()));
-                loopPending.setown(createOverflowableBuffer(*this, this, LOOP_SMART_BUFFER_SIZE));
+                loopPending.setown(createOverflowableBuffer(*this, this, false));
                 loopPendingCount = 0;
                 ++loopCounter;
                 if ((container.getKind() == TAKloopcount) && (loopCounter > maxIterations))

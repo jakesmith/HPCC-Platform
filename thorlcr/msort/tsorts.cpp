@@ -285,7 +285,7 @@ class CMiniSort
     ICommunicator &clusterComm;
     unsigned partNo, numNodes;
     mptag_t mpTag;
-    Owned<IThorRowLoader> loader;
+    Owned<IThorRowCollector> collector;
 
     unsigned serialize(IRowStream &stream, MemoryBuffer &mb, size32_t dstMax)
     {
@@ -427,7 +427,7 @@ public:
     CMiniSort(CActivityBase &_activity, IRowInterfaces &_rowIf, ICommunicator &_clusterComm, unsigned _partNo, unsigned _numNodes, mptag_t _mpTag)
         : activity(_activity), rowIf(_rowIf), clusterComm(_clusterComm), partNo(_partNo), numNodes(_numNodes), mpTag(_mpTag)
     {
-        loader.setown(createThorRowLoader(activity));
+        collector.setown(createThorRowCollector(activity));
         serializer = rowIf.queryRowSerializer();
         deserializer = rowIf.queryRowDeserializer();
         allocator = rowIf.queryRowAllocator();
@@ -464,15 +464,17 @@ public:
                     break;
                 idx += done;
             }
-            loader->setup(&rowIf);
-            appendFromPrimaryNode(*loader); // will be sorted, may spill
-            rowCount = loader->numRows();
-            return loader->getStream();
+            collector->setup(&rowIf);
+            Owned<IRowWriter> writer = collector->getWriter();
+            appendFromPrimaryNode(*writer); // will be sorted, may spill
+            rowCount = collector->numRows();
+            writer.clear();
+            return collector->getStream();
         }
         else
         {
-            loader->setup(&rowIf, &iCompare, isStable, UINT_MAX); // must not spill
-            loader->transferRowsIn(localRows);
+            collector->setup(&rowIf, &iCompare, isStable, UINT_MAX); // must not spill
+            collector->transferRowsIn(localRows);
 
             // JCSMORE - very odd, threaded, but semaphores ensuring sequential writes, why?
             class casyncfor: public CAsyncFor
@@ -492,7 +494,8 @@ public:
                 }
                 void Do(unsigned i)
                 {
-                    base.appendFromSecondaryNode(*base.loader, (rank_t)(i+2),nextsem[i]); // +2 as master is 0 self is 1
+                    Owned<IRowWriter> writer = base.collector->getWriter();
+                    base.appendFromSecondaryNode(*writer, (rank_t)(i+2),nextsem[i]); // +2 as master is 0 self is 1
                     nextsem[i+1].signal();
                 }
             } afor1(*this, numNodes);
@@ -504,7 +507,7 @@ public:
             // But shouldn't it merge sort here instead?
 
             CThorRowFixedSizeArray globalRows(activity, &rowIf);
-            loader->transferRowsOut(globalRows); // will sort in process
+            collector->transferRowsOut(globalRows); // will sort in process
 
 #ifdef  _FULL_TRACE
             PROGLOG("MiniSort got %d rows %"I64F"d bytes", globalRows.ordinality(),(__int64)(globalRows.totalSize()));
@@ -1185,7 +1188,7 @@ public:
         try
         {
             // if all in memory, rows will be transferred into rowArray when done
-            overflowstream.setown(sortedloader->load(in, false, sl_allDiskOrAllMem, &rowArray, abort));
+            overflowstream.setown(sortedloader->load(in, abort, rc_allDiskOrAllMem, false, &rowArray));
             ActPrintLog(activity, "Local run sort(s) done");
         }
         catch (IException *e)

@@ -1024,7 +1024,7 @@ void CThorExpandingRowArray::sort(ICompare & compare, unsigned maxcores)
     }
 }
 
-unsigned CThorExpandingRowArray::save(IFile &file)
+unsigned CThorExpandingRowArray::save(IFile &file, bool grouped)
 {
     Owned<IExtRowWriter> writer = createRowWriter(&file, rowIf->queryRowSerializer(), rowIf->queryRowAllocator(), false, false, true);
     roxiemem::rowidx_t numRows = numCommitted();
@@ -1092,24 +1092,367 @@ void CThorExpandingRowArray::removeRows(roxiemem::rowidx_t start, roxiemem::rowi
     }
 }
 
-
-/*
-void CThorExpandingRowArray::reorder(unsigned start,unsigned num, unsigned *neworder)
+class CThorRowCollectorBase : public CSimpleInterface, implements roxiemem::IBufferedRowCallback
 {
-    if (start>=ordinality())
-        return;
-    if (start+num>ordinality())
-        num = ordinality()-start;
-    if (!num)
-        return;
-    MemoryAttr ma;
-    byte **tmp = (byte **)ma.allocate(num*sizeof(void *));
-    byte **p = ((byte **)ptrbuf.toByteArray())+start;
-    memcpy(tmp,p,num*sizeof(void *));
-    for (unsigned i=0;i<num;i++)
-        p[i] = tmp[neworder[i]];
+protected:
+    CActivityBase &activity;
+    CThorExpandingRowArray spillableRows;
+    IArrayOf<IFile> spillFiles;
+    Owned<IOutputRowSerializer> serializer;
+    unsigned spillPriority;
+    unsigned totalRows;
+    unsigned overflowCount;
+    unsigned maxCores;
+    unsigned outStreams;
+    ICompare *iCompare;
+    bool isStable, preserveGrouping;
+    IRowInterfaces *rowIf;
+
+    bool spillRows()
+    {
+        roxiemem::rowidx_t numRows = spillableRows.numCommitted();
+        if (numRows == 0)
+            return false;
+
+        totalRows += numRows;
+        if (iCompare)
+            spillableRows.sort(*iCompare, maxCores);
+
+        StringBuffer tempname;
+        GetTempName(tempname,"srtspill",true);
+        Owned<IFile> iFile = createIFile(tempname.str());
+
+        spillableRows.save(*iFile, preserveGrouping);
+        spillableRows.noteSpilled(numRows);
+        spillFiles.append(*iFile.getClear());
+
+        ++overflowCount;
+
+        return true;
+    }
+    void setPreserveGrouping(bool _preserveGrouping)
+    {
+        preserveGrouping = _preserveGrouping;
+    }
+    void putRow(const void *row)
+    {
+        if (!spillableRows.append(row))
+        {
+            {
+                roxiemem::RoxieOutputRowArrayLock block(spillableRows);
+                //We should have been called back to free any committed rows, but occasionally it may not (e.g., if
+                //the problem is global memory is exhausted) - in which case force a spill here (but add any pending
+                //rows first).
+                if (spillableRows.numCommitted() != 0)
+                {
+                    spillableRows.flush();
+                    spillRows();
+                }
+                //Ensure new rows are written to the head of the array.  It needs to be a separate call because
+                //spillRows() cannot shift active row pointer since it can be called from any thread
+                spillableRows.flush();
+            }
+            if (!spillableRows.append(row))
+            {
+                ReleaseThorRow(row);
+                throw MakeStringException(ROXIEMM_MEMORY_LIMIT_EXCEEDED, "Insufficient memory to append sort row");
+            }
+        }
+    }
+    IRowStream *getStream(RowCollectorFlags diskMemMix, roxiemem::RoxieSimpleInputRowArray *allMemRows)
+    {
+        if (0 == outStreams)
+        {
+            spillableRows.flush();
+            if ((rc_allDisk == diskMemMix) || ((rc_allDiskOrAllMem == diskMemMix) && overflowCount))
+            {
+                roxiemem::RoxieOutputRowArrayLock block(spillableRows);
+                if (spillableRows.numCommitted())
+                {
+                    spillRows();
+                    spillableRows.kill();
+                }
+            }
+        }
+        if (outStreams)
+            assertex(rc_allDisk == diskMemMix); // JCSMORE for now, needs sharing/spilling mem/disk combo. reader
+        ++outStreams;
+
+        class CStreamFileOwner : public CSimpleInterface, implements IExtRowStream
+        {
+            Linked<IFile> iFile;
+            IExtRowStream *stream;
+        public:
+            IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+            CStreamFileOwner(IFile *_iFile, IExtRowStream *_stream) : iFile(_iFile)
+            {
+                stream = LINK(_stream);
+            }
+            ~CStreamFileOwner()
+            {
+                stream->Release();
+                iFile->remove();
+            }
+        // IExtRowStream
+            virtual const void *nextRow() { return stream->nextRow(); }
+            virtual void stop() { stream->stop(); }
+            virtual offset_t getOffset() { return stream->getOffset(); }
+            virtual void stop(CRC32 *crcout=NULL) { stream->stop(); }
+            virtual const void *prefetchRow(size32_t *sz=NULL) { return stream->prefetchRow(sz); }
+            virtual void prefetchDone() { stream->prefetchDone(); }
+            virtual void reinit(offset_t offset, offset_t len, unsigned __int64 maxRows)
+            {
+                stream->reinit(offset, len, maxRows);
+            }
+        };
+
+        IArrayOf<IRowStream> instrms;
+        ForEachItemIn(f, spillFiles)
+        {
+            IFile &iFile = spillFiles.item(f);
+            Owned<IExtRowStream> strm = createRowStream(&iFile, rowIf, 0, (offset_t) -1, (unsigned __int64)-1, false, preserveGrouping);
+            instrms.append(* new CStreamFileOwner(&iFile, strm));
+        }
+
+        { // NB: should only be any left, if not all to disk
+            roxiemem::RoxieOutputRowArrayLock block(spillableRows);
+            if (spillableRows.numCommitted())
+            {
+                totalRows += spillableRows.numCommitted();
+                if (iCompare)
+                    spillableRows.sort(*iCompare, maxCores);
+                if (rc_allDiskOrAllMem == diskMemMix)
+                {
+                    assertex(allMemRows);
+                    allMemRows->transferFrom(spillableRows);
+                    // stream cannot be used
+                    return NULL;
+                }
+                instrms.append(*spillableRows.createRowStream()); // NB: stream will take ownership of rows in spillableRows
+            }
+        }
+        if (instrms.ordinality()==1)
+            return LINK(&instrms.item(0));
+        if (iCompare)
+        {
+            Owned<IRowLinkCounter> linkcounter = new CThorRowLinkCounter;
+            return createRowStreamMerger(instrms.ordinality(), instrms.getArray(), iCompare, false, linkcounter);
+        }
+        else
+            return createConcatRowStream(instrms.ordinality(),instrms.getArray());
+    }
+    void reset()
+    {
+        spillableRows.kill();
+        totalRows = overflowCount = outStreams = 0;
+    }
+public:
+    CThorRowCollectorBase(CActivityBase &_activity)
+        : activity(_activity),
+          spillableRows(_activity, InitialSortElements, CommitStep)
+    {
+        rowIf = NULL;
+        iCompare = NULL;
+        preserveGrouping = isStable = false;
+        totalRows = 0;
+        overflowCount = 0;
+        spillPriority = 50;
+        outStreams = 0;
+        activity.queryJob().queryRowManager()->addRowBuffer(this);
+        maxCores = activity.queryMaxCores();
+    }
+    ~CThorRowCollectorBase()
+    {
+        reset();
+        activity.queryJob().queryRowManager()->removeRowBuffer(this);
+    }
+    void setup(IRowInterfaces *_rowIf, ICompare *_iCompare, bool _isStable, unsigned _spillPriority)
+    {
+        rowIf = _rowIf;
+        iCompare = _iCompare;
+        isStable = _isStable;
+        spillPriority = _spillPriority;
+        spillableRows.setup(rowIf, isStable);
+    }
+    void transferRowsOut(CThorRowFixedSizeArray &out, bool sort)
+    {
+        roxiemem::RoxieOutputRowArrayLock block(spillableRows);
+        totalRows += spillableRows.numCommitted();
+        if (sort && iCompare)
+            spillableRows.sort(*iCompare, maxCores);
+        out.transferFrom(spillableRows);
+    }
+    bool hasOverflowed() const
+    {
+        return 0 != overflowCount;
+    }
+    rowcount_t numRows() const
+    {
+        return totalRows;
+    }
+    unsigned numOverflows() const
+    {
+        return overflowCount;
+    }
+    unsigned overflowScale() const
+    {
+        // 1 if no spill
+        if (!overflowCount)
+            return 1;
+        return overflowCount*2+3; // bit arbitrary
+    }
+    void transferRowsIn(CThorRowFixedSizeArray &src)
+    {
+        reset();
+        spillableRows.transferFrom(src);
+    }
+// IBufferedRowCallback
+    virtual unsigned getPriority() const
+    {
+        return spillPriority;
+    }
+    virtual bool freeBufferedRows(bool critical)
+    {
+        if (UINT_MAX == spillPriority)
+            return false;
+        roxiemem::RoxieOutputRowArrayLock block(spillableRows);
+        return spillRows();
+    }
+};
+
+enum TRLGroupFlag { trl_ungroup, trl_preserveGrouping, trl_stopAtEog };
+class CThorRowLoader : public CThorRowCollectorBase, implements IThorRowLoader
+{
+    IRowStream *load(IRowStream *in, bool &abort, TRLGroupFlag grouping, RowCollectorFlags diskMemMix, roxiemem::RoxieSimpleInputRowArray *allMemRows)
+    {
+        reset();
+        setPreserveGrouping(trl_preserveGrouping == grouping);
+        while (!abort)
+        {
+            const void *next = in->nextRow();
+            if (!next)
+            {
+                if (grouping == trl_stopAtEog)
+                    break;
+                else
+                {
+                    next = in->nextRow();
+                    if (!next)
+                        break;
+                    if (grouping == trl_preserveGrouping)
+                        putRow(NULL);
+                }
+            }
+            putRow(next);
+        }
+        return getStream(diskMemMix, allMemRows);
+    }
+
+public:
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+
+    CThorRowLoader(CActivityBase &activity) : CThorRowCollectorBase(activity)
+    {
+    }
+// IThorRowCollectorCommon
+    virtual void setup(IRowInterfaces *rowIf, ICompare *iCompare, bool isStable, unsigned spillPriority)
+    {
+        CThorRowCollectorBase::setup(rowIf, iCompare, isStable, spillPriority);
+    }
+    virtual rowcount_t numRows() const { return CThorRowCollectorBase::numRows(); }
+    virtual unsigned numOverflows() const { return CThorRowCollectorBase::numOverflows(); }
+    virtual unsigned overflowScale() const { return CThorRowCollectorBase::overflowScale(); }
+    virtual void transferRowsOut(CThorRowFixedSizeArray &dst, bool sort) { CThorRowCollectorBase::transferRowsOut(dst, sort); }
+    virtual void transferRowsIn(CThorRowFixedSizeArray &src) { CThorRowCollectorBase::transferRowsIn(src); }
+// IThorRowLoader
+    virtual IRowStream *load(IRowStream *in, bool &abort, RowCollectorFlags diskMemMix, bool preserveGrouping, roxiemem::RoxieSimpleInputRowArray *allMemRows)
+    {
+        assertex(!iCompare || !preserveGrouping); // can't sort if group preserving
+        return load(in, abort, preserveGrouping?trl_preserveGrouping:trl_ungroup, diskMemMix, allMemRows);
+    }
+    virtual IRowStream *loadGroup(IRowStream *in, bool &abort, RowCollectorFlags diskMemMix, roxiemem::RoxieSimpleInputRowArray *allMemRows)
+    {
+        return load(in, abort, trl_stopAtEog, diskMemMix, allMemRows);
+    }
+};
+
+IThorRowLoader *createThorRowLoader(CActivityBase &activity)
+{
+    return new CThorRowLoader(activity);
 }
-*/
+
+IThorRowLoader *createThorRowLoader(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare, bool isStable, unsigned spillPriority)
+{
+    Owned<IThorRowLoader> loader = new CThorRowLoader(activity);
+    loader->setup(rowIf, iCompare, isStable, spillPriority);
+    return loader.getClear();
+}
+
+class CThorRowCollector : public CThorRowCollectorBase, implements IThorRowCollector
+{
+public:
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+
+    CThorRowCollector(CActivityBase &activity) : CThorRowCollectorBase(activity)
+    {
+    }
+// IThorRowCollectorCommon
+    virtual void setup(IRowInterfaces *rowIf, ICompare *iCompare, bool isStable, unsigned spillPriority, bool preserveGrouping)
+    {
+        assertex(!iCompare || !preserveGrouping); // can't sort if group preserving
+        CThorRowCollectorBase::setup(rowIf, iCompare, isStable, spillPriority);
+        setPreserveGrouping(preserveGrouping);
+    }
+    virtual rowcount_t numRows() const { return CThorRowCollectorBase::numRows(); }
+    virtual unsigned numOverflows() const { return CThorRowCollectorBase::numOverflows(); }
+    virtual unsigned overflowScale() const { return CThorRowCollectorBase::overflowScale(); }
+    virtual void transferRowsOut(CThorRowFixedSizeArray &dst, bool sort) { CThorRowCollectorBase::transferRowsOut(dst, sort); }
+    virtual void transferRowsIn(CThorRowFixedSizeArray &src) { CThorRowCollectorBase::transferRowsIn(src); }
+// IThorRowCollector
+    virtual IRowWriter *getWriter()
+    {
+        class CWriter : public CSimpleInterface, implements IRowWriter
+        {
+            Linked<CThorRowCollector> parent;
+        public:
+            IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+
+            CWriter(CThorRowCollector *_parent) : parent(_parent)
+            {
+            }
+        // IRowWriter
+            virtual void putRow(const void *row)
+            {
+                parent->putRow(row);
+            }
+            virtual void flush()
+            {
+            }
+        };
+        return new CWriter(this);
+    }
+    virtual void reset()
+    {
+        CThorRowCollectorBase::reset();
+    }
+    virtual IRowStream *getStream(RowCollectorFlags diskMemMix)
+    {
+        return CThorRowCollectorBase::getStream(diskMemMix, NULL);
+    }
+};
+
+IThorRowCollector *createThorRowCollector(CActivityBase &activity)
+{
+    return new CThorRowCollector(activity);
+}
+
+IThorRowCollector *createThorRowCollector(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare, bool isStable, unsigned spillPriority, bool preserveGrouping)
+{
+    Owned<IThorRowCollector> collector = new CThorRowCollector(activity);
+    collector->setup(rowIf, iCompare, isStable, spillPriority, preserveGrouping);
+    return collector.getClear();
+}
+
 
 
 void setThorInABox(unsigned num)

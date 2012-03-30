@@ -257,7 +257,7 @@ public:
     void start()
     {
         CLimitSlaveActivityBase::start();
-        buf.setown(createOverflowableBuffer(*this, this, SKIPLIMIT_BUFFER_SIZE));
+        buf.setown(createOverflowableBuffer(*this, this, true));
     }
     CATCH_NEXTROW()
     {

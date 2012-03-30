@@ -2283,7 +2283,7 @@ public:
         distributor.setown(createHashDistributor(this, container.queryJob().queryJobComm(), mptag, queryRowInterfaces(inL), abortSoon,false, this));
         Owned<IRowStream> reader = distributor->connect(inL,ihashL,icompareL);
         Owned<IThorRowLoader> loaderL = createThorRowLoader(*this, ::queryRowInterfaces(inL), icompareL, true, SPILL_PRIORITY_HASHJOIN);
-        strmL.setown(loaderL->load(reader, false, sl_allDisk, NULL, abortSoon));
+        strmL.setown(loaderL->load(reader, abortSoon, rc_allDisk));
         loaderL.clear();
         reader.clear();
         stopInputL();
@@ -2295,7 +2295,7 @@ public:
         distributor.setown(createHashDistributor(this, container.queryJob().queryJobComm(), mptag2, queryRowInterfaces(inR), abortSoon,false, this));
         reader.setown(distributor->connect(inR,ihashR,icompareR));
         Owned<IThorRowLoader> loaderR = createThorRowLoader(*this, ::queryRowInterfaces(inR), icompareR, true, SPILL_PRIORITY_HASHJOIN);;
-        strmR.setown(loaderR->load(reader, false, sl_mixed, NULL, abortSoon));
+        strmR.setown(loaderR->load(reader, abortSoon));
         loaderR.clear();
         reader.clear();
         stopInputR();

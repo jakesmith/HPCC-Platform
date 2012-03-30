@@ -436,10 +436,7 @@ public:
                 ret = createKeyedJoinSlave(this);
                 break;
             case TAKgroup:
-                if (queryLocalOrGrouped())
-                    ret = createLocalGroupSlave(this);
-                else
-                    ret = createGroupSlave(this);
+                ret = createGroupSlave(this);
                 break;
             case TAKworkunitwrite:
                 ret = createWorkUnitWriteSlave(this);

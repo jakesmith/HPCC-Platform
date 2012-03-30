@@ -432,7 +432,7 @@ public:
         }
         else {
             StringBuffer tmpStr;
-            strm1.setown(iLoaderL->load(input1, false, sl_allDisk, NULL, abortSoon));
+            strm1.setown(iLoaderL->load(input1, abortSoon, rc_allDisk));
             isemptylhs = 0 == iLoaderL->numRows();
             stopInput1();
         }
@@ -449,7 +449,7 @@ public:
                 strm2.set(input2.get()); // already ungrouped
         }
         else {
-            strm2.setown(iLoaderR->load(input2, false, sl_allDisk, NULL, abortSoon));
+            strm2.setown(iLoaderR->load(input2, abortSoon, rc_allDisk));
             stopInput2();
         }
     }

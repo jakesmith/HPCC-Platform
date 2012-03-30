@@ -638,164 +638,43 @@ ISmartRowBuffer * createSmartInMemoryBuffer(CActivityBase *activity, size32_t bu
     return new CSmartRowInMemoryBuffer(activity,buffsize,srbrowif);
 }
 
-
-class COverflowableBuffer : public CSimpleInterface, implements IRowWriterMultiReader, implements roxiemem::IBufferedRowCallback
+class COverflowableBuffer : public CSimpleInterface, implements IRowWriterMultiReader
 {
     CActivityBase &activity;
     IRowInterfaces *rowif;
-    CThorRowArray rows;
-    bool lastnull;
-    rowcount_t total;
-    bool eoi;
-    Owned<IRowWriter> diskout;
-    Owned<IFile> tmpfile;
-    unsigned readersInUse;
-
-    void diskSwitch()
-    {
-        StringBuffer temp;
-        GetTempName(temp,"bufovf",true);
-        tmpfile.setown(createIFile(temp));
-        diskout.setown(createRowWriter(tmpfile,rowif->queryRowSerializer(),rowif->queryRowAllocator(),true,false, false));
-    }
-    void doStop()
-    {
-        flush(); // unless no readers, will have been already
-    }
-    void readerStop()
-    {
-        --readersInUse;
-    }
+    Owned<IThorRowCollector> collector;
+    bool eoi, grouped, shared;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    COverflowableBuffer(CActivityBase &_activity, IRowInterfaces *_rowif, size32_t sizebuf)
-        : activity(_activity), rowif(_rowif)
+    COverflowableBuffer(CActivityBase &_activity, IRowInterfaces *_rowif, bool _grouped, bool _shared)
+        : activity(_activity), rowif(_rowif), grouped(_grouped), shared(_shared)
     {
-        rows.setSizing(true,false);
-        rows.setMaxTotal(sizebuf);
-        total = 0;
-        eoi = false;
-        lastnull = false;
-        readersInUse = 0;
-        activity.queryJob().queryRowManager()->addRowBuffer(this);
-    }
-    ~COverflowableBuffer()
-    {
-        activity.queryJob().queryRowManager()->removeRowBuffer(this);
-        assertex(!readersInUse); // readers have link to parent, so shouldn't destruct unless they have released
-        doStop();
-        if (tmpfile)
-            tmpfile->remove();
+        collector.setown(createThorRowCollector(*this, &activity, NULL, false, SPILL_PRIORITY_OVERFLOWABLE_BUFFER, grouped));
     }
 
 // IRowWriterMultiReader
     virtual IRowStream *getReader()
     {
         flush();
-        class COverflowReader : public CSimpleInterface, implements IRowStream
-        {
-            Linked<COverflowableBuffer> owner;
-            IRowInterfaces *rowIf;
-            CThorRowArray &rows;
-            IFile *file;
-            Owned<IRowStream> diskin;
-            rowcount_t pos;
-            bool eog;
-
-        public:
-            IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-
-            COverflowReader(COverflowableBuffer *_owner, CThorRowArray &_rows, IFile *_file, IRowInterfaces *_rowIf) : owner(_owner), rows(_rows), file(_file), rowIf(_rowIf)
-            {
-                if (file)
-                    diskin.setown(createRowStream(file,rowIf,0,(offset_t)-1,RCUNBOUND,false,true)); // NH->JCS: always grouped?
-                pos = 0;
-            }
-            ~COverflowReader()
-            {
-                stop();
-            }
-            virtual const void *nextRow()
-            {
-                const void *ret;
-                if (pos<rows.ordinality())
-                {
-                    ret = rows.item((unsigned)(pos++));
-                    if (ret)
-                        LinkThorRow(ret);
-                }
-                else if (diskin)
-                    ret = diskin->nextRow();
-                else
-                    return NULL;
-                if (ret)
-                    return ret;
-                else if (eog)
-                {
-                    // eof
-                    diskin.clear();
-                    return NULL;
-                }
-                eog = true;
-                return NULL;
-            }
-            virtual void stop()
-            {
-                diskin.clear();
-                owner->readerStop();
-            }
-        };
-        ++readersInUse;
-        return new COverflowReader(this, rows, tmpfile, rowif); // NB: holds link to COverflowReader
+        return collector->getStream(shared?rc_allDisk:rc_mixed); // JCSMORE, if shared, needs to be all on disk for now
     }
 // IRowWriter
     virtual void putRow(const void *row)
     {
         assertex(!eoi);
-        if (row==NULL)
-        {
-            if (lastnull) {
-                flush();
-                return;
-            }
-            lastnull = true;
-        }
-        else
-            lastnull = false;
-        if (diskout)
-            diskout->putRow(row);
-        else
-        {
-            rows.append(row);
-            if (rows.isFull())
-                diskSwitch();
-        }
-        total++;
+        collector->putRow(row);
     }
     virtual void flush()
     {
         eoi = true;
-        if (diskout) {
-            diskout->flush();
-            diskout.clear();
-        }
-    }
-// IBufferedRowCallback
-    virtual unsigned getPriority() const
-    {
-        return SPILL_PRIORITY_OVERFLOWABLE_BUFFER;
-    }
-    virtual bool freeBufferedRows(bool critical)
-    {
-        return false; // JCSMORE
     }
 };
 
-IRowWriterMultiReader *createOverflowableBuffer(CActivityBase &activity, IRowInterfaces *rowif, size32_t sizebuf)
+IRowWriterMultiReader *createOverflowableBuffer(CActivityBase &activity, IRowInterfaces *rowIf, bool grouped)
 {
-    return new COverflowableBuffer(activity, rowif, sizebuf);
+    return new COverflowableBuffer(activity, rowIf, grouped);
 }
 
 

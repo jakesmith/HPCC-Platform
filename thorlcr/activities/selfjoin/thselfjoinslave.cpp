@@ -64,7 +64,7 @@ private:
         ActPrintLog("SELFJOIN: Performing local self-join");
 #endif
         Owned<IThorRowLoader> iLoader = createThorRowLoader(*this, ::queryRowInterfaces(input), compare, !isUnstable(), SPILL_PRIORITY_SELFJOIN);
-        Owned<IRowStream> rs = iLoader->load(input, true, sl_mixed, NULL, abortSoon);
+        Owned<IRowStream> rs = iLoader->load(input, abortSoon);
         stopInput(input);
         input = NULL;
         return rs.getClear();

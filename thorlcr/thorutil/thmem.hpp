@@ -491,12 +491,45 @@ public:
     void removeRows(roxiemem::rowidx_t start, roxiemem::rowidx_t n);
 
     void sort(ICompare & compare, unsigned maxcores);
-    unsigned save(IFile &file);
+    unsigned save(IFile &file, bool grouped);
     IRowStream *createRowStream();
 
     void deserialize(size32_t sz,const void *buf,bool hasnulls);
     void deserializeRow(IRowDeserializerSource &in); // NB single row not NULL
 };
+
+
+
+enum RowCollectorFlags { rc_mixed, rc_allDisk, rc_allDiskOrAllMem };
+interface IThorRowCollectorCommon : extends IInterface
+{
+    virtual rowcount_t numRows() const = 0;
+    virtual unsigned numOverflows() const = 0;
+    virtual unsigned overflowScale() const = 0;
+    virtual void transferRowsOut(CThorRowFixedSizeArray &dst, bool sort=true) = 0;
+    virtual void transferRowsIn(CThorRowFixedSizeArray &src) = 0;
+};
+
+interface IThorRowLoader : extends IThorRowCollectorCommon
+{
+    virtual void setup(IRowInterfaces *rowIf, ICompare *iCompare=NULL, bool isStable=false, unsigned spillPriority=50) = 0;
+    virtual IRowStream *load(IRowStream *in, bool &abort, RowCollectorFlags diskMemMix=rc_mixed, bool preserveGrouping=false, roxiemem::RoxieSimpleInputRowArray *allMemRows=NULL) = 0;
+    virtual IRowStream *loadGroup(IRowStream *in, bool &abort, RowCollectorFlags diskMemMix=rc_mixed, roxiemem::RoxieSimpleInputRowArray *allMemRows=NULL);
+};
+
+interface IThorRowCollector : extends IThorRowCollectorCommon
+{
+    virtual void setup(IRowInterfaces *rowIf, ICompare *iCompare=NULL, bool isStable=false, unsigned spillPriority=50, bool preserveGrouping=false) = 0;
+    virtual IRowWriter *getWriter() = 0;
+    virtual void reset() = 0;
+    virtual IRowStream *getStream(RowCollectorFlags diskMemMix = rc_mixed) = 0;
+};
+
+extern graph_decl IThorRowLoader *createThorRowLoader(CActivityBase &activity);
+extern graph_decl IThorRowLoader *createThorRowLoader(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare=NULL, bool isStable=false, unsigned spillPriority=50);
+extern graph_decl IThorRowCollector *createThorRowCollector(CActivityBase &activity);
+extern graph_decl IThorRowCollector *createThorRowCollector(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare=NULL, bool isStable=false, unsigned spillPriority=50, bool preserveGrouping=false);
+
 
 
 

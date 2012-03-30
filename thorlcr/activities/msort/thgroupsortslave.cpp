@@ -53,7 +53,6 @@ public:
         iCompare = helper->queryCompare();
         IHThorAlgorithm * algo = helper?(static_cast<IHThorAlgorithm *>(helper->selectInterface(TAIalgorithm_1))):NULL;
         unstable = (algo&&algo->getAlgorithmFlags()&TAFunstable);
-        iLoader.setown(createThorRowLoader(*this));
         appendOutputLinked(this);
     }
     void start()
@@ -62,10 +61,13 @@ public:
         dataLinkStart(activityKindStr(queryContainer().getKind()), container.queryId());
         input = inputs.item(0);
         unsigned spillPriority = container.queryGrouped() ? 50 : 20;
-        iLoader->setup(queryRowInterfaces(input), iCompare, !unstable, spillPriority);
+        iLoader.setown(createThorRowLoader(*this, queryRowInterfaces(input), iCompare, !unstable, spillPriority));
         startInput(input);
         eoi = false;
-        out.setown(iLoader->load(input, container.queryGrouped(), sl_mixed, NULL, abortSoon));
+        if (container.queryGrouped())
+            out.setown(iLoader->loadGroup(input, abortSoon));
+        else
+            out.setown(iLoader->load(input, abortSoon));
         if (0 == iLoader->numRows())
             eoi = true;
     }
@@ -86,7 +88,10 @@ public:
         {
             if (!container.queryGrouped())
                 return NULL;
-            out.setown(iLoader->load(input, container.queryGrouped(), sl_mixed, NULL, abortSoon));
+            if (container.queryGrouped())
+                out.setown(iLoader->loadGroup(input, abortSoon));
+            else
+                out.setown(iLoader->load(input, abortSoon));
             if (0 == iLoader->numRows())
             {
                 eoi = true;
