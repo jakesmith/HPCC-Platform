@@ -86,7 +86,7 @@ interface IRowWriterMultiReader : extends IRowWriter
     virtual IRowStream *getReader() = 0;
 };
 
-extern graph_decl IRowWriterMultiReader *createOverflowableBuffer(CActivityBase &activity, IRowInterfaces *rowif, bool grouped);
+extern graph_decl IRowWriterMultiReader *createOverflowableBuffer(CActivityBase &activity, IRowInterfaces *rowif, bool grouped, bool shared=false);
 // NB first write all then read (not interleaved!)
 
 #endif

@@ -1097,7 +1097,7 @@ class CThorRowCollectorBase : public CSimpleInterface, implements roxiemem::IBuf
 protected:
     CActivityBase &activity;
     CThorExpandingRowArray spillableRows;
-    IArrayOf<IFile> spillFiles;
+    PointerIArrayOf<IFile> spillFiles;
     Owned<IOutputRowSerializer> serializer;
     unsigned spillPriority;
     unsigned totalRows;
@@ -1121,10 +1121,9 @@ protected:
         StringBuffer tempname;
         GetTempName(tempname,"srtspill",true);
         Owned<IFile> iFile = createIFile(tempname.str());
-
+        spillFiles.append(iFile.getLink());
         spillableRows.save(*iFile, preserveGrouping);
         spillableRows.noteSpilled(numRows);
-        spillFiles.append(*iFile.getClear());
 
         ++overflowCount;
 
@@ -1209,9 +1208,10 @@ protected:
         IArrayOf<IRowStream> instrms;
         ForEachItemIn(f, spillFiles)
         {
-            IFile &iFile = spillFiles.item(f);
-            Owned<IExtRowStream> strm = createRowStream(&iFile, rowIf, 0, (offset_t) -1, (unsigned __int64)-1, false, preserveGrouping);
-            instrms.append(* new CStreamFileOwner(&iFile, strm));
+            IFile *iFile = spillFiles.item(f);
+            Owned<IExtRowStream> strm = createRowStream(iFile, rowIf, 0, (offset_t) -1, (unsigned __int64)-1, false, preserveGrouping);
+			spillFiles.replace(NULL, f); // stream now owns (and will delete)
+            instrms.append(* new CStreamFileOwner(iFile, strm));
         }
 
         { // NB: should only be any left, if not all to disk
