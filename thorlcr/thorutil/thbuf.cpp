@@ -689,7 +689,7 @@ IRowWriterMultiReader *createOverflowableBuffer(CActivityBase &activity, IRowInt
 class CRowSet : public CSimpleInterface
 {
     unsigned chunk;
-    CThorRowArrayNew rows;
+    CThorExpandingRowArray rows;
 public:
     CRowSet(CActivityBase &activity, unsigned _chunk) : rows(activity), chunk(_chunk)
     {
@@ -700,7 +700,7 @@ public:
         rows.kill();
     }
     inline unsigned queryChunk() const { return chunk; }
-    inline unsigned getRowCount() const { return rows.numRows(); }
+    inline unsigned getRowCount() const { return rows.ordinality(); }
     inline void addRow(const void *row) { rows.append(row); }
     inline const void *getRow(unsigned r)
     {

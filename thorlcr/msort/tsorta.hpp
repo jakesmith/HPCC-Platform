@@ -65,7 +65,7 @@ public:
     size32_t totalSize();
 private:
     CActivityBase &activity;
-    CThorRowArrayNew rows;
+    CThorExpandingRowArray rows;
     Linked<ICompressor> compressor;
     Linked<IExpander> expander;
     ISortKeySerializer *keyserializer;
@@ -98,7 +98,7 @@ class CThorKeyArray
     CActivityBase &activity;
     Linked<IRowInterfaces> rowif;
     Linked<IRowInterfaces> keyif;
-    CThorRowArrayNew keys;
+    CThorExpandingRowArray keys;
     size32_t maxsamplesize;
     offset_t totalserialsize;
     size32_t serialrowsize;     // 0 when not known
@@ -136,7 +136,7 @@ public:
     ~CThorKeyArray();
     void clear();
     void add(const void *row);
-    unsigned ordinality() { return keys.numRows(); }
+    unsigned ordinality() { return keys.ordinality(); }
     void serialize(MemoryBuffer &mb);
     void deserialize(MemoryBuffer &mb,bool append);
     void sort();

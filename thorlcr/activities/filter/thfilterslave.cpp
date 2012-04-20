@@ -280,7 +280,7 @@ public:
                 groupStream.clear();
                 return NULL;
             }
-            CThorRowFixedSizeArray rows;
+            CThorExpandingRowArray rows(*this);
             groupStream.setown(group.loadGroup(*input, abortSoon, rows));
             if (group.numRows())
             {

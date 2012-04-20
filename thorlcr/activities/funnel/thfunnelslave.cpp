@@ -528,7 +528,7 @@ class CombineSlaveActivity : public CSlaveActivity, public CThorDataLink
     bool grouped;
     bool eogNext;
     MemoryBuffer recbuf;
-    CThorRowArrayNew rows;
+    CThorExpandingRowArray rows;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
@@ -604,7 +604,7 @@ public:
             if (eog) 
                 break;
             RtlDynamicRowBuilder row(queryRowAllocator());
-            size32_t sizeGot = helper->transform(row, rows.numRows(), rows.getRowArray());
+            size32_t sizeGot = helper->transform(row, rows.ordinality(), rows.getRowArray());
             rows.reset();
             if (sizeGot) {
                 dataLinkIncrement();

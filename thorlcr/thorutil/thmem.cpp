@@ -811,7 +811,7 @@ void CThorExpandingRowArray::transferRows(roxiemem::rowidx_t & outNumRows, const
     rows = NULL;
 }
 
-void CThorExpandingRowArray::transferFrom(CThorRowFixedSizeArray &donor)
+void CThorExpandingRowArray::transferFrom(CThorExpandingRowArray &donor)
 {
     kill();
     donor.transferRows(numRows, rows);
@@ -868,36 +868,76 @@ unsigned CThorExpandingRowArray::save(IFile &iFile, bool preserveGrouping)
     return numRows;
 }
 
-IRowStream *CThorExpandingRowArray::createRowStream()
+IRowStream *CThorExpandingRowArray::createRowStream(roxiemem::rowidx_t start, roxiemem::rowidx_t num, bool streamOwns);
 {
     class CStream : public CSimpleInterface, implements IRowStream
     {
         roxiemem::rowidx_t pos;
-        CThorExpandingRowArray rows;
+        CThorExpandingRowArray &parent;
+        bool owns;
+        roxiemem::rowidx_t lastRow;
 
     public:
         IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-        CStream(CActivityBase &activity, CThorExpandingRowArray &inRows)
-            : rows(activity)
+        CStream(CThorExpandingRowArray &_parent, roxiemem::rowidx_t firstRow, roxiemem::rowidx_t _lastRow, bool _owns)
+            : rows(activity), pos(firstRow), lastRow(_lastRow), owns(_owns)
         {
             rows.swap(inRows);
-            pos =  0;
         }
 
     // IRowStream
         virtual const void *nextRow()
         {
-            if (pos == rows.ordinality())
+            if (pos >= lastRow)
                 return NULL;
-            const void *row = rows.getClear(pos);
-            ++pos;
-            return row;
+            if (owns)
+                return parent.getClear(pos++);
+            else
+                return parent.get(pos++);
         }
         virtual void stop() { }
     };
 
-    return new CStream(activity, *this);
+    if (start>ordinality())
+        start = ordinality();
+    roxiemem::rowidx_t lastRow;
+    if ((num==(roxiemem::rowidx_t)-1)||(start+num>ordinality()))
+        lastRow = ordinality();
+    else
+        lastRow = start+num;
+
+    return new CStream(activity, *this, start, lastRow, streamOwns);
+}
+
+void CThorExpandingRowArray::partition(ICompare &compare, unsigned num, UnsignedArray &out)
+{
+    unsigned p=0;
+    unsigned n = ordinality();
+    while (num)
+    {
+        out.append(p);
+        if (p<n)
+        {
+            unsigned q = p+(n-p)/num;
+            if (p==q){ // skip to next group
+                while (q<n)
+                {
+                    q++;
+                    if ((q<n)&&(compare.docompare(rows[p],rows[q])!=0)) // ensure at next group
+                        break;
+                }
+            }
+            else
+            {
+                while ((q<n)&&(q!=p)&&(compare.docompare(rows[q-1],rows[q])==0)) // ensure at start of group
+                    q--;
+            }
+            p = q;
+        }
+        num--;
+    }
+    out.append(n);
 }
 
 offset_t CThorExpandingRowArray::serializedSize()
@@ -928,7 +968,7 @@ void CThorExpandingRowArray::serialize(IRowSerializerTarget &out)
                 serializer->serialize(out, (const byte *)row);
             else if (warnnull)
             {
-                WARNLOG("CThorRowFixedSizeArray::serialize ignoring NULL row");
+                WARNLOG("CThorExpandingRowArray::serialize ignoring NULL row");
                 warnnull = false;
             }
         }
@@ -959,6 +999,40 @@ void CThorExpandingRowArray::serialize(MemoryBuffer &mb, bool hasnulls)
         }
     }
 }
+
+unsigned CThorExpandingRowArray::serializeBlock(MemoryBuffer &mb, size32_t dstmax, unsigned idx, unsigned count)
+{
+    assertex(serializer);
+    CMemoryRowSerializer out(mb);
+    bool warnnull = true;
+    unsigned num=ordinality();
+    if (idx>=num)
+        return 0;
+    if (num-idx<count)
+        count = num-idx;
+    unsigned ret = 0;
+    for (unsigned i=0;i<count;i++)
+    {
+        size32_t ln = mb.length();
+        const void *row = query(i+idx);
+        if (row)
+            serializer->serialize(out,(const byte *)row);
+        else if (warnnull)
+        {
+            WARNLOG("CThorExpandingRowArray::serialize ignoring NULL row");
+            warnnull = false;
+        }
+        if (mb.length()>dstmax)
+        {
+            if (ln)
+                mb.setLength(ln);   // make sure one row
+            break;
+        }
+        ret++;
+    }
+    return ret;
+}
+
 
 void CThorExpandingRowArray::deserializeRow(IRowDeserializerSource &in)
 {
@@ -1082,7 +1156,7 @@ void CThorSpillableRowArray::transferRows(roxiemem::rowidx_t & outNumRows, const
     commitRows = 0;
 }
 
-void CThorSpillableRowArray::transferFrom(CThorRowFixedSizeArray &src)
+void CThorSpillableRowArray::transferFrom(CThorExpandingRowArray &src)
 {
     CThorSpillableRowArrayLock block(*this);
     kill();
@@ -1648,20 +1722,6 @@ void CThorExpandingRowArray::deserialize(size32_t sz,const void *buf, bool hasnu
 }
 
 ///////////
-
-CThorRowArrayNew::CThorRowArrayNew(CActivityBase &activity, roxiemem::rowidx_t initialSize)
-    : CThorExpandingRowArray(activity, &activity, false, initialSize)
-{
-}
-
-bool CThorRowArrayNew::ensure(roxiemem::rowidx_t requiredRows)
-{
-    if (!CThorExpandingRowArray::ensure(requiredRows))
-        throw createRowArrayException((size32_t)serializedSize());
-    return true;
-}
-
-///////////
 void CThorExpandingRowArray::removeRows(roxiemem::rowidx_t start, roxiemem::rowidx_t n)
 {
     assertex(start>=firstRow);
@@ -1748,7 +1808,7 @@ protected:
             }
         }
     }
-    IRowStream *getStream(roxiemem::RoxieSimpleInputRowArray *allMemRows)
+    IRowStream *getStream(CThorExpandingRowArray *allMemRows)
     {
         SpinBlock b(readerLock);
         if (0 == outStreams)
@@ -1874,7 +1934,7 @@ public:
         spillPriority = _spillPriority;
         spillableRows.setup(rowIf, isStable);
     }
-    void transferRowsOut(CThorRowFixedSizeArray &out, bool sort)
+    void transferRowsOut(CThorExpandingRowArray &out, bool sort)
     {
         CThorSpillableRowArray::CThorSpillableRowArrayLock block(spillableRows);
         totalRows += spillableRows.numCommitted();
@@ -1923,7 +1983,7 @@ public:
 enum TRLGroupFlag { trl_ungroup, trl_preserveGrouping, trl_stopAtEog };
 class CThorRowLoader : public CThorRowCollectorBase, implements IThorRowLoader
 {
-    IRowStream *load(IRowStream *in, bool &abort, TRLGroupFlag grouping, roxiemem::RoxieSimpleInputRowArray *allMemRows)
+    IRowStream *load(IRowStream *in, bool &abort, TRLGroupFlag grouping, CThorExpandingRowArray *allMemRows)
     {
         reset();
         setPreserveGrouping(trl_preserveGrouping == grouping);
@@ -1965,12 +2025,12 @@ public:
     virtual void transferRowsOut(CThorRowFixedSizeArray &dst, bool sort) { CThorRowCollectorBase::transferRowsOut(dst, sort); }
     virtual void transferRowsIn(CThorRowFixedSizeArray &src) { CThorRowCollectorBase::transferRowsIn(src); }
 // IThorRowLoader
-    virtual IRowStream *load(IRowStream *in, bool &abort, bool preserveGrouping, roxiemem::RoxieSimpleInputRowArray *allMemRows)
+    virtual IRowStream *load(IRowStream *in, bool &abort, bool preserveGrouping, CThorExpandingRowArray *allMemRows)
     {
         assertex(!iCompare || !preserveGrouping); // can't sort if group preserving
         return load(in, abort, preserveGrouping?trl_preserveGrouping:trl_ungroup, allMemRows);
     }
-    virtual IRowStream *loadGroup(IRowStream *in, bool &abort, roxiemem::RoxieSimpleInputRowArray *allMemRows)
+    virtual IRowStream *loadGroup(IRowStream *in, bool &abort, CThorExpandingRowArray *allMemRows)
     {
         return load(in, abort, trl_stopAtEog, allMemRows);
     }

@@ -213,7 +213,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     CBroadcaster broadcaster;
     Owned<IException> leftexception;
     Semaphore leftstartsem;
-    CThorRowArrayNew rhs;
+    CThorExpandingRowArray rhs;
     bool eos;
     unsigned flags;
     bool exclude;
@@ -463,7 +463,7 @@ public:
     {
         if (!gotRHS)
             getRHS(true);
-        rhs.reset();
+        rhs.kill();
         stopRightInput();
         stopInput(left);
         dataLinkStop();
@@ -851,7 +851,7 @@ public:
             unsigned r=0;
             while (!abortSoon)
             {
-                while (r!=rhs.numRows())
+                while (r!=rhs.ordinality())
                 {
                     const void *row = rhs.query(r++);
                     rightSerializer->serialize(mbs, (const byte *)row);
@@ -1016,7 +1016,7 @@ public:
                         {
                             loop
                             {
-                                if (r == rhs.numRows())
+                                if (r == rhs.ordinality())
                                 {
                                     allDone = true;
                                     break;
@@ -1082,7 +1082,7 @@ public:
         if (exception.get())
         {
             StringBuffer errStr(joinStr);
-            errStr.append("(").append(container.queryId()).appendf(") right-hand side is too large (%"I64F"u bytes in %d rows) for %s : (",(unsigned __int64) rhs.serializedSize(),rhs.numRows(),joinStr.get());
+            errStr.append("(").append(container.queryId()).appendf(") right-hand side is too large (%"I64F"u bytes in %d rows) for %s : (",(unsigned __int64) rhs.serializedSize(),rhs.ordinality(),joinStr.get());
             errStr.append(exception->errorCode()).append(", ");
             exception->errorMessage(errStr);
             errStr.append(")");
@@ -1094,7 +1094,7 @@ public:
     void prepareRHS()
     {
         // first count records (a bit slow for variable)
-        rhsRows = rhs.numRows();
+        rhsRows = rhs.ordinality();
         rhsTableLen = rhsRows*4/3+16;  // could go bigger if room (or smaller if not)
         if (isAll())
         {

@@ -1974,7 +1974,7 @@ protected:
     IRowStream *input;      // can be changed
     bool inputstopped;
     const char *actTxt;
-    CThorRowArrayNew htabrows;
+    CThorExpandingRowArray htabrows;
     const void **htab;
     IHThorHashDedupArg *dedupargs;
     unsigned htsize;

@@ -38,7 +38,7 @@ class CDedupAllHelper : public CSimpleInterface, implements IRowStream
     IStopInput *iStopInput;
 
     Owned<IThorRowLoader> rowLoader;
-    CThorRowFixedSizeArray rows;
+    CThorExpandingRowArray rows;
 
     void remove(unsigned idx)
     {
@@ -83,7 +83,7 @@ class CDedupAllHelper : public CSimpleInterface, implements IRowStream
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CDedupAllHelper(CActivityBase *_activity) : activity(_activity)
+    CDedupAllHelper(CActivityBase *_activity) : activity(_activity) : rows(_activity)
     {
         in = NULL;
         helper = NULL;
@@ -111,11 +111,11 @@ public:
         ActPrintLog(activity, "DedupAllHelper::calcNextDedupAll");
 #endif
         dedupIdx = 0;
-        allMemRows.kill();
+        rows.kill();
 
         // JCSMORE - could do in chunks and merge if > mem
-        Owned<IRowStream> rowStream = groupOp ? rowLoader.loadGroup(in, abortSoon, allMemRows) : rowLoader.load(in, abortSoon, false, allMemRows);
-        dedupCount = allMemRows.numRows();
+        Owned<IRowStream> rowStream = groupOp ? rowLoader.loadGroup(in, abortSoon, rows) : rowLoader.load(in, abortSoon, false, rows);
+        dedupCount = rows.ordinality();
         ActPrintLog(activity, "DEDUP: rows loaded = %d",dedupCount);
 
         if (iStopInput)
@@ -126,7 +126,7 @@ public:
             dedupArray = NULL;
             return false;
         }
-        dedupArray = allMemRows.getRowArray();
+        dedupArray = rows.getRowArray();
         dedupAll();
         return true;
     }
@@ -539,9 +539,9 @@ public:
         ActivityTimer t(totalCycles, timeActivities, NULL);
         if (!eoi)
         {
-            CThorRowFixedSizeArray rows;
+            CThorExpandingRowArray rows(*this);
             groupStream.setown(groupLoader.loadGroup(*input, abortSoon, rows));
-            unsigned count = rows.numRows();
+            unsigned count = rows.ordinality();
             if (count)
             {
                 RtlDynamicRowBuilder row(queryRowAllocator());

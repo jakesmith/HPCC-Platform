@@ -102,7 +102,7 @@ class CJoinGroup : public CSimpleInterface, implements IInterface
 protected:
     CActivityBase activity;
     OwnedConstThorRow left;
-    CThorRowArrayNew rows;
+    CThorExpandingRowArray rows;
     Int64Array offsets;
     unsigned endMarkersPending, endEndCandidatesPending;
     IJoinProcessor *join;
@@ -319,7 +319,7 @@ public:
     inline unsigned rowsSeen() const
     {
         CriticalBlock b(crit);
-        return rows.numRows();
+        return rows.ordinality();
     }
 
     inline unsigned candidateCount() const
@@ -572,7 +572,7 @@ class CKeyedJoinSlave : public CSlaveActivity, public CThorDataLink, implements 
         unsigned pendingSends, pendingReplies, nodes, minFetchSendSz, totalSz, fetchMin;
         size32_t perRowMin;
         unsigned maxRequests, blockRequestsAt;
-        CThorRowArrayNew *dstLists;
+        CThorExpandingRowArray *dstLists;
         CriticalSection crit, sendCrit;
         Semaphore pendingSendsSem, pendingReplySem;
         mptag_t requestMpTag, resultMpTag;
@@ -642,7 +642,7 @@ class CKeyedJoinSlave : public CSlaveActivity, public CThorDataLink, implements 
                             unsigned count;
                             msg.read(count);
 
-                            CThorRowArrayNew received(*this, *owner.fetchOutputRowIf);
+                            CThorExpandingRowArray received(*this, *owner.fetchOutputRowIf);
                             size32_t recvSz = msg.remaining();
                             received.deserialize(recvSz, msg.readDirect(recvSz), false);
 
@@ -754,8 +754,8 @@ class CKeyedJoinSlave : public CSlaveActivity, public CThorDataLink, implements 
                             unsigned count;
                             msg.read(count);
 
-                            CThorRowArrayNew received(*this, owner.fetchInputMetaRowIf);
-                            CThorRowArrayNew replyRows(*this, owner.fetchOutputRowIf);
+                            CThorExpandingRowArray received(*this, owner.fetchInputMetaRowIf);
+                            CThorExpandingRowArray replyRows(*this, owner.fetchOutputRowIf);
                             size32_t recvSz =  msg.remaining();
                             received.deserialize(recvSz, msg.readDirect(recvSz), false);
                             size32_t replySz = 0;
@@ -887,7 +887,7 @@ class CKeyedJoinSlave : public CSlaveActivity, public CThorDataLink, implements 
             nodes = owner.container.queryJob().querySlaves();
             stopped = aborted = writeWaiting = replyWaiting = false;
             pendingSends = pendingReplies = 0;
-            dstLists = new CThorRowArrayNew[nodes];
+            dstLists = new CThorExpandingRowArray[nodes];
             fetchMin = owner.helper->queryJoinFieldsRecordSize()->getMinRecordSize();
             perRowMin = NEWFETCHSENDHEADERSZ+fetchMin;
             maxRequests = NEWFETCHPRMEMLIMIT<perRowMin ? 1 : (NEWFETCHPRMEMLIMIT / perRowMin);
@@ -1031,11 +1031,11 @@ class CKeyedJoinSlave : public CSlaveActivity, public CThorDataLink, implements 
                     return;
                 CMessageBuffer msg;
                 { CriticalBlock b(crit); // keep writer out during flush to this dstNode
-                    unsigned total = dstLists[n].numRows();
+                    unsigned total = dstLists[n].ordinality();
                     if (total)
                     {
                         assertex(!replyWaiting);
-                        CThorRowArrayNew dstList;
+                        CThorExpandingRowArray dstList;
                         unsigned dstP=0;
                         loop
                         {
@@ -1065,7 +1065,7 @@ class CKeyedJoinSlave : public CSlaveActivity, public CThorDataLink, implements 
                             if (0 == dstP) // delay detach until necessary as may have been blocked and more added.
                             {
                                 dstList.swap(dstLists[n]);
-                                total = dstList.numRows();
+                                total = dstList.ordinality();
                             }
                             unsigned requests = maxRequests - pendingReplies;
                             assertex(requests);

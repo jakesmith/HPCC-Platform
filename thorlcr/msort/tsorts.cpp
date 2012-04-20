@@ -75,7 +75,7 @@ class CWriteIntercept : public CSimpleInterface
     CThorStreamDeserializerSource dataFileDeserialzierSource;
     unsigned interval;
     unsigned idx;
-    roxiemem::DynamicRoxieOutputRowArray sampleRows;
+    CThorExpandingRowArray sampleRows;
     offset_t overflowsize;
     size32_t fixedsize;
     offset_t lastofs;
@@ -267,9 +267,8 @@ public:
         assertex(sz == idxSz);
         return rowBuilder.finalizeRowClear(sz);
     }
-    void transferRows(CThorRowFixedSizeArray &rows)
+    void transferRows(CThorExpandingRowArray &rows)
     {
-        sampleRows.flush();
         rows.transferFrom(sampleRows);
     }
 };
@@ -340,7 +339,7 @@ class CMiniSort
 #endif
         clusterComm.reply(mb);
     }
-    void sendToSecondaryNode(CThorRowFixedSizeArray &rowArray, rank_t node, unsigned from, unsigned to, size32_t blksize)
+    void sendToSecondaryNode(CThorExpandingRowArray &rowArray, rank_t node, unsigned from, unsigned to, size32_t blksize)
     {
         //compression TBD
         CMessageBuffer mbout;
@@ -432,7 +431,7 @@ public:
         deserializer = rowIf.queryRowDeserializer();
         allocator = rowIf.queryRowAllocator();
     }
-    IRowStream *sort(CThorRowFixedSizeArray &localRows, ICompare &iCompare, bool isStable, rowcount_t &rowCount)
+    IRowStream *sort(CThorExpandingRowArray &localRows, ICompare &iCompare, bool isStable, rowcount_t &rowCount)
     {
         PrintLog("Minisort started: %s, totalrows=%"RCPF"d", partNo?"seconday node":"primary node", localRows.ordinality());
         size32_t blksize = 0x100000;
@@ -506,7 +505,7 @@ public:
             // It's sorting on remote side, before it knows how big..
             // But shouldn't it merge sort here instead?
 
-            CThorRowFixedSizeArray globalRows(activity, &rowIf);
+            CThorExpandingRowArray globalRows(activity, &rowIf);
             collector->transferRowsOut(globalRows); // will sort in process
 
 #ifdef  _FULL_TRACE
@@ -521,11 +520,11 @@ public:
             class casyncfor2: public CAsyncFor
             {
                 CMiniSort &base;
-                CThorRowFixedSizeArray &globalRows;
+                CThorExpandingRowArray &globalRows;
                 unsigned *points;
                 size32_t blksize;
             public:
-                casyncfor2(CMiniSort &_base, CThorRowFixedSizeArray &_globalRows, unsigned *_points, size32_t _blksize)
+                casyncfor2(CMiniSort &_base, CThorExpandingRowArray &_globalRows, unsigned *_points, size32_t _blksize)
                     : base(_base), globalRows(_globalRows)
                 {
                     points = _points;
@@ -557,7 +556,7 @@ class CThorSorter : public CSimpleInterface, implements IThorSorter, implements 
     Linked<ICommunicator> clusterComm;
     mptag_t mpTagRPC;
 
-    CThorRowFixedSizeArray rowArray;
+    CThorExpandingRowArray rowArray;
     CThreaded threaded;
 
     Owned<CWriteIntercept> intercept;

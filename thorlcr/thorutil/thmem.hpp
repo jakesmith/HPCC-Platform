@@ -444,28 +444,7 @@ graph_decl StringBuffer &getRecordString(const void *key, IOutputRowSerializer *
 #define SPILL_PRIORITY_SPILLABLE_STREAM 50
 
 #if 1
-class graph_decl CThorRowFixedSizeArray : public CSimpleInterface
-{
-    CActivityBase &activity;
-    IRowInterfaces *rowIf;
-    IOutputRowSerializer *serializer;
-
-public:
-    CThorRowFixedSizeArray(CActivityBase &_activity);
-    CThorRowFixedSizeArray(CActivityBase &_activity, IRowInterfaces *rowIf);
-    void setup(IRowInterfaces *_rowIf);
-
-    void swap(CThorRowFixedSizeArray &src);
-    void transferRows(roxiemem::rowidx_t &outNumRows, const void **&outRows);
-
-    void partition(ICompare &compare, unsigned num, UnsignedArray &out); // returns num+1 points
-    IRowStream *createRowStream(unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
-    unsigned save(IFile &file, unsigned start=0, unsigned num=(unsigned)-1, bool streamowns=true);
-
-    unsigned serializeBlock(MemoryBuffer &mb,size32_t dstmax, unsigned idx, unsigned count);
-};
-
-class graph_decl CThorExpandingRowArray : public CThorRowFixedSizeArray
+class graph_decl CThorExpandingRowArray : public CSimpleInterface
 {
 protected:
     CActivityBase &activity;
@@ -491,7 +470,8 @@ public:
     CThorExpandingRowArray(CActivityBase &activity, roxiemem::rowidx_t initialSize=InitialSortElements);
     CThorExpandingRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool stable=false, roxiemem::rowidx_t initialSize=InitialSortElements);
     ~CThorExpandingRowArray();
-    void setup(IRowInterfaces *rowIf, bool stableSort=false, bool throwOnOom=false, bool allowNulls=false);
+    // NB: throws error on OOM by default
+    void setup(IRowInterfaces *rowIf, bool stableSort=false, bool throwOnOom=true, bool allowNulls=false);
 
     void clearRows();
     void kill();
@@ -550,17 +530,20 @@ public:
         swap(from);
     }
     void transferRows(roxiemem::rowidx_t & outNumRows, const void * * & outRows);
-    void transferFrom(CThorRowFixedSizeArray &src);
+    void transferFrom(CThorExpandingRowArray &src);
     void removeRows(roxiemem::rowidx_t start, roxiemem::rowidx_t n);
     void sort(ICompare &compare, unsigned maxCores);
     void reorder(roxiemem::rowidx_t start, roxiemem::rowidx_t num, unsigned *neworder);
 
     unsigned save(IFile &file, bool preserveGrouping);
-    IRowStream *createRowStream();
+    IRowStream *createRowStream(roxiemem::rowidx_t start=0, roxiemem::rowidx_t num=(roxiemem::rowidx_t)-1, bool streamOwns=true);
+
+    void partition(ICompare &compare, unsigned num, UnsignedArray &out); // returns num+1 points
 
     offset_t serializedSize();
     void serialize(IRowSerializerTarget &out);
     void serialize(MemoryBuffer &mb,bool hasnulls);
+    unsigned serializeBlock(MemoryBuffer &mb,size32_t dstmax, unsigned idx, unsigned count);
     void deserialize(size32_t sz, const void *buf, bool hasnulls);
     void deserializeRow(IRowDeserializerSource &in); // NB single row not NULL
 };
@@ -588,6 +571,7 @@ public:
 
     CThorSpillableRowArray(CActivityBase &activity, roxiemem::rowidx_t initialSize=InitialSortElements, size32_t commitDelta=CommitStep);
     CThorSpillableRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool stable=false, roxiemem::rowidx_t initialSize=InitialSortElements, size32_t commitDelta=CommitStep);
+    // NB: throwOnOom false
     void setup(IRowInterfaces *rowIf, bool stableSort=false, bool throwOnOom=false, bool allowNulls=false)
     {
         CThorExpandingRowArray::setup(rowIf, stableSort, throwOnOom, allowNulls);
@@ -661,7 +645,7 @@ public:
         kill();
         swap(from);
     }
-    void transferFrom(CThorRowFixedSizeArray &src);
+    void transferFrom(CThorExpandingRowArray &src);
 
     IRowStream *createRowStream();
 
@@ -731,9 +715,6 @@ class graph_decl CThorExpandingRowArray : public roxiemem::RoxieOutputRowArray
     void **stableSortTmp;
     bool stableSort;
 
-protected:
-    virtual bool ensure(roxiemem::rowidx_t requiredRows);
-
 public:
     CThorExpandingRowArray(CActivityBase &activity, roxiemem::rowidx_t initialSize=InitialSortElements, size32_t commitDelta=CommitStep);
     CThorExpandingRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool stable=false, roxiemem::rowidx_t initialSize=InitialSortElements, size32_t commitDelta=CommitStep);
@@ -759,25 +740,10 @@ public:
     void serialize(MemoryBuffer &mb,bool hasnulls);
     void deserialize(size32_t sz, const void *buf, bool hasnulls);
     void deserializeRow(IRowDeserializerSource &in); // NB single row not NULL
-};
-#endif
 
-// simple non-spilling array, all in mem. (noteSpilled should not be used)
-// will throw exception on OOM
-class graph_decl CThorRowArrayNew : public CThorExpandingRowArray
-{
-public:
-    CThorRowArrayNew(CActivityBase &activity, roxiemem::rowidx_t initialSize=InitialSortElements);
-    CThorRowArrayNew(CActivityBase &activity, IRowInterfaces *rowIf, roxiemem::rowidx_t initialSize=InitialSortElements)
-        : CThorExpandingRowArray(activity, rowIf, false, initialSize)
-    {
-    }
-    // JCSMORE change to ordinality()
-    inline roxiemem::rowidx_t numRows() const { return CThorExpandingRowArray::ordinality(); }
     virtual bool ensure(roxiemem::rowidx_t requiredRows);
 };
-
-
+#endif
 
 
 enum RowCollectorFlags { rc_mixed, rc_allMem, rc_allDisk, rc_allDiskOrAllMem };
@@ -786,15 +752,15 @@ interface IThorRowCollectorCommon : extends IInterface
     virtual rowcount_t numRows() const = 0;
     virtual unsigned numOverflows() const = 0;
     virtual unsigned overflowScale() const = 0;
-    virtual void transferRowsOut(CThorRowFixedSizeArray &dst, bool sort=true) = 0;
-    virtual void transferRowsIn(CThorRowFixedSizeArray &src) = 0;
+    virtual void transferRowsOut(CThorExpandingRowArray &dst, bool sort=true) = 0;
+    virtual void transferRowsIn(CThorExpandingRowArray &src) = 0;
 };
 
 interface IThorRowLoader : extends IThorRowCollectorCommon
 {
     virtual void setup(IRowInterfaces *rowIf, ICompare *iCompare=NULL, bool isStable=false, RowCollectorFlags diskMemMix=rc_mixed, unsigned spillPriority=50) = 0;
-    virtual IRowStream *load(IRowStream *in, bool &abort, bool preserveGrouping=false, roxiemem::RoxieSimpleInputRowArray *allMemRows=NULL) = 0;
-    virtual IRowStream *loadGroup(IRowStream *in, bool &abort, roxiemem::RoxieSimpleInputRowArray *allMemRows=NULL);
+    virtual IRowStream *load(IRowStream *in, bool &abort, bool preserveGrouping=false, CThorExpandingRowArray *allMemRows=NULL) = 0;
+    virtual IRowStream *loadGroup(IRowStream *in, bool &abort, CThorExpandingRowArray *allMemRows=NULL);
 };
 
 interface IThorRowCollector : extends IThorRowCollectorCommon

@@ -244,7 +244,7 @@ public:
         if (!result->isLocal())
         {
             Owned<IRowWriter> resultWriter = result->getWriter();
-            PointerArrayOf<CThorRowArrayNew> results;
+            PointerArrayOf<CThorExpandingRowArray> results;
             Owned<IException> e;
             try
             {
@@ -252,7 +252,7 @@ public:
                 unsigned todo = container.queryJob().querySlaves();
                 unsigned n=0;
                 for (; n<todo; n++)
-                    results.append(new CThorRowArrayNew(*this));
+                    results.append(new CThorExpandingRowArray(*this));
                 MemoryBuffer mb;
                 CMessageBuffer msg;
                 Owned<ISerialStream> stream = createMemoryBufferSerialStream(mb);
@@ -279,7 +279,7 @@ public:
                     {
                         ThorExpand(msg, mb.clear());
 
-                        CThorRowArrayNew *slaveResults = results.item(sender);
+                        CThorExpandingRowArray *slaveResults = results.item(sender);
                         while (!rowSource.eos()) 
                         {
                             RtlDynamicRowBuilder rowBuilder(inputRowIf->queryRowAllocator());
@@ -290,7 +290,7 @@ public:
                 }
                 mb.clear();
                 CMemoryRowSerializer mbs(mb);
-                CThorRowArrayNew *slaveResult = results.item(0);
+                CThorExpandingRowArray *slaveResult = results.item(0);
                 unsigned rowNum=0;
                 unsigned resultNum=1;
                 loop
@@ -307,7 +307,7 @@ public:
                                     break;
                                 }
                                 slaveResult = results.item(resultNum++);
-                                if (slaveResult->numRows())
+                                if (slaveResult->ordinality())
                                 {
                                     rowNum = 0;
                                     break;
@@ -338,7 +338,7 @@ public:
             catch (IException *_e) { e.setown(_e); }
             ForEachItemIn(r, results)
             {
-                CThorRowArrayNew *result = results.item(r);
+                CThorExpandingRowArray *result = results.item(r);
                 delete result;
             }
             if (e)

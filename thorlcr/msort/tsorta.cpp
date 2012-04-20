@@ -123,7 +123,7 @@ void VarElemArray::deserializeExpand(const void *data, size32_t,bool append)
 
 const byte *VarElemArray::item(unsigned i)
 {
-    if (i>=rows.numRows())
+    if (i>=rows.ordinality())
         return NULL;
     return (const byte *)rows.query(i);
 }
@@ -131,7 +131,7 @@ const byte *VarElemArray::item(unsigned i)
 
 unsigned VarElemArray::ordinality()
 {
-    return rows.numRows();
+    return rows.ordinality();
 }
 
 void VarElemArray::transfer(VarElemArray &from)
@@ -184,7 +184,7 @@ void VarElemArray::appendNull()
 
 bool VarElemArray::isNull(unsigned idx)
 {
-    if (idx>rows.numRows())
+    if (idx>rows.ordinality())
         return true;
     return rows.query(idx)==NULL;
 }
@@ -196,7 +196,7 @@ CThorKeyArray::CThorKeyArray(
     ISortKeySerializer *_serializer,
     ICompare *_icompare,
     ICompare *_ikeycompare,
-    ICompare *_irowkeycompare) : activity(_activity)
+    ICompare *_irowkeycompare) : activity(_activity), keys(_activity, _rowIf)
 {
     rowif.set(_rowif);
     sizes = NULL;
@@ -285,16 +285,16 @@ void CThorKeyArray::add(const void *row)
         LinkThorRow(row);
     }
     if (maxsamplesize) {
-        while (keys.numRows()&&(totalserialsize+sz>maxsamplesize))
+        while (keys.ordinality()&&(totalserialsize+sz>maxsamplesize))
             split();
     }
     if (sizes)
        sizes->append(sz);
-    else if (keys.numRows()==0)
+    else if (keys.ordinality()==0)
         serialrowsize = sz;
     else if (serialrowsize!=sz) {
         sizes = new UnsignedArray;
-        for (unsigned i=0;i<keys.numRows();i++)
+        for (unsigned i=0;i<keys.ordinality();i++)
             sizes->append(serialrowsize);
        sizes->append(sz);
        serialrowsize = 0;
@@ -306,7 +306,7 @@ void CThorKeyArray::add(const void *row)
 void CThorKeyArray::serialize(MemoryBuffer &mb)
 {
     // NB doesn't serialize filepos
-    unsigned n = keys.numRows();
+    unsigned n = keys.ordinality();
     unsigned i;
     mb.append(n);
     mb.append(serialrowsize);
@@ -347,7 +347,7 @@ void CThorKeyArray::deserialize(MemoryBuffer &mb,bool append)
         if (rss==0) {
             if (nsz) {
                 sizes = new UnsignedArray;
-                for (i=0;i<keys.numRows();i++)
+                for (i=0;i<keys.ordinality();i++)
                     sizes->append(serialrowsize);
                 serialrowsize = 0;
             }
@@ -464,10 +464,10 @@ void CThorKeyArray::createSortedPartition(unsigned pn)
     }
     delete filepos;
     filepos = newpos;
-    CThorRowArrayNew newrows(activity);
+    CThorExpandingRowArray newrows(activity);
     for (i = 1; i<pn; i++) {
         unsigned p = i*n/pn;
-        newrows.append(keys.getLink(ra[p]));
+        newrows.append(keys.get(ra[p]));
     }
     keys.swap(newrows);
 }
@@ -633,7 +633,7 @@ void CThorKeyArray::split()
     divisor *= 2;
     // not that fast!
     unsigned n = ordinality();
-    CThorRowArrayNew newkeys;
+    CThorExpandingRowArray newkeys(activity, rowIf);
     UnsignedArray *newsizes = sizes?new UnsignedArray:NULL;
     Int64Array *newfilepos = filepos?new Int64Array:NULL;
     unsigned newss = 0;
