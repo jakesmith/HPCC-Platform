@@ -624,7 +624,6 @@ public:
     {
         return this;
     }
-
 };
 
 ISmartRowBuffer * createSmartBuffer(CActivityBase *activity, const char * tempname, size32_t buffsize, IRowInterfaces *rowif) 
@@ -653,7 +652,8 @@ public:
         : activity(_activity), rowif(_rowif), grouped(_grouped), shared(_shared)
     {
 		IRowInterfaces *rowIf = &activity;
-        collector.setown(createThorRowCollector(activity, &activity, NULL, false, SPILL_PRIORITY_OVERFLOWABLE_BUFFER, grouped));
+        // JCSMORE, if shared, needs to be all on disk for now
+        collector.setown(createThorRowCollector(activity, &activity, NULL, false, shared?rc_allDisk:rc_mixed, SPILL_PRIORITY_OVERFLOWABLE_BUFFER, grouped));
 		writer.setown(collector->getWriter());
 		eoi = false;
     }
@@ -662,7 +662,7 @@ public:
     virtual IRowStream *getReader()
     {
         flush();
-        return collector->getStream(shared?rc_allDisk:rc_mixed); // JCSMORE, if shared, needs to be all on disk for now
+        return collector->getStream();
     }
 // IRowWriter
     virtual void putRow(const void *row)
@@ -689,25 +689,22 @@ IRowWriterMultiReader *createOverflowableBuffer(CActivityBase &activity, IRowInt
 class CRowSet : public CSimpleInterface
 {
     unsigned chunk;
-    CThorRowArray rows;
+    CThorRowArrayNew rows;
 public:
-    CRowSet(unsigned _chunk) : chunk(_chunk)
+    CRowSet(CActivityBase &activity, unsigned _chunk) : rows(activity), chunk(_chunk)
     {
     }
     void reset(unsigned _chunk)
     {
         chunk = _chunk;
-        rows.clear();
+        rows.kill();
     }
     inline unsigned queryChunk() const { return chunk; }
-    inline unsigned getRowCount() const { return rows.ordinality(); }
+    inline unsigned getRowCount() const { return rows.numRows(); }
     inline void addRow(const void *row) { rows.append(row); }
     inline const void *getRow(unsigned r)
     {
-        const void *row = rows.item(r);
-        if (row)
-            LinkThorRow(row);
-        return row;
+        return rows.get(r);
     }
 };
 
@@ -1037,7 +1034,7 @@ public:
         {
             outputs.append(* new COutput(*this, c));
         }
-        inMemRows.setown(new CRowSet(0));
+        inMemRows.setown(new CRowSet(*activity, 0));
     }
     ~CSharedWriteAheadBase()
     {
@@ -1079,7 +1076,7 @@ public:
             unsigned reader=anyReaderBehind();
             if (NotFound != reader)
                 flushRows();
-            inMemRows.setown(new CRowSet(++totalChunksOut));
+            inMemRows.setown(new CRowSet(*activity, ++totalChunksOut));
 #ifdef TRACE_WRITEAHEAD
             totalOutChunkSize = sizeof(unsigned);
 #else
@@ -1349,7 +1346,7 @@ class CSharedWriteAheadDisk : public CSharedWriteAheadBase
         VALIDATEEQ(diskChunkNum, currentChunkNum);
 #endif
         CThorStreamDeserializerSource ds(stream);
-        Owned<CRowSet> rowSet = new CRowSet(currentChunkNum);
+        Owned<CRowSet> rowSet = new CRowSet(*activity, currentChunkNum);
         loop
         {   
             byte b;

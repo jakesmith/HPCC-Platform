@@ -53,6 +53,7 @@ public:
     //The following can be called from the writer, without any need to lock first.
     inline bool append(const void * row)
     {
+        OwnedConstRoxieRow _row = row; // JCS->GH - if don't assign, need to release
         if (numRows >= maxRows)
         {
             if (!ensure(numRows+1))
@@ -63,7 +64,7 @@ public:
             }
         }
 
-        rows[numRows++] = row;
+        rows[numRows++] = _row.getClear();
         if (numRows >= commitRows + commitDelta)
             flush();
         return true;

@@ -1974,7 +1974,7 @@ protected:
     IRowStream *input;      // can be changed
     bool inputstopped;
     const char *actTxt;
-    CThorRowArray htabrows;
+    CThorRowArrayNew htabrows;
     const void **htab;
     IHThorHashDedupArg *dedupargs;
     unsigned htsize;
@@ -2005,20 +2005,16 @@ public:
             ikeycompare = dedupargs->queryKeyCompare();
             keyallocator.setown(queryJob().getRowAllocator(km,queryActivityId()));
             keyserializer.setown(km->createRowSerializer(queryCodeContext(),queryActivityId()));
-            htabrows.setSizing(true,true);
         }
-        else {
-            htabrows.setSizing(true,true);
+        else
             ikeycompare = NULL;
-        }
-        htabrows.setMaxTotal(queryLargeMemSize());
     }
     void start()
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
         inputstopped = false;
         input = inputs.item(0);
-        htabrows.clear();
+        htabrows.kill();
         htsize = 0;
         startInput(inputs.item(0));
         dataLinkStart(actTxt, container.queryId());
@@ -2032,7 +2028,6 @@ public:
     bool addHash(const void *row)
     {
         // NB assume key size constant
-        // TBD use CThorRowArray with sizing better?
         OwnedConstThorRow key;
         if (keyallocator) {
             RtlDynamicRowBuilder krow(keyallocator);
@@ -2042,6 +2037,7 @@ public:
         }
         else
             key.set(row);
+        // JCSMORE - needs revisting, to better cope with memory/spilling
         if (htsize==0) {
             CSizingSerializer ssz;
             if (keyserializer)
@@ -2055,8 +2051,9 @@ public:
             unsigned total = (container.queryOwnerId() ? (queryLargeMemSize()/10) : queryLargeMemSize()) /(divsz+sizeof(void *)*3);
             htsize = total+10;
             ActPrintLog("%s: reserving hash table of size %d",actTxt,htsize);
-            htabrows.reserve(htsize);
-            htab = (const void **)htabrows.base();
+            if (!htabrows.ensure(htsize))
+                throw MakeActivityException(this, TE_TooMuchData, "%s: hash table could not be allocated (out of memory)", actTxt);
+            htab = htabrows.getRowArray();
             htremaining = htsize*9/10;
         }
         unsigned h = ihash->hash(row)%htsize;
@@ -2086,7 +2083,7 @@ public:
     void kill()
     {
         ActPrintLog("%s: kill", actTxt);
-        htabrows.clear();
+        htabrows.kill();
         CSlaveActivity::kill();
     }
     CATCH_NEXTROW()
@@ -2282,8 +2279,8 @@ public:
         Owned<IHashDistributor> distributor;
         distributor.setown(createHashDistributor(this, container.queryJob().queryJobComm(), mptag, queryRowInterfaces(inL), abortSoon,false, this));
         Owned<IRowStream> reader = distributor->connect(inL,ihashL,icompareL);
-        Owned<IThorRowLoader> loaderL = createThorRowLoader(*this, ::queryRowInterfaces(inL), icompareL, true, SPILL_PRIORITY_HASHJOIN);
-        strmL.setown(loaderL->load(reader, abortSoon, rc_allDisk));
+        Owned<IThorRowLoader> loaderL = createThorRowLoader(*this, ::queryRowInterfaces(inL), icompareL, true, rc_allDisk, SPILL_PRIORITY_HASHJOIN);
+        strmL.setown(loaderL->load(reader, abortSoon));
         loaderL.clear();
         reader.clear();
         stopInputL();
@@ -2294,7 +2291,7 @@ public:
         leftdone = true;
         distributor.setown(createHashDistributor(this, container.queryJob().queryJobComm(), mptag2, queryRowInterfaces(inR), abortSoon,false, this));
         reader.setown(distributor->connect(inR,ihashR,icompareR));
-        Owned<IThorRowLoader> loaderR = createThorRowLoader(*this, ::queryRowInterfaces(inR), icompareR, true, SPILL_PRIORITY_HASHJOIN);;
+        Owned<IThorRowLoader> loaderR = createThorRowLoader(*this, ::queryRowInterfaces(inR), icompareR, true, rc_mixed, SPILL_PRIORITY_HASHJOIN);;
         strmR.setown(loaderR->load(reader, abortSoon));
         loaderR.clear();
         reader.clear();

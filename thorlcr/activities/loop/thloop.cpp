@@ -244,7 +244,7 @@ public:
         if (!result->isLocal())
         {
             Owned<IRowWriter> resultWriter = result->getWriter();
-            PointerArray results;
+            PointerArrayOf<CThorRowArrayNew> results;
             Owned<IException> e;
             try
             {
@@ -252,7 +252,7 @@ public:
                 unsigned todo = container.queryJob().querySlaves();
                 unsigned n=0;
                 for (; n<todo; n++)
-                    results.append(new CThorRowArray());
+                    results.append(new CThorRowArrayNew(*this));
                 MemoryBuffer mb;
                 CMessageBuffer msg;
                 Owned<ISerialStream> stream = createMemoryBufferSerialStream(mb);
@@ -279,7 +279,7 @@ public:
                     {
                         ThorExpand(msg, mb.clear());
 
-                        CThorRowArray *slaveResults = (CThorRowArray *)results.item(sender);
+                        CThorRowArrayNew *slaveResults = results.item(sender);
                         while (!rowSource.eos()) 
                         {
                             RtlDynamicRowBuilder rowBuilder(inputRowIf->queryRowAllocator());
@@ -290,14 +290,14 @@ public:
                 }
                 mb.clear();
                 CMemoryRowSerializer mbs(mb);
-                CThorRowArray *slaveResult = (CThorRowArray *)results.item(0);
+                CThorRowArrayNew *slaveResult = results.item(0);
                 unsigned rowNum=0;
                 unsigned resultNum=1;
                 loop
                 {
                     while (resultNum)
                     {
-                        if (rowNum == slaveResult->ordinality())
+                        if (rowNum == slaveResult->numRows())
                         {
                             loop
                             {
@@ -306,8 +306,8 @@ public:
                                     resultNum = 0; // eos
                                     break;
                                 }
-                                slaveResult = (CThorRowArray *)results.item(resultNum++);
-                                if (slaveResult->ordinality())
+                                slaveResult = results.item(resultNum++);
+                                if (slaveResult->numRows())
                                 {
                                     rowNum = 0;
                                     break;
@@ -316,8 +316,8 @@ public:
                             if (!resultNum) // eos
                                 break;
                         }
-                        const byte *row = slaveResult->item(rowNum++);
-                        inputRowIf->queryRowSerializer()->serialize(mbs, row);
+                        const void *row = slaveResult->query(rowNum++);
+                        inputRowIf->queryRowSerializer()->serialize(mbs, (const byte *)row);
                         LinkThorRow(row);
                         resultWriter->putRow(row);
                         if (mb.length() > 0x80000)
@@ -338,7 +338,7 @@ public:
             catch (IException *_e) { e.setown(_e); }
             ForEachItemIn(r, results)
             {
-                CThorRowArray *result = (CThorRowArray *)results.item(r);
+                CThorRowArrayNew *result = results.item(r);
                 delete result;
             }
             if (e)

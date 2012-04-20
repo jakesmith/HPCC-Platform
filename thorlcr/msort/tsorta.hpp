@@ -37,13 +37,13 @@ interface ICompare;
 interface IRecordSize;
 interface ISortKeySerializer;
 
+// JCSMORE this class should be folded into unified row array class
 class VarElemArray
 { // simple expanding array for variable sized elements
   // note space not reclaimed and rows stored serialized (if serializer supplied)
   // only intended for relatively small arrays
 public:
-    VarElemArray(IRowInterfaces *rowif,ISortKeySerializer *_serializer);
-    ~VarElemArray();
+    VarElemArray(CActivityBase &activity, IRowInterfaces *rowif);
     void appendLink(const void *row);
     void appendLink(VarElemArray &from,unsigned idx);
     void appendNull();
@@ -64,13 +64,11 @@ public:
     bool checksorted(ICompare *icmp);
     size32_t totalSize();
 private:
-    CThorRowArray rows;
+    CActivityBase &activity;
+    CThorRowArrayNew rows;
     Linked<ICompressor> compressor;
     Linked<IExpander> expander;
     ISortKeySerializer *keyserializer;
-    Linked<IEngineRowAllocator> allocator;
-    Linked<IOutputRowSerializer> serializer;
-    Linked<IOutputRowDeserializer> deserializer;
 };
 
 
@@ -97,9 +95,10 @@ interface IThorRowSortedLoader: extends IInterface
 
 class CThorKeyArray
 {
+    CActivityBase &activity;
     Linked<IRowInterfaces> rowif;
     Linked<IRowInterfaces> keyif;
-    CThorRowArray keys;
+    CThorRowArrayNew keys;
     size32_t maxsamplesize;
     offset_t totalserialsize;
     size32_t serialrowsize;     // 0 when not known
@@ -122,12 +121,13 @@ class CThorKeyArray
     offset_t findLessRowPos(const void * row);
     int keyRowCompare(unsigned keyidx,const void *row);
     void expandfpos();
-    const void *queryKey(unsigned idx) { return keys.item(idx); }
+    const void *queryKey(unsigned idx) { return keys.query(idx); }
     const void *getRow(unsigned idx);
     int binchopPartition(const void * row,bool lt);
 public:
 
     CThorKeyArray(
+        CActivityBase &activity,
         IRowInterfaces *_rowif,
         ISortKeySerializer *_serializer,
         ICompare *_icompare,
@@ -136,7 +136,7 @@ public:
     ~CThorKeyArray();
     void clear();
     void add(const void *row);
-    unsigned ordinality() { return keys.ordinality(); }
+    unsigned ordinality() { return keys.numRows(); }
     void serialize(MemoryBuffer &mb);
     void deserialize(MemoryBuffer &mb,bool append);
     void sort();

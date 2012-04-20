@@ -61,7 +61,7 @@ public:
         dataLinkStart(activityKindStr(queryContainer().getKind()), container.queryId());
         input = inputs.item(0);
         unsigned spillPriority = container.queryGrouped() ? 50 : 20;
-        iLoader.setown(createThorRowLoader(*this, queryRowInterfaces(input), iCompare, !unstable, spillPriority));
+        iLoader.setown(createThorRowLoader(*this, queryRowInterfaces(input), iCompare, !unstable, rc_mixed, spillPriority));
         startInput(input);
         eoi = false;
         if (container.queryGrouped())

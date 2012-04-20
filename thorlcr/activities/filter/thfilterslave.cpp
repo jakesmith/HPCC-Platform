@@ -241,14 +241,16 @@ public:
 class CFilterGroupSlaveActivity : public CFilterSlaveActivityBase, public CThorSteppable
 {
     unsigned nextIndex;
-    CThorRowArray group;
     IHThorFilterGroupArg *helper;
+    Owned<IThorRowLoader> group;
+    Owned<IRowStream> groupStream;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
     CFilterGroupSlaveActivity(CGraphElementBase *container) : CFilterSlaveActivityBase(container), CThorSteppable(this)
     {
+        group.setown(createThorRowLoader(*this, this, NULL, rc_allMem));
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
@@ -267,23 +269,25 @@ public:
         ActivityTimer t(totalCycles, timeActivities, NULL);
         while (!abortSoon)
         {
-            if (group.ordinality())
+            if (groupStream)
             {
-                if (nextIndex < group.ordinality())
+                OwnedConstThorRow row = groupStream.nextRow();
+                if (row)
                 {
-                    OwnedConstThorRow itm = group.itemClear(nextIndex++);
                     dataLinkIncrement();
-                    return itm.getClear();
+                    return row.getClear();
                 }
-                nextIndex = 0;
-                group.clear();
+                groupStream.clear();
                 return NULL;
             }
-            unsigned num = group.load(*input, false);
-            if (num)
+            CThorRowFixedSizeArray rows;
+            groupStream.setown(group.loadGroup(*input, abortSoon, rows));
+            if (group.numRows())
             {
-                if (!helper->isValid(num, (const void **)group.base()))
-                    group.clear(); // read next group
+                // JCSMORE - if isValid would take a stream, group wouldn't need to be in mem.
+                if (!helper->isValid(num, rows.getRowArray()))
+                    groupStream.clear();
+                // read next group
             }
             else
                 abortSoon = true; // eof

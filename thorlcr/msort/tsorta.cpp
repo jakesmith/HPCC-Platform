@@ -47,17 +47,11 @@
 #endif
 
 
-VarElemArray::VarElemArray(IRowInterfaces *rowif,ISortKeySerializer *_keyserializer) 
-  : allocator(rowif->queryRowAllocator()),serializer(rowif->queryRowSerializer()),deserializer(rowif->queryRowDeserializer())
-{ 
-    rows.setSizing(true,true);
-    keyserializer = _keyserializer;
+VarElemArray::VarElemArray(CActivityBase &_activity, IRowInterfaces *rowif)
+  : activity(_activity), rows(_activity)
+{
+    rows.setup(rowif, true);
 }
-
-VarElemArray::~VarElemArray() 
-{ 
-}
-
 
 void VarElemArray::appendLink(const void *row)
 {
@@ -68,7 +62,7 @@ void VarElemArray::appendLink(const void *row)
 
 void VarElemArray::clear() 
 { 
-    rows.clear();
+    rows.kill();
 }
 
 
@@ -85,19 +79,19 @@ bool VarElemArray::checksorted(ICompare *icmp)
 
 void VarElemArray::sort(ICompare *icmp,unsigned maxcores)
 {
-    rows.sort(*icmp,true,maxcores);
+    rows.sort(*icmp,maxcores);
 }
 
 size32_t VarElemArray::totalSize()
 { 
-    return rows.totalSize();
+    return (size32_t)rows.serializedSize();
 }
 
 
 
 void VarElemArray::serialize(MemoryBuffer &mb)
 {
-    rows.serialize(serializer,mb,true);
+    rows.serialize(mb,true);
 }
 
 
@@ -112,8 +106,7 @@ void  VarElemArray::deserialize(const void *data, size32_t sz, bool append)
 {   
     if (!append)
         clear();
-    rows.deserialize(*allocator,deserializer,sz,data,true);
-
+    rows.deserialize(sz,data,true);
 }
 
 
@@ -130,15 +123,15 @@ void VarElemArray::deserializeExpand(const void *data, size32_t,bool append)
 
 const byte *VarElemArray::item(unsigned i)
 {
-    if (i>=rows.ordinality())
+    if (i>=rows.numRows())
         return NULL;
-    return (const byte *)rows.item(i);
+    return (const byte *)rows.query(i);
 }
 
 
 unsigned VarElemArray::ordinality()
 {
-    return rows.ordinality();
+    return rows.numRows();
 }
 
 void VarElemArray::transfer(VarElemArray &from)
@@ -164,22 +157,22 @@ bool VarElemArray::equal(ICompare *icmp,VarElemArray &to)
 
 int VarElemArray::compare(ICompare *icmp,unsigned i,unsigned j)
 {
-    const void *p1 = rows.item(i);
-    const void *p2 = rows.item(j);
+    const void *p1 = rows.query(i);
+    const void *p2 = rows.query(j);
     return  icmp->docompare(p1,p2);
 }
 
 void VarElemArray::appendLink(class VarElemArray &from,unsigned int i)
 {
-    const void *row = from.rows.item(i);
+    const void *row = from.rows.query(i);
     appendLink(row);
 }
 
 
 int VarElemArray::compare(ICompare *icmp,unsigned i,VarElemArray &other,unsigned j)
 {
-    const void *p1 = rows.item(i);
-    const void *p2 = other.rows.item(j);
+    const void *p1 = rows.query(i);
+    const void *p2 = other.rows.query(j);
     return icmp->docompare(p1,p2);
 }
 
@@ -191,18 +184,19 @@ void VarElemArray::appendNull()
 
 bool VarElemArray::isNull(unsigned idx)
 {
-    if (idx>rows.ordinality())
+    if (idx>rows.numRows())
         return true;
-    return rows.item(idx)==NULL;
+    return rows.query(idx)==NULL;
 }
 
 
 CThorKeyArray::CThorKeyArray(
+    CActivityBase &_activity,
     IRowInterfaces *_rowif,
     ISortKeySerializer *_serializer,
     ICompare *_icompare,
     ICompare *_ikeycompare,
-    ICompare *_irowkeycompare)
+    ICompare *_irowkeycompare) : activity(_activity)
 {
     rowif.set(_rowif);
     sizes = NULL;
@@ -222,7 +216,7 @@ CThorKeyArray::CThorKeyArray(
 
 void CThorKeyArray::clear()
 {
-    keys.clear();
+    keys.kill();
     delete filepos;
     filepos = NULL;
     totalserialsize = 0;
@@ -291,16 +285,16 @@ void CThorKeyArray::add(const void *row)
         LinkThorRow(row);
     }
     if (maxsamplesize) {
-        while (keys.ordinality()&&(totalserialsize+sz>maxsamplesize)) 
+        while (keys.numRows()&&(totalserialsize+sz>maxsamplesize))
             split();
     }
     if (sizes)
        sizes->append(sz);
-    else if (keys.ordinality()==0) 
+    else if (keys.numRows()==0)
         serialrowsize = sz;
     else if (serialrowsize!=sz) {
         sizes = new UnsignedArray;
-        for (unsigned i=0;i<keys.ordinality();i++)
+        for (unsigned i=0;i<keys.numRows();i++)
             sizes->append(serialrowsize);
        sizes->append(sz);
        serialrowsize = 0;
@@ -312,7 +306,7 @@ void CThorKeyArray::add(const void *row)
 void CThorKeyArray::serialize(MemoryBuffer &mb)
 {
     // NB doesn't serialize filepos
-    unsigned n = keys.ordinality();
+    unsigned n = keys.numRows();
     unsigned i;
     mb.append(n);
     mb.append(serialrowsize);
@@ -332,7 +326,7 @@ void CThorKeyArray::serialize(MemoryBuffer &mb)
     IOutputRowSerializer *serializer = haskeyserializer?keyif->queryRowSerializer():rowif->queryRowSerializer();
     CMemoryRowSerializer msz(mb);
     for (i=0;i<n;i++) 
-        serializer->serialize(msz,(const byte *)keys.item(i));
+        serializer->serialize(msz,(const byte *)keys.query(i));
     size32_t l = mb.length()-pos-sizeof(size32_t);
     mb.writeDirect(pos,sizeof(l),&l);
 }
@@ -353,7 +347,7 @@ void CThorKeyArray::deserialize(MemoryBuffer &mb,bool append)
         if (rss==0) {
             if (nsz) {
                 sizes = new UnsignedArray;
-                for (i=0;i<keys.ordinality();i++)
+                for (i=0;i<keys.numRows();i++)
                     sizes->append(serialrowsize);
                 serialrowsize = 0;
             }
@@ -470,14 +464,12 @@ void CThorKeyArray::createSortedPartition(unsigned pn)
     }
     delete filepos;
     filepos = newpos;
-    CThorRowArray newrows;
+    CThorRowArrayNew newrows(activity);
     for (i = 1; i<pn; i++) {
         unsigned p = i*n/pn;
-        const void *r = keys.item(ra[p]);
-        LinkThorRow(r);
-        newrows.append(r);
+        newrows.append(keys.getLink(ra[p]));
     }
-    keys.swapWith(newrows);
+    keys.swap(newrows);
 }
 
 int CThorKeyArray::binchopPartition(const void * row,bool lt)
@@ -611,7 +603,7 @@ void CThorKeyArray::calcPositions(IFile *file,CThorKeyArray &sample)
 const void *CThorKeyArray::getRow(unsigned idx)
 {
     OwnedConstThorRow k;
-    k.set(keys.item(idx));
+    k.set(keys.query(idx));
     if (!keyserializer) 
         return k.getClear();
     RtlDynamicRowBuilder r(rowif->queryRowAllocator());
@@ -641,12 +633,12 @@ void CThorKeyArray::split()
     divisor *= 2;
     // not that fast!
     unsigned n = ordinality();
-    CThorRowArray newkeys;
+    CThorRowArrayNew newkeys;
     UnsignedArray *newsizes = sizes?new UnsignedArray:NULL;
     Int64Array *newfilepos = filepos?new Int64Array:NULL;
     unsigned newss = 0;
     for (unsigned i=0;i<n;i+=2) {
-        const void *k = keys.item(i);
+        const void *k = keys.query(i);
         LinkThorRow(k);
         newkeys.append(k);
         size32_t sz = sizes?sizes->item(i):serialrowsize;
@@ -656,7 +648,7 @@ void CThorKeyArray::split()
         if (newfilepos)
             newfilepos->append(filepos->item(i));
     }
-    keys.swapWith(newkeys);
+    keys.swap(newkeys);
     if (newsizes) {
         delete sizes;
         sizes = newsizes;

@@ -417,8 +417,9 @@ public:
     }
     void dolocaljoin()
     {
-        Owned<IThorRowLoader> iLoaderL = createThorRowLoader(*this, ::queryRowInterfaces(input1), compare1, true, SPILL_PRIORITY_JOIN);
-        Owned<IThorRowLoader> iLoaderR = createThorRowLoader(*this, ::queryRowInterfaces(input2), compare2, true, SPILL_PRIORITY_JOIN);
+        // NB: old version used to force both sides all to disk
+        Owned<IThorRowLoader> iLoaderL = createThorRowLoader(*this, ::queryRowInterfaces(input1), compare1, true, rc_mixed, SPILL_PRIORITY_JOIN);
+        Owned<IThorRowLoader> iLoaderR = createThorRowLoader(*this, ::queryRowInterfaces(input2), compare2, true, rc_mixed, SPILL_PRIORITY_JOIN);
         bool isemptylhs = false;
         if (helper->isLeftAlreadySorted()) {
             ThorDataLinkMetaInfo info;
@@ -432,7 +433,7 @@ public:
         }
         else {
             StringBuffer tmpStr;
-            strm1.setown(iLoaderL->load(input1, abortSoon, rc_allDisk));
+            strm1.setown(iLoaderL->load(input1, abortSoon));
             isemptylhs = 0 == iLoaderL->numRows();
             stopInput1();
         }
@@ -449,7 +450,7 @@ public:
                 strm2.set(input2.get()); // already ungrouped
         }
         else {
-            strm2.setown(iLoaderR->load(input2, abortSoon, rc_allDisk));
+            strm2.setown(iLoaderR->load(input2, abortSoon));
             stopInput2();
         }
     }

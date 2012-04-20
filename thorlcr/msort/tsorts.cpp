@@ -777,7 +777,7 @@ public:
         else if (haskeyserializer&&!keyserializer) {
             WARNLOG("Mismatched key serializer (master has, slave doesn't");
         }
-        numlocal = rowArray.ordinality(); // JCSMORE - this is sample total, why not return actuall spill total?
+        numlocal = rowArray.ordinality(); // JCSMORE - this is sample total, why not return actual spill total?
         _overflowscale = overflowinterval;
         totalsize = grandtotalsize; // used by master, if nothing overflowed to see if can MiniSort
     }
@@ -1183,12 +1183,12 @@ public:
         icollate = _icollate?_icollate:_icompare;
         icollateupper = _icollateupper?_icollateupper:icollate;
 
-        Owned<IThorRowLoader> sortedloader = createThorRowLoader(*activity, rowif, nosort?NULL:icompare, isstable, SPILL_PRIORITY_SELFJOIN);
+        Owned<IThorRowLoader> sortedloader = createThorRowLoader(*activity, rowif, nosort?NULL:icompare, isstable, rc_allDiskOrAllMem, SPILL_PRIORITY_SELFJOIN);
         Owned<IRowStream> overflowstream;
         try
         {
             // if all in memory, rows will be transferred into rowArray when done
-            overflowstream.setown(sortedloader->load(in, abort, rc_allDiskOrAllMem, false, &rowArray));
+            overflowstream.setown(sortedloader->load(in, abort, false, &rowArray));
             ActPrintLog(activity, "Local run sort(s) done");
         }
         catch (IException *e)

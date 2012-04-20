@@ -213,7 +213,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     CBroadcaster broadcaster;
     Owned<IException> leftexception;
     Semaphore leftstartsem;
-    CThorRowArray rhs;
+    CThorRowArrayNew rhs;
     bool eos;
     unsigned flags;
     bool exclude;
@@ -400,7 +400,6 @@ public:
         right.set(inputs.item(1));
         rightAllocator.set(::queryRowAllocator(right));
         rightSerializer.set(::queryRowSerializer(right));
-        rhs.setSizing(true, true);
         try
         {
             startInput(right); 
@@ -464,7 +463,7 @@ public:
     {
         if (!gotRHS)
             getRHS(true);
-        rhs.reset(false);
+        rhs.reset();
         stopRightInput();
         stopInput(left);
         dataLinkStop();
@@ -852,10 +851,10 @@ public:
             unsigned r=0;
             while (!abortSoon)
             {
-                while (r!=rhs.ordinality())
+                while (r!=rhs.numRows())
                 {
-                    const byte *row = (const byte *)rhs.item(r++);
-                    rightSerializer->serialize(mbs, row);
+                    const void *row = rhs.query(r++);
+                    rightSerializer->serialize(mbs, (const byte *)row);
                     if (mb.length() > 0x80000)
                         break;
                 }
@@ -910,7 +909,7 @@ public:
             RtlDynamicRowBuilder rowBuilder(allocator);
             size32_t sz = deserializer->deserialize(rowBuilder, memDeserializer);
             OwnedConstThorRow fRow = rowBuilder.finalizeRowClear(sz);
-            rhs.append(fRow.getClear()); // will throw IThorRowArrayException if full
+            rhs.append(fRow.getClear());
         }
     }
     void gatherLocal()
@@ -920,7 +919,7 @@ public:
             OwnedConstThorRow rhsRow = right->ungroupedNextRow();
             if (!rhsRow)
                 break;
-            rhs.append(rhsRow.getClear()); // will throw IThorRowArrayException if full
+            rhs.append(rhsRow.getClear());
         }
 #ifdef STOPRIGHT_ASAP
         stopRightInput();
@@ -1017,13 +1016,13 @@ public:
                         {
                             loop
                             {
-                                if (r == rhs.ordinality())
+                                if (r == rhs.numRows())
                                 {
                                     allDone = true;
                                     break;
                                 }
-                                const byte *row = (const byte *)rhs.item(r++);
-                                rightSerializer->serialize(mbs, row);
+                                const void *row = rhs.query(r++);
+                                rightSerializer->serialize(mbs, (const byte *)row);
                                 if (tmp.length() > 0x80000)
                                     break;
                             }
@@ -1049,7 +1048,7 @@ public:
                         allRequestStop = true;
                     else
                     {
-                        rhs.clear();
+                        rhs.kill();
                         MemoryBuffer buf;
                         MemoryBuffer expBuf;
                         while (broadcaster.receive(buf))
@@ -1083,7 +1082,7 @@ public:
         if (exception.get())
         {
             StringBuffer errStr(joinStr);
-            errStr.append("(").append(container.queryId()).appendf(") right-hand side is too large (%"I64F"u bytes in %d rows) for %s : (",(unsigned __int64) rhs.totalSize(),rhs.ordinality(),joinStr.get());
+            errStr.append("(").append(container.queryId()).appendf(") right-hand side is too large (%"I64F"u bytes in %d rows) for %s : (",(unsigned __int64) rhs.serializedSize(),rhs.numRows(),joinStr.get());
             errStr.append(exception->errorCode()).append(", ");
             exception->errorMessage(errStr);
             errStr.append(")");
@@ -1095,17 +1094,17 @@ public:
     void prepareRHS()
     {
         // first count records (a bit slow for variable)
-        rhsRows = rhs.ordinality();
+        rhsRows = rhs.numRows();
         rhsTableLen = rhsRows*4/3+16;  // could go bigger if room (or smaller if not)
         if (isAll())
         {
-            rhsTable = (const void **)rhs.base();
+            rhsTable = rhs.getRowArray();
             ActPrintLog("ALLJOIN rhs table: %d elements", rhsRows);
         }
         else // lookup, or all join with some hard matching.
         {
             unsigned htTable = rhsRows;
-            rhs.reserve(rhsTableLen); // will throw IThorRowArrayException if full
+            rhs.ensure(rhsTableLen);
 
             unsigned count = 0;
             unsigned dup = 0;
@@ -1114,11 +1113,11 @@ public:
             bool dedup = compareRight && !maySkip && !fuzzyMatch && (!returnMany || 1==keepLimit);
             for (unsigned i=0;i<rhsRows;i++)
             {
-                OwnedConstThorRow p = rhs.itemClear(i);
+                OwnedConstThorRow p = rhs.getClear(i);
                 unsigned h = htTable+rightHash->hash(p.get())%rhsTableLen;
                 loop
                 {
-                    const byte *e = rhs.item(h);
+                    const byte *e = rhs.query(h);
                     if (!e)
                     {
                         rhs.setRow(h, p.getClear());
@@ -1135,7 +1134,7 @@ public:
                         h = htTable;
                 }
             }
-            rhsTable = (const void **)rhs.base()+htTable;
+            rhsTable = rhs.getRowArray()+htTable;
             ActPrintLog("LOOKUPJOIN hash table created: %d elements %d duplicates",count,dup);
         }
     }

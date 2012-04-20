@@ -543,7 +543,7 @@ public:
             CSortNode &slave = slaves.item(i);
             if (slave.numrecs==0)
                 continue;
-            VarElemArray minmax(rowif,keyserializer) ;
+            VarElemArray minmax(*this, rowif);
             void *p = NULL;
             size32_t retlen = 0;
             size32_t avrecsize=0;
@@ -611,7 +611,7 @@ public:
         unsigned averagesamples = OVERSAMPLE*numnodes;  
         rowmap_t averagerecspernode = (rowmap_t)(total/numnodes);
         CriticalSection asect;
-        VarElemArray sample(rowif,keyserializer);
+        VarElemArray sample(*this, rowif);
 #ifdef ASYNC_PARTIONING
         class casyncfor1: public CAsyncFor
         {
@@ -673,7 +673,7 @@ public:
         size32_t ts=sample.totalSize();
         estrecsize = numsamples?(ts/numsamples):100;
         sample.sort(icompare,activity->queryMaxCores());
-        VarElemArray mid(rowif,keyserializer);
+        VarElemArray mid(*this, rowif);
         if (numsamples) { // could shuffle up empty nodes here
             for (unsigned i=0;i<numsplits;i++) {
                 unsigned pos = (unsigned)(((count_t)numsamples*(i+1))/((count_t)numsplits+1));
@@ -797,12 +797,12 @@ public:
             return splitmap.getClear();
         }
         unsigned numsplits=numnodes-1;
-        VarElemArray emin(rowif,keyserializer);
-        VarElemArray emax(rowif,keyserializer);
-        VarElemArray totmid(rowif,keyserializer);
+        VarElemArray emin(*this, rowif);
+        VarElemArray emax(*this, rowif);
+        VarElemArray totmid(*this, rowif);
         ECFarray = &totmid;
         ECFcompare = icompare;
-        VarElemArray mid(rowif,keyserializer);
+        VarElemArray mid(*this, rowif);
         unsigned i;
         unsigned j;
         for(i=0;i<numsplits;i++) {

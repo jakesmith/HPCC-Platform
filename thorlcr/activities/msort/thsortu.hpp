@@ -27,7 +27,7 @@
 
 interface IHThorJoinArg;
 interface IOutputMetaData;
-class CThorRowArray;
+class CThorRowArrayNew;
 
 interface ILimitedCompareHelper: public IInterface
 {
@@ -38,14 +38,12 @@ interface ILimitedCompareHelper: public IInterface
             ICompare *limcompare
         )=0;
 
-    virtual bool getGroup(CThorRowArray &group,const void *left) = 0;
-
+    virtual bool getGroup(CThorRowArrayNew &group,const void *left) = 0;
 };
 
-class CThorRowArray;
 interface IMulticoreIntercept
 {
-    virtual void addWork(CThorRowArray *lgroup,CThorRowArray *rgroup)=0;
+    virtual void addWork(CThorRowArrayNew *lgroup, CThorRowArrayNew *rgroup)=0;
     virtual void addRow(const void *row)=0;
 };
 

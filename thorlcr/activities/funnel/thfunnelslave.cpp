@@ -528,16 +528,15 @@ class CombineSlaveActivity : public CSlaveActivity, public CThorDataLink
     bool grouped;
     bool eogNext;
     MemoryBuffer recbuf;
-    CThorRowArray rows;
+    CThorRowArrayNew rows;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
 
     CombineSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorDataLink(this), rows(*this)
     {
-        rows.setSizing(true,true);
         grouped = container.queryGrouped();
     }
     void init()
@@ -587,7 +586,7 @@ public:
                         err = true;
                         break;
                     }
-                    rows.append((void *)row.getClear());
+                    rows.append(row.getClear());
                 }
                 else {
                     if (i&&!eog) {
@@ -599,20 +598,20 @@ public:
             }
             if (err) {
                 eog = true;
-                rows.clear();
+                rows.reset();
                 throw MakeActivityException(this, -1, "mismatched input row count for Combine");
             }
             if (eog) 
                 break;
             RtlDynamicRowBuilder row(queryRowAllocator());
-            size32_t sizeGot = helper->transform(row, rows.ordinality(), (const void * *)rows.base());
-            rows.clear();
+            size32_t sizeGot = helper->transform(row, rows.numRows(), rows.getRowArray());
+            rows.reset();
             if (sizeGot) {
                 dataLinkIncrement();
                 return row.finalizeRowClear(sizeGot);
             }
         }
-        rows.clear();
+        rows.reset();
         return NULL;
     }
     bool isGrouped()
