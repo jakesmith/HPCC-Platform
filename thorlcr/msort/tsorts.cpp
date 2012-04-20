@@ -440,14 +440,14 @@ public:
         // JCSMORE - at the moment, the localsort set is already sorted
         if (1 == activity.queryJob().querySlaves())
         {
-            CThorExpandingRowArray spillableRows(activity, &rowIf);
+            CThorSpillableRowArray spillableRows(activity, &rowIf);
             rowCount = localRows.ordinality();
             spillableRows.transferFrom(localRows);
             return spillableRows.createRowStream();
         }
         if (partNo)
         {
-            CThorExpandingRowArray spillableRows(activity, &rowIf);
+            CThorSpillableRowArray spillableRows(activity, &rowIf);
             spillableRows.transferFrom(localRows);
             Owned<IRowStream> spillableStream = spillableRows.createRowStream();
 
@@ -541,14 +541,12 @@ public:
             globalRows.removeRows(points.item(1),globalRows.ordinality()-points.item(1));
             // only local rows left
             rowCount = globalRows.ordinality();
-            CThorExpandingRowArray spillableRows(activity, &rowIf);
+            CThorSpillableRowArray spillableRows(activity, &rowIf);
             spillableRows.transferFrom(globalRows);
             return spillableRows.createRowStream();
         }
     }
 };
-
-
 
 class CThorSorter : public CSimpleInterface, implements IThorSorter, implements ISortSlaveBase, implements ISortSlaveMP,
     private IThreaded
