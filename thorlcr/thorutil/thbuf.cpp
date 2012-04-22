@@ -1608,3 +1608,7 @@ public:
     }
 };
 
+interface IADD : extends IInterface
+{
+};
+

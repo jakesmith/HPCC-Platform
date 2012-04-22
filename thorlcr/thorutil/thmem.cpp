@@ -820,6 +820,26 @@ void CThorExpandingRowArray::transferFrom(CThorExpandingRowArray &donor)
         ensure(maxRows);
 }
 
+void CThorExpandingRowArray::transferFrom(CThorSpillableRowArray &donor)
+{
+	transferFrom((CThorExpandingRowArray &)donor);
+}
+
+void CThorExpandingRowArray::removeRows(roxiemem::rowidx_t start, roxiemem::rowidx_t n)
+{
+    assertex(numRows-start >= n);
+    assertex(!n || !rows);
+    if (rows)
+    {
+        for (roxiemem::rowidx_t i = start; i < n; i++)
+            ReleaseThorRow(rows[i]);
+        //firstRow = 0;
+        numRows -= n;
+        const void **from = rows+start;
+        memmove(from, from+n, n * sizeof(void *));
+    }
+}
+
 bool CThorExpandingRowArray::ensure(roxiemem::rowidx_t requiredRows)
 {
     OwnedConstThorRow newStableSortTmp;
@@ -868,7 +888,7 @@ unsigned CThorExpandingRowArray::save(IFile &iFile, bool preserveGrouping)
     return numRows;
 }
 
-IRowStream *CThorExpandingRowArray::createRowStream(roxiemem::rowidx_t start, roxiemem::rowidx_t num, bool streamOwns);
+IRowStream *CThorExpandingRowArray::createRowStream(roxiemem::rowidx_t start, roxiemem::rowidx_t num, bool streamOwns)
 {
     class CStream : public CSimpleInterface, implements IRowStream
     {
@@ -881,9 +901,8 @@ IRowStream *CThorExpandingRowArray::createRowStream(roxiemem::rowidx_t start, ro
         IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
         CStream(CThorExpandingRowArray &_parent, roxiemem::rowidx_t firstRow, roxiemem::rowidx_t _lastRow, bool _owns)
-            : rows(activity), pos(firstRow), lastRow(_lastRow), owns(_owns)
+            : parent(_parent), pos(firstRow), lastRow(_lastRow), owns(_owns)
         {
-            rows.swap(inRows);
         }
 
     // IRowStream
@@ -907,7 +926,7 @@ IRowStream *CThorExpandingRowArray::createRowStream(roxiemem::rowidx_t start, ro
     else
         lastRow = start+num;
 
-    return new CStream(activity, *this, start, lastRow, streamOwns);
+    return new CStream(*this, start, lastRow, streamOwns);
 }
 
 void CThorExpandingRowArray::partition(ICompare &compare, unsigned num, UnsignedArray &out)
@@ -1101,6 +1120,7 @@ bool CThorSpillableRowArray::ensure(roxiemem::rowidx_t requiredRows)
         maxRows = RoxieRowCapacity(rows) / sizeof(void *);
         stableSortTmp = (void **)newStableSortTmp.getClear();
     }
+	return true;
 }
 
 void CThorSpillableRowArray::sort(ICompare &compare, unsigned maxCores)
@@ -1159,9 +1179,13 @@ void CThorSpillableRowArray::transferRows(roxiemem::rowidx_t & outNumRows, const
 void CThorSpillableRowArray::transferFrom(CThorExpandingRowArray &src)
 {
     CThorSpillableRowArrayLock block(*this);
-    kill();
     CThorExpandingRowArray::transferFrom(src);
     commitRows = numRows;
+}
+
+void CThorSpillableRowArray::transferFrom(CThorSpillableRowArray &donor)
+{
+	transferFrom((CThorExpandingRowArray &)donor);
 }
 
 void CThorSpillableRowArray::swap(CThorSpillableRowArray &other)
@@ -1961,7 +1985,7 @@ public:
             return 1;
         return overflowCount*2+3; // bit arbitrary
     }
-    void transferRowsIn(CThorRowFixedSizeArray &src)
+    void transferRowsIn(CThorExpandingRowArray &src)
     {
         reset();
         spillableRows.transferFrom(src);
@@ -1983,7 +2007,7 @@ public:
 enum TRLGroupFlag { trl_ungroup, trl_preserveGrouping, trl_stopAtEog };
 class CThorRowLoader : public CThorRowCollectorBase, implements IThorRowLoader
 {
-    IRowStream *load(IRowStream *in, bool &abort, TRLGroupFlag grouping, CThorExpandingRowArray *allMemRows)
+    IRowStream *load(IRowStream *in, const bool &abort, TRLGroupFlag grouping, CThorExpandingRowArray *allMemRows)
     {
         reset();
         setPreserveGrouping(trl_preserveGrouping == grouping);
@@ -2022,15 +2046,15 @@ public:
     virtual rowcount_t numRows() const { return CThorRowCollectorBase::numRows(); }
     virtual unsigned numOverflows() const { return CThorRowCollectorBase::numOverflows(); }
     virtual unsigned overflowScale() const { return CThorRowCollectorBase::overflowScale(); }
-    virtual void transferRowsOut(CThorRowFixedSizeArray &dst, bool sort) { CThorRowCollectorBase::transferRowsOut(dst, sort); }
-    virtual void transferRowsIn(CThorRowFixedSizeArray &src) { CThorRowCollectorBase::transferRowsIn(src); }
+    virtual void transferRowsOut(CThorExpandingRowArray &dst, bool sort) { CThorRowCollectorBase::transferRowsOut(dst, sort); }
+    virtual void transferRowsIn(CThorExpandingRowArray &src) { CThorRowCollectorBase::transferRowsIn(src); }
 // IThorRowLoader
-    virtual IRowStream *load(IRowStream *in, bool &abort, bool preserveGrouping, CThorExpandingRowArray *allMemRows)
+    virtual IRowStream *load(IRowStream *in, const bool &abort, bool preserveGrouping, CThorExpandingRowArray *allMemRows)
     {
         assertex(!iCompare || !preserveGrouping); // can't sort if group preserving
         return load(in, abort, preserveGrouping?trl_preserveGrouping:trl_ungroup, allMemRows);
     }
-    virtual IRowStream *loadGroup(IRowStream *in, bool &abort, CThorExpandingRowArray *allMemRows)
+    virtual IRowStream *loadGroup(IRowStream *in, const bool &abort, CThorExpandingRowArray *allMemRows)
     {
         return load(in, abort, trl_stopAtEog, allMemRows);
     }
@@ -2066,8 +2090,8 @@ public:
     virtual rowcount_t numRows() const { return CThorRowCollectorBase::numRows(); }
     virtual unsigned numOverflows() const { return CThorRowCollectorBase::numOverflows(); }
     virtual unsigned overflowScale() const { return CThorRowCollectorBase::overflowScale(); }
-    virtual void transferRowsOut(CThorRowFixedSizeArray &dst, bool sort) { CThorRowCollectorBase::transferRowsOut(dst, sort); }
-    virtual void transferRowsIn(CThorRowFixedSizeArray &src) { CThorRowCollectorBase::transferRowsIn(src); }
+    virtual void transferRowsOut(CThorExpandingRowArray &dst, bool sort) { CThorRowCollectorBase::transferRowsOut(dst, sort); }
+    virtual void transferRowsIn(CThorExpandingRowArray &src) { CThorRowCollectorBase::transferRowsIn(src); }
 // IThorRowCollector
     virtual IRowWriter *getWriter()
     {

@@ -138,9 +138,6 @@ public:
     JoinSlaveActivity(CGraphElementBase *_container, bool local)
         : CSlaveActivity(_container), CThorDataLink(this)
     {
-        if (local)
-            activityName.append("LOCAL");
-        activityName.append(activityKindStr(container.getKind()));
         islocal = local;
         portbase = 0;
 #ifdef _TESTING
@@ -237,11 +234,11 @@ public:
         dataLinkStart(activityName, container.queryId());
         CriticalBlock b(joinHelperCrit);
         if (denorm)
-            joinhelper.setown(createDenormalizeHelper(helperdn, activityName, container.getKind(), container.queryId(), queryRowAllocator()));
+            joinhelper.setown(createDenormalizeHelper(*this, helperdn, queryRowAllocator()));
         else {
             bool hintparallelmatch = container.queryXGMML().getPropInt("hint[@name=\"parallel_match\"]/@value")!=0;
             bool hintunsortedoutput = container.queryXGMML().getPropInt("hint[@name=\"unsorted_output\"]/@value")!=0;
-            joinhelper.setown(createJoinHelper(helperjn, activityName, container.queryId(), queryRowAllocator(),hintparallelmatch,hintunsortedoutput));
+            joinhelper.setown(createJoinHelper(*this, helperjn, queryRowAllocator(), hintparallelmatch, hintunsortedoutput));
         }
     }
 
@@ -337,7 +334,7 @@ public:
         if (!strm1.get()||!strm2.get()) {
             throw MakeThorException(TE_FailedToStartJoinStreams, "Failed to start join streams");
         }
-        joinhelper->init (strm1, strm2, ::queryRowAllocator(inputs.item(0)),::queryRowAllocator(inputs.item(1)),::queryRowMetaData(inputs.item(0)), &abortSoon, NULL);
+        joinhelper->init (strm1, strm2, ::queryRowAllocator(inputs.item(0)),::queryRowAllocator(inputs.item(1)),::queryRowMetaData(inputs.item(0)), &abortSoon);
     }
     void stopInput1()
     {

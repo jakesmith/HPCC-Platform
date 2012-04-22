@@ -57,7 +57,6 @@ interface IJoinHelper: public IInterface
             IEngineRowAllocator *allocatorR,
             IOutputMetaData * outputmetaL,   // for XML output 
             bool *_abort,
-            CActivityBase *activity=NULL,
             IMulticoreIntercept *mcoreintercept=NULL
         )=0;
 
@@ -66,9 +65,9 @@ interface IJoinHelper: public IInterface
     virtual rowcount_t getRhsProgress() const = 0;
 };
 
-IJoinHelper *createJoinHelper(IHThorJoinArg *helper, const char *activityName, activity_id activityId, IEngineRowAllocator *allocator,bool parallelmatch,bool unsortedoutput);
-IJoinHelper *createSelfJoinHelper(IHThorJoinArg *helper, const char *activityName, activity_id activityId, IEngineRowAllocator *allocator,bool parallelmatch,bool unsortedoutput);
-IJoinHelper *createDenormalizeHelper(IHThorDenormalizeArg *helper, const char *activityName, ThorActivityKind kind, activity_id activityId, IEngineRowAllocator *allocator);
+IJoinHelper *createJoinHelper(CActivityBase &activity, IHThorJoinArg *helper, IEngineRowAllocator *allocator,bool parallelmatch,bool unsortedoutput);
+IJoinHelper *createSelfJoinHelper(CActivityBase &activity, IHThorJoinArg *helper, IEngineRowAllocator *allocator,bool parallelmatch,bool unsortedoutput);
+IJoinHelper *createDenormalizeHelper(CActivityBase &activity, IHThorDenormalizeArg *helper, IEngineRowAllocator *allocator);
 
 
 

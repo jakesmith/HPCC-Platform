@@ -166,7 +166,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
     CWriteIntercept(CActivityBase &_activity, IRowInterfaces *_rowIf, unsigned _interval)
-        : activity(_activity), rowIf(_rowIf), interval(_interval), sampleRows(activity.queryJob().queryRowManager(), InitialSortElements, CommitStep)
+        : activity(_activity), rowIf(_rowIf), interval(_interval), sampleRows(activity, InitialSortElements)
     {
         interval = _interval;
         idx = 0;
@@ -472,7 +472,7 @@ public:
         }
         else
         {
-            collector->setup(&rowIf, &iCompare, isStable, UINT_MAX); // must not spill
+            collector->setup(&rowIf, &iCompare, isStable, rc_mixed, UINT_MAX); // must not spill
             collector->transferRowsIn(localRows);
 
             // JCSMORE - very odd, threaded, but semaphores ensuring sequential writes, why?
@@ -780,7 +780,7 @@ public:
     }
     virtual rowmap_t GetMinMax(size32_t &keybufsize,void *&keybuf,size32_t &avrecsize)
     {
-        VarElemArray ret(rowif,keyserializer);
+        VarElemArray ret(*activity, rowif);
         avrecsize = 0;
         if (rowArray.ordinality()>0) {
             const void *kp = rowArray.query(0);
@@ -846,9 +846,9 @@ public:
     {
         // finds the keys within the ranges specified
         // uses empty keys (0 size) if none found
-        VarElemArray low(rowif,keyserializer);
-        VarElemArray high(rowif,keyserializer);
-        VarElemArray mid(rowif,keyserializer);
+        VarElemArray low(*activity, rowif);
+        VarElemArray high(*activity, rowif);
+        VarElemArray mid(*activity, rowif);
         low.deserializeExpand(lkeybuf,lbufsize,false);
         high.deserializeExpand(hkeybuf,hbufsize,false);
         unsigned n=low.ordinality();
@@ -904,13 +904,13 @@ public:
     }
     virtual void MultiBinChop(size32_t keybufsize, const byte * keybuf, unsigned num, rowmap_t * pos, byte cmpfn, bool useaux)
     {
-        VarElemArray keys(useaux?auxrowif:rowif,NULL);
+        VarElemArray keys(*activity, useaux?auxrowif:rowif);
         keys.deserialize(keybuf,keybufsize,false);
         doBinChop(keys,pos,num,cmpfn);
     }
     virtual void MultiBinChopStart(size32_t keybufsize, const byte * keybuf, byte cmpfn)
     {
-        VarElemArray keys(rowif,keyserializer);
+        VarElemArray keys(*activity, rowif);
         keys.deserializeExpand(keybuf,keybufsize,false);
         assertex(multibinchoppos==NULL); // check for reentrancy
         multibinchopnum = keys.ordinality();
@@ -939,7 +939,7 @@ public:
         for (i=0;i<mapsize;i++)
             ActPrintLog(activity, "%"RCPF"d ",overflowmap[i]);
 #endif
-        VarElemArray keys(useaux?auxrowif:rowif,NULL);
+        VarElemArray keys(*activity, useaux?auxrowif:rowif);
         keys.deserialize(keybuf,keybufsize,false);
         for (i=0;i<mapsize-1;i++)
             AdjustOverflow(overflowmap[i],keys.item(i),cmpfn);
@@ -1019,7 +1019,7 @@ public:
     {
         // actually doesn't get Nth row but numsplits samples distributed evenly through the rows
         assertex(numsplits);
-        VarElemArray ret(rowif,keyserializer);
+        VarElemArray ret(*activity, rowif);
         unsigned numrows = rowArray.ordinality();
         if (numrows) {
             for (unsigned i=0;i<numsplits;i++) {

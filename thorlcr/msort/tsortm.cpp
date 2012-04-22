@@ -192,8 +192,8 @@ struct PartitionInfo
 {
     size32_t guard;
     Linked<IRowInterfaces> prowif;
-    PartitionInfo(IRowInterfaces *rowif)
-        : splitkeys(rowif,NULL), prowif(rowif)
+    PartitionInfo(CActivityBase *_activity, IRowInterfaces *rowif)
+        : splitkeys(*_activity, rowif), prowif(rowif)
     {
         nodes = NULL;
         mpports = NULL;
@@ -422,10 +422,10 @@ public:
         if (!partitioninfo) { // if cosort use aux
             if (cosort) {
                 ActPrintLog(activity, "Cosort with no prior partition");
-                partitioninfo = new PartitionInfo(auxrowif);
+                partitioninfo = new PartitionInfo(activity, auxrowif);
             }
             else
-                partitioninfo = new PartitionInfo(rowif);
+                partitioninfo = new PartitionInfo(activity, rowif);
         }
         free(partitioninfo->nodes);
         free(partitioninfo->mpports);
@@ -543,7 +543,7 @@ public:
             CSortNode &slave = slaves.item(i);
             if (slave.numrecs==0)
                 continue;
-            VarElemArray minmax(*this, rowif);
+            VarElemArray minmax(*activity, rowif);
             void *p = NULL;
             size32_t retlen = 0;
             size32_t avrecsize=0;
@@ -611,7 +611,7 @@ public:
         unsigned averagesamples = OVERSAMPLE*numnodes;  
         rowmap_t averagerecspernode = (rowmap_t)(total/numnodes);
         CriticalSection asect;
-        VarElemArray sample(*this, rowif);
+        VarElemArray sample(*activity, rowif);
 #ifdef ASYNC_PARTIONING
         class casyncfor1: public CAsyncFor
         {
@@ -673,7 +673,7 @@ public:
         size32_t ts=sample.totalSize();
         estrecsize = numsamples?(ts/numsamples):100;
         sample.sort(icompare,activity->queryMaxCores());
-        VarElemArray mid(*this, rowif);
+        VarElemArray mid(*activity, rowif);
         if (numsamples) { // could shuffle up empty nodes here
             for (unsigned i=0;i<numsplits;i++) {
                 unsigned pos = (unsigned)(((count_t)numsamples*(i+1))/((count_t)numsplits+1));
@@ -797,12 +797,12 @@ public:
             return splitmap.getClear();
         }
         unsigned numsplits=numnodes-1;
-        VarElemArray emin(*this, rowif);
-        VarElemArray emax(*this, rowif);
-        VarElemArray totmid(*this, rowif);
+        VarElemArray emin(*activity, rowif);
+        VarElemArray emax(*activity, rowif);
+        VarElemArray totmid(*activity, rowif);
         ECFarray = &totmid;
         ECFcompare = icompare;
-        VarElemArray mid(*this, rowif);
+        VarElemArray mid(*activity, rowif);
         unsigned i;
         unsigned j;
         for(i=0;i<numsplits;i++) {
@@ -962,8 +962,8 @@ public:
                     }
                 }
 
-                VarElemArray newmin(rowif,keyserializer);
-                VarElemArray newmax(rowif,keyserializer);
+                VarElemArray newmin(*activity, rowif);
+                VarElemArray newmax(*activity, rowif);
                 unsigned __int64 maxerror=0;
                 unsigned __int64 nodewanted = (stotal/numnodes); // Note scaled total
                 unsigned __int64 variancelimit = estrecsize?maxdeviance/estrecsize:0;
@@ -1111,7 +1111,7 @@ public:
         // I think this dependant on row being same format as meta
 
         unsigned numsplits=numnodes-1;
-        VarElemArray splits(rowif,NULL);
+        VarElemArray splits(*activity, rowif);
         char *s=cosortfilenames;
         unsigned i;
         for(i=0;i<numnodes;i++) {
@@ -1143,7 +1143,7 @@ public:
     {
         ActPrintLog(activity, "Previous partition");
         unsigned numsplits=numnodes-1;
-        VarElemArray splits(rowif,NULL);
+        VarElemArray splits(*activity, rowif);
         unsigned i;
         for(i=1;i<numnodes;i++) {
             CSortNode &slave = slaves.item(i);

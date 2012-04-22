@@ -598,20 +598,20 @@ public:
             }
             if (err) {
                 eog = true;
-                rows.reset();
+                rows.kill();
                 throw MakeActivityException(this, -1, "mismatched input row count for Combine");
             }
             if (eog) 
                 break;
             RtlDynamicRowBuilder row(queryRowAllocator());
             size32_t sizeGot = helper->transform(row, rows.ordinality(), rows.getRowArray());
-            rows.reset();
+            rows.kill();
             if (sizeGot) {
                 dataLinkIncrement();
                 return row.finalizeRowClear(sizeGot);
             }
         }
-        rows.reset();
+        rows.kill();
         return NULL;
     }
     bool isGrouped()

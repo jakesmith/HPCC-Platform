@@ -196,7 +196,7 @@ CThorKeyArray::CThorKeyArray(
     ISortKeySerializer *_serializer,
     ICompare *_icompare,
     ICompare *_ikeycompare,
-    ICompare *_irowkeycompare) : activity(_activity), keys(_activity, _rowIf)
+    ICompare *_irowkeycompare) : activity(_activity), keys(_activity, _rowif)
 {
     rowif.set(_rowif);
     sizes = NULL;
@@ -633,7 +633,7 @@ void CThorKeyArray::split()
     divisor *= 2;
     // not that fast!
     unsigned n = ordinality();
-    CThorExpandingRowArray newkeys(activity, rowIf);
+    CThorExpandingRowArray newkeys(activity, rowif);
     UnsignedArray *newsizes = sizes?new UnsignedArray:NULL;
     Int64Array *newfilepos = filepos?new Int64Array:NULL;
     unsigned newss = 0;

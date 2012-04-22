@@ -297,7 +297,7 @@ public:
                 {
                     while (resultNum)
                     {
-                        if (rowNum == slaveResult->numRows())
+                        if (rowNum == slaveResult->ordinality())
                         {
                             loop
                             {

@@ -158,16 +158,16 @@ public:
         if (helper->getJoinFlags()&JFlimitedprefixjoin) {
             CriticalBlock b(joinHelperCrit);
             // use std join helper (less efficient but implements limited prefix)
-            joinhelper.setown(createJoinHelper(helper,"SELFJOIN", container.queryId(), queryRowAllocator(),hintparallelmatch,hintunsortedoutput));
+            joinhelper.setown(createJoinHelper(*this, helper, queryRowAllocator(), hintparallelmatch, hintunsortedoutput));
         }
         else {
             CriticalBlock b(joinHelperCrit);
-            joinhelper.setown(createSelfJoinHelper(helper,"SELFJOIN", container.queryId(), queryRowAllocator(),hintparallelmatch,hintunsortedoutput));
+            joinhelper.setown(createSelfJoinHelper(*this, helper, queryRowAllocator(), hintparallelmatch, hintunsortedoutput));
         }
         strm.setown(isLightweight? doLightweightSelfJoin() : (isLocal ? doLocalSelfJoin() : doGlobalSelfJoin()));
         assertex(strm);
 
-        joinhelper->init(strm, NULL, ::queryRowAllocator(inputs.item(0)), ::queryRowAllocator(inputs.item(0)), ::queryRowMetaData(inputs.item(0)), &abortSoon, this);
+        joinhelper->init(strm, NULL, ::queryRowAllocator(inputs.item(0)), ::queryRowAllocator(inputs.item(0)), ::queryRowMetaData(inputs.item(0)), &abortSoon);
     }
 
     virtual void stop()

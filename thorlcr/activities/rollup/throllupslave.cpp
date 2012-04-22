@@ -83,12 +83,12 @@ class CDedupAllHelper : public CSimpleInterface, implements IRowStream
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CDedupAllHelper(CActivityBase *_activity) : activity(_activity) : rows(_activity)
+    CDedupAllHelper(CActivityBase *_activity) : activity(_activity), rows(*_activity)
     {
         in = NULL;
         helper = NULL;
         abort = NULL;
-        rowLoader.setown(createThorRowLoader(*this, this, NULL, rc_allMem));
+        rowLoader.setown(createThorRowLoader(*activity, activity, NULL, rc_allMem));
     }
 
     void init(IThorDataLink * _in, IHThorDedupArg * _helper, bool _keepLeft, bool * _abort, IStopInput *_iStopInput)
@@ -114,7 +114,7 @@ public:
         rows.kill();
 
         // JCSMORE - could do in chunks and merge if > mem
-        Owned<IRowStream> rowStream = groupOp ? rowLoader.loadGroup(in, abortSoon, rows) : rowLoader.load(in, abortSoon, false, rows);
+        Owned<IRowStream> rowStream = groupOp ? rowLoader->loadGroup(in, activity->queryAbortSoon(), &rows) : rowLoader->load(in, activity->queryAbortSoon(), false, &rows);
         dedupCount = rows.ordinality();
         ActPrintLog(activity, "DEDUP: rows loaded = %d",dedupCount);
 
@@ -141,6 +141,7 @@ public:
         }
         return NULL;
     }
+	virtual void stop() { }
 };
 
 class CDedupRollupBaseActivity : public CSlaveActivity, implements IStopInput
@@ -310,7 +311,7 @@ public:
         if (compareAll)
         {           
             assertex(!global);      // dedup(),local,all only supported
-            dedupStream.setown(new CDedupAllHelper(this));
+            dedupHelper.setown(new CDedupAllHelper(this));
             dedupHelper->init(input, ddhelper, keepLeft, &abortSoon, groupOp?NULL:this);
             dedupHelper->calcNextDedupAll(groupOp);
         }
@@ -505,7 +506,6 @@ class CRollupGroupSlaveActivity : public CSlaveActivity, public CThorDataLink
 {
     IHThorRollupGroupArg *helper;
     Owned<IThorRowLoader> groupLoader;
-    Owned<IRowStream> groupStream;
     bool eoi;
     IThorDataLink *input;
 
@@ -540,13 +540,13 @@ public:
         if (!eoi)
         {
             CThorExpandingRowArray rows(*this);
-            groupStream.setown(groupLoader.loadGroup(*input, abortSoon, rows));
+            groupLoader->loadGroup(input, abortSoon, &rows);
             unsigned count = rows.ordinality();
             if (count)
             {
                 RtlDynamicRowBuilder row(queryRowAllocator());
                 size32_t sz = helper->transform(row, count, rows.getRowArray());
-                group.kill();
+                rows.kill();
                 if (sz)
                 {
                     dataLinkIncrement();

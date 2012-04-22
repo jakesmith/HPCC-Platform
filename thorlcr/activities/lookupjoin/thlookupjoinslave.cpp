@@ -262,7 +262,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
     CLookupJoinActivity(CGraphElementBase *_container, joinkind_t _joinKind) 
-        : CSlaveActivity(_container), CThorDataLink(this), joinKind(_joinKind), broadcaster(this, abortSoon)
+        : CSlaveActivity(_container), CThorDataLink(this), joinKind(_joinKind), broadcaster(this, abortSoon), rhs(*this)
     {
         gotRHS = false;
         joinType = JT_Undefined;
@@ -1117,7 +1117,7 @@ public:
                 unsigned h = htTable+rightHash->hash(p.get())%rhsTableLen;
                 loop
                 {
-                    const byte *e = rhs.query(h);
+                    const void *e = rhs.query(h);
                     if (!e)
                     {
                         rhs.setRow(h, p.getClear());

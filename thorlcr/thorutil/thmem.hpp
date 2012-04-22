@@ -444,6 +444,7 @@ graph_decl StringBuffer &getRecordString(const void *key, IOutputRowSerializer *
 #define SPILL_PRIORITY_SPILLABLE_STREAM 50
 
 #if 1
+class CThorSpillableRowArray;
 class graph_decl CThorExpandingRowArray : public CSimpleInterface
 {
 protected:
@@ -464,12 +465,12 @@ protected:
     const void *allocateNewRows(roxiemem::rowidx_t requiredRows, OwnedConstThorRow &newStableSortTmp);
     void doSort(unsigned n, void **const rows, ICompare &compare, unsigned maxCores);
     void doSave(unsigned n, const void **rows, bool grouped, IFile &file);
-    virtual bool ensure(roxiemem::rowidx_t requiredRows);
 
 public:
     CThorExpandingRowArray(CActivityBase &activity, roxiemem::rowidx_t initialSize=InitialSortElements);
     CThorExpandingRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool stable=false, roxiemem::rowidx_t initialSize=InitialSortElements);
     ~CThorExpandingRowArray();
+	CActivityBase &queryActivity() { return activity; }
     // NB: throws error on OOM by default
     void setup(IRowInterfaces *rowIf, bool stableSort=false, bool throwOnOom=true, bool allowNulls=false);
 
@@ -530,7 +531,8 @@ public:
         swap(from);
     }
     void transferRows(roxiemem::rowidx_t & outNumRows, const void * * & outRows);
-    void transferFrom(CThorExpandingRowArray &src);
+	void transferFrom(CThorExpandingRowArray &src); 
+	void transferFrom(CThorSpillableRowArray &src);
     void removeRows(roxiemem::rowidx_t start, roxiemem::rowidx_t n);
     void sort(ICompare &compare, unsigned maxCores);
     void reorder(roxiemem::rowidx_t start, roxiemem::rowidx_t num, unsigned *neworder);
@@ -546,6 +548,8 @@ public:
     unsigned serializeBlock(MemoryBuffer &mb,size32_t dstmax, unsigned idx, unsigned count);
     void deserialize(size32_t sz, const void *buf, bool hasnulls);
     void deserializeRow(IRowDeserializerSource &in); // NB single row not NULL
+
+    virtual bool ensure(roxiemem::rowidx_t requiredRows);
 };
 
 class graph_decl CThorSpillableRowArray : private CThorExpandingRowArray
@@ -645,7 +649,8 @@ public:
         kill();
         swap(from);
     }
-    void transferFrom(CThorExpandingRowArray &src);
+	void transferFrom(CThorExpandingRowArray &src); 
+    void transferFrom(CThorSpillableRowArray &src);
 
     IRowStream *createRowStream();
 
@@ -759,8 +764,8 @@ interface IThorRowCollectorCommon : extends IInterface
 interface IThorRowLoader : extends IThorRowCollectorCommon
 {
     virtual void setup(IRowInterfaces *rowIf, ICompare *iCompare=NULL, bool isStable=false, RowCollectorFlags diskMemMix=rc_mixed, unsigned spillPriority=50) = 0;
-    virtual IRowStream *load(IRowStream *in, bool &abort, bool preserveGrouping=false, CThorExpandingRowArray *allMemRows=NULL) = 0;
-    virtual IRowStream *loadGroup(IRowStream *in, bool &abort, CThorExpandingRowArray *allMemRows=NULL);
+    virtual IRowStream *load(IRowStream *in, const bool &abort, bool preserveGrouping=false, CThorExpandingRowArray *allMemRows=NULL) = 0;
+    virtual IRowStream *loadGroup(IRowStream *in, const bool &abort, CThorExpandingRowArray *allMemRows=NULL);
 };
 
 interface IThorRowCollector : extends IThorRowCollectorCommon

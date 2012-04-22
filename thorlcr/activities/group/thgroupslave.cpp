@@ -89,7 +89,7 @@ public:
         if (rolloverEnabled && !firstNode())  // 1st node can have nothing to send
         {
             rowcount_t sentRecs = 0;
-            Owned<IThorRowCollector> collector = createThorRowCollector(*this, this, NULL, false, SPILL_PRIORITY_SPILLABLE_STREAM);
+            Owned<IThorRowCollector> collector = createThorRowCollector(*this, this, NULL, false, rc_mixed, SPILL_PRIORITY_SPILLABLE_STREAM);
             Owned<IRowWriter> writer = collector->getWriter();
             if (next)
             {

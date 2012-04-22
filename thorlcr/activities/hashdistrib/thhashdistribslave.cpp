@@ -1989,7 +1989,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
     HashDedupSlaveActivityBase(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorDataLink(this), htabrows(*this)
     {
         htsize = 0;
         inputstopped = false;
@@ -2307,12 +2307,12 @@ public:
                     {
                         bool hintparallelmatch = container.queryXGMML().getPropInt("hint[@name=\"parallel_match\"]/@value")!=0;
                         bool hintunsortedoutput = container.queryXGMML().getPropInt("hint[@name=\"unsorted_output\"]/@value")!=0;
-                        joinhelper.setown(createJoinHelper(joinargs, "HASHJOIN", container.queryId(), queryRowAllocator(),hintparallelmatch,hintunsortedoutput));
+                        joinhelper.setown(createJoinHelper(*this, joinargs, queryRowAllocator(), hintparallelmatch, hintunsortedoutput));
                     }
                     break;
                 case TAKhashdenormalize:
                 case TAKhashdenormalizegroup:
-                    joinhelper.setown(createDenormalizeHelper(joinargs, "HASHDENORMALIZE", container.getKind(), container.queryId(), queryRowAllocator()));
+                    joinhelper.setown(createDenormalizeHelper(*this, joinargs, queryRowAllocator()));
                     break;
                 default:
                     throwUnexpected();
