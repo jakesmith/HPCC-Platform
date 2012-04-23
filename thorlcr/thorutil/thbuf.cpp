@@ -429,6 +429,7 @@ class CSmartRowInMemoryBuffer: public CSimpleInterface, implements ISmartRowBuff
 {
     // NB must *not* call LinkThorRow or ReleaseThorRow (or Owned*ThorRow) if deallocator set
     CActivityBase *activity;
+    IRowInterfaces *rowIf;
     ThorRowQueue *in;
     size32_t insz;
     SpinLock lock;
@@ -447,8 +448,8 @@ class CSmartRowInMemoryBuffer: public CSimpleInterface, implements ISmartRowBuff
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CSmartRowInMemoryBuffer(CActivityBase *_activity, size32_t bufsize,ISRBRowInterface *_srbrowif)
-        : activity(_activity), srbrowif(_srbrowif)
+    CSmartRowInMemoryBuffer(CActivityBase *_activity, IRowInterfaces *_rowIf, size32_t bufsize,ISRBRowInterface *_srbrowif)
+        : activity(_activity), rowIf(_rowIf), srbrowif(_srbrowif)
     {
 #ifdef _DEBUG
         putrecheck = false;
@@ -481,7 +482,7 @@ public:
             if (srbrowif)
                 sz = srbrowif->rowMemSize(row);
             else
-                sz = thorRowMemoryFootprint(activity->queryRowSerializer(), row);
+                sz = thorRowMemoryFootprint(rowIf->queryRowSerializer(), row);
 #ifdef _DEBUG
             assertex(sz<0x1000000);
 #endif
@@ -539,7 +540,7 @@ public:
                     if (srbrowif)
                         sz = srbrowif->rowMemSize(ret);
                     else
-                        sz = thorRowMemoryFootprint(activity->queryRowSerializer(), ret);
+                        sz = thorRowMemoryFootprint(rowIf->queryRowSerializer(), ret);
 #ifdef _TRACE_SMART_PUTGET
                     ActPrintLog(activity, "***dequeueRow(%x) %d insize=%d {%x}",(unsigned)ret,sz,insz,*(const unsigned *)ret);
 #endif
@@ -632,9 +633,9 @@ ISmartRowBuffer * createSmartBuffer(CActivityBase *activity, const char * tempna
     return new CSmartRowBuffer(activity,file,buffsize,rowif);
 }
 
-ISmartRowBuffer * createSmartInMemoryBuffer(CActivityBase *activity, size32_t buffsize, ISRBRowInterface *srbrowif) 
+ISmartRowBuffer * createSmartInMemoryBuffer(CActivityBase *activity, IRowInterfaces *rowIf, size32_t buffsize, ISRBRowInterface *srbrowif)
 {
-    return new CSmartRowInMemoryBuffer(activity,buffsize,srbrowif);
+    return new CSmartRowInMemoryBuffer(activity, rowIf, buffsize, srbrowif);
 }
 
 class COverflowableBuffer : public CSimpleInterface, implements IRowWriterMultiReader

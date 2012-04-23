@@ -334,7 +334,7 @@ public:
         if (!strm1.get()||!strm2.get()) {
             throw MakeThorException(TE_FailedToStartJoinStreams, "Failed to start join streams");
         }
-        joinhelper->init (strm1, strm2, ::queryRowAllocator(inputs.item(0)),::queryRowAllocator(inputs.item(1)),::queryRowMetaData(inputs.item(0)), &abortSoon);
+        joinhelper->init(strm1, strm2, ::queryRowAllocator(inputs.item(0)),::queryRowAllocator(inputs.item(1)),::queryRowMetaData(inputs.item(0)), &abortSoon);
     }
     void stopInput1()
     {

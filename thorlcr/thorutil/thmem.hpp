@@ -443,7 +443,6 @@ graph_decl StringBuffer &getRecordString(const void *key, IOutputRowSerializer *
 #define SPILL_PRIORITY_OVERFLOWABLE_BUFFER 50
 #define SPILL_PRIORITY_SPILLABLE_STREAM 50
 
-#if 1
 class CThorSpillableRowArray;
 class graph_decl CThorExpandingRowArray : public CSimpleInterface
 {
@@ -604,6 +603,8 @@ public:
             }
         }
         rows[numRows++] = _row.getClear();
+        if (numRows >= commitRows + commitDelta)
+            flush();
         return true;
     }
 
@@ -675,80 +676,6 @@ public:
     void deserialize(size32_t sz, const void *buf, bool hasNulls){ CThorExpandingRowArray::deserialize(sz, buf, hasNulls); }
     void deserializeRow(IRowDeserializerSource &in) { CThorExpandingRowArray::deserializeRow(in); }
 };
-
-
-#else
-class graph_decl CThorRowFixedSizeArray : public roxiemem::RoxieSimpleInputRowArray
-{
-    CActivityBase &activity;
-    IRowInterfaces *rowIf;
-    IEngineRowAllocator *allocator;
-    IOutputRowSerializer *serializer;
-
-public:
-    CThorRowFixedSizeArray(CActivityBase &_activity);
-    CThorRowFixedSizeArray(CActivityBase &_activity, IRowInterfaces *rowIf);
-    void setup(IRowInterfaces *_rowIf);
-
-    void swap(CThorRowFixedSizeArray &src);
-    void transferRows(roxiemem::rowidx_t &outNumRows, const void **&outRows);
-    const void **getRowArray();
-
-    void removeRows(roxiemem::rowidx_t start, roxiemem::rowidx_t n);
-
-    void partition(ICompare &compare, unsigned num, UnsignedArray &out); // returns num+1 points
-    IRowStream *createRowStream(unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
-    unsigned save(IFile &file, unsigned start=0, unsigned num=(unsigned)-1, bool streamowns=true);
-
-    offset_t serializedSize();
-    void serialize(IRowSerializerTarget &out);
-    void serialize(MemoryBuffer &mb,bool hasnulls);
-    unsigned serializeBlock(MemoryBuffer &mb,size32_t dstmax, unsigned idx, unsigned count);
-};
-
-
-
-class graph_decl CThorExpandingRowArray : public roxiemem::RoxieOutputRowArray
-{
-    CActivityBase &activity;
-    IRowInterfaces *rowIf;
-    IEngineRowAllocator *allocator;
-    IOutputRowSerializer *serializer;
-    IOutputRowDeserializer *deserializer;
-    roxiemem::rowidx_t initialSize;
-
-    void **stableSortTmp;
-    bool stableSort;
-
-public:
-    CThorExpandingRowArray(CActivityBase &activity, roxiemem::rowidx_t initialSize=InitialSortElements, size32_t commitDelta=CommitStep);
-    CThorExpandingRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool stable=false, roxiemem::rowidx_t initialSize=InitialSortElements, size32_t commitDelta=CommitStep);
-    ~CThorExpandingRowArray();
-    void setup(IRowInterfaces *rowIf, bool stable=false);
-
-    void swap(CThorExpandingRowArray &src);
-    void transfer(CThorExpandingRowArray &from)
-    {
-        kill();
-        swap(from);
-    }
-	void transferFrom(CThorRowFixedSizeArray &src);
-    void removeRows(roxiemem::rowidx_t start, roxiemem::rowidx_t n);
-    void sort(ICompare & compare, unsigned maxcores);
-    void reorder(unsigned start, unsigned num, unsigned *neworder);
-
-    unsigned save(IFile &file, bool grouped);
-    IRowStream *createRowStream();
-
-    offset_t serializedSize();
-    void serialize(IRowSerializerTarget &out);
-    void serialize(MemoryBuffer &mb,bool hasnulls);
-    void deserialize(size32_t sz, const void *buf, bool hasnulls);
-    void deserializeRow(IRowDeserializerSource &in); // NB single row not NULL
-
-    virtual bool ensure(roxiemem::rowidx_t requiredRows);
-};
-#endif
 
 
 enum RowCollectorFlags { rc_mixed, rc_allMem, rc_allDisk, rc_allDiskOrAllMem };

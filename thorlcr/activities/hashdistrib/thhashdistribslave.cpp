@@ -463,7 +463,7 @@ public:
         irandom.setown(createRandomNumberGenerator());
         irandom->seed(self);
         pipeout.setown(new cPipeOutWrapper);
-        piperd.setown(createSmartInMemoryBuffer(activity,pullBufferSize,&ptrallocator));
+        piperd.setown(createSmartInMemoryBuffer(activity, activity, pullBufferSize, &ptrallocator));
         pipeout->init(piperd,serializer,&ptrallocator);
         pipewr.set(pipeout->piperd->queryWriter());
         connected = true;

@@ -87,11 +87,11 @@ public:
         if (!row)
         {
             if (!container.queryGrouped())
+            {
+                eoi = true;
                 return NULL;
-            if (container.queryGrouped())
-                out.setown(iLoader->loadGroup(input, abortSoon));
-            else
-                out.setown(iLoader->load(input, abortSoon));
+            }
+            out.setown(iLoader->loadGroup(input, abortSoon));
             if (0 == iLoader->numRows())
             {
                 eoi = true;

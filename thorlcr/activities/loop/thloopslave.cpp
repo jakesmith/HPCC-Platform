@@ -44,7 +44,7 @@ public:
     CNextRowFeeder(CActivityBase *_activity, IRowStream *_in) : in(_in), threaded("CNextRowFeeder"), activity(_activity), rowInterfaces(_activity)
     {
         stopped = true;
-        smartbuf.setown(createSmartInMemoryBuffer(activity, SMALL_SMART_BUFFER_SIZE));
+        smartbuf.setown(createSmartInMemoryBuffer(activity, activity, SMALL_SMART_BUFFER_SIZE));
         threaded.init(this);
     }
     ~CNextRowFeeder()

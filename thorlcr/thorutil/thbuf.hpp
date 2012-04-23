@@ -66,6 +66,7 @@ interface ISRBRowInterface: extends IInterface
 
 
 extern graph_decl ISmartRowBuffer * createSmartInMemoryBuffer(CActivityBase *activity,
+                                                      IRowInterfaces *rowIf,
                                                       size32_t buffsize, 
                                                       ISRBRowInterface *srbrowif=NULL // only needed if not thor rows
                                                       ); 
