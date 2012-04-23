@@ -179,7 +179,6 @@ public:
         size32_t sz = helper->clearAggregate(resultcr);         
         if (next)
         {
-            next.clear();
             hadElement = true;
             sz = helper->processFirst(resultcr, next);
             loop {

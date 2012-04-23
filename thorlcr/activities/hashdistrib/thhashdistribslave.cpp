@@ -2051,7 +2051,7 @@ public:
             unsigned total = (container.queryOwnerId() ? (queryLargeMemSize()/10) : queryLargeMemSize()) /(divsz+sizeof(void *)*3);
             htsize = total+10;
             ActPrintLog("%s: reserving hash table of size %d",actTxt,htsize);
-            if (!htabrows.ensure(htsize))
+            if (!htabrows.ensureClear(htsize))
                 throw MakeActivityException(this, TE_TooMuchData, "%s: hash table could not be allocated (out of memory)", actTxt);
             htab = htabrows.getRowArray();
             htremaining = htsize*9/10;

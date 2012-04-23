@@ -116,8 +116,9 @@ public:
     inline const void * getLink() const         { LinkThorRow(ptr); return ptr; }
     inline void set(const void * _ptr)          
     { 
-        const void * temp = ptr; 
-        LinkThorRow(_ptr); 
+        const void * temp = ptr;
+        if (_ptr)
+            LinkThorRow(_ptr);
         ptr = _ptr; 
         if (temp)
             ReleaseThorRow(temp); 
@@ -206,224 +207,7 @@ extern graph_decl void setMultiThorMemoryNotify(size32_t size,ILargeMemLimitNoti
 
 extern graph_decl memsize_t setLargeMemSize(unsigned limit);
 
-class graph_decl CLegacyThorRowArray
-{
-    MemoryBuffer ptrbuf;
-    unsigned numelem;
-    memsize_t totalsize;
-    memsize_t maxtotal;
-    size32_t overhead;
-    Linked<IOutputRowSerializer> serializer;
-    bool keepsize;
-    bool sizing;
-    bool raiseexceptions;
-
-    void adjSize(const void *row, bool inc);
-
-
-public:
-    CLegacyThorRowArray();
-
-    ~CLegacyThorRowArray()
-    {
-        reset(true);
-    }
-
-    void reset(bool freeptrs)
-    {
-        const void ** row = (const void **)base();
-        unsigned remn = 0;
-        while (numelem) {
-            const void * r = *(row++);
-            if (r) {
-                remn++;
-                ReleaseThorRow(r);
-            }
-            numelem--;
-        }
-        if (freeptrs)
-            ptrbuf.resetBuffer();
-        else
-            ptrbuf.setLength(0);
-        if (sizing&&remn) 
-            checkMultiThorMemoryThreshold(false);
-        totalsize = 0;
-        overhead = 0;
-    }
-
-    inline void clear() { reset(true); }
-
-    void append(const void *row) // takes ownership
-    {
-        if (sizing) 
-            adjSize(row,true);
-        ptrbuf.append(sizeof(row),&row);
-        numelem++;
-    }
-
-    void removeRows(unsigned i,unsigned n);
-
-    inline const byte * item(unsigned idx) const
-    {
-        if (idx>=numelem)
-            return NULL;
-        return *(((const byte **)ptrbuf.toByteArray())+idx);
-
-    }
-    inline const byte ** base() const
-    {
-        return (const byte **)ptrbuf.toByteArray();
-    }
-
-    inline const byte * itemClear(unsigned idx) // sets old to NULL 
-    {
-        if (idx>=numelem)
-            return NULL;
-        byte ** rp = ((byte **)ptrbuf.toByteArray())+idx;
-        const byte *ret = *rp;
-        if (sizing)
-            adjSize(ret,false);
-        *rp = NULL;
-        return ret;
-
-    }
-
-    inline unsigned ordinality() const
-    {
-        return numelem;
-    }
-
-    inline memsize_t totalSize() const
-    {
-#ifdef _DEBUG
-        assertex(sizing); 
-#endif
-        return totalsize;
-    }
-
-    void setMaxTotal(memsize_t tot)
-    {   
-        maxtotal = tot;
-    }
-
-    inline memsize_t totalMem()
-    {
-        return 
-#ifdef INCLUDE_POINTER_ARRAY_SIZE           
-        ptrbuf.length()+ptrbuf.capacity()+
-#endif
-        totalsize+overhead;
-    }
-
-    inline bool isFull()
-    {
-        memsize_t sz = totalMem();
-#ifdef _DEBUG
-        assertex(sizing&&!raiseexceptions);
-#endif
-        if (sz>maxtotal) {
-#ifdef _DEBUG
-            PROGLOG("CLegacyThorRowArray isFull(totalsize=%"I64F"u,ptrbuf.length()=%u,ptrbuf.capacity()=%u,overhead=%u,maxtotal=%"I64F"u",
-                     (unsigned __int64) totalsize,ptrbuf.length(),ptrbuf.capacity(),overhead,(unsigned __int64) maxtotal);
-#endif
-            return true;
-        }
-        else
-            return false;
-    }
-
-    void sort(ICompare & compare, bool stable, unsigned maxcores)
-    {
-        unsigned n = ordinality();
-        if (n>1) {
-            const byte ** res = base();
-            if (stable) {
-                MemoryAttr tmp;
-                void ** ptrs = (void **)tmp.allocate(n*sizeof(void *));
-                memcpy(ptrs,res,n*sizeof(void **));
-                parqsortvecstable(ptrs, n, compare, (void ***)res, maxcores); // use res for index
-                while (n--) {
-                    *res = **((byte ***)res);
-                    res++;
-                }
-            }
-            else 
-                parqsortvec((void **)res, n, compare, maxcores);
-        }
-    }
-
-    void partition(ICompare & compare,unsigned num,UnsignedArray &out) // returns num+1 points
-    {
-        unsigned p=0;
-        unsigned n = ordinality();
-        const byte **ptrs = (const byte **)ptrbuf.toByteArray();
-        while (num) {
-            out.append(p);
-            if (p<n) {
-                unsigned q = p+(n-p)/num;
-                if (p==q) { // skip to next group
-                    while (q<n) {
-                        q++;
-                        if ((q<n)&&(compare.docompare(ptrs[p],ptrs[q])!=0)) // ensure at next group
-                            break;
-                    }
-                }
-                else {
-                    while ((q<n)&&(q!=p)&&(compare.docompare(ptrs[q-1],ptrs[q])==0)) // ensure at start of group
-                        q--;
-                }
-                p = q;
-            }
-            num--;
-        }
-        out.append(n);
-    }
-
-    void setSizing(bool _sizing,bool _raiseexceptions) // ,IOutputRowSerializer *_serializer)
-    {
-        sizing = _sizing;
-        raiseexceptions = _raiseexceptions;
-    }
-
-    unsigned load(IRowStream &stream,bool ungroup); // doesn't check for overflow
-    unsigned load(IRowStream &stream, bool ungroup, bool &abort, bool *overflowed=NULL);
-    
-    IRowStream *createRowStream(unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
-    unsigned save(IRowWriter *writer,unsigned start=0,unsigned num=(unsigned)-1, bool streamowns=true);
-    void setNull(unsigned idx);
-    void transfer(CLegacyThorRowArray &from);
-    void swapWith(CLegacyThorRowArray &from);
-
-    void serialize(IOutputRowSerializer *_serializer,IRowSerializerTarget &out);
-    void serialize(IOutputRowSerializer *_serializer,MemoryBuffer &mb,bool hasnulls);
-    unsigned serializeblk(IOutputRowSerializer *_serializer,MemoryBuffer &mb,size32_t dstmax, unsigned idx, unsigned count);
-    void deserialize(IEngineRowAllocator &allocator,IOutputRowDeserializer *deserializer,size32_t sz,const void *buf,bool hasnulls);
-    void deserializerow(IEngineRowAllocator &allocator,IOutputRowDeserializer *deserializer,IRowDeserializerSource &in); // NB single row not NULL
-
-    void reorder(unsigned start,unsigned num, unsigned *neworder);
-
-    void setRaiseExceptions(bool on=true) { raiseexceptions=on; }
-
-    void reserve(unsigned n);
-    void setRow(unsigned idx,const void *row) // takes ownership of row
-    {
-        assertex(idx<numelem);
-        const byte ** rp = ((const byte **)ptrbuf.toByteArray())+idx;
-        OwnedConstThorRow old = *rp;
-        if (old&&sizing) 
-            adjSize(old,false);
-        *rp = (const byte *)row;
-        if (sizing) 
-            adjSize(row,true);
-    }
-    void ensure(unsigned size)
-    {
-        if (size<=numelem) return;
-        reserve(size-numelem);
-    }
-};
-
-//////////////
+/////////////
 
 // JCSMORE
 enum {
@@ -465,6 +249,12 @@ protected:
     void doSort(unsigned n, void **const rows, ICompare &compare, unsigned maxCores);
     void doSave(unsigned n, const void **rows, bool grouped, IFile &file);
 
+protected:
+    virtual bool ensure(roxiemem::rowidx_t requiredRows)
+    {
+        return ensureClear(requiredRows, false);
+    }
+
 public:
     CThorExpandingRowArray(CActivityBase &activity, roxiemem::rowidx_t initialSize=InitialSortElements);
     CThorExpandingRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool stable=false, roxiemem::rowidx_t initialSize=InitialSortElements);
@@ -484,6 +274,8 @@ public:
         if (oldRow)
             ReleaseThorRow(oldRow);
         rows[idx] = _row.getClear();
+        if (idx+1>numRows)
+            numRows = idx+1;
     }
     inline bool append(const void *row) // NB: takes ownership
     {
@@ -548,7 +340,7 @@ public:
     void deserialize(size32_t sz, const void *buf, bool hasnulls);
     void deserializeRow(IRowDeserializerSource &in); // NB single row not NULL
 
-    virtual bool ensure(roxiemem::rowidx_t requiredRows);
+    bool ensureClear(roxiemem::rowidx_t requiredRows, bool clearMemory=true);
 };
 
 class graph_decl CThorSpillableRowArray : private CThorExpandingRowArray

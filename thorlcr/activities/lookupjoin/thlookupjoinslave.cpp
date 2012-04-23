@@ -1104,7 +1104,7 @@ public:
         else // lookup, or all join with some hard matching.
         {
             unsigned htTable = rhsRows;
-            rhs.ensure(rhsTableLen);
+            rhs.ensureClear(rhsTableLen);
 
             unsigned count = 0;
             unsigned dup = 0;
