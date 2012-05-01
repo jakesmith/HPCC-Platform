@@ -72,7 +72,7 @@ class CWriteIntercept : public CSimpleInterface
     Owned<IFileIO> dataFileIO, idxFileIO;
     Owned<ISerialStream> dataFileStream;
     Linked<IFileIOStream> idxFileStream;
-    CThorStreamDeserializerSource dataFileDeserialzierSource;
+    CThorStreamDeserializerSource dataFileDeserializerSource;
     unsigned interval;
     unsigned idx;
     CThorExpandingRowArray sampleRows;
@@ -240,7 +240,7 @@ public:
     {
         dataFileStream.clear();
         dataFileIO.clear();
-        dataFileDeserialzierSource.setStream(NULL);
+        dataFileDeserializerSource.setStream(NULL);
         idxFileIO.clear();
     }
     size32_t readOverflowPos(rowmap_t pos, unsigned n, offset_t *ofs, bool closeIO)
@@ -259,11 +259,11 @@ public:
         {
             dataFileIO.setown(dataFile->open(IFOread));
             dataFileStream.setown(createFileSerialStream(dataFileIO));
-            dataFileDeserialzierSource.setStream(dataFileStream);
+            dataFileDeserializerSource.setStream(dataFileStream);
         }
-        dataFileStream->reset(ofs[0], (offset_t)-1);
+        dataFileStream->reset(ofs[0], idxSz);
         RtlDynamicRowBuilder rowBuilder(rowIf->queryRowAllocator());
-        size32_t sz = rowIf->queryRowDeserializer()->deserialize(rowBuilder, dataFileDeserialzierSource);
+        size32_t sz = rowIf->queryRowDeserializer()->deserialize(rowBuilder, dataFileDeserializerSource);
         assertex(sz == idxSz);
         return rowBuilder.finalizeRowClear(sz);
     }
