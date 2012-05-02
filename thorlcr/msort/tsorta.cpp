@@ -279,7 +279,7 @@ void CThorKeyArray::sort()
             newsizes->append(sizes->item(ra[i]));
         sizes.setown(newsizes.getClear());
     }
-    OwnedMalloc<Int64Array> newpos = new Int64Array;
+    OwnedPtr<Int64Array> newpos = new Int64Array;
     newpos->ensure(n);
     for (i = 0; i<n; i++)
         newpos->append(filepos?filepos->item(ra[i]):filerecsize*(offset_t)ra[i]);
@@ -312,14 +312,14 @@ void CThorKeyArray::createSortedPartition(unsigned pn)
     qsortarray<unsigned>(ra, n, ::keyCompare);
     if (sizes)
     {
-        OwnedMalloc<UnsignedArray> newsizes = new UnsignedArray;
+        OwnedPtr<UnsignedArray> newsizes = new UnsignedArray;
         for (i = 1; i<pn; i++) {
             unsigned p = i*n/pn;
             newsizes->append(sizes->item(ra[p]));
         }
         sizes.setown(newsizes.getClear());
     }
-    OwnedMalloc<Int64Array> newpos = new Int64Array;
+    OwnedPtr<Int64Array> newpos = new Int64Array;
     for (i = 0; i<pn; i++)
     {
         unsigned p = i*n/pn;
@@ -508,8 +508,8 @@ void CThorKeyArray::split()
     unsigned n = ordinality();
     CThorExpandingRowArray newkeys(activity, rowif);
     newkeys.ensure(n);
-    OwnedMalloc<UnsignedArray> newSizes;
-    OwnedMalloc<Int64Array> newFilePos;
+    OwnedPtr<UnsignedArray> newSizes;
+    OwnedPtr<Int64Array> newFilePos;
     if (sizes)
     {
         newSizes.setown(new UnsignedArray);
