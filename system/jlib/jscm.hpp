@@ -49,6 +49,12 @@ public:
     inline OwnedPtr(CLASS * _ptr)            { ptr = _ptr; }
     inline ~OwnedPtr()                       { delete ptr; }
 
+    void operator = (CLASS * _ptr)
+    {
+        if (ptr)
+            delete ptr;
+        ptr = _ptr;
+    }
     inline CLASS * operator -> () const         { return ptr; }
     inline operator CLASS *() const             { return ptr; }
 
@@ -58,11 +64,7 @@ public:
     inline void setown(CLASS * _ptr)            { CLASS * temp = ptr; ptr = _ptr; delete temp; }
 
 private:
-    inline OwnedPtr(const OwnedPtr<CLASS> & other);
-
-    void operator = (CLASS * _ptr);
     void operator = (const OwnedPtr<CLASS> & other);
-    void set(const OwnedPtr<CLASS> &other);
     void setown(const OwnedPtr<CLASS> &other);
 
 private:
