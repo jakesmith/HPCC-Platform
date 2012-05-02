@@ -1298,6 +1298,7 @@ public:
     void transferRowsOut(CThorExpandingRowArray &out, bool sort)
     {
         CThorSpillableRowArray::CThorSpillableRowArrayLock block(spillableRows);
+        spillableRows.flush();
         totalRows += spillableRows.numCommitted();
         if (sort && iCompare)
             spillableRows.sort(*iCompare, maxCores);

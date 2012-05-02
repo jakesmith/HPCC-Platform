@@ -93,18 +93,13 @@ public:
             }
             out.setown(iLoader->loadGroup(input, abortSoon));
             if (0 == iLoader->numRows())
-            {
                 eoi = true;
-                return NULL;
-            }
-            row.setown(out->nextRow());
-            if (!row)
-                return NULL;
+            return NULL; // eog marker
         }
         dataLinkIncrement();
         return row.getClear();
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() { return container.queryGrouped(); }
     void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
