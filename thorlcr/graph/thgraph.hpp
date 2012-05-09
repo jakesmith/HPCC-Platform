@@ -435,7 +435,7 @@ class graph_decl CGraphBase : public CInterface, implements ILocalGraph, impleme
     CriticalSection evaluateCrit;
     CGraphElementTable containers;
     CGraphElementArray sinks;
-    bool sink, complete, global;
+    bool sink, complete, global, localChild;
     mutable int localOnly;
     activity_id parentActivityId;
     IPropertyTree *xgmml;
@@ -622,7 +622,7 @@ public:
     bool isCreated() const { return created; }
     bool isStarted() const { return started; }
     bool isLocalOnly() const; // this graph and all upstream dependencies
-    bool isLocalChild() const { return owner && !owner->isGlobal(); }
+    bool isLocalChild() const { return localChild; }
     void setCompleteEx(bool tf=true) { complete = tf; }
     const byte *setParentCtx(size32_t _parentExtractSz, const byte *parentExtract)
     {

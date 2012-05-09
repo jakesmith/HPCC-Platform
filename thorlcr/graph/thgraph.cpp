@@ -1629,7 +1629,7 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         tmpHandler.setown(queryJob().createTempHandler());
     }
 
-    bool localChild = false;
+    localChild = false;
     if (owner && parentActivityId)
     {
         CGraphElementBase *parentElement = owner->queryElement(parentActivityId);
@@ -1641,7 +1641,7 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
             case TAKloopdataset:
             case TAKgraphloop:
             case TAKparallelgraphloop:
-                if (!parentElement->queryLocal())
+                if (parentElement->queryOwner().isGlobal())
                     global = true;
                 break;
             default:
