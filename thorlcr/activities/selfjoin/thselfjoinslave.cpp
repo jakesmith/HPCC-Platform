@@ -131,7 +131,6 @@ public:
             mptag_t barrierTag = container.queryJob().deserializeMPTag(data);
             barrier.setown(container.queryJob().createBarrier(barrierTag));
             portbase = allocPort(NUMSLAVEPORTS);
-            SocketEndpoint server;
             server.setLocalHost(portbase);
             sorter.setown(CreateThorSorter(this, server,&container.queryJob().queryIDiskUsage(),&container.queryJob().queryJobComm(),mpTagRPC));
             server.serialize(slaveData);
