@@ -1844,7 +1844,7 @@ public:
     CCollatedResult(CMasterGraph &_graph, CActivityBase &_activity, IRowInterfaces *_rowIf, unsigned _id) : graph(_graph), activity(_activity), rowIf(_rowIf), id(_id)
     {
         for (unsigned n=0; n<graph.queryJob().querySlaves(); n++)
-            results.append(new CThorExpandingRowArray(activity));
+            results.append(new CThorExpandingRowArray(activity, rowIf));
     }
     ~CCollatedResult()
     {
