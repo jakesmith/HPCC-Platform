@@ -1101,7 +1101,7 @@ public:
     virtual void setResult(unsigned id, IThorResult *result)
     {
         CriticalBlock procedure(cs);
-        ensureAtLeast(id+1);
+        ensureAtLeast(id);
         if (results.isItem(id))
             results.replace(*LINK(result), id);
         else
