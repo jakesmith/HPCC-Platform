@@ -1714,34 +1714,6 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         }
     }
 
-    if (!localChild)
-    {
-        ForEach(*nodes)
-        {
-            IPropertyTree &e = nodes->query();
-            ThorActivityKind kind = (ThorActivityKind) e.getPropInt("att[@name=\"_kind\"]/@value");
-            switch (kind)
-            {
-                case TAKlooprow:
-                case TAKloopcount:
-                case TAKloopdataset:
-                case TAKgraphloop:
-                case TAKparallelgraphloop:
-                {
-                    unsigned loopId = e.getPropInt("att[@name=\"_loopid\"]/@value");
-                    // if any need sub graph or dependency if subgraphs need global execution,
-                    // then all loop subgraphs must be executed globally (sync'd with master)
-                    Owned<CGraphBase> loopGraph = getChildGraph(loopId);
-                    if (!loopGraph->isLocalOnly())
-                        loopGraph->setGlobal();
-                    break;
-                }
-                default:
-                    break;
-            }
-        }
-    }
-
     Owned<IPropertyTreeIterator> edges = xgmml->getElements("edge");
     ForEach(*edges)
     {
@@ -2471,7 +2443,7 @@ void CJobBase::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
             targetActivity->addDependsOn(source, controlId);
         }
         else if (edge.getPropBool("att[@name=\"_conditionSource\"]/@value", false))
-            { /* Ignore it */ }
+        { /* Ignore it */ }
         else if (edge.getPropBool("att[@name=\"_childGraph\"]/@value", false))
         {
             // NB: any dependencies of the child acts. are dependencies of this act.
@@ -2497,6 +2469,29 @@ void CJobBase::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
             {
                 CGraphDependency &globalDep = globalChildGraphDeps.item(gcd);
                 targetActivity.addDependsOn(globalDep.graph, globalDep.controlId);
+            }
+        }
+    }
+
+    SuperHashIteratorOf<CGraphBase> allIter(allGraphs);
+    ForEach(allIter)
+    {
+        CGraphBase &subGraph = allIter.query();
+        if (subGraph.queryOwner() && subGraph.queryParentActivityId())
+        {
+            CGraphElementBase *parentElement = subGraph.queryOwner()->queryElement(subGraph.queryParentActivityId());
+            switch (parentElement->getKind())
+            {
+                case TAKlooprow:
+                case TAKloopcount:
+                case TAKloopdataset:
+                case TAKgraphloop:
+                case TAKparallelgraphloop:
+                {
+                    if (!parentElement->queryOwner().isLocalChild() && !subGraph.isLocalOnly())
+                        subGraph.setGlobal();
+                    break;
+                }
             }
         }
     }
