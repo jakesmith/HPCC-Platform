@@ -1628,14 +1628,6 @@ void CGraphBase::GraphPrintLog(IException *e, const char *format, ...)
     va_end(args);
 }
 
-void CGraphBase::setGlobal(bool tf)
-{
-    global = tf;
-    Owned<IThorGraphIterator> iter = getChildGraphs();
-    ForEach(*iter)
-        iter->query().setGlobal(tf);
-}
-
 void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGraphBase *_parent, CGraphBase *resultsGraph)
 {
     owner = _owner;
@@ -2489,7 +2481,7 @@ void CJobBase::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
                 case TAKparallelgraphloop:
                 {
                     if (!parentElement->queryOwner().isLocalChild() && !subGraph.isLocalOnly())
-                        subGraph.setGlobal();
+                        subGraph.setGlobal(true);
                     break;
                 }
             }
