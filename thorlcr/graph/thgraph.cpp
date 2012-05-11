@@ -377,6 +377,7 @@ CGraphElementBase::CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml) 
     whichBranchBitSet.setown(createBitSet());
     newWhichBranch = false;
     isEof = false;
+    log = true;
     sentActInitData.setown(createBitSet());
 }
 
@@ -1628,6 +1629,13 @@ void CGraphBase::GraphPrintLog(IException *e, const char *format, ...)
     va_end(args);
 }
 
+void CGraphBase::setLogging(bool tf)
+{
+    CGraphElementIterator iterC(containers);
+    ForEach(iterC)
+        iterC.query().setLogging(tf);
+}
+
 void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGraphBase *_parent, CGraphBase *resultsGraph)
 {
     owner = _owner;
@@ -2321,6 +2329,9 @@ void CJobBase::init()
     userDesc = createUserDescriptor();
     userDesc->set(user.str(), password.str());
 
+    forceLogGraphIdMin = (graph_id)getWorkUnitValueInt("forceLogGraphIdMin", 0);
+    forceLogGraphIdMax = (graph_id)getWorkUnitValueInt("forceLogGraphIdMax", 0);
+
     // global setting default on, can be overridden by #option
     timeActivities = 0 != getWorkUnitValueInt("timeActivities", globals->getPropBool("@timeActivities", true));
     maxActivityCores = (unsigned)getWorkUnitValueInt("maxActivityCores", globals->getPropInt("@maxActivityCores", 0)); // NB: 0 means system decides
@@ -2358,6 +2369,14 @@ CJobBase::~CJobBase()
     ::Release(userDesc);
     timeReporter->Release();
     delete pluginMap;
+}
+
+bool CJobBase::queryForceLogging(graph_id graphId, bool def) const
+{
+    // JCSMORE, could add comma separated range, e.g. 1-5,10-12
+    if ((graphId >= forceLogGraphIdMin) && (graphId <= forceLogGraphIdMax))
+        return true;
+    return def;
 }
 
 void CJobBase::clean()
@@ -2486,6 +2505,8 @@ void CJobBase::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
                 }
             }
         }
+        bool log = queryForceLogging(subGraph.queryGraphId(), subGraph.isGlobal());
+        subGraph.setLogging(log);
     }
 }
 

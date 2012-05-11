@@ -250,7 +250,7 @@ protected:
     activity_id id, ownerId;
     StringAttr eclText;
     Owned<IPropertyTree> xgmml;
-    bool isLocal, isGrouped, sink, prepared, onCreateCalled, onStartCalled, onlyUpdateIfChanged, nullAct;
+    bool isLocal, isGrouped, sink, prepared, onCreateCalled, onStartCalled, onlyUpdateIfChanged, nullAct, log;
     Owned<CActivityBase> activity;
     CGraphBase *resultsGraph, *owner;
     CGraphDependencyArray dependsOn;
@@ -312,6 +312,8 @@ public:
     unsigned getOutputs() const { return outputs.ordinality(); }
     bool isSource() const { return isActivitySource(kind); }
     bool isSink() const { return sink; }
+    inline bool doLogging() const { return log; }
+    inline void setLogging(bool _log) { log = _log; }
     bool queryLocal() const { return isLocal; }
     bool queryGrouped() const { return isGrouped; }
     bool queryLocalOrGrouped() { return isLocal || isGrouped; }
@@ -626,6 +628,7 @@ public:
     bool isLocalChild() const { return localChild; }
     void setCompleteEx(bool tf=true) { complete = tf; }
     void setGlobal(bool tf) { global = tf; }
+    void setLogging(bool tf);
     const byte *setParentCtx(size32_t _parentExtractSz, const byte *parentExtract)
     {
         parentExtractSz = _parentExtractSz;
@@ -807,6 +810,7 @@ protected:
     Owned<IGraphTempHandler> tmpHandler;
     bool timeActivities;
     unsigned maxActivityCores;
+    unsigned forceLogGraphIdMin, forceLogGraphIdMax;
     class CThorPluginCtx : public SimplePluginCtx
     {
     public:
@@ -843,6 +847,7 @@ public:
     const bool &queryAborted() const { return aborted; }
     const char *queryKey() const { return key; }
     const char *queryGraphName() const { return graphName; }
+    bool queryForceLogging(graph_id graphId, bool def) const;
     ITimeReporter &queryTimeReporter() { return *timeReporter; }
     virtual IGraphTempHandler *createTempHandler() = 0;
     virtual CGraphBase *createGraph() = 0;
