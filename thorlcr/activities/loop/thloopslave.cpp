@@ -220,7 +220,7 @@ class CLoopSlaveActivity : public CLoopSlaveActivityBase
     Owned<CNextRowFeeder> nextRowFeeder;
     Owned<IRowWriterMultiReader> loopPending;
     unsigned loopPendingCount;
-    unsigned flags;
+    unsigned flags, lastMs;
     IHThorLoopArg *helper;
     bool eof, finishedLooping;
 
@@ -251,6 +251,7 @@ public:
         loopPendingCount = 0;
         finishedLooping = ((container.getKind() == TAKloopcount) && (maxIterations == 0));
         curInput.set(input);
+        lastMs = msTick();
 
         class CWrapper : public CSimpleInterface, implements IRowStream
         {
@@ -353,8 +354,12 @@ public:
                     // only fire error here, if local
                     if (container.queryLocalOrGrouped() && emptyIterations > maxEmptyLoopIterations)
                         throw MakeActivityException(this, 0, "Executed LOOP with empty input and output %u times", emptyIterations);
-                    if (emptyIterations % 32 == 0)
+                    unsigned now = msTick();
+                    if (now-lastMs > 60000)
+                    {
                         ActPrintLog("Executing LOOP with empty input and output %u times", emptyIterations);
+                        lastMs = now;
+                    }
                 }
 
                 if (!sendLoopingCount(loopCounter, emptyIterations)) // only if global
