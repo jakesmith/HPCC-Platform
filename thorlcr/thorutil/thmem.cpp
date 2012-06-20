@@ -367,21 +367,21 @@ public:
 
 //====
 
-void CThorExpandingRowArray::init(rowidx_t initialSize, StableSortFlag _stableSort)
+void CThorExpandingRowArray::init(rowidx_t initialSize, CoTableFlag _coTableFlag, unsigned _coTablePc)
 {
     rowManager = activity.queryJob().queryRowManager();
-    stableSort = _stableSort;
+    coTableFlag = _coTableFlag;
     throwOnOom = false;
-    stableSortTmp = NULL;
+    coTable = NULL;
+    coTableRows = 0;
+    coTablePc = _coTablePc;
     if (initialSize)
     {
         rows = static_cast<const void * *>(rowManager->allocate(initialSize * sizeof(void*), activity.queryContainer().queryId()));
         maxRows = getRowsCapacity();
         memset(rows, 0, maxRows * sizeof(void *));
-        if (stableSort_earlyAlloc == stableSort)
-            stableSortTmp = static_cast<void **>(rowManager->allocate(maxRows * sizeof(void*), activity.queryContainer().queryId()));
-        else
-            stableSortTmp = NULL;
+        if (coTablePc && cotable_earlyalloc == coTableFlag)
+            coTable = allocateCoTable(maxRows, true, coTableRows);
     }
     else
     {
@@ -389,6 +389,31 @@ void CThorExpandingRowArray::init(rowidx_t initialSize, StableSortFlag _stableSo
         maxRows = 0;
     }
     numRows = 0;
+}
+
+void CThorExpandingRowArray::setup(IRowInterfaces *_rowIf, bool _allowNulls, bool _throwOnOom)
+{
+    rowIf = _rowIf;
+    throwOnOom = _throwOnOom;
+    allowNulls = _allowNulls;
+    if (rowIf)
+    {
+        allocator = rowIf->queryRowAllocator();
+        deserializer = rowIf->queryRowDeserializer();
+        serializer = rowIf->queryRowSerializer();
+    }
+    else
+    {
+        allocator = NULL;
+        deserializer = NULL;
+        serializer = NULL;
+    }
+}
+
+void CThorExpandingRowArray::setupCoTable(CoTableFlag _coTableFlag, unsigned _coTablePc)
+{
+    coTableFlag = _coTableFlag;
+    coTablePc = _coTablePc;
 }
 
 const void *CThorExpandingRowArray::allocateRowTable(rowidx_t num)
@@ -429,41 +454,59 @@ const void *CThorExpandingRowArray::allocateNewRows(rowidx_t requiredRows)
     return allocateRowTable(newSize);
 }
 
-void **CThorExpandingRowArray::allocateStableTable(bool error)
+void **CThorExpandingRowArray::allocateCoTable(rowidx_t baseNumRows, bool error, rowidx_t &numRows)
 {
     dbgassertex(NULL != rows);
-    rowidx_t rowsCapacity = getRowsCapacity();
-    OwnedConstThorRow newStableSortTmp = allocateRowTable(rowsCapacity);
-    if (!newStableSortTmp)
+    dbgassertex(coTablePc);
+
+    rowidx_t newCoTableRows = (rowidx_t)(((rowcount_t)baseNumRows)*100/coTablePc);
+    OwnedConstThorRow newCoTable = allocateRowTable(newCoTableRows);
+    if (!newCoTable)
     {
         if (error)
-            throw MakeActivityException(&activity, 0, "Out of memory, allocating stable row array, trying to allocate %"RIPF"d elements", rowsCapacity);
+            throw MakeActivityException(&activity, 0, "Out of memory, allocating co-table row array, trying to allocate %"RIPF"d elements", newCoTableRows);
         return NULL;
     }
-    return (void **)newStableSortTmp.getClear();
+    numRows = RoxieRowCapacity((void **)newCoTable.get());
+    return (void **)newCoTable.getClear();
+}
+
+bool CThorExpandingRowArray::reallocateCoTable(rowidx_t baseNumRows, bool error)
+{
+    rowidx_t newCoTableRows;
+    OwnedConstThorRow newCoTable = allocateCoTable(baseNumRows, error, newCoTableRows);
+    if (!newCoTable)
+        return false;
+    void **oldCoTable = coTable;
+    coTable = (void **)newCoTable.getClear();
+    coTableRows = newCoTableRows;
+    ReleaseThorRow(oldCoTable);
+    return true;
 }
 
 void CThorExpandingRowArray::doSort(rowidx_t n, void **const rows, ICompare &compare, unsigned maxCores)
 {
     // NB: will only be called if numRows>1
-    if (stableSort_none != stableSort)
+    if (cotable_none != coTableFlag)
     {
-        OwnedConstThorRow newStableSortTmp;
-        void **stableTable;
-        if (stableSort_lateAlloc == stableSort)
+        OwnedConstThorRow newCoTable;
+        void **_coTable;
+        if (cotable_latealloc == coTableFlag)
         {
-            dbgassertex(NULL == stableSortTmp);
-            newStableSortTmp.setown(allocateStableTable(true));
-            stableTable = (void **)newStableSortTmp.get();
+            dbgassertex(NULL == coTable);
+            rowidx_t coTableCapacity;
+            newCoTable.setown(allocateCoTable(maxRows, true, coTableCapacity));
+            _coTable = (void **)newCoTable.get();
+            dbgassertex(coTableCapacity >= maxRows);
         }
         else
         {
-            dbgassertex(NULL != stableSortTmp);
-            stableTable = stableSortTmp;
+            dbgassertex(NULL != coTable);
+            _coTable = coTable;
         }
         void **_rows = rows;
-        memcpy(stableTable, _rows, n*sizeof(void **));
-        parqsortvecstable(stableTable, n, compare, (void ***)_rows, maxCores);
+        memcpy(_coTable, _rows, n*sizeof(void **));
+        parqsortvecstable(_coTable, n, compare, (void ***)_rows, maxCores);
         while (n--)
         {
             *_rows = **((void ***)_rows);
@@ -474,37 +517,17 @@ void CThorExpandingRowArray::doSort(rowidx_t n, void **const rows, ICompare &com
         parqsortvec((void **const)rows, n, compare, maxCores);
 }
 
-CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IRowInterfaces *_rowIf, bool _allowNulls, StableSortFlag _stableSort, bool _throwOnOom, rowidx_t initialSize) : activity(_activity)
+CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IRowInterfaces *_rowIf, bool _allowNulls, CoTableFlag coTableFlag, unsigned coTablePc, bool _throwOnOom, rowidx_t initialSize) : activity(_activity)
 {
-    init(initialSize, _stableSort);
-    setup(_rowIf, _allowNulls, _stableSort, _throwOnOom);
+    init(initialSize, coTableFlag, coTablePc);
+    setup(_rowIf, _allowNulls, _throwOnOom);
 }
 
 CThorExpandingRowArray::~CThorExpandingRowArray()
 {
     clearRows();
     ReleaseThorRow(rows);
-    ReleaseThorRow(stableSortTmp);
-}
-
-void CThorExpandingRowArray::setup(IRowInterfaces *_rowIf, bool _allowNulls, StableSortFlag _stableSort, bool _throwOnOom)
-{
-    rowIf = _rowIf;
-    stableSort = _stableSort;
-    throwOnOom = _throwOnOom;
-    allowNulls = _allowNulls;
-    if (rowIf)
-    {
-        allocator = rowIf->queryRowAllocator();
-        deserializer = rowIf->queryRowDeserializer();
-        serializer = rowIf->queryRowSerializer();
-    }
-    else
-    {
-        allocator = NULL;
-        deserializer = NULL;
-        serializer = NULL;
-    }
+    ReleaseThorRow(coTable);
 }
 
 void CThorExpandingRowArray::clearRows()
@@ -519,9 +542,10 @@ void CThorExpandingRowArray::kill()
     clearRows();
     maxRows = 0;
     ReleaseThorRow(rows);
-    ReleaseThorRow(stableSortTmp);
+    ReleaseThorRow(coTable);
     rows = NULL;
-    stableSortTmp = NULL;
+    coTable = NULL;
+    coTableRows = 0;
 }
 
 void CThorExpandingRowArray::swap(CThorExpandingRowArray &other)
@@ -529,26 +553,32 @@ void CThorExpandingRowArray::swap(CThorExpandingRowArray &other)
     roxiemem::IRowManager *otherRowManager = other.rowManager;
     IRowInterfaces *otherRowIf = other.rowIf;
     const void **otherRows = other.rows;
-    void **otherStableSortTmp = other.stableSortTmp;
+    void **otherCoTable = other.coTable;
+    rowidx_t otherCoTableRows = other.coTableRows;
     bool otherAllowNulls = other.allowNulls;
-    StableSortFlag otherStableSort = other.stableSort;
+    CoTableFlag otherCoTableFlag = other.coTableFlag;
+    unsigned otherCoTablePc = other.coTablePc;
     bool otherThrowOnOom = other.throwOnOom;
     rowidx_t otherMaxRows = other.maxRows;
     rowidx_t otherNumRows = other.numRows;
 
     other.rowManager = rowManager;
-    other.setup(rowIf, allowNulls, stableSort, throwOnOom);
+    other.setup(rowIf, allowNulls, throwOnOom);
+    other.setupCoTable(coTableFlag, coTablePc);
     other.rows = rows;
-    other.stableSortTmp = stableSortTmp;
+    other.coTable = coTable;
     other.maxRows = maxRows;
     other.numRows = numRows;
+    other.coTableRows = coTableRows;
 
     rowManager = otherRowManager;
-    setup(otherRowIf, otherAllowNulls, otherStableSort, otherThrowOnOom);
+    setup(otherRowIf, otherAllowNulls, otherThrowOnOom);
+    setupCoTable(otherCoTableFlag, otherCoTablePc);
     rows = otherRows;
-    stableSortTmp = otherStableSortTmp;
+    coTable = otherCoTable;
     maxRows = otherMaxRows;
     numRows = otherNumRows;
+    coTableRows = otherCoTableRows;
 }
 
 void CThorExpandingRowArray::transferRows(rowidx_t & outNumRows, const void * * & outRows)
@@ -558,8 +588,9 @@ void CThorExpandingRowArray::transferRows(rowidx_t & outNumRows, const void * * 
     numRows = 0;
     maxRows = 0;
     rows = NULL;
-    ReleaseThorRow(stableSortTmp);
-    stableSortTmp = NULL;
+    ReleaseThorRow(coTable);
+    coTable = NULL;
+    coTableRows = 0;
 }
 
 void CThorExpandingRowArray::transferFrom(CThorExpandingRowArray &donor)
@@ -567,7 +598,7 @@ void CThorExpandingRowArray::transferFrom(CThorExpandingRowArray &donor)
     kill();
     donor.transferRows(numRows, rows);
     maxRows = numRows;
-    if (maxRows && (stableSort_earlyAlloc == stableSort))
+    if (maxRows && coTablePc && (cotable_earlyalloc == coTableFlag))
         ensure(maxRows);
 }
 
@@ -599,7 +630,7 @@ void CThorExpandingRowArray::clearUnused()
 
 bool CThorExpandingRowArray::ensure(rowidx_t requiredRows)
 {
-    if (getRowsCapacity() < requiredRows) // check, because may have expanded previously, but failed to allocate stableSortTmp and set new maxRows
+    if (getRowsCapacity() < requiredRows) // check, because may have expanded previously, but failed to allocate coTable and set new maxRows
     {
         OwnedConstThorRow newRows = allocateNewRows(requiredRows);
         if (!newRows)
@@ -614,16 +645,13 @@ bool CThorExpandingRowArray::ensure(rowidx_t requiredRows)
         rows = (const void **)newRows.getClear();
         ReleaseThorRow(oldRows);
     }
-    if (stableSort_earlyAlloc == stableSort)
+    rowidx_t newMaxRows = getRowsCapacity();
+    if (cotable_earlyalloc == coTableFlag)
     {
-        OwnedConstThorRow newStableSortTmp = allocateStableTable(throwOnOom);
-        if (!newStableSortTmp)
+        if (!reallocateCoTable(newMaxRows, throwOnOom))
             return false;
-        void **oldStableSortTmp = stableSortTmp;
-        stableSortTmp = (void **)newStableSortTmp.getClear();
-        ReleaseThorRow(oldStableSortTmp);
     }
-    maxRows = getRowsCapacity();
+    maxRows = newMaxRows;
 
     return true;
 }
@@ -901,8 +929,8 @@ void CThorSpillableRowArray::unregisterWriteCallback(IWritePosCallback &cb)
     writeCallbacks.zap(cb);
 }
 
-CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool allowNulls, StableSortFlag stableSort, rowidx_t initialSize, size32_t _commitDelta)
-    : CThorExpandingRowArray(activity, rowIf, false, stableSort, false, initialSize), commitDelta(_commitDelta)
+CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool allowNulls, CoTableFlag coTableFlag, unsigned coTablePc, rowidx_t initialSize, size32_t _commitDelta)
+    : CThorExpandingRowArray(activity, rowIf, false, coTableFlag, coTablePc, false, initialSize), commitDelta(_commitDelta)
 {
     commitRows = 0;
     firstRow = 0;
@@ -933,7 +961,7 @@ bool CThorSpillableRowArray::ensure(rowidx_t requiredRows)
     //Only the writer is allowed to reallocate rows (otherwise append can't be optimized), so rows is valid outside the lock
 
     OwnedConstThorRow newRows;
-    if (getRowsCapacity() < requiredRows) // check, because may have expanded previously, but failed to allocate stableSortTmp and set new maxRows
+    if (getRowsCapacity() < requiredRows) // check, because may have expanded previously, but failed to allocate coTable and set new maxRows
     {
         newRows.setown(allocateNewRows(requiredRows));
         if (!newRows)
@@ -954,17 +982,14 @@ bool CThorSpillableRowArray::ensure(rowidx_t requiredRows)
             ReleaseThorRow(oldRows);
         }
 
+        rowidx_t newMaxRows = getRowsCapacity();
         // NB: can't release lock, or change maxRows, until know this succeeds
-        if (stableSort_earlyAlloc == stableSort)
+        if (cotable_earlyalloc == coTableFlag)
         {
-            OwnedConstThorRow newStableSortTmp = allocateStableTable(false);
-            if (!newStableSortTmp)
+            if (!reallocateCoTable(newMaxRows, false))
                 return false;
-            void **oldStableSortTmp = stableSortTmp;
-            stableSortTmp = (void **)newStableSortTmp.getClear();
-            ReleaseThorRow(oldStableSortTmp);
         }
-        maxRows = getRowsCapacity();
+        maxRows = newMaxRows;
     }
     return true;
 }
@@ -1279,8 +1304,8 @@ public:
             mmRegistered = true;
         }
         maxCores = activity.queryMaxCores();
-
-        spillableRows.setup(rowIf, false, isStable?stableSort_earlyAlloc:stableSort_none);
+        if (isStable)
+            spillableRows.setupCoTable(cotable_earlyalloc, 100);
     }
     ~CThorRowCollectorBase()
     {
@@ -1331,7 +1356,8 @@ public:
             mmRegistered = false;
             activity.queryJob().queryRowManager()->removeRowBuffer(this);
         }
-        spillableRows.setup(rowIf, false, isStable?stableSort_earlyAlloc:stableSort_none);
+        if (isStable)
+            spillableRows.setupCoTable(cotable_earlyalloc, 100);
     }
 // IBufferedRowCallback
     virtual unsigned getPriority() const
