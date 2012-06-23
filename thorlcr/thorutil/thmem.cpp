@@ -367,21 +367,22 @@ public:
 
 //====
 
-void CThorExpandingRowArray::init(rowidx_t initialSize, CoTableFlag _coTableFlag, unsigned _coTablePc)
+void CThorExpandingRowArray::init(rowidx_t initialSize)
 {
     rowManager = activity.queryJob().queryRowManager();
-    coTableFlag = _coTableFlag;
+    coTableFlag = cotable_none;
     throwOnOom = false;
     coTable = NULL;
-    coTableRows = 0;
-    coTablePc = _coTablePc;
+    coTableMaxRows = 0;
+    coTablePc = 0;
+    coTableOwnRows = false;
     if (initialSize)
     {
         rows = static_cast<const void * *>(rowManager->allocate(initialSize * sizeof(void*), activity.queryContainer().queryId()));
         maxRows = getRowsCapacity();
         memset(rows, 0, maxRows * sizeof(void *));
         if (coTablePc && cotable_earlyalloc == coTableFlag)
-            coTable = allocateCoTable(maxRows, true, coTableRows);
+            coTable = allocateCoTable(maxRows, true, coTableMaxRows);
     }
     else
     {
@@ -410,10 +411,11 @@ void CThorExpandingRowArray::setup(IRowInterfaces *_rowIf, bool _allowNulls, boo
     }
 }
 
-void CThorExpandingRowArray::setupCoTable(CoTableFlag _coTableFlag, unsigned _coTablePc)
+void CThorExpandingRowArray::setupCoTable(CoTableFlag _coTableFlag, unsigned _coTablePc, bool _coTableOwnRows)
 {
     coTableFlag = _coTableFlag;
     coTablePc = _coTablePc;
+    coTableOwnRows = _coTableOwnRows;
 }
 
 const void *CThorExpandingRowArray::allocateRowTable(rowidx_t num)
@@ -454,12 +456,12 @@ const void *CThorExpandingRowArray::allocateNewRows(rowidx_t requiredRows)
     return allocateRowTable(newSize);
 }
 
-void **CThorExpandingRowArray::allocateCoTable(rowidx_t baseNumRows, bool error, rowidx_t &numRows)
+const void **CThorExpandingRowArray::allocateCoTable(rowidx_t baseNumRows, bool error, rowidx_t &numRows)
 {
     dbgassertex(NULL != rows);
     dbgassertex(coTablePc);
 
-    rowidx_t newCoTableRows = (rowidx_t)(((rowcount_t)baseNumRows)*100/coTablePc);
+    rowidx_t newCoTableRows = (rowidx_t)(((rowcount_t)baseNumRows)*coTablePc/100);
     OwnedConstThorRow newCoTable = allocateRowTable(newCoTableRows);
     if (!newCoTable)
     {
@@ -467,19 +469,23 @@ void **CThorExpandingRowArray::allocateCoTable(rowidx_t baseNumRows, bool error,
             throw MakeActivityException(&activity, 0, "Out of memory, allocating co-table row array, trying to allocate %"RIPF"d elements", newCoTableRows);
         return NULL;
     }
-    numRows = RoxieRowCapacity((void **)newCoTable.get());
-    return (void **)newCoTable.getClear();
+    numRows = RoxieRowCapacity((void **)newCoTable.get()) / sizeof(void *);
+    if (coTableOwnRows)
+        memset((void **)newCoTable.get(), 0, coTableMaxRows * sizeof(void *));
+    return (const void **)newCoTable.getClear();
 }
 
 bool CThorExpandingRowArray::reallocateCoTable(rowidx_t baseNumRows, bool error)
 {
-    rowidx_t newCoTableRows;
-    OwnedConstThorRow newCoTable = allocateCoTable(baseNumRows, error, newCoTableRows);
+    rowidx_t newCoTableMaxRows;
+    OwnedConstThorRow newCoTable = allocateCoTable(baseNumRows, error, newCoTableMaxRows);
     if (!newCoTable)
         return false;
-    void **oldCoTable = coTable;
-    coTable = (void **)newCoTable.getClear();
-    coTableRows = newCoTableRows;
+    const void **oldCoTable = coTable;
+    if (coTableOwnRows)
+        memcpy((void *)newCoTable.get(), coTable, coTableMaxRows * sizeof(void*));
+    coTable = (const void **)newCoTable.getClear();
+    coTableMaxRows = newCoTableMaxRows;
     ReleaseThorRow(oldCoTable);
     return true;
 }
@@ -502,7 +508,7 @@ void CThorExpandingRowArray::doSort(rowidx_t n, void **const rows, ICompare &com
         else
         {
             dbgassertex(NULL != coTable);
-            _coTable = coTable;
+            _coTable = (void **)coTable;
         }
         void **_rows = rows;
         memcpy(_coTable, _rows, n*sizeof(void **));
@@ -517,9 +523,40 @@ void CThorExpandingRowArray::doSort(rowidx_t n, void **const rows, ICompare &com
         parqsortvec((void **const)rows, n, compare, maxCores);
 }
 
-CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IRowInterfaces *_rowIf, bool _allowNulls, CoTableFlag coTableFlag, unsigned coTablePc, bool _throwOnOom, rowidx_t initialSize) : activity(_activity)
+rowidx_t CThorExpandingRowArray::removeNullRows(const void **rows, rowidx_t n)
 {
-    init(initialSize, coTableFlag, coTablePc);
+    // bubble up, removing holes
+    rowidx_t d = 0;
+    rowidx_t r2 = 0;
+    rowidx_t r = 0;
+    do
+    {
+        const void *row = rows[r];
+        if (row)
+        {
+            if (d)
+            {
+                rows[r2] = row;
+                rows[r] = NULL;
+            }
+            ++r2;
+        }
+        else
+            d++;
+        ++r;
+    }
+    while (r<n);
+    return r2;
+}
+
+void CThorExpandingRowArray::removeNullRows()
+{
+    numRows = removeNullRows(rows, numRows);
+}
+
+CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IRowInterfaces *_rowIf, bool _allowNulls, bool _throwOnOom, rowidx_t initialSize) : activity(_activity)
+{
+    init(initialSize);
     setup(_rowIf, _allowNulls, _throwOnOom);
 }
 
@@ -537,15 +574,25 @@ void CThorExpandingRowArray::clearRows()
     numRows = 0;
 }
 
+void CThorExpandingRowArray::clearCoTable()
+{
+    if (!coTableOwnRows)
+        return;
+    for (rowidx_t i = 0; i < coTableMaxRows; i++)
+        ReleaseThorRow(coTable[i]);
+    memset(coTable, 0, coTableMaxRows * sizeof(void *));
+}
+
 void CThorExpandingRowArray::kill()
 {
     clearRows();
+    clearCoTable();
     maxRows = 0;
     ReleaseThorRow(rows);
     ReleaseThorRow(coTable);
     rows = NULL;
     coTable = NULL;
-    coTableRows = 0;
+    coTableMaxRows = 0;
 }
 
 void CThorExpandingRowArray::swap(CThorExpandingRowArray &other)
@@ -553,32 +600,33 @@ void CThorExpandingRowArray::swap(CThorExpandingRowArray &other)
     roxiemem::IRowManager *otherRowManager = other.rowManager;
     IRowInterfaces *otherRowIf = other.rowIf;
     const void **otherRows = other.rows;
-    void **otherCoTable = other.coTable;
-    rowidx_t otherCoTableRows = other.coTableRows;
+    const void **otherCoTable = other.coTable;
+    rowidx_t otherCoTableRows = other.coTableMaxRows;
     bool otherAllowNulls = other.allowNulls;
     CoTableFlag otherCoTableFlag = other.coTableFlag;
     unsigned otherCoTablePc = other.coTablePc;
+    bool otherCoTableOwnRows = other.coTableOwnRows;
     bool otherThrowOnOom = other.throwOnOom;
     rowidx_t otherMaxRows = other.maxRows;
     rowidx_t otherNumRows = other.numRows;
 
     other.rowManager = rowManager;
     other.setup(rowIf, allowNulls, throwOnOom);
-    other.setupCoTable(coTableFlag, coTablePc);
+    other.setupCoTable(coTableFlag, coTablePc, coTableOwnRows);
     other.rows = rows;
     other.coTable = coTable;
     other.maxRows = maxRows;
     other.numRows = numRows;
-    other.coTableRows = coTableRows;
+    other.coTableMaxRows = coTableMaxRows;
 
     rowManager = otherRowManager;
     setup(otherRowIf, otherAllowNulls, otherThrowOnOom);
-    setupCoTable(otherCoTableFlag, otherCoTablePc);
+    setupCoTable(otherCoTableFlag, otherCoTablePc, otherCoTableOwnRows);
     rows = otherRows;
     coTable = otherCoTable;
     maxRows = otherMaxRows;
     numRows = otherNumRows;
-    coTableRows = otherCoTableRows;
+    coTableMaxRows = otherCoTableRows;
 }
 
 void CThorExpandingRowArray::transferRows(rowidx_t & outNumRows, const void * * & outRows)
@@ -590,7 +638,7 @@ void CThorExpandingRowArray::transferRows(rowidx_t & outNumRows, const void * * 
     rows = NULL;
     ReleaseThorRow(coTable);
     coTable = NULL;
-    coTableRows = 0;
+    coTableMaxRows = 0;
 }
 
 void CThorExpandingRowArray::transferFrom(CThorExpandingRowArray &donor)
@@ -929,8 +977,8 @@ void CThorSpillableRowArray::unregisterWriteCallback(IWritePosCallback &cb)
     writeCallbacks.zap(cb);
 }
 
-CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool allowNulls, CoTableFlag coTableFlag, unsigned coTablePc, rowidx_t initialSize, size32_t _commitDelta)
-    : CThorExpandingRowArray(activity, rowIf, false, coTableFlag, coTablePc, false, initialSize), commitDelta(_commitDelta)
+CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool allowNulls, rowidx_t initialSize, size32_t _commitDelta)
+    : CThorExpandingRowArray(activity, rowIf, false, false, initialSize), commitDelta(_commitDelta)
 {
     commitRows = 0;
     firstRow = 0;
@@ -939,6 +987,7 @@ CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity, IRowInte
 CThorSpillableRowArray::~CThorSpillableRowArray()
 {
     clearRows();
+    clearCoTable();
 }
 
 void CThorSpillableRowArray::clearRows()
@@ -992,6 +1041,15 @@ bool CThorSpillableRowArray::ensure(rowidx_t requiredRows)
         maxRows = newMaxRows;
     }
     return true;
+}
+
+void CThorSpillableRowArray::removeNullRows()
+{
+    rowidx_t n = numCommitted();
+    const void **rows = getBlock(n);
+    rowidx_t diff = n - CThorExpandingRowArray::removeNullRows(rows, n);
+    commitRows -= diff;
+    numRows -= diff;
 }
 
 void CThorSpillableRowArray::sort(ICompare &compare, unsigned maxCores)
@@ -1091,20 +1149,6 @@ IRowStream *CThorSpillableRowArray::createRowStream()
 
 class CThorRowCollectorBase : public CSimpleInterface, implements roxiemem::IBufferedRowCallback
 {
-    class CFileOwner : public CSimpleInterface, implements IInterface
-    {
-        IFile *iFile;
-    public:
-        IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-        CFileOwner(IFile *_iFile) : iFile(_iFile)
-        {
-        }
-        ~CFileOwner()
-        {
-            iFile->remove();
-        }
-        IFile &queryIFile() const { return *iFile; }
-    };
 protected:
     CActivityBase &activity;
     CThorSpillableRowArray spillableRows;
@@ -1204,33 +1248,6 @@ protected:
         }
         ++outStreams;
 
-        class CStreamFileOwner : public CSimpleInterface, implements IExtRowStream
-        {
-            Linked<CFileOwner> fileOwner;
-            IExtRowStream *stream;
-        public:
-            IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-            CStreamFileOwner(CFileOwner *_fileOwner, IExtRowStream *_stream) : fileOwner(_fileOwner)
-            {
-                stream = LINK(_stream);
-            }
-            ~CStreamFileOwner()
-            {
-                stream->Release();
-            }
-        // IExtRowStream
-            virtual const void *nextRow() { return stream->nextRow(); }
-            virtual void stop() { stream->stop(); }
-            virtual offset_t getOffset() { return stream->getOffset(); }
-            virtual void stop(CRC32 *crcout=NULL) { stream->stop(); }
-            virtual const void *prefetchRow(size32_t *sz=NULL) { return stream->prefetchRow(sz); }
-            virtual void prefetchDone() { stream->prefetchDone(); }
-            virtual void reinit(offset_t offset, offset_t len, unsigned __int64 maxRows)
-            {
-                stream->reinit(offset, len, maxRows);
-            }
-        };
-
         // NB: CStreamFileOwner, shares reference so CFileOwner, last usage, will auto delete file
         // which may be one of these streams of CThorRowCollectorBase itself
         IArrayOf<IRowStream> instrms;
@@ -1305,7 +1322,7 @@ public:
         }
         maxCores = activity.queryMaxCores();
         if (isStable)
-            spillableRows.setupCoTable(cotable_earlyalloc, 100);
+            spillableRows.setupStable();
     }
     ~CThorRowCollectorBase()
     {
@@ -1357,7 +1374,7 @@ public:
             activity.queryJob().queryRowManager()->removeRowBuffer(this);
         }
         if (isStable)
-            spillableRows.setupCoTable(cotable_earlyalloc, 100);
+            spillableRows.setupStable();
     }
 // IBufferedRowCallback
     virtual unsigned getPriority() const

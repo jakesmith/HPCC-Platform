@@ -59,7 +59,7 @@ protected:
         if (1 == numPartialResults)
             return firstRow;
 
-        CThorExpandingRowArray partialResults(*this, this, true, cotable_none, 0, true, numPartialResults);
+        CThorExpandingRowArray partialResults(*this, this, true, true, numPartialResults);
         if (hadElement)
             partialResults.setRow(0, firstRow);
         --numPartialResults;

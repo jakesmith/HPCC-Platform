@@ -1967,32 +1967,131 @@ friend class CKeyLookup;
 
 //===========================================================================
 
-
-class HashDedupSlaveActivityBase : public CSlaveActivity, public CThorDataLink
+#define HTSIZE_PC 115
+class HashDedupSlaveActivityBase : public CSlaveActivity, public CThorDataLink, implements roxiemem::IBufferedRowCallback
 {
 protected:
     IRowStream *input;      // can be changed
-    bool inputstopped;
+    bool inputstopped, first;
     const char *actTxt;
-    CThorExpandingRowArray htabrows;
     const void **htab;
     IHThorHashDedupArg *dedupargs;
-    unsigned htsize;
-    unsigned htremaining;   // remaining slots left
     ICompare *icompare;
     IHash *ihash;
-    ICompare *ikeycompare;
-    Owned<IEngineRowAllocator> keyallocator;
-    Owned<IOutputRowSerializer> keyserializer;
+    ICompare *keyCompare;
+    Owned<IRowInterfaces> keyRowInterfaces;
+    IEngineRowAllocator *keyAllocator;
+    CThorSpillableRowArray spillableRows;
+    rowidx_t lastDedupCount;
+    PointerIArrayOf<CFileOwner> spillFiles;
+    Owned<IRowStream> outStream;
+
+    bool hashDedup()
+    {
+        rowidx_t numRows = spillableRows.numCommitted();
+        ActPrintLog("Create hash table for %"RCPF"d rows [last count = %"RCPF"d", numRows, lastDedupCount);
+        const void **rows = spillableRows.getBlock(numRows);
+        rowidx_t coTableSize;
+        const void **hashTable = spillableRows.queryCoTable(coTableSize);
+
+        memset(hashTable, 0, coTableSize * sizeof(void *));
+        struct ClearupCoTable
+        {
+            const void **ht;
+            rowidx_t n;
+            ClearupCoTable(const void **_ht, rowidx_t _n) : ht(_ht), n(_n) { }
+            ~ClearupCoTable()
+            {
+                for (rowidx_t i=0; i<n; i++)
+                    ReleaseThorRow(ht[i]);
+            }
+        } clearupCoTable(hashTable, coTableSize);
+
+        rowidx_t removed = 0;
+        rowidx_t r = 0;
+        do
+        {
+            const void *row = rows[r];
+            OwnedConstThorRow key;
+            if (keyAllocator)
+            {
+                RtlDynamicRowBuilder krow(keyAllocator);
+                size32_t sz = dedupargs->recordToKey(krow, row);
+                assertex(sz);
+                key.setown(krow.finalizeRowClear(sz));
+            }
+            else
+                key.set(row);
+            bool dup = false;
+            unsigned h = ihash->hash(row) % coTableSize;
+            loop
+            {
+                const void *htk = hashTable[h];
+                if (!htk)
+                    break;
+                dup = eqKey(htk, key);
+                if (dup)
+                {
+                    ReleaseThorRow(row);
+                    rows[r] = NULL;
+                    ++removed;
+                    break;
+                }
+                if (++h==coTableSize)
+                    h = 0;
+            }
+            if (!dup)
+                hashTable[h] = key.getClear();
+            ++r;
+        }
+        while (r<numRows);
+        ActPrintLog("Hash dedupped %d rows", removed);
+        spillableRows.removeNullRows();
+
+        return removed>0;
+    }
+    bool spillRows()
+    {
+        rowidx_t numRows = spillableRows.numCommitted();
+        if (numRows == 0) // none, or no new since last dedupped
+            return false;
+        if (numRows > lastDedupCount)
+        {
+            bool dedupped = hashDedup();
+            numRows = spillableRows.numCommitted(); // update
+            if (dedupped)
+            {
+                lastDedupCount = numRows;
+                return true;
+            }
+        }
+        ActPrintLog("Spilling hash table: %"RCPF"d rows", numRows);
+        ICompare *cmp = keyCompare ? keyCompare : icompare;
+        spillableRows.sort(*cmp, maxCores);
+
+        StringBuffer tempname;
+        GetTempName(tempname, "hashdedupspill", true);
+        Owned<IFile> iFile = createIFile(tempname.str());
+        spillFiles.append(new CFileOwner(iFile.getLink()));
+        spillableRows.save(*iFile);
+        spillableRows.noteSpilled(numRows);
+        lastDedupCount = 0;
+
+        return true;
+    }
+
 public:
 
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
     HashDedupSlaveActivityBase(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this), htabrows(*this, this, true)
+        : CSlaveActivity(_container), CThorDataLink(this), spillableRows(*this, NULL)
     {
-        htsize = 0;
         inputstopped = false;
+    }
+    ~HashDedupSlaveActivityBase()
+    {
+        queryJob().queryRowManager()->removeRowBuffer(this); // probably already removed
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
@@ -2000,83 +2099,43 @@ public:
         ihash = dedupargs->queryHash();
         icompare = dedupargs->queryCompare();
         appendOutputLinked(this);
-        IOutputMetaData* km = dedupargs->queryKeySize();
-        if (km&&(km!=dedupargs->queryOutputMeta())) {
-            ikeycompare = dedupargs->queryKeyCompare();
-            keyallocator.setown(queryJob().getRowAllocator(km,queryActivityId()));
-            keyserializer.setown(km->createRowSerializer(queryCodeContext(),queryActivityId()));
+        IOutputMetaData *km = dedupargs->queryKeySize();
+        if (km&&(km!=dedupargs->queryOutputMeta()))
+        {
+            keyRowInterfaces.setown(createRowInterfaces(km, queryActivityId(), queryCodeContext()));
+            keyCompare = dedupargs->queryKeyCompare();
+            keyAllocator = keyRowInterfaces->queryRowAllocator();
+            spillableRows.setup(keyRowInterfaces, false);
         }
         else
-            ikeycompare = NULL;
+        {
+            keyCompare = NULL;
+            spillableRows.setup(this, false);
+        }
+        spillableRows.setupCoTable(cotable_earlyalloc, HTSIZE_PC, false);
     }
     void start()
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
         inputstopped = false;
+        first = true;
+        lastDedupCount = 0;
         input = inputs.item(0);
-        htabrows.kill();
-        htsize = 0;
+        spillableRows.kill();
+        spillFiles.kill();
         startInput(inputs.item(0));
         dataLinkStart(actTxt, container.queryId());
     }
     bool eqKey(const void *k1, const void *k2)
     {
-        if (ikeycompare)
-            return (ikeycompare->docompare(k1,k2)==0);
+        if (keyCompare)
+            return (keyCompare->docompare(k1,k2)==0);
         return (icompare->docompare(k1,k2)==0);
-    }
-    bool addHash(const void *row)
-    {
-        // NB assume key size constant
-        OwnedConstThorRow key;
-        if (keyallocator) {
-            RtlDynamicRowBuilder krow(keyallocator);
-            size32_t sz = dedupargs->recordToKey(krow,row);
-            assertex(sz);
-            key.setown(krow.finalizeRowClear(sz));
-        }
-        else
-            key.set(row);
-        // JCSMORE - needs revisting, to better cope with memory/spilling
-        if (htsize==0) {
-            CSizingSerializer ssz;
-            if (keyserializer)
-                keyserializer->serialize(ssz,(const byte *)key.get());
-            else
-                queryRowSerializer()->serialize(ssz,(const byte *)row);
-            // following is very rough guess of how many will fit in memory (will work best for fixed)
-            size32_t ks = ssz.size();
-            size32_t divsz = (ks<16)?16:ks;
-            // JCSMORE if child query assume low memory usage??
-            unsigned total = (container.queryOwnerId() ? (queryLargeMemSize()/10) : queryLargeMemSize()) /(divsz+sizeof(void *)*3);
-            htsize = total+10;
-            ActPrintLog("%s: reserving hash table of size %d",actTxt,htsize);
-            if (!htabrows.ensure(htsize))
-                throw MakeActivityException(this, TE_TooMuchData, "%s: hash table could not be allocated (out of memory)", actTxt);
-            htabrows.clearUnused();
-            htab = htabrows.getRowArray();
-            htremaining = htsize*9/10;
-        }
-        unsigned h = ihash->hash(row)%htsize;
-        loop {
-            const void *htk=htab[h];
-            if (!htk)
-                break;
-            if (eqKey(htk,key))
-                return false;
-            if (++h==htsize)
-                h = 0;
-        }
-        if (htremaining==0)
-            throw MakeActivityException(this, TE_TooMuchData, "%s: hash table overflow (out of memory)",actTxt);
-        htremaining--;
-
-        htabrows.setRow(h,key.getClear());
-        return true;
     }
     void stopInput()
     {
-        if (!inputstopped) {
+        if (!inputstopped)
+        {
             CSlaveActivity::stopInput(inputs.item(0));
             inputstopped = true;
         }
@@ -2084,26 +2143,99 @@ public:
     void kill()
     {
         ActPrintLog("%s: kill", actTxt);
-        htabrows.kill();
+        spillableRows.kill();
+        spillFiles.kill();
         CSlaveActivity::kill();
     }
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities, NULL);
-        while (!abortSoon) {
-            OwnedConstThorRow row = input->ungroupedNextRow();
-            if (!row)
-                break;
-            if (addHash(row)) {
-                dataLinkIncrement();
-                return row.getClear();
+        if (first)
+        {
+            queryJob().queryRowManager()->addRowBuffer(this);
+            first = false;
+            while (!abortSoon)
+            {
+                OwnedConstThorRow row = input->ungroupedNextRow();
+                if (!row)
+                    break;
+                if (!spillableRows.append(row.getClear()))
+                {
+                    CThorSpillableRowArray::CThorSpillableRowArrayLock block(spillableRows);
+                    if (spillableRows.numCommitted() != 0)
+                    {
+                        spillableRows.flush();
+                        spillRows();
+                    }
+                    //Ensure new rows are written to the head of the array.  It needs to be a separate call because
+                    //spillRows() cannot shift active row pointer since it can be called from any thread
+                    spillableRows.flush();
+                    if (!spillableRows.append(row))
+                        throw MakeActivityException(this, ROXIEMM_MEMORY_LIMIT_EXCEEDED, "Insufficient memory to append row for hash dedup");
+                }
             }
+            Owned<IRowStream> stream;
+            {
+                CThorSpillableRowArray::CThorSpillableRowArrayLock block(spillableRows);
+                rowidx_t numRows = spillableRows.numCommitted();
+                if (numRows)
+                {
+                    hashDedup();
+                    stream.setown(spillableRows.createRowStream());
+                }
+            }
+            queryJob().queryRowManager()->removeRowBuffer(this);
+            if (spillFiles.ordinality())
+            {
+                ActPrintLog("%d spill streams to merge", spillFiles.ordinality());
+                IArrayOf<IRowStream> instrms;
+                ForEachItemIn(f, spillFiles)
+                {
+                    CFileOwner *fileOwner = spillFiles.item(f);
+                    IRowInterfaces *rowIf = keyRowInterfaces ? keyRowInterfaces : this;
+                    Owned<IExtRowStream> strm = createRowStream(&fileOwner->queryIFile(), rowIf, 0, (offset_t) -1, (unsigned __int64)-1, false, false);
+                    instrms.append(* new CStreamFileOwner(fileOwner, strm));
+                }
+                if (stream)
+                    instrms.append(* stream.getClear());
+                if (instrms.ordinality())
+                {
+                    Owned<IRowLinkCounter> linkcounter = new CThorRowLinkCounter;
+                    ICompare *iCmp = keyCompare ? keyCompare : icompare;
+                    outStream.setown(createRowStreamMerger(instrms.ordinality(), instrms.getArray(), iCmp, true, linkcounter));
+                }
+                spillFiles.kill();
+            }
+            else
+            {
+                if (stream)
+                    outStream.setown(stream.getClear());
+            }
+            if (!stream)
+                stream.setown(createNullRowStream());
+        }
+        const void *row = outStream->nextRow();
+        if (row)
+        {
+            dataLinkIncrement();
+            return row;
         }
         return NULL;
     }
 
     virtual bool isGrouped() { return false; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
+
+// IBufferedRowCallback
+    virtual unsigned getPriority() const
+    {
+        return 1; // SPILL_PRIORITY_HASHDEDUP;
+    }
+    virtual bool freeBufferedRows(bool critical)
+    {
+        CThorSpillableRowArray::CThorSpillableRowArrayLock block(spillableRows);
+        return spillRows();
+    }
 };
 
 

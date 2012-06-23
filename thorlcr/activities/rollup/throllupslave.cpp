@@ -44,6 +44,8 @@ class CDedupAllHelper : public CSimpleInterface, implements IRowStream
     {
         OwnedConstThorRow row = rows.getClear(idx); // discard
     }
+
+    // JCSMORE - use threads/cores
     void dedupAll()
     {
         unsigned idxL, idxR;
