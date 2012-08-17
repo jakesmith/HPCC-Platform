@@ -26,6 +26,10 @@
 #include <stdio.h> 
 #include <stdlib.h> 
 
+#ifdef _USE_MPI
+#include <mpi.h>
+#endif
+
 #include "build-config.h"
 #include "jlib.hpp"
 #include "jdebug.hpp"
@@ -246,6 +250,19 @@ int main( int argc, char *argv[]  )
     addAbortHandler(ControlHandler);
     EnableSEHtoExceptionMapping();
 
+#ifdef _USE_MPI
+    int mpiRank, mpiSize;
+
+    MPI_Init(&argc, &argv);      /* starts MPI */
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpiRank);        /* get current process id */
+    MPI_Comm_size(MPI_COMM_WORLD, &mpiSize);        /* get number of processes */
+    PROGLOG("MPI process %d of %d\n", mpiRank+1, mpiSize);
+ 
+#include "../mpitest.cpp"
+
+    return 0;
+#endif
+
     dummyProc();
 #ifndef __64BIT__
     Thread::setDefaultStackSize(0x10000);   // NB under windows requires linker setting (/stack:)
@@ -441,6 +458,10 @@ int main( int argc, char *argv[]  )
 
     if (multiThorMemoryThreshold)
         setMultiThorMemoryNotify(0,NULL);
+
+#ifdef _USE_MPI
+  MPI_Finalize();
+#endif
 
 #ifdef ISDALICLIENT
     closeEnvironment();

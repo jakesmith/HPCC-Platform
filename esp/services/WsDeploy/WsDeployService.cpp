@@ -3761,7 +3761,7 @@ bool CWsDeployFileInfo::getDeployableComps(IEspContext &context, IEspGetDeployab
           if (computer && *computer)
           {
             const char* instanceNodeNames[] = { XML_TAG_INSTANCE, XML_TAG_ROXIE_SERVER, XML_TAG_ROXIE_SLAVE };
-            for (UINT i=0; i<sizeof(instanceNodeNames) / sizeof(instanceNodeNames[0]); i++)
+            for (unsigned int i=0; i<sizeof(instanceNodeNames) / sizeof(instanceNodeNames[0]); i++)
               if (!strcmp(nodeName, instanceNodeNames[i]))
               {
                 if (*nodeName != 'R')// || //neither RoxieServerProcess nor RoxieSlaveProcess

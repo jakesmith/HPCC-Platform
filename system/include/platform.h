@@ -307,15 +307,20 @@ typedef int socklen_t;
 //#define true  TRUE
 #define HFILE   int
 //#define bool  unsigned char
-#define BOOL    bool
-#define UINT    unsigned int
-#define CHAR    char
+
+//#define BOOL    bool
+
+// #define UINT    unsigned int
+
+//#define CHAR    char
+
 #define DWORD   unsigned long
 #define VOID    void
 #define LPBYTE  char *
 #define LPSTR   char *
 #define LPTSTR  char *
 #define LPVOID
+
 #define FAR
 #define WINAPI
 #define fpos_ht off_t

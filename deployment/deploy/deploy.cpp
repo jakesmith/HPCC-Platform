@@ -1225,7 +1225,7 @@ IPropertyTree* getInstances(const IPropertyTree* pEnvRoot, const char* compName,
 
             StringBuffer sb(pInst->queryName());
 
-            for (UINT i=0; i<sizeof(instanceNodeNames) / sizeof(instanceNodeNames[0]); i++)
+            for (unsigned int i=0; i<sizeof(instanceNodeNames) / sizeof(instanceNodeNames[0]); i++)
               if (!strcmp(sb.str(), instanceNodeNames[i]))
               {
                 //allow multiple instances but do not allow either roxie servers or slaves more than once per computer

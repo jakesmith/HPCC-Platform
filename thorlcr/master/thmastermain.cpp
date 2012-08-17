@@ -30,6 +30,10 @@
 #include <direct.h> 
 #endif
 
+#ifdef _USE_MPI
+#include <mpi.h>
+#endif
+
 #include "build-config.h"
 #include "jlib.hpp"
 #include "jdebug.hpp"
@@ -449,6 +453,19 @@ int main( int argc, char *argv[]  )
     char **pp = argv+1;
     while (*pp)
         loadCmdProp(globals, *pp++);
+
+#ifdef _USE_MPI
+    int mpiRank, mpiSize;
+
+    MPI_Init(&argc, &argv);      /* starts MPI */
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpiRank);        /* get current process id */
+    MPI_Comm_size(MPI_COMM_WORLD, &mpiSize);        /* get number of processes */
+    PROGLOG("MPI process %d of %d\n", mpiRank+1, mpiSize );
+
+#include "../mpitest.cpp"
+
+    return 0;
+#endif
 
     setIORetryCount(globals->getPropInt("Debug/@ioRetries")); // default == 0 == off
     StringBuffer daliServer;

@@ -63,6 +63,12 @@ if (WIN32)
     set (CMAKE_EXE_LINKER_FLAGS "/STACK:65536 ${CMAKE_EXE_LINKER_FLAGS}")
 endif()
 
+if (USE_MPI)
+    message("MPI_LIBRARY = ${MPI_LIBRARY}, MPI_LIBRARIES = ${MPI_LIBRARIES}")
+    SET (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${MPI_LINK_FLAGS}")
+    SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MPI_COMPILE_FLAGS}")
+endif()
+
 HPCC_ADD_EXECUTABLE ( thorslave_lcr ${SRCS} )
 install ( TARGETS thorslave_lcr RUNTIME DESTINATION ${EXEC_DIR} )
 target_link_libraries (  thorslave_lcr 
@@ -83,6 +89,7 @@ target_link_libraries (  thorslave_lcr
          graphslave_lcr 
          thorsort_lcr 
          activityslaves_lcr 
+         ${MPI_LIBRARIES}
     )
 
 

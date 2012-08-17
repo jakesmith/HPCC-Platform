@@ -823,11 +823,11 @@ void CConfigEnvHelper::addComponent(const char* pszBuildSet, StringBuffer& sbNew
   }
 }
 
-bool CConfigEnvHelper::EnsureInRange(const char* psz, UINT low, UINT high, const char* caption)
+bool CConfigEnvHelper::EnsureInRange(const char* psz, unsigned int low, unsigned int high, const char* caption)
 {
     bool rc = false;
     StringBuffer msg;
-    const UINT x = atoi( psz );
+    const unsigned int x = atoi( psz );
     if ( ((low < high) && (x < low || x > high)) || (low == high && x != low) )
     {
         msg.append(caption).append(" must be ");
@@ -937,7 +937,7 @@ bool CConfigEnvHelper::handleRoxieSlaveConfig(const char* xmlArg)
         sDataDir.appendf("%s", dir1.str());
 
         //give legacy slaves unique names
-        UINT i = 1;
+        unsigned int i = 1;
         Owned<IPropertyTreeIterator> it = pRoxie->getElements(XML_TAG_ROXIE_SLAVE);
         ForEach( *it)
         {
@@ -1067,7 +1067,7 @@ bool CConfigEnvHelper::GenerateCyclicRedConfig(IPropertyTree* pRoxie, IPropertyT
 bool CConfigEnvHelper::GenerateOverloadedConfig(IPropertyTree* pRoxie, IPropertyTreePtrArray& computers, const char* copies,
                                                                                                 const char* dir1, const char* dir2, const char* dir3)
 {
-    const UINT nComputers = computers.size();
+    const unsigned int nComputers = computers.size();
     if (!nComputers)
         return false;
 
@@ -1080,7 +1080,7 @@ bool CConfigEnvHelper::GenerateOverloadedConfig(IPropertyTree* pRoxie, IProperty
     RemoveSlaves(pRoxie, false);
 
     int channel = 1;
-    for (UINT i=0; i<nComputers; i++)
+    for (unsigned int i=0; i<nComputers; i++)
     {
         IPropertyTree* pComputer = computers[i];
         const char* szComputer = pComputer->queryProp(XML_ATTR_NAME);
