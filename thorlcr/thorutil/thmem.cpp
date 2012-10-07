@@ -1138,7 +1138,13 @@ protected:
 
         totalRows += numRows;
         if (iCompare)
+        {
+            ActPrintLog(&activity, "Sorting %"RIPF"d rows", spillableRows.numCommitted());
+            unsigned ms=msTick();
             spillableRows.sort(*iCompare, maxCores); // sorts committed rows
+            unsigned took=msTick()-ms;
+            ActPrintLog(&activity, "Sort took: %f", ((float)took)/1000);
+        }
 
         StringBuffer tempname;
         GetTempName(tempname,"srtspill",true);
@@ -1712,9 +1718,10 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CThorAllocator(memsize_t memSize, bool _usePacked) : usePacked(_usePacked)
+    CThorAllocator(memsize_t memSize, unsigned memorySpillAt, bool _usePacked) : usePacked(_usePacked)
     {
         rowManager.setown(roxiemem::createRowManager(memSize, NULL, queryDummyContextLogger(), this, false));
+        rowManager->setMemoryLimit(memSize, memSize/100*memorySpillAt);
         rtlSetReleaseRowHook(this);
     }
     ~CThorAllocator()
@@ -1827,7 +1834,7 @@ public:
 class CThorCrcCheckingAllocator : public CThorAllocator
 {
 public:
-    CThorCrcCheckingAllocator(memsize_t memSize, bool usePacked) : CThorAllocator(memSize, usePacked)
+    CThorCrcCheckingAllocator(memsize_t memSize, unsigned memorySpillAt, bool usePacked) : CThorAllocator(memSize, memorySpillAt, usePacked)
     {
     }
 // IThorAllocator
@@ -1843,14 +1850,14 @@ public:
 };
 
 
-IThorAllocator *createThorAllocator(memsize_t memSize, bool crcChecking, bool usePacked)
+IThorAllocator *createThorAllocator(memsize_t memSize, unsigned memorySpillAt, bool crcChecking, bool usePacked)
 {
     PROGLOG("CRC allocator %s", crcChecking?"ON":"OFF");
     PROGLOG("Packed allocator %s", usePacked?"ON":"OFF");
     if (crcChecking)
-        return new CThorCrcCheckingAllocator(memSize, usePacked);
+        return new CThorCrcCheckingAllocator(memSize, memorySpillAt, usePacked);
     else
-        return new CThorAllocator(memSize, usePacked);
+        return new CThorAllocator(memSize, memorySpillAt, usePacked);
 }
 
 

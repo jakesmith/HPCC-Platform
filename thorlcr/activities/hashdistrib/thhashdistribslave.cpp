@@ -564,8 +564,14 @@ public:
                     }
                     {
                         CriticalBlock block(putsect);
-                        while (!rowSource.eos()) 
-                            pipewr->putRow(ptrallocator.deserializeRow(allocator,rowSource));      
+                        while (!rowSource.eos())
+                        {
+                            unsigned ms=msTick();
+                            pipewr->putRow(ptrallocator.deserializeRow(allocator,rowSource));
+                            unsigned took = msTick()-ms;
+                            if (took>=1000)
+                                PROGLOG("RECVLOOP blocked for %d seconds", ms/1000);
+                        }
                     }
                 }
                 else {

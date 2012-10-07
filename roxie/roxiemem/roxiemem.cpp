@@ -1657,6 +1657,8 @@ public:
         if (numCallbacks == 0)
             return false;
 
+        PROGLOG("calling doReleaseBuffers");
+        PrintStackReport();
         unsigned first = 0;
         unsigned numSuccess = 0;
         //Loop through each set of different priorities
@@ -2286,7 +2288,9 @@ public:
 
         if (spillPageLimit && (totalPages > spillPageLimit))
         {
+            PROGLOG("calling releaseBuffersInBackground");
             callbacks.releaseBuffersInBackground();
+            PROGLOG("done calling releaseBuffersInBackground");
         }
 
         if (totalPages > peakPages)
