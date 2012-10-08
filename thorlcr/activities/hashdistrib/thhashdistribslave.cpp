@@ -87,6 +87,27 @@ public:
 };
 
 
+class CQuickTimer
+{
+    cycle_t start_time;
+    StringAttr title;
+    unsigned threshold;
+public:
+    CQuickTimer(const char *_title, unsigned _threshold) : title(_title), threshold(_threshold)
+    {
+    }
+    inline void start()
+    {
+        start_time = get_cycles_now();
+    }
+    inline void stop()
+    {
+        cycle_t took = get_cycles_now() - start_time;
+        unsigned ms = cycle_to_nanosec(took)/1000000;
+        if (ms>threshold)
+            DBGLOG("Timer %s, took %d ms", title.get(), ms);
+    }
+};
 
 
 
@@ -575,7 +596,8 @@ public:
 
     virtual void recvloop()
     {
-        CTimer timeThis(1000);
+        CQuickTimer qTimer1("recvloop row deserialize", 1000);
+        CQuickTimer qTimer2("recvloop pipewr->putRow", 1000);
         MemoryBuffer tempMb;
         try {
             ActPrintLog(activity, "Read loop start");
@@ -608,18 +630,12 @@ public:
                         CriticalBlock block(putsect);
                         while (!rowSource.eos())
                         {
-                            unsigned ms=msTick();
-//                            timeThis.start();
+                            qTimer1.start();
                             const void *row = ptrallocator.deserializeRow(allocator,rowSource);
-                            unsigned ms2=msTick();
-                            unsigned took=ms2-ms;
-                            if (took>=1000)
-                                PROGLOG("RECVLOOP pipewr->putRow blocked for : %d second(s)", took/1000);
+                            qTimer1.stop();
+                            qTimer2.start();
                             pipewr->putRow(row);
-                            took=msTick()-ms2;
-                            if (took>=1000)
-                                PROGLOG("RECVLOOP2 pipewr->putRow blocked for : %d second(s)", took/1000);
-//                            timeThis.stop();
+                            qTimer2.stop();
                         }
                     }
                 }
