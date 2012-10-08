@@ -144,11 +144,7 @@ public:
     static inline size32_t size(size32_t metasize) { return sizeof(PtrElem*)+sizeof(const void *)+metasize; }
     inline void deserialize(IEngineRowAllocator *allocator,IOutputRowDeserializer *deserializer,IRowDeserializerSource &dsz, size32_t metasize)
     {
-        unsigned ms=msTick();
         RtlDynamicRowBuilder rowBuilder(allocator);
-        unsigned took=msTick()-ms;
-        if (took>=1000)
-            PROGLOG("RtlDynamicRowBuilder rowBuilder(allocator) blocked for %d seconds", took/1000);
         size32_t sz = deserializer->deserialize(rowBuilder,dsz);
         row = rowBuilder.finalizeRowClear(sz);
         dsz.read(metasize,getMetaPtr());
@@ -531,7 +527,7 @@ public:
         {
             StringBuffer temp;
             GetTempName(temp,"hdlookahd", true);
-            smartbuf.setown(createSmartBuffer(&activity, temp.toCharArray(), pullBufferSize, ptrallocator));
+            piperd.setown(createSmartBuffer(&activity, temp.toCharArray(), pullBufferSize, ptrallocator));
         }
         else
             piperd.setown(createSmartInMemoryBuffer(activity, activity, pullBufferSize, &ptrallocator));
