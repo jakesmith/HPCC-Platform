@@ -526,6 +526,19 @@ public:
         irandom->seed(self);
         pipeout.setown(new cPipeOutWrapper);
         piperd.setown(createSmartInMemoryBuffer(activity, activity, pullBufferSize, &ptrallocator));
+/*
+        if (allowspill)
+        {
+            StringBuffer temp;
+            GetTempName(temp,"hdlookahd", true);
+            smartbuf.setown(createSmartBuffer(&activity, temp.toCharArray(), pullBufferSize, ptrallocator));
+        }
+        else
+            piperd.setown(createSmartInMemoryBuffer(activity, activity, pullBufferSize, &ptrallocator));
+            smartbuf.setown(createSmartInMemoryBuffer(&activity, queryRowInterfaces(in), bufsize));
+  */
+
+
         pipeout->init(piperd,serializer,&ptrallocator);
         pipewr.set(pipeout->piperd->queryWriter());
         connected = true;
