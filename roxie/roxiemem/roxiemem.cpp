@@ -1657,8 +1657,6 @@ public:
         if (numCallbacks == 0)
             return false;
 
-        PROGLOG("calling doReleaseBuffers");
-        PrintStackReport();
         unsigned first = 0;
         unsigned numSuccess = 0;
         //Loop through each set of different priorities
@@ -2267,6 +2265,10 @@ public:
             //freed up some memory.
             //The following reduces the nubmer of times the callback is called, but I'm not sure how this affects
             //performance.  I think better if a single free is likely to free up some memory, and worse if not.
+
+            PROGLOG("Calling releaseBuffers callback in foreground - BLOCKING");
+            PrintStackReport();
+
             const bool skipReleaseIfAnotherThreadReleases = true;
             if (!callbacks.releaseBuffers(true, 1, skipReleaseIfAnotherThreadReleases, lastReleaseSeq))
             {
@@ -2284,14 +2286,11 @@ public:
                     }
                 }
             }
+            PROGLOG("Called eleaseBuffers callback in foreground - BLOCKING OVER");
         }
 
         if (spillPageLimit && (totalPages > spillPageLimit))
-        {
-            PROGLOG("calling releaseBuffersInBackground");
             callbacks.releaseBuffersInBackground();
-            PROGLOG("done calling releaseBuffersInBackground");
-        }
 
         if (totalPages > peakPages)
         {
@@ -2308,7 +2307,10 @@ public:
 
     bool releaseCallbackMemory(bool critical)
     {
-        return callbacks.releaseBuffers(critical, 1, false, 0);
+        PROGLOG("Calling releaseCallbackMemory BLOCKING");
+        PrintStackReport();
+        bool r = callbacks.releaseBuffers(critical, 1, false, 0);
+        PROGLOG("Called releaseCallbackMemory BLOCKING OVER");
     }
 
 protected:

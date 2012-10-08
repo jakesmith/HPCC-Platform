@@ -50,6 +50,43 @@
 //
 
 
+class CTimer : implements IThreaded
+{
+    unsigned startMs, limit, waitTime;
+    CThreadedPersistent threaded;
+    Semaphore sem;
+    void check()
+    {
+        unsigned sofar = msTick()-startMs;
+        if (sofar>=limit)
+            PROGLOG("Been waiting >= %d secs", sofar/1000);
+        startMs = msTick();
+    }
+public:
+    CTimer(unsigned _limit) : threaded("CTimer", this), limit(_limit)
+    {
+        waitTime = 200;
+    }
+    ~CTimer()
+    {
+        stop();
+        if (startMs)
+            check();
+    }
+    void start() { startMs=msTick(); threaded.start(); }
+    void stop() { sem.signal(); threaded.join(); startMs=0; }
+    virtual void main()
+    {
+        loop
+        {
+            if (sem.wait(waitTime))
+                break;
+            check();
+        }
+    }
+};
+
+
 
 
 
@@ -86,7 +123,11 @@ public:
     static inline size32_t size(size32_t metasize) { return sizeof(PtrElem*)+sizeof(const void *)+metasize; }
     inline void deserialize(IEngineRowAllocator *allocator,IOutputRowDeserializer *deserializer,IRowDeserializerSource &dsz, size32_t metasize)
     {
+        unsigned ms=msTick();
         RtlDynamicRowBuilder rowBuilder(allocator);
+        unsigned took=msTick()-ms;
+        if (took>=1000)
+            PROGLOG("RtlDynamicRowBuilder rowBuilder(allocator) blocked for %d seconds", took/1000);
         size32_t sz = deserializer->deserialize(rowBuilder,dsz);
         row = rowBuilder.finalizeRowClear(sz);
         dsz.read(metasize,getMetaPtr());
@@ -534,6 +575,7 @@ public:
 
     virtual void recvloop()
     {
+        CTimer timeThis(1000);
         MemoryBuffer tempMb;
         try {
             ActPrintLog(activity, "Read loop start");
@@ -567,10 +609,17 @@ public:
                         while (!rowSource.eos())
                         {
                             unsigned ms=msTick();
-                            pipewr->putRow(ptrallocator.deserializeRow(allocator,rowSource));
-                            unsigned took = msTick()-ms;
+//                            timeThis.start();
+                            const void *row = ptrallocator.deserializeRow(allocator,rowSource);
+                            unsigned ms2=msTick();
+                            unsigned took=ms2-ms;
                             if (took>=1000)
-                                PROGLOG("RECVLOOP blocked for %d seconds", ms/1000);
+                                PROGLOG("RECVLOOP pipewr->putRow blocked for : %d second(s)", took/1000);
+                            pipewr->putRow(row);
+                            took=msTick()-ms2;
+                            if (took>=1000)
+                                PROGLOG("RECVLOOP2 pipewr->putRow blocked for : %d second(s)", took/1000);
+//                            timeThis.stop();
                         }
                     }
                 }
