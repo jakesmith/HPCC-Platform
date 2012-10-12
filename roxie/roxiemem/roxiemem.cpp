@@ -25,7 +25,7 @@
 #endif
 
 #ifdef _DEBUG
-#define _CLEAR_ALLOCATED_ROW
+//#define _CLEAR_ALLOCATED_ROW
 //#define _CLEAR_ALLOCATED_HUGE_ROW
 #endif
 
@@ -2754,7 +2754,7 @@ class CDataBufferManager : public CInterface, implements IDataBufferManager
                         DBGLOG("RoxieMemMgr: DataBufferBottom::allocate() freeing DataBuffers Page - addr=%p", goer);
                     goer->~DataBufferBottom(); 
 #ifdef _DEBUG
-                    memset(goer, 0xcc, HEAP_ALIGNMENT_SIZE);
+//                    memset(goer, 0xcc, HEAP_ALIGNMENT_SIZE);
 #endif
                     subfree_aligned(goer, 1);
                     atomic_dec(&dataBufferPages);
