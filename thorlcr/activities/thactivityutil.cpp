@@ -161,13 +161,50 @@ public:
         {
             ActPrintLog(&activity, e, "ThorLookaheadCache get exception");
             getexception.setown(e);
-        }   
+        }
+        class CNotifyThread : implements IThreaded
+        {
+            CThreaded threaded;
+            ISmartBufferNotify *notify;
+            rowcount_t count;
+        public:
+            CNotifyThread(ISmartBufferNotify *_notify) : threaded("Lookahead-CNotifyThread"), notify(_notify)
+            {
+                count = 0;
+            }
+            ~CNotifyThread()
+            {
+                loop
+                {
+                    if (threaded.join(60000))
+                        break;
+                    PROGLOG("Still waiting on lookahead CNotifyThread thread to complete");
+                }
+            }
+            void start(rowcount_t _count)
+            {
+                count = _count;
+                threaded.init(this);
+            }
+            virtual void main()
+            {
+                notify->onInputFinished(count);
+            }
+        } notifyThread(notify);
+
+        // notify async, as can block, but do not want to block in->stop()
+        // especially if this is a spilling read ahead, where use case scenarios, include not wanting to
+        // block the upstream input.
+        // An example is a firstn which if stop() it not called, it may block
+        // other nodes from pulling because it is blocked upstream on full buffers (which can be discarded
+        // on stop()), and those in turn are blocking other arms of the graph.
         if (notify)
-            notify->onInputFinished(count);
+            notifyThread.start(count);
         if (smartbuf)
             smartbuf->queryWriter()->flush();
         running = false;
-        try {
+        try
+        {
             if (in)
                 in->stop();
         }
