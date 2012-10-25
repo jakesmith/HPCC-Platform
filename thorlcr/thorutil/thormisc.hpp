@@ -46,6 +46,7 @@
 #endif
 
 /// Thor options, that can be hints, workunit options, or global settings
+#define THOROPT_COMPRESS_SPILLS       "compress_internal_spills"
 #define THOROPT_HDIST_SPILL           "hdist_spill"
 #define THOROPT_HDIST_WRITE_POOL_SIZE "hdist_send_pool_size"
 #define THOROPT_SPLITTER_SPILL        "splitter_spill"

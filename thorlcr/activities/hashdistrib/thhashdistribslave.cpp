@@ -1795,6 +1795,7 @@ public:
         if (sz==(offset_t)-1)
         {
             // not great but hopefully exception not rule!
+            unsigned rwFlags = DEFAULT_RWFLAGS;
             sz = 0;
             StringBuffer tempname;
             GetTempName(tempname,"hdprop",true); // use alt temp dir
@@ -1803,7 +1804,9 @@ public:
                 ActPrintLogEx(&activity->queryContainer(), thorlog_null, MCwarning, "REDISTRIBUTE size unknown, spilling to disk");
                 MemoryAttr ma;
                 activity->startInput(in);
-                Owned<IExtRowWriter> out = createRowWriter(tempfile, activity);
+                if (activity->getOptBool(THOROPT_COMPRESS_SPILLS, true))
+                    rwFlags |= rw_compress;
+                Owned<IExtRowWriter> out = createRowWriter(tempfile, activity, rwFlags);
                 if (!out)
                     throw MakeStringException(-1,"Could not created file %s",tempname.str());
                 loop
@@ -1817,7 +1820,7 @@ public:
                 sz = out->getPosition();
                 activity->stopInput(in);
             }
-            ret.setown(createRowStream(tempfile, activity));
+            ret.setown(createRowStream(tempfile, activity, rwFlags));
         }
         CMessageBuffer mb;
         mb.append(sz);
@@ -2140,20 +2143,23 @@ public:
 
 class CSpill : public CSimpleInterface, implements IRowWriter
 {
+    CActivityBase &owner;
     IRowInterfaces *rowIf;
     rowcount_t count;
     Owned<CFileOwner> spillFile;
     IRowWriter *writer;
     StringAttr desc;
-    unsigned bucketN;
+    unsigned bucketN, rwFlags;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CSpill(IRowInterfaces *_rowIf, const char *_desc, unsigned _bucketN) : rowIf(_rowIf), desc(_desc), bucketN(_bucketN)
+    CSpill(CActivityBase &_owner, IRowInterfaces *_rowIf, const char *_desc, unsigned _bucketN)
+        : owner(_owner), rowIf(_rowIf), desc(_desc), bucketN(_bucketN)
     {
         count = 0;
         writer = NULL;
+        rwFlags = DEFAULT_RWFLAGS;
     }
     ~CSpill()
     {
@@ -2168,7 +2174,9 @@ public:
         GetTempName(tempname, prefix.str(), true);
         OwnedIFile iFile = createIFile(tempname.str());
         spillFile.setown(new CFileOwner(iFile.getLink()));
-        writer = createRowWriter(iFile, rowIf);
+        if (owner.getOptBool(THOROPT_COMPRESS_SPILLS, true))
+            rwFlags |= rw_compress;
+        writer = createRowWriter(iFile, rowIf, rwFlags);
     }
     IRowStream *getReader(rowcount_t *_count=NULL) // NB: also detatches ownership of 'fileOwner'
     {
@@ -2176,7 +2184,7 @@ public:
         Owned<CFileOwner> fileOwner = spillFile.getClear();
         if (!fileOwner)
             return NULL;
-        Owned<IExtRowStream> strm = createRowStream(&fileOwner->queryIFile(), rowIf);
+        Owned<IExtRowStream> strm = createRowStream(&fileOwner->queryIFile(), rowIf, rwFlags);
         Owned<CStreamFileOwner> fileStream = new CStreamFileOwner(fileOwner, strm);
         if (_count)
             *_count = count;
@@ -2665,7 +2673,7 @@ bool CHashTableRowTable::rehash()
 
 CBucket::CBucket(HashDedupSlaveActivityBase &_owner, IRowInterfaces *_rowIf, IRowInterfaces *_keyIf, IHash *_iRowHash, IHash *_iKeyHash, ICompare *_iCompare, bool _extractKey, unsigned _bucketN, CHashTableRowTable &_htRows)
     : owner(_owner), rowIf(_rowIf), keyIf(_keyIf), iRowHash(_iRowHash), iKeyHash(_iKeyHash), iCompare(_iCompare), extractKey(_extractKey), bucketN(_bucketN), htRows(_htRows),
-      rowSpill(_rowIf, "rows", _bucketN), keySpill(_keyIf, "keys", _bucketN)
+      rowSpill(owner, _rowIf, "rows", _bucketN), keySpill(owner, _keyIf, "keys", _bucketN)
 
 {
     spilt = false;

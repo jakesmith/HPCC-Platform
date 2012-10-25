@@ -180,7 +180,7 @@ class CSpillableStreamBase : public CSimpleInterface, implements roxiemem::IBuff
 protected:
     CActivityBase &activity;
     IRowInterfaces *rowIf;
-    bool preserveNulls, ownsRows;
+    bool preserveNulls, ownsRows, useCompression;
     CThorSpillableRowArray rows;
     OwnedIFile spillFile;
     Owned<IRowStream> spillStream;
@@ -196,7 +196,7 @@ protected:
         GetTempName(tempname,"streamspill", true);
         spillFile.setown(createIFile(tempname.str()));
 
-        rows.save(*spillFile); // saves committed rows
+        rows.save(*spillFile, useCompression); // saves committed rows
         rows.noteSpilled(numRows);
         return true;
     }
@@ -208,6 +208,7 @@ public:
         : activity(_activity), rowIf(_rowIf), rows(_activity, _rowIf, _preserveNulls), preserveNulls(_preserveNulls)
     {
         rows.swap(inRows);
+        useCompression = false;
         activity.queryJob().queryRowManager()->addRowBuffer(this);
     }
     ~CSpillableStreamBase()
@@ -323,6 +324,7 @@ public:
     CSpillableStream(CActivityBase &_activity, CThorSpillableRowArray &inRows, IRowInterfaces *_rowIf, bool _preserveNulls)
         : CSpillableStreamBase(_activity, inRows, _rowIf, _preserveNulls)
     {
+        useCompression = activity.getOptBool(THOROPT_COMPRESS_SPILLS, true);
         pos = numReadRows = 0;
         granularity = 500; // JCSMORE - rows
 
@@ -352,6 +354,8 @@ public:
                 unsigned rwFlags = DEFAULT_RWFLAGS;
                 if (preserveNulls)
                     rwFlags |= rw_grouped;
+                if (useCompression)
+                    rwFlags |= rw_compress;
                 spillStream.setown(createRowStream(spillFile, rowIf, rwFlags));
                 return spillStream->nextRow();
             }
@@ -1026,13 +1030,19 @@ void CThorSpillableRowArray::sort(ICompare &compare, unsigned maxCores)
     }
 }
 
-rowidx_t CThorSpillableRowArray::save(IFile &iFile, rowidx_t watchRecNum, offset_t *watchFilePosResult)
+rowidx_t CThorSpillableRowArray::save(IFile &iFile, bool useCompression)
 {
     rowidx_t n = numCommitted();
     if (0 == n)
         return 0;
     ActPrintLog(&activity, "CThorSpillableRowArray::save %"RIPF"d rows", n);
+
+    if (useCompression)
+        assertex(0 == writeCallbacks.ordinality()); // incompatible
+
     unsigned rwFlags = DEFAULT_RWFLAGS;
+    if (useCompression)
+        rwFlags |= rw_compress;
     if (allowNulls)
         rwFlags |= rw_grouped;
     Owned<IExtRowWriter> writer = createRowWriter(&iFile, rowIf, rwFlags);
@@ -1152,7 +1162,7 @@ protected:
         GetTempName(tempname,"srtspill",true);
         Owned<IFile> iFile = createIFile(tempname.str());
         spillFiles.append(new CFileOwner(iFile.getLink()));
-        spillableRows.save(*iFile); // saves committed rows
+        spillableRows.save(*iFile, activity.getOptBool(THOROPT_COMPRESS_SPILLS, true)); // saves committed rows
         spillableRows.noteSpilled(numRows);
 
         ++overflowCount;
@@ -1228,6 +1238,8 @@ protected:
         {
             CFileOwner *fileOwner = spillFiles.item(f);
             unsigned rwFlags = DEFAULT_RWFLAGS;
+            if (activity.getOptBool(THOROPT_COMPRESS_SPILLS, true))
+                rwFlags |= rw_compress;
             if (preserveGrouping)
                 rwFlags |= rw_grouped;
             Owned<IExtRowStream> strm = createRowStream(&fileOwner->queryIFile(), rowIf, rwFlags);
