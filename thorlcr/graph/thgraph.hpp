@@ -898,6 +898,7 @@ public:
     mptag_t allocateMPTag();
     void freeMPTag(mptag_t tag);
     mptag_t deserializeMPTag(MemoryBuffer &mb);
+    bool getOptBool(const char *opt, bool dft=false);
     unsigned getOptInt(const char *opt, unsigned dft=0);
     __int64 getOptInt64(const char *opt, __int64 dft=0);
 
@@ -988,6 +989,10 @@ public:
     virtual IOutputMetaData *queryRowMetaData() { return baseHelper->queryOutputMeta(); }
     virtual unsigned queryActivityId() { return (unsigned)container.queryId(); }
     virtual ICodeContext *queryCodeContext() { return container.queryCodeContext(); }
+
+    bool getOptBool(const char *prop, bool defVal) const;
+    unsigned getOptInt(const char *prop, unsigned defVal) const;
+    __int64 getOptInt64(const char *prop, __int64 defVal) const;
 };
 
 interface IFileInProgressHandler : extends IInterface

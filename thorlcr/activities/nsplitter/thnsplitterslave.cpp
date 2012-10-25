@@ -310,8 +310,8 @@ public:
         ForEachItemIn(o, container.outputs)
             appendOutput(new CDelayedInput(*this));
         IHThorSplitArg *helper = (IHThorSplitArg *)queryHelper();
-        int dV = (int)container.queryJob().getWorkUnitValueInt("splitterSpills", -1);
-        if (-1 == dV)
+        unsigned dV = getOptInt(THOROPT_SPLITTER_SPILL, (unsigned)-1);
+        if ((unsigned)-1 == dV)
         {
             spill = !helper->isBalanced();
             bool forcedUnbalanced = queryContainer().queryXGMML().getPropBool("@unbalanced", false);

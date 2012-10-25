@@ -742,11 +742,10 @@ public:
         fixedEstSize = meta->querySerializedMeta()->getFixedSize();
         rowManager = activity->queryJob().queryRowManager();
 
-        bool defaultAllowSpill = activity->queryJob().getWorkUnitValueBool("allowSpillHashDist", globals->getPropBool("@allowSpillHashDist", true));
-        allowSpill = activity->queryContainer().queryXGMML().getPropBool("hint[@name=\"allow_spill\"]/@value", defaultAllowSpill);
+        allowSpill = activity->getOptBool(THOROPT_HDIST_SPILL, true);
         if (allowSpill)
             ActPrintLog(activity, "Using spilling buffer (will spill if overflows)");
-        writerPoolSize = (unsigned)activity->queryJob().getWorkUnitValueInt("hashDistWritePoolSize", globals->getPropInt("@hashDistWritePoolSize", DEFAULT_WRITEPOOLSIZE));
+        writerPoolSize = activity->getOptInt(THOROPT_HDIST_WRITE_POOL_SIZE, DEFAULT_WRITEPOOLSIZE);
         if (writerPoolSize>numnodes)
             writerPoolSize = numnodes; // no point in more
         ActPrintLog(activity, "Writer thread pool size : %d", writerPoolSize);

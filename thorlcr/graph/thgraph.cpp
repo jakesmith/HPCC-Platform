@@ -2597,16 +2597,29 @@ mptag_t CJobBase::deserializeMPTag(MemoryBuffer &mb)
     return tag;
 }
 
+// these getX methods for property in workunit settings, then global setting, defaulting to provided 'dft' if not present
+bool CJobBase::getOptBool(const char *opt, bool dft)
+{
+    if (!opt || !*opt)
+        return dft; // probably error
+    VStringBuffer gOpt("@%s", opt);
+    return getWorkUnitValueBool(opt, globals->getPropBool(gOpt, dft));
+}
+
 unsigned CJobBase::getOptInt(const char *opt, unsigned dft)
 {
-    const char *wOpt = (opt&&(*opt)=='@') ? opt+1 : opt; // strip @ for options in workunit
-    return (unsigned)getWorkUnitValueInt(wOpt, globals->getPropInt(opt, dft));
+    if (!opt || !*opt)
+        return dft; // probably error
+    VStringBuffer gOpt("@%s", opt);
+    return (unsigned)getWorkUnitValueInt(opt, globals->getPropInt(gOpt, dft));
 }
 
 __int64 CJobBase::getOptInt64(const char *opt, __int64 dft)
 {
-    const char *wOpt = (opt&&(*opt)=='@') ? opt+1 : opt; // strip @ for options in workunit
-    return getWorkUnitValueInt(opt, globals->getPropInt64(opt, dft));
+    if (!opt || !*opt)
+        return dft; // probably error
+    VStringBuffer gOpt("@%s", opt);
+    return getWorkUnitValueInt(opt, globals->getPropInt64(gOpt, dft));
 }
 
 // IGraphCallback
@@ -2780,3 +2793,23 @@ void CActivityBase::cancelReceiveMsg(const rank_t rank, const mptag_t mpTag)
         container.queryJob().queryJobComm().cancel(rank, mpTag);
 }
 
+bool CActivityBase::getOptBool(const char *prop, bool defVal) const
+{
+    bool def = queryJob().getOptBool(prop, defVal);
+    VStringBuffer path("hint[@name=\"%s\"]/@value", prop);
+    return container.queryXGMML().getPropBool(path.str(), def);
+}
+
+unsigned CActivityBase::getOptInt(const char *prop, unsigned defVal) const
+{
+    bool def = queryJob().getOptInt(prop, defVal);
+    VStringBuffer path("hint[@name=\"%s\"]/@value", prop);
+    return container.queryXGMML().getPropInt(path.str(), def);
+}
+
+__int64 CActivityBase::getOptInt64(const char *prop, __int64 defVal) const
+{
+    bool def = queryJob().getOptInt64(prop, defVal);
+    VStringBuffer path("hint[@name=\"%s\"]/@value", prop);
+    return container.queryXGMML().getPropInt64(path.str(), def);
+}
