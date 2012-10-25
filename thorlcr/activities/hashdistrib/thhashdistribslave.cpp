@@ -1793,7 +1793,8 @@ public:
         ThorDataLinkMetaInfo info;
         in->getMetaInfo(info);
         offset_t sz = info.byteTotal;
-        if (sz==(offset_t)-1) {
+        if (sz==(offset_t)-1)
+        {
             // not great but hopefully exception not rule!
             sz = 0;
             StringBuffer tempname;
@@ -1803,10 +1804,11 @@ public:
                 ActPrintLogEx(&activity->queryContainer(), thorlog_null, MCwarning, "REDISTRIBUTE size unknown, spilling to disk");
                 MemoryAttr ma;
                 activity->startInput(in);
-                Owned<IExtRowWriter> out = createRowWriter(tempfile,serializer,activity->queryRowAllocator(),false, false, false);
+                Owned<IExtRowWriter> out = createRowWriter(tempfile, activity);
                 if (!out)
                     throw MakeStringException(-1,"Could not created file %s",tempname.str());
-                loop {
+                loop
+                {
                     const void * row = in->ungroupedNextRow();
                     if (!row)
                         break;
@@ -1816,7 +1818,7 @@ public:
                 sz = out->getPosition();
                 activity->stopInput(in);
             }
-            ret.setown(createSimpleRowStream(tempfile,activity));
+            ret.setown(createRowStream(tempfile, activity));
         }
         CMessageBuffer mb;
         mb.append(sz);
@@ -2167,7 +2169,7 @@ public:
         GetTempName(tempname, prefix.str(), true);
         OwnedIFile iFile = createIFile(tempname.str());
         spillFile.setown(new CFileOwner(iFile.getLink()));
-        writer = createRowWriter(iFile, rowIf->queryRowSerializer(), rowIf->queryRowAllocator());
+        writer = createRowWriter(iFile, rowIf);
     }
     IRowStream *getReader(rowcount_t *_count=NULL) // NB: also detatches ownership of 'fileOwner'
     {
@@ -2175,7 +2177,7 @@ public:
         Owned<CFileOwner> fileOwner = spillFile.getClear();
         if (!fileOwner)
             return NULL;
-        Owned<IExtRowStream> strm = createSimpleRowStream(&fileOwner->queryIFile(), rowIf);
+        Owned<IExtRowStream> strm = createRowStream(&fileOwner->queryIFile(), rowIf);
         Owned<CStreamFileOwner> fileStream = new CStreamFileOwner(fileOwner, strm);
         if (_count)
             *_count = count;
@@ -2188,7 +2190,7 @@ public:
             return;
         flush();
         ::Release(writer);
-        writer =NULL;
+        writer = NULL;
     }
 // IRowWriter
     virtual void putRow(const void *row)

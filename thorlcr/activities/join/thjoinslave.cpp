@@ -493,7 +493,7 @@ public:
 
                 GetTempName(tempname.clear(),"joinspill",false); // don't use alt temp dir
                 Owned<IFile> tempf = createIFile(tempname.str());
-                Owned<IRowWriter> tmpstrm = createRowWriter(tempf,rowif2->queryRowSerializer(),rowif2->queryRowAllocator());
+                Owned<IRowWriter> tmpstrm = createRowWriter(tempf, rowif2);
                 if (!tmpstrm) {
                     ActPrintLogEx(&queryContainer(), thorlog_null, MCerror, "Cannot open %s", tempname.toCharArray());
                     throw MakeErrnoException("JoinSlaveActivity::doglobaljoin");
@@ -503,7 +503,7 @@ public:
                 tmpstrm.clear();
                 rstrm2.clear();
                 try {
-                    strm2.setown(createSimpleRowStream(tempf,rowif2));
+                    strm2.setown(createRowStream(tempf, rowif2));
 
                     ActPrintLog("JOIN waiting barrier.2");
                     if (!barrier->wait(false))
@@ -572,8 +572,9 @@ public:
 
                 GetTempName(tempname.clear(),"joinspill",false); // don't use alt temp dir
                 Owned<IFile> tempf = createIFile(tempname.str());
-                Owned<IRowWriter> tmpstrm = createRowWriter(tempf,rowif1->queryRowSerializer(),rowif1->queryRowAllocator());
-                if (!tmpstrm) {
+                Owned<IRowWriter> tmpstrm = createRowWriter(tempf, rowif1);
+                if (!tmpstrm)
+                {
                     ActPrintLogEx(&queryContainer(), thorlog_null, MCerror, "Cannot open %s", tempname.toCharArray());
                     throw MakeErrnoException("JoinSlaveActivity::doglobaljoin");
                 }
@@ -582,7 +583,7 @@ public:
                 tmpstrm.clear();
                 rstrm1.clear();
                 try {
-                    strm1.setown(createSimpleRowStream(tempf,rowif1));
+                    strm1.setown(createRowStream(tempf, rowif1));
 
                     ActPrintLog("JOIN waiting barrier.2");
                     if (!barrier->wait(false))

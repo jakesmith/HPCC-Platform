@@ -1150,7 +1150,7 @@ class CRowStreamReader : public CSimpleInterface, implements IExtRowStream
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CRowStreamReader(IFileIO *_fileio,IMemoryMappedFile *_mmfile,offset_t _ofs, offset_t _len, IRowInterfaces *rowif,unsigned __int64 _maxrows,bool _tallycrc, bool _grouped)
+    CRowStreamReader(IFileIO *_fileio, IMemoryMappedFile *_mmfile, IRowInterfaces *rowif, offset_t _ofs, offset_t _len, unsigned __int64 _maxrows, bool _tallycrc, bool _grouped)
         : fileio(_fileio), mmfile(_mmfile), allocator(rowif->queryRowAllocator()), prefetchBuffer(NULL) 
     {
 #ifdef TRACE_CREATE
@@ -1287,33 +1287,35 @@ unsigned CRowStreamReader::rdnum;
 
 bool UseMemoryMappedRead = false;
 
-IExtRowStream *createRowStream(IFile *file,IRowInterfaces *rowif,offset_t offset,offset_t len,unsigned __int64 maxrows,bool tallycrc,bool grouped)
+IExtRowStream *createRowStreamEx(IFile *file, IRowInterfaces *rowIf, offset_t offset, offset_t len, unsigned __int64 maxrows, unsigned rwFlags, IExpander *eexp)
 {
-    IExtRowStream *ret;
-    if (UseMemoryMappedRead) {
+    bool compressed = rwFlags & rw_compress;
+    if (UseMemoryMappedRead && !compressed)
+    {
         PROGLOG("Memory Mapped read of %s",file->queryFilename());
         Owned<IMemoryMappedFile> mmfile = file->openMemoryMapped();
         if (!mmfile)
             return NULL;
-        ret = new CRowStreamReader(NULL,mmfile,offset,len,rowif,maxrows,tallycrc,grouped);
+        return new CRowStreamReader(NULL, mmfile, rowIf, offset, len, maxrows, rwFlags & rw_crc, rwFlags & rw_grouped);
     }
-    else {
-        Owned<IFileIO> fileio = file->open(IFOread);
+    else
+    {
+        Owned<IFileIO> fileio;
+        if (compressed)
+            fileio.setown(createCompressedFileReader(file, eexp, UseMemoryMappedRead));
+        else
+            fileio.setown(file->open(IFOread));
         if (!fileio)
             return NULL;
-        ret = new CRowStreamReader(fileio,NULL,offset,len,rowif,maxrows,tallycrc,grouped);
+        return new CRowStreamReader(fileio, NULL, rowIf, offset, len, maxrows, rwFlags & rw_crc, rwFlags & rw_grouped);
     }
-    return ret;
 }
 
-IExtRowStream *createCompressedRowStream(IFile *file,IRowInterfaces *rowif,offset_t offset,offset_t len,unsigned __int64 maxrows,bool tallycrc,bool grouped,IExpander *eexp)
+IExtRowStream *createRowStream(IFile *file, IRowInterfaces *rowIf, unsigned rwFlags, IExpander *eexp)
 {
-    Owned<IFileIO> fileio = createCompressedFileReader(file, eexp, UseMemoryMappedRead);
-    if (!fileio)
-        return NULL;
-    IExtRowStream *ret = new CRowStreamReader(fileio,NULL,offset,len,rowif,maxrows,tallycrc,grouped);
-    return ret;
+    return createRowStreamEx(file, rowIf, 0, (offset_t)-1, (unsigned __int64)-1, rwFlags, eexp);
 }
+
 
 void useMemoryMappedRead(bool on)
 {
@@ -1505,20 +1507,45 @@ public:
 unsigned CRowStreamWriter::wrnum=0;
 #endif
 
-IExtRowWriter *createRowWriter(IFile *file,IOutputRowSerializer *serializer,IEngineRowAllocator *allocator,bool grouped, bool tallycrc, bool extend)
+IExtRowWriter *createRowWriter(IFile *iFile, IRowInterfaces *rowIf, unsigned flags, ICompressor *compressor)
 {
-    Owned<IFileIO> fileio = file->open(extend?IFOwrite:IFOcreate);
-    if (!fileio)
+    OwnedIFileIO iFileIO;
+    if (flags & rw_compress)
+    {
+        flags &= ~((unsigned)rw_crc); // no crc'ing if compressed
+        size32_t fixedSize = rowIf->queryRowMetaData()->querySerializedMeta()->getFixedSize();
+        if (fixedSize && (flags & rw_grouped))
+            ++fixedSize; // row writer will include a grouping byte
+        iFileIO.setown(createCompressedFileWriter(iFile, fixedSize, flags & rw_extend, flags & rw_crc, compressor, flags & rw_fastlz));
+    }
+    else
+        iFileIO.setown(iFile->open((flags & rw_extend)?IFOwrite:IFOcreate));
+    if (!iFileIO)
         return NULL;
-    Owned<IFileIOStream> stream = createIOStream(fileio);
-    if (extend)
-        stream->seek(0,IFSend);
-    return createRowWriter(stream,serializer,allocator,grouped,tallycrc,true);
+    flags &= ~((unsigned)(rw_compress|rw_fastlz));
+    return createRowWriter(iFileIO, rowIf, flags);
 }
 
-IExtRowWriter *createRowWriter(IFileIOStream *strm,IOutputRowSerializer *serializer,IEngineRowAllocator *allocator,bool grouped, bool tallycrc, bool autoflush)
+IExtRowWriter *createRowWriter(IFileIO *iFileIO, IRowInterfaces *rowIf, unsigned flags)
 {
-    Owned<CRowStreamWriter> writer = new CRowStreamWriter(strm, serializer, allocator, grouped, tallycrc, autoflush);
+    if (0 != (flags & rw_compress))
+        throw MakeStringException(0, "Unsupported createRowWriter flags");
+    Owned<IFileIOStream> stream;
+    if (flags & rw_buffered)
+        stream.setown(createBufferedIOStream(iFileIO));
+    else
+        stream.setown(createIOStream(iFileIO));
+    if (flags & rw_extend)
+        stream->seek(0, IFSend);
+    flags &= ~((unsigned)(rw_extend|rw_buffered));
+    return createRowWriter(stream, rowIf, flags);
+}
+
+IExtRowWriter *createRowWriter(IFileIOStream *strm, IRowInterfaces *rowIf, unsigned flags)
+{
+    if (0 != (flags & (rw_compress|rw_fastlz|rw_extend|rw_buffered)))
+        throw MakeStringException(0, "Unsupported createRowWriter flags");
+    Owned<CRowStreamWriter> writer = new CRowStreamWriter(strm, rowIf->queryRowSerializer(), rowIf->queryRowAllocator(), flags & rw_grouped, flags & rw_crc, flags & rw_autoflush);
     return writer.getClear();
 }
 
@@ -1563,7 +1590,7 @@ public:
         tempname.append('.').append(tempfiles.ordinality()).append('_').append((__int64)GetCurrentThreadId()).append('_').append((unsigned)GetCurrentProcessId());
         IFile *file = createIFile(tempname.str());
         tempfiles.append(*file);
-        return createRowWriter(file,rowInterfaces->queryRowSerializer(),rowInterfaces->queryRowAllocator(),false,false,false); // flushed by close
+        return createRowWriter(file, rowInterfaces, 0); // flushed by close
     }
     void put(const void **rows,unsigned numrows)
     {
@@ -1590,7 +1617,7 @@ public:
         strms = (IRowStream **)calloc(numstrms,sizeof(IRowStream *));
         unsigned i;
         for (i=0;i<numstrms;i++) {
-            strms[i] = createSimpleRowStream(&tempfiles.item(i), rowInterfaces);
+            strms[i] = createRowStream(&tempfiles.item(i), rowInterfaces);
         }
         if (numstrms==1) 
             return LINK(strms[0]);

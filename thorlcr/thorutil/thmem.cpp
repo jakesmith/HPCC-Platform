@@ -266,7 +266,10 @@ class CSharedSpillableRowSet : public CSpillableStreamBase, implements IInterfac
             else if (owner->spillFile) // i.e. has spilt
             {
                 assertex(((offset_t)-1) != outputOffset);
-                spillStream.setown(::createRowStream(owner->spillFile, owner->rowIf, outputOffset, (offset_t)-1, (unsigned __int64)-1, false, owner->preserveNulls));
+                unsigned rwFlags = DEFAULT_RWFLAGS;
+                if (owner->preserveNulls)
+                    rwFlags |= rw_grouped;
+                spillStream.setown(::createRowStreamEx(owner->spillFile, owner->rowIf, outputOffset, (offset_t)-1, (unsigned __int64)-1, rwFlags));
                 return spillStream->nextRow();
             }
             return owner->rows.get(pos++);
@@ -297,7 +300,12 @@ public:
             // already spilled?
             CThorSpillableRowArray::CThorSpillableRowArrayLock block(rows);
             if (spillFile)
-                return ::createRowStream(spillFile, rowIf, 0, (offset_t)-1, (unsigned __int64)-1, false, preserveNulls);
+            {
+                unsigned rwFlags = DEFAULT_RWFLAGS;
+                if (preserveNulls)
+                    rwFlags |= rw_grouped;
+                return ::createRowStream(spillFile, rowIf, rwFlags);
+            }
         }
         return new CStream(*this);
     }
@@ -341,7 +349,10 @@ public:
             CThorSpillableRowArray::CThorSpillableRowArrayLock block(rows);
             if (spillFile)
             {
-                spillStream.setown(createRowStream(spillFile, rowIf, 0, (offset_t)-1, (unsigned __int64)-1, false, preserveNulls));
+                unsigned rwFlags = DEFAULT_RWFLAGS;
+                if (preserveNulls)
+                    rwFlags |= rw_grouped;
+                spillStream.setown(createRowStream(spillFile, rowIf, rwFlags));
                 return spillStream->nextRow();
             }
             rowidx_t fetch = rows.numCommitted();
@@ -1020,10 +1031,13 @@ rowidx_t CThorSpillableRowArray::save(IFile &iFile, rowidx_t watchRecNum, offset
     rowidx_t n = numCommitted();
     if (0 == n)
         return 0;
+    ActPrintLog(&activity, "CThorSpillableRowArray::save %"RIPF"d rows", n);
+    unsigned rwFlags = DEFAULT_RWFLAGS;
+    if (allowNulls)
+        rwFlags |= rw_grouped;
+    Owned<IExtRowWriter> writer = createRowWriter(&iFile, rowIf, rwFlags);
+
     const void **rows = getBlock(n);
-    Owned<IExtRowWriter> writer = createRowWriter(&iFile, rowIf->queryRowSerializer(), rowIf->queryRowAllocator(), allowNulls, false, true);
-    ActPrintLog(&activity, "CThorSpillableRowArray::save %"RIPF"d rows", numRows);
-    offset_t startPos = writer->getPosition();
     for (rowidx_t i=0; i < n; i++)
     {
         const void *row = rows[i];
@@ -1041,7 +1055,7 @@ rowidx_t CThorSpillableRowArray::save(IFile &iFile, rowidx_t watchRecNum, offset
         }
     }
     writer->flush();
-    offset_t bytesWritten = writer->getPosition() - startPos;
+    offset_t bytesWritten = writer->getPosition();
     writer.clear();
     ActPrintLog(&activity, "CThorSpillableRowArray::save done, bytes = %"I64F"d", (__int64)bytesWritten);
     return n;
@@ -1213,7 +1227,10 @@ protected:
         ForEachItemIn(f, spillFiles)
         {
             CFileOwner *fileOwner = spillFiles.item(f);
-            Owned<IExtRowStream> strm = createRowStream(&fileOwner->queryIFile(), rowIf, 0, (offset_t) -1, (unsigned __int64)-1, false, preserveGrouping);
+            unsigned rwFlags = DEFAULT_RWFLAGS;
+            if (preserveGrouping)
+                rwFlags |= rw_grouped;
+            Owned<IExtRowStream> strm = createRowStream(&fileOwner->queryIFile(), rowIf, rwFlags);
             instrms.append(* new CStreamFileOwner(fileOwner, strm));
         }
 
