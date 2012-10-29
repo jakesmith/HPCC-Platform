@@ -37,6 +37,12 @@ enum DAFS_OS
 
 extern REMOTE_API void filenameToUrl(StringBuffer & out, const char * filename);
 
+interface IDaFileSrvHook : extends IRemoteFileCreateHook
+{
+    virtual void addSubnetFilter(const char *subnet, const char *mask) = 0;
+    virtual void addSubnetFilters(IPropertyTree *filters) = 0;
+};
+extern REMOTE_API IDaFileSrvHook *queryDaFileSrvHook();
 extern REMOTE_API unsigned short getDaliServixPort();  // assumed just the one for now
 extern REMOTE_API void setCanAccessDirectly(RemoteFilename & file,bool set);
 extern REMOTE_API void setDaliServixSocketCaching(bool set);

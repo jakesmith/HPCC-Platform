@@ -2796,6 +2796,22 @@ int main(int argc, char* argv[])
     InitModuleObjects();
 
     EnableSEHtoExceptionMapping();
+#if 1
+    {
+        IpSubNet subnet("10.173.0.0", "255.255.0.0");
+
+        SocketEndpoint ep1("10.173.1.1");
+        SocketEndpoint ep2("10.173.4.200");
+        SocketEndpoint ep3("10.174.4.200");
+        SocketEndpoint ep4("11.173.4.200");
+
+        bool tf = subnet.test(ep1);
+        tf = subnet.test(ep2);
+        tf = subnet.test(ep3);
+        tf = subnet.test(ep4);
+        return 0;
+    }
+#endif
 
     try {
         StringBuffer cmd;

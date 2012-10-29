@@ -62,8 +62,10 @@ void setLocalMountRedirect(const IpAddress &ip,const char *dir,const char *mount
 
 
 
-class CDaliServixIntercept: public CInterface, implements IRemoteFileCreateHook
+MAKEValueArray(IpSubNet, IpSubNetArray);
+class CDaliServixIntercept: public CInterface, implements IDaFileSrvHook
 {
+    IpSubNetArray translateToLocal;
 public:
     IMPLEMENT_IINTERFACE;
     virtual IFile * createIFile(const RemoteFilename & filename)
@@ -71,10 +73,24 @@ public:
         SocketEndpoint ep = filename.queryEndpoint();
         bool noport = (ep.port==0);
         setDafsEndpointPort(ep);
-        if (!filename.isLocal()||(ep.port!=DAFILESRV_PORT)) {   // assume standard port is running on local machine 
+        if (!filename.isLocal()||(ep.port!=DAFILESRV_PORT)) // assume standard port is running on local machine
+        {
 #ifdef __linux__
-#ifndef USE_SAMBA   
-            return createDaliServixFile(filename);  
+#ifndef USE_SAMBA
+            if (noport && translateToLocal.ordinality())
+            {
+                ForEachItemIn(sn, translateToLocal)
+                {
+                    const IpSubNet &ipSubNet = translateToLocal.item(sn);
+                    if (ipSubNet.test(ep))
+                    {
+                        StringBuffer lPath;
+                        filename.getLocalPath(lPath);
+                        return ::createIFile(lPath.str());
+                    }
+                }
+            }
+            return createDaliServixFile(filename);
 #endif
 #endif
             if (!noport)            // expect all filenames that specify port to be dafilesrc or daliservix
@@ -87,7 +103,25 @@ public:
                 return createDaliServixFile(filename);  
         }
         return NULL;
-    }   
+    }
+    virtual void addSubnetFilter(const char *subnet, const char *mask)
+    {
+        IpSubNet ipSubNet;
+        if (!ipSubNet.set(subnet, mask))
+            throw MakeStringException(0, "Invalid sub net definition: %s, %s", subnet, mask);
+        translateToLocal.append(ipSubNet);
+    }
+    virtual void addSubnetFilters(IPropertyTree *filters)
+    {
+        Owned<IPropertyTreeIterator> iter = filters->getElements("Filter");
+        ForEach(*iter)
+        {
+            IPropertyTree &filter = iter->query();
+            const char *subnet = filter.queryProp("@subnet");
+            const char *mask = filter.queryProp("@mask");
+            addSubnetFilter(subnet, mask);
+        }
+    }
 } *DaliServixIntercept = NULL;
 
 bool testDaliServixPresent(const SocketEndpoint &_ep)
@@ -717,3 +751,7 @@ MODULE_EXIT()
     removeFileHooks();
 }
 
+IDaFileSrvHook *queryDaFileSrvHook()
+{
+    return DaliServixIntercept;
+}

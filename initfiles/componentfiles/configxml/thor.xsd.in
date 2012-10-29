@@ -223,7 +223,7 @@
         <xs:element name="Storage">
           <xs:annotation>
             <xs:appinfo>
-              <title>Backup</title>
+              <title>Storage</title>
               <tooltip>Options for mirroring thor data</tooltip>
             </xs:appinfo>
           </xs:annotation>

@@ -606,6 +606,9 @@ int main( int argc, char *argv[]  )
             FLLOG(MCoperatorError, thorJob, "ERROR: Validate failure(s) detected, exiting Thor");
             return globals->getPropBool("@validateDAFSretCode"); // default is no recycle!
         }
+        IDaFileSrvHook *daFileSrvHook = queryDaFileSrvHook();
+        if (daFileSrvHook) // probably always installed
+            daFileSrvHook->addSubnetFilters(globals->queryPropTree("Storage/NAS"));
         
         HardwareInfo hdwInfo;
         getHardwareInfo(hdwInfo);

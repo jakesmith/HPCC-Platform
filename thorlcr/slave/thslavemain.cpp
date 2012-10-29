@@ -46,6 +46,7 @@
 #include "slave.hpp"
 #include "portlist.h"
 #include "dafdesc.hpp"
+#include "rmtfile.hpp"
 
 #include "slavmain.hpp"
 
@@ -299,6 +300,10 @@ int main( int argc, char *argv[]  )
         startLogMsgParentReceiver();
         LOG(MCdebugProgress, thorJob, "MPServer started on port %d", getFixedPort(TPORT_mp));
 #endif
+
+        IDaFileSrvHook *daFileSrvHook = queryDaFileSrvHook();
+        if (daFileSrvHook) // probably always installed
+            daFileSrvHook->addSubnetFilters(globals->queryPropTree("Storage/NAS"));
 
         SocketEndpoint masterEp(master);
         localHostToNIC(masterEp);
