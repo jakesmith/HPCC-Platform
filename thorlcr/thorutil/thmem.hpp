@@ -222,10 +222,11 @@ protected:
     IEngineRowAllocator *allocator;
     IOutputRowSerializer *serializer;
     IOutputRowDeserializer *deserializer;
+    roxiemem::IRowResizeCallback *resizeRowsCallback, *resizeStableTableCallback;
 
     roxiemem::IRowManager *rowManager;
     const void **rows;
-    void **stableSortTmp;
+    void **stableTable;
     bool throwOnOom; // tested during array expansion (ensure())
     bool allowNulls;
     StableSortFlag stableSort;
@@ -233,9 +234,10 @@ protected:
     rowidx_t numRows;  // High water mark of rows added
 
     void init(rowidx_t initialSize, StableSortFlag stableSort);
-    void **allocateStableTable(bool error); // allocates stable table based on std. ptr table
     const void *allocateRowTable(rowidx_t num);
     const void *allocateNewRows(rowidx_t requiredRows);
+    rowidx_t getNewSize(rowidx_t requiredRows);
+    bool resizeRowTable(void **&oldRows, rowidx_t num, bool copy, rowidx_t &newRowCapacity, roxiemem::IRowResizeCallback *callback);
     void serialize(IRowSerializerTarget &out);
     void doSort(rowidx_t n, void **const rows, ICompare &compare, unsigned maxCores);
     inline rowidx_t getRowsCapacity() const { return rows ? RoxieRowCapacity(rows) / sizeof(void *) : 0; }
@@ -330,8 +332,7 @@ public:
     void deserializeRow(IRowDeserializerSource &in); // NB single row not NULL
     void deserialize(size32_t sz, const void *buf);
     void deserializeExpand(size32_t sz, const void *data);
-
-    virtual bool ensure(rowidx_t requiredRows);
+    bool ensure(rowidx_t requiredRows);
 };
 
 interface IWritePosCallback : extends IInterface
@@ -458,7 +459,7 @@ public:
     }
     void deserialize(size32_t sz, const void *buf, bool hasNulls){ CThorExpandingRowArray::deserialize(sz, buf); }
     void deserializeRow(IRowDeserializerSource &in) { CThorExpandingRowArray::deserializeRow(in); }
-    virtual bool ensure(rowidx_t requiredRows);
+    bool ensure(rowidx_t requiredRows) { return CThorExpandingRowArray::ensure(requiredRows); }
 };
 
 
