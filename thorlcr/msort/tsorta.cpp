@@ -103,9 +103,9 @@ void CThorKeyArray::expandfpos()
 
 void CThorKeyArray::add(const void *row)
 {
-    
+    IOutputRowSerializer *serializer = keyserializer?keyif->queryRowSerializer():rowif->queryRowSerializer();
     CSizingSerializer ssz;
-    rowif->queryRowSerializer()->serialize(ssz,(const byte *)row);
+    serializer->serialize(ssz,(const byte *)row);
     size32_t recsz = ssz.size();
     totalfilesize += recsz;
     if (filepos)
@@ -448,6 +448,7 @@ void CThorKeyArray::calcPositions(IFile *file,CThorKeyArray &sample)
     for (unsigned i0=0;i0<ordinality();i0++)
         filepos->append(-1);
     filerecsize = 0;
+    IOutputRowSerializer *serializer = keyserializer?keyif->queryRowSerializer():rowif->queryRowSerializer();
     ForEachItemIn(i,*filepos)
     {
         OwnedConstThorRow row = getRow(i);
@@ -465,7 +466,7 @@ void CThorKeyArray::calcPositions(IFile *file,CThorKeyArray &sample)
             if (cmp>=0) 
                 break;
             CSizingSerializer ssz;
-            rowif->queryRowSerializer()->serialize(ssz,(const byte *)rowcmp.get());
+            serializer->serialize(ssz,(const byte *)rowcmp.get());
             pos += ssz.size();
         }
         //PROGLOG("CThorKeyArray::calcPositions %d: initpos = %"I64F"d pos = %"I64F"d",i,initpos,pos);
