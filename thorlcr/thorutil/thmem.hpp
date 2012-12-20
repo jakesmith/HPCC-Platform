@@ -214,6 +214,11 @@ graph_decl StringBuffer &getRecordString(const void *key, IOutputRowSerializer *
 
 enum StableSortFlag { stableSort_none, stableSort_earlyAlloc, stableSort_lateAlloc };
 class CThorSpillableRowArray;
+
+interface IThorResizeCallback : extends roxiemem::IRowResizeCallback
+{
+    virtual memsize_t getMaxSize() = 0;
+};
 class graph_decl CThorExpandingRowArray : public CSimpleInterface
 {
 protected:
@@ -222,7 +227,7 @@ protected:
     IEngineRowAllocator *allocator;
     IOutputRowSerializer *serializer;
     IOutputRowDeserializer *deserializer;
-    roxiemem::IRowResizeCallback *resizeRowsCallback, *resizeStableTableCallback;
+    IThorResizeCallback *resizeRowsCallback, *resizeStableTableCallback;
 
     roxiemem::IRowManager *rowManager;
     const void **rows;
@@ -237,7 +242,7 @@ protected:
     const void *allocateRowTable(rowidx_t num);
     const void *allocateNewRows(rowidx_t requiredRows);
     rowidx_t getNewSize(rowidx_t requiredRows);
-    bool resizeRowTable(void **&oldRows, rowidx_t num, bool copy, rowidx_t &newRowCapacity, roxiemem::IRowResizeCallback *callback);
+    bool resizeRowTable(void **&oldRows, rowidx_t num, bool copy, rowidx_t &newRowCapacity, IThorResizeCallback *callback);
     void serialize(IRowSerializerTarget &out);
     void doSort(rowidx_t n, void **const rows, ICompare &compare, unsigned maxCores);
     inline rowidx_t getRowsCapacity() const { return rows ? RoxieRowCapacity(rows) / sizeof(void *) : 0; }

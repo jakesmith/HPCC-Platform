@@ -442,18 +442,26 @@ rowidx_t CThorExpandingRowArray::getNewSize(rowidx_t requiredRows)
     return newSize;
 }
 
-bool CThorExpandingRowArray::resizeRowTable(void **&oldRows, rowidx_t num, bool copy, rowidx_t &newRowCapacity, roxiemem::IRowResizeCallback *callback)
+bool CThorExpandingRowArray::resizeRowTable(void **&oldRows, rowidx_t num, bool copy, rowidx_t &newRowCapacity, IThorResizeCallback *callback)
 {
     try
     {
         //NB: if callback supplied, it will update row ptr
         if (oldRows)
         {
-            memsize_t capacity;
-            void **newRows = (void **)rowManager->resizeRow(oldRows, copy?RoxieRowCapacity(oldRows):0, num * sizeof(void *), activity.queryContainer().queryId(), capacity, callback);
-            if (!callback)
-                oldRows = newRows;
-            newRowCapacity = capacity / sizeof(void *);
+            if (callback)
+            {
+                rowManager->resizeRow(oldRows, copy?RoxieRowCapacity(oldRows):0, num * sizeof(void *), activity.queryContainer().queryId(), *callback);
+                newRowCapacity = callback->getMaxSize() / sizeof(void *);
+            }
+            else
+            {
+                memsize_t capacity;
+                void *ptr = (void *)oldRows;
+                rowManager->resizeRow(capacity, ptr, copy?RoxieRowCapacity(oldRows):0, num * sizeof(void *), activity.queryContainer().queryId());
+                oldRows = (void **)ptr;
+                newRowCapacity = capacity / sizeof(void *);
+            }
         }
         else
         {
@@ -996,20 +1004,22 @@ CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity, IRowInte
 {
     commitRows = 0;
     firstRow = 0;
-    class CResizeRowCallback : implements roxiemem::IRowResizeCallback
+    class CResizeRowCallback : implements IThorResizeCallback
     {
         CThorSpillableRowArray &parent;
         void **&rows;
+        memsize_t capacity;
     public:
-        CResizeRowCallback(CThorSpillableRowArray &_parent, void **&_rows) : parent(_parent), rows(_rows) { }
+        CResizeRowCallback(CThorSpillableRowArray &_parent, void **&_rows) : parent(_parent), rows(_rows), capacity(0) { }
         virtual void lock() { parent.lock(); }
         virtual void unlock() { parent.unlock(); }
-        virtual void update(memsize_t capacity, void * ptr) { rows = (void **)ptr; }
+        virtual void update(memsize_t _capacity, void * ptr) { capacity = _capacity; rows = (void **)ptr; }
         virtual void atomicUpdate(memsize_t capacity, void * ptr)
         {
             CThorSpillableRowArray::CThorSpillableRowArrayLock block(parent);
             update(capacity, ptr);
         }
+        virtual memsize_t getMaxSize() { return capacity; }
     };
     resizeRowsCallback = new CResizeRowCallback(*this, (void **&)rows);
     resizeStableTableCallback = new CResizeRowCallback(*this, stableTable);
