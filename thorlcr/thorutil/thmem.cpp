@@ -185,7 +185,7 @@ protected:
 
     bool spillRows()
     {
-        // NB: Should always be called whilst 'rows' is locked (with CThorSpillableRowArrayLock)
+        // NB: Should always be called whilst 'rows' is locked (with CThorArrayLockBlock)
         rowidx_t numRows = rows.numCommitted();
         if (0 == numRows)
             return false;
@@ -224,7 +224,7 @@ public:
     }
     virtual bool freeBufferedRows(bool critical)
     {
-        CThorSpillableRowArray::CThorSpillableRowArrayLock block(rows);
+        CThorArrayLockBlock block(rows);
         return spillRows();
     }
 };
@@ -259,7 +259,7 @@ class CSharedSpillableRowSet : public CSpillableStreamBase, implements IInterfac
         {
             if (spillStream)
                 return spillStream->nextRow();
-            CThorSpillableRowArray::CThorSpillableRowArrayLock block(owner->rows);
+            CThorArrayLockBlock block(owner->rows);
             if (pos == owner->rows.numCommitted())
                 return NULL;
             else if (owner->spillFile) // i.e. has spilt
@@ -297,7 +297,7 @@ public:
     {
         {
             // already spilled?
-            CThorSpillableRowArray::CThorSpillableRowArrayLock block(rows);
+            CThorArrayLockBlock block(rows);
             if (spillFile)
             {
                 unsigned rwFlags = DEFAULT_RWFLAGS;
@@ -346,7 +346,7 @@ public:
             return spillStream->nextRow();
         if (pos == numReadRows)
         {
-            CThorSpillableRowArray::CThorSpillableRowArrayLock block(rows);
+            CThorArrayLockBlock block(rows);
             if (spillFile)
             {
                 unsigned rwFlags = DEFAULT_RWFLAGS;
@@ -379,6 +379,25 @@ public:
 
 //====
 
+class CResizeRowCallback : implements roxiemem::IRowResizeCallback
+{
+    IThorArrayLock &alock;
+    void **&rows;
+    memsize_t &capacity;
+public:
+    CResizeRowCallback(void **&_rows, memsize_t &_capacity, IThorArrayLock &_alock) : rows(_rows), capacity(_capacity), alock(_alock) { }
+    virtual void lock() { alock.lock(); }
+    virtual void unlock() { alock.unlock(); }
+    virtual void update(memsize_t _capacity, void * ptr) { capacity = _capacity; rows = (void **)ptr; }
+    virtual void atomicUpdate(memsize_t capacity, void * ptr)
+    {
+        CThorArrayLockBlock block(alock);
+        update(capacity, ptr);
+    }
+};
+
+//====
+
 void CThorExpandingRowArray::init(rowidx_t initialSize, StableSortFlag _stableSort)
 {
     rowManager = activity.queryJob().queryRowManager();
@@ -401,7 +420,6 @@ void CThorExpandingRowArray::init(rowidx_t initialSize, StableSortFlag _stableSo
         maxRows = 0;
     }
     numRows = 0;
-    resizeRowsCallback = resizeStableTableCallback = NULL;
 }
 
 const void *CThorExpandingRowArray::allocateRowTable(rowidx_t num)
@@ -442,35 +460,16 @@ rowidx_t CThorExpandingRowArray::getNewSize(rowidx_t requiredRows)
     return newSize;
 }
 
-bool CThorExpandingRowArray::resizeRowTable(void **&oldRows, rowidx_t num, bool copy, rowidx_t &newRowCapacity, IThorResizeCallback *callback)
+bool CThorExpandingRowArray::resizeRowTable(void **oldRows, memsize_t newCapacity, bool copy, roxiemem::IRowResizeCallback &callback)
 {
     try
     {
-        //NB: if callback supplied, it will update row ptr
         if (oldRows)
-        {
-            if (callback)
-            {
-                rowManager->resizeRow(oldRows, copy?RoxieRowCapacity(oldRows):0, num * sizeof(void *), activity.queryContainer().queryId(), *callback);
-                newRowCapacity = callback->getMaxSize() / sizeof(void *);
-            }
-            else
-            {
-                memsize_t capacity;
-                void *ptr = (void *)oldRows;
-                rowManager->resizeRow(capacity, ptr, copy?RoxieRowCapacity(oldRows):0, num * sizeof(void *), activity.queryContainer().queryId());
-                oldRows = (void **)ptr;
-                newRowCapacity = capacity / sizeof(void *);
-            }
-        }
+            rowManager->resizeRow(oldRows, copy?RoxieRowCapacity(oldRows):0, newCapacity, activity.queryContainer().queryId(), callback);
         else
         {
-            void **newRows = (void **)rowManager->allocate(num * sizeof(void *), activity.queryContainer().queryId());
-            newRowCapacity = RoxieRowCapacity(newRows) / sizeof(void *);
-            if (callback)
-                callback->atomicUpdate(newRowCapacity, newRows);
-            else
-                oldRows = newRows;
+            void **newRows = (void **)rowManager->allocate(newCapacity, activity.queryContainer().queryId());
+            callback.atomicUpdate(RoxieRowCapacity(newRows), newRows);
         }
     }
     catch (IException * e)
@@ -668,11 +667,13 @@ bool CThorExpandingRowArray::ensure(rowidx_t requiredRows)
         return true;
 
     // NB: only ensure alters row capacity, so no locking required to protect getRowsCapacity()
+    memsize_t capacity = rows ? RoxieRowCapacity(rows) : 0;
     rowidx_t currentMaxRows = getRowsCapacity();
     if (currentMaxRows < requiredRows) // check, because may have expanded previously, but failed to allocate stableTable and set new maxRows
     {
-        rowidx_t newSize = getNewSize(requiredRows);
-        if (!resizeRowTable((void ** &)rows, newSize, true, currentMaxRows, resizeRowsCallback))
+        capacity = ((memsize_t)getNewSize(requiredRows)) * sizeof(void *);
+        CResizeRowCallback callback((void ** &)rows, capacity, *this);
+        if (!resizeRowTable((void **)rows, capacity, true, callback)) // callback will reset newCapacity
         {
             if (throwOnOom)
                 throw MakeActivityException(&activity, 0, "Out of memory, allocating row array, had %"RIPF"d, trying to allocate %"RIPF"d elements", ordinality(), requiredRows);
@@ -681,8 +682,9 @@ bool CThorExpandingRowArray::ensure(rowidx_t requiredRows)
     }
     if (stableSort_earlyAlloc == stableSort)
     {
-        rowidx_t dummy;
-        if (!resizeRowTable(stableTable, currentMaxRows, false, dummy, resizeStableTableCallback))
+        memsize_t dummy;
+        CResizeRowCallback callback(stableTable, dummy, *this);
+        if (!resizeRowTable(stableTable, currentMaxRows, false, callback))
         {
             if (throwOnOom)
                 throw MakeActivityException(&activity, 0, "Out of memory, resizing stable row array, trying to allocate %"RIPF"d elements", currentMaxRows);
@@ -694,11 +696,8 @@ bool CThorExpandingRowArray::ensure(rowidx_t requiredRows)
     }
 
     // Both row tables updated, only now update maxRows
-    if (resizeRowsCallback)
-        resizeRowsCallback->lock();
-    maxRows = currentMaxRows;
-    if (resizeRowsCallback)
-        resizeRowsCallback->unlock();
+    CThorArrayLockBlock block(*this);
+    maxRows = capacity / sizeof(void *);
     return true;
 }
 
@@ -989,13 +988,13 @@ void CThorExpandingRowArray::deserializeExpand(size32_t sz, const void *data)
 
 void CThorSpillableRowArray::registerWriteCallback(IWritePosCallback &cb)
 {
-    CThorSpillableRowArrayLock block(*this);
+    CThorArrayLockBlock block(*this);
     writeCallbacks.append(cb); // NB not linked to avoid circular dependency
 }
 
 void CThorSpillableRowArray::unregisterWriteCallback(IWritePosCallback &cb)
 {
-    CThorSpillableRowArrayLock block(*this);
+    CThorArrayLockBlock block(*this);
     writeCallbacks.zap(cb);
 }
 
@@ -1004,32 +1003,11 @@ CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity, IRowInte
 {
     commitRows = 0;
     firstRow = 0;
-    class CResizeRowCallback : implements IThorResizeCallback
-    {
-        CThorSpillableRowArray &parent;
-        void **&rows;
-        memsize_t capacity;
-    public:
-        CResizeRowCallback(CThorSpillableRowArray &_parent, void **&_rows) : parent(_parent), rows(_rows), capacity(0) { }
-        virtual void lock() { parent.lock(); }
-        virtual void unlock() { parent.unlock(); }
-        virtual void update(memsize_t _capacity, void * ptr) { capacity = _capacity; rows = (void **)ptr; }
-        virtual void atomicUpdate(memsize_t capacity, void * ptr)
-        {
-            CThorSpillableRowArray::CThorSpillableRowArrayLock block(parent);
-            update(capacity, ptr);
-        }
-        virtual memsize_t getMaxSize() { return capacity; }
-    };
-    resizeRowsCallback = new CResizeRowCallback(*this, (void **&)rows);
-    resizeStableTableCallback = new CResizeRowCallback(*this, stableTable);
 }
 
 CThorSpillableRowArray::~CThorSpillableRowArray()
 {
     clearRows();
-    delete resizeRowsCallback;
-    delete resizeStableTableCallback;
 }
 
 void CThorSpillableRowArray::clearRows()
@@ -1109,7 +1087,7 @@ const void **CThorSpillableRowArray::getBlock(rowidx_t readRows)
 
 void CThorSpillableRowArray::flush()
 {
-    CThorSpillableRowArrayLock block(*this);
+    CThorArrayLockBlock block(*this);
     dbgassertex(numRows >= commitRows);
     //This test could be improved...
     if (firstRow != 0 && firstRow == commitRows)
@@ -1125,14 +1103,14 @@ void CThorSpillableRowArray::flush()
 
 void CThorSpillableRowArray::transferFrom(CThorExpandingRowArray &src)
 {
-    CThorSpillableRowArrayLock block(*this);
+    CThorArrayLockBlock block(*this);
     CThorExpandingRowArray::transferFrom(src);
     commitRows = numRows;
 }
 
 void CThorSpillableRowArray::swap(CThorSpillableRowArray &other)
 {
-    CThorSpillableRowArrayLock block(*this);
+    CThorArrayLockBlock block(*this);
     CThorExpandingRowArray::swap(other);
     rowidx_t otherFirstRow = other.firstRow;
     rowidx_t otherCommitRows = other.commitRows;
@@ -1213,7 +1191,7 @@ protected:
             bool oom = false;
             if (spillingEnabled())
             {
-                CThorSpillableRowArray::CThorSpillableRowArrayLock block(spillableRows);
+                CThorArrayLockBlock block(spillableRows);
                 //We should have been called back to free any committed rows, but occasionally it may not (e.g., if
                 //the problem is global memory is exhausted) - in which case force a spill here (but add any pending
                 //rows first).
@@ -1248,7 +1226,7 @@ protected:
                 // i.e. all disk OR (some on disk already AND allDiskOrAllMem)
                 if (((rc_allDisk == diskMemMix) || ((rc_allDiskOrAllMem == diskMemMix) && overflowCount)))
                 {
-                    CThorSpillableRowArray::CThorSpillableRowArrayLock block(spillableRows);
+                    CThorArrayLockBlock block(spillableRows);
                     if (spillableRows.numCommitted())
                     {
                         spillRows();
@@ -1279,7 +1257,7 @@ protected:
             // Otherwise there is potential for deadlock with the callback mechanism, if it is in the midst of calling this callback.
             clearSpillingCallback();
 
-            CThorSpillableRowArray::CThorSpillableRowArrayLock block(spillableRows);
+            CThorArrayLockBlock block(spillableRows);
             if (spillableRowSet)
                 instrms.append(*spillableRowSet->createRowStream());
             else if (spillableRows.numCommitted())
@@ -1363,7 +1341,7 @@ public:
     }
     void transferRowsOut(CThorExpandingRowArray &out, bool sort)
     {
-        CThorSpillableRowArray::CThorSpillableRowArrayLock block(spillableRows);
+        CThorArrayLockBlock block(spillableRows);
         spillableRows.flush();
         totalRows += spillableRows.numCommitted();
         if (sort && iCompare)
@@ -1419,7 +1397,7 @@ public:
     {
         if (!spillingEnabled())
             return false;
-        CThorSpillableRowArray::CThorSpillableRowArrayLock block(spillableRows);
+        CThorArrayLockBlock block(spillableRows);
         return spillRows();
     }
 };
