@@ -77,6 +77,7 @@ class CThorKeyArray
     size32_t filerecsize;
     size32_t filerecnum;
     offset_t totalfilesize;
+    bool fixedSize;
 
 
 
@@ -84,7 +85,7 @@ class CThorKeyArray
     offset_t findLessEqRowPos(const void * row);
     offset_t findLessRowPos(const void * row);
     int keyRowCompare(unsigned keyidx,const void *row);
-    void expandfpos();
+    void expandFPos();
     const void *queryKey(unsigned idx) { return keys.query(idx); }
     const void *getRow(unsigned idx);
     int binchopPartition(const void * row,bool lt);
