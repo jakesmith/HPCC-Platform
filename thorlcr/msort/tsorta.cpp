@@ -65,7 +65,6 @@ CThorKeyArray::CThorKeyArray(
     icompare = _icompare;
     ikeycompare = _ikeycompare?_ikeycompare:(_serializer?NULL:_icompare);
     irowkeycompare = _irowkeycompare?_irowkeycompare:(_serializer?NULL:_icompare);
-    fixedSize = rowif->queryRowMetaData()->querySerializedDiskMeta()->isFixedSize();
 }
 
 void CThorKeyArray::clear()
@@ -78,7 +77,6 @@ void CThorKeyArray::clear()
     totalfilesize = 0;
     filerecsize = 0;
     filerecnum = 0;
-    index = 0;
 }
 
 void CThorKeyArray::setSampling(size32_t _maxsamplesize, unsigned _divisor)
@@ -86,7 +84,7 @@ void CThorKeyArray::setSampling(size32_t _maxsamplesize, unsigned _divisor)
     maxsamplesize = _maxsamplesize;
     serialrowsize = 0;
     sizes.clear();
-    index = 0;
+    assertex(filerecnum==0); // must not have been added to already
     divisor = _divisor?_divisor:1;
 }
 
@@ -95,9 +93,9 @@ void CThorKeyArray::expandFPos()
     if (!filepos)
     {
         filepos.setown(new Int64Array);
-        filepos->ensure(filerecnum+1);
-        for (unsigned i=0;i<filerecnum;i++)
-            filepos->append(i*(offset_t)filerecsize);
+        filepos->ensure(keys.ordinality());
+        for (unsigned i=0;i<keys.ordinality();i++)
+            filepos->append(getFixedFilePos(i));
         filerecsize = 0;
     }
 }
@@ -115,8 +113,7 @@ void CThorKeyArray::add(const void *row)
     if (maxsamplesize)
     {
         // only in use after a split()
-        ++index;
-        if ((index%divisor) != (divisor-1))
+        if ((filerecnum-1)%divisor != 0)
             return;
     }
 
@@ -284,11 +281,6 @@ void CThorKeyArray::sort()
             newsizes->append(sizes->item(ra[i]));
         sizes.setown(newsizes.getClear());
     }
-    OwnedPtr<Int64Array> newpos(new Int64Array);
-    newpos->ensure(n);
-    for (i = 0; i<n; i++)
-        newpos->append(filepos?filepos->item(ra[i]):filerecsize*(offset_t)ra[i]);
-    filepos.setown(newpos.getClear());
     keys.reorder(0,n,ra);
     delete [] ra;
 }
@@ -325,14 +317,6 @@ void CThorKeyArray::createSortedPartition(unsigned pn)
         }
         sizes.setown(newsizes.getClear());
     }
-    OwnedPtr<Int64Array> newpos(new Int64Array);
-    newpos->ensure(pn);
-    for (i = 0; i<pn; i++)
-    {
-        unsigned p = i*n/pn;
-        newpos->append(filepos?filepos->item(ra[p]):filerecsize*(offset_t)ra[p]);
-    }
-    filepos.setown(newpos.getClear());
     CThorExpandingRowArray newrows(activity, rowif);
     newrows.ensure(pn);
     for (i = 1; i<pn; i++)
@@ -432,7 +416,7 @@ offset_t CThorKeyArray::findLessEqRowPos(const void * row)
         return (offset_t)-1;
     if (filepos)
         return filepos->item(p);
-    return p*filerecsize;
+    return getFixedFilePos(p);
 }
 
 offset_t CThorKeyArray::findLessRowPos(const void * row) 
@@ -442,7 +426,7 @@ offset_t CThorKeyArray::findLessRowPos(const void * row)
         return (offset_t)-1;
     if (filepos)
         return filepos->item(p);
-    return p*filerecsize;
+    return getFixedFilePos(p);
 }
 
 void CThorKeyArray::calcPositions(IFile *file,CThorKeyArray &sample)
@@ -523,8 +507,6 @@ void CThorKeyArray::split()
         newSizes.setown(new UnsignedArray);
         newSizes->ensure(n);
     }
-    if (!fixedSize) // may have yet have been expanded if variable if all equal until now
-        expandFPos(); // expand before sampling begins
     if (filepos)
     {
         newFilePos.setown(new Int64Array);
@@ -551,11 +533,15 @@ void CThorKeyArray::split()
         filepos.setown(newFilePos.getClear());
 }
 
-offset_t CThorKeyArray::getFilePos(unsigned idx)
+offset_t CThorKeyArray::getFixedFilePos(unsigned i)
 {
-    return idx<ordinality()?(filepos?filepos->item(idx):idx*filerecsize):totalfilesize;
+    return i*divisor*((offset_t)filerecsize);
 }
 
+offset_t CThorKeyArray::getFilePos(unsigned idx)
+{
+    return idx<ordinality()?(filepos?filepos->item(idx):getFixedFilePos(idx)):totalfilesize;
+}
 
 void traceKey(IOutputRowSerializer *serializer, const char *prefix,const void *key)
 {
