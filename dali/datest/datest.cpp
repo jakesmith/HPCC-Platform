@@ -35,6 +35,8 @@
 
 #include "jptree.hpp"
 
+#include "zoo.hpp"
+
 #define DEFAULT_TEST "RANDTEST"
 static const char *whichTest = DEFAULT_TEST;
 static StringArray testParams;
@@ -1766,13 +1768,88 @@ void TestSubLocks()
     PrintLog("SubLocks test done");
 }
 
+void handleFile(const char *filename)
+{
+    CDfsLogicalFileName lname;
+    lname.set(filename);
+    StringBuffer query;
+    lname.makeFullnameQuery(query,DXB_File,true);
+
+    PROGLOG("lname = %s", query.str());
+
+    StringBuffer saveFName;
+    unsigned s;
+    unsigned l = strlen(filename);
+    const char *c = filename;
+    for (s=0; s<l; s++)
+    {
+        if (*c == ':')
+            saveFName.append('_');
+        else
+            saveFName.append(*c);
+        ++c;
+    }
+    saveFName.append(".xml");
+    try
+    {
+        PROGLOG("Connectin to : %s", query.str());
+        Owned<IRemoteConnection> conn = querySDS().connect(query.str(), myProcessSession(), RTM_LOCK_WRITE|RTM_DELETE_ON_DISCONNECT, 2000*MDELAY);
+        if (!conn)
+        {
+            PROGLOG("File %s not found", query.str());
+            return;
+        }
+        IPropertyTree *root = conn->queryRoot();
+        PROGLOG("Saving to: %s", saveFName.str());
+        saveXML(saveFName.str(), root);
+        PROGLOG("Saved to: %s", saveFName.str());
+    }
+    catch (IException *e)
+    {
+        StringBuffer errStr("Whilst dealing with :");
+        errStr.append(query);
+        EXCLOG(e, errStr.str());
+    }
+}
+
 void TestSDS1()
 {
     StringBuffer xml;
     ISDSManager &sdsManager = querySDS();
     IRemoteConnection *conn;
     IPropertyTree *root;
-
+#if 1
+    {
+        Owned<IFile> iFile = createIFile("/home/jsmith/ecl/aband2.txt");
+        OwnedIFileIO iFileIO = iFile->open(IFOread);
+        size32_t s = iFileIO->size();
+        MemoryBuffer mb;
+        const char *buf = (const char *)mb.reserveTruncate(s);
+        size32_t r = iFileIO->read(0, s, (void*)buf);
+        const char *ebuf = buf+r;
+        const char *p = buf;
+        bool end = false;
+        loop
+        {
+            const char *eol = strchr(p, '\n');
+            if (!eol)
+            {
+                end = true;
+                eol = buf + s;
+            }
+            StringBuffer line(eol-p, p);
+            handleFile(line.str());
+            if (end)
+                break;
+            if (!end)
+                eol++; // skip \n
+            p = eol;
+            if (end || (p == ebuf))
+                break;
+        }
+        return;
+    }
+#endif
 #ifdef TSUB
     Owned<TestSubscription> ts = new TestSubscription();
     SubscriptionId id = querySDS().subscribe("/subtest", *ts, false, true);
@@ -2790,12 +2867,37 @@ void usage(const char *error=NULL)
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
+
 int main(int argc, char* argv[])
-{   
+{
     ReleaseAtomBlock rABlock;
     InitModuleObjects();
 
     EnableSEHtoExceptionMapping();
+
+
+#if 0
+{
+    using namespace zoo;
+
+    try
+    {
+        Owned<IZooClient> zoo = createZooClient("localhost:2181");
+
+        Owned<ILock> myLock = zoo->createLock("/WorkUnits/W20130413-010000", ZOOLOCK_WRITE, 60000);
+        myLock->changeMode(ZOOLOCK_READ, 60000);
+        myLock->changeMode(ZOOLOCK_WRITE, 60000);
+    }
+    catch (IException *e)
+    {
+        EXCLOG(e, NULL);
+        e->Release();
+        return 1;
+    }
+    return 0;
+}
+#endif
+
 
     try {
         StringBuffer cmd;

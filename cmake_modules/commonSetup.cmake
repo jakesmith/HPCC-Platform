@@ -46,6 +46,7 @@ IF ("${COMMONSETUP_DONE}" STREQUAL "")
 
   option(USE_BINUTILS "Enable use of binutils to embed workunit info into shared objects" ON)
   option(USE_CPPUNIT "Enable unit tests (requires cppunit)" OFF)
+  option(USE_ZOOKEEPER "Enable zookeeper" ON)
   option(USE_OPENLDAP "Enable OpenLDAP support (requires OpenLDAP)" ON)
   option(USE_ICU "Enable unicode support (requires ICU)" ON)
   option(USE_BOOST_REGEX "Configure use of boost regex" ON)
@@ -498,6 +499,17 @@ IF ("${COMMONSETUP_DONE}" STREQUAL "")
       else()
         add_definitions (-D_NO_MYSQL)
       endif(USE_MYSQL)
+
+      IF (USE_ZOOKEEPER)
+        find_package(ZOOKEEPER)
+        IF (ZOOKEEPER_FOUND)
+          add_definitions (-D_USE_ZOOKEEPER)
+          include_directories(${ZOOKEEPER_INCLUDE_DIR})
+        ELSE()
+          message(FATAL_ERROR "ZOOKEEPER requested but package not found")
+        ENDIF()
+      ENDIF(USE_ZOOKEEPER)
+
   ENDIF()
   ###########################################################################
   ###

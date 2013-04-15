@@ -25,6 +25,7 @@ project( datest )
 
 set (    SRCS 
          datest.cpp 
+         zoo.cpp
     )
 
 include_directories ( 
@@ -34,6 +35,7 @@ include_directories (
          . 
          ./../../system/include 
          ./../../system/jlib 
+         ${ZOOKEEPER_INCLUDE_DIR}
     )
 
 HPCC_ADD_EXECUTABLE ( datest ${SRCS} )
@@ -44,7 +46,8 @@ target_link_libraries ( datest
          hrpc 
          remote 
          dalibase 
-                 ${CPPUNIT_LIBRARIES}
+         ${CPPUNIT_LIBRARIES}
+         ${ZOOKEEPER_LIBRARIES}
     )
 
 
