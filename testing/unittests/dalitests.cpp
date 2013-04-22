@@ -443,6 +443,7 @@ void dispFDesc(IFileDescriptor *fdesc)
 class DaliTests : public CppUnit::TestFixture
 {
     CPPUNIT_TEST_SUITE( DaliTests );
+#if 0
         CPPUNIT_TEST(testDFS);
 //        CPPUNIT_TEST(testReadAllSDS); // Ignoring this test; See comments below
         CPPUNIT_TEST(testSDSRW);
@@ -456,10 +457,12 @@ class DaliTests : public CppUnit::TestFixture
         CPPUNIT_TEST(testMisc);
         CPPUNIT_TEST(testDFile);
 #endif
-        CPPUNIT_TEST(testDFSTrans);
-        CPPUNIT_TEST(testDFSPromote);
-        CPPUNIT_TEST(testDFSDel);
-        CPPUNIT_TEST(testDFSRename);
+#endif
+//        CPPUNIT_TEST(testDFSTrans);
+//        CPPUNIT_TEST(testDFSPromote);
+//        CPPUNIT_TEST(testDFSDel);
+//        CPPUNIT_TEST(testDFSRename);
+        CPPUNIT_TEST(testDFSClearAdd);
     CPPUNIT_TEST_SUITE_END();
 
 #ifndef COMPAT
@@ -1502,6 +1505,32 @@ public:
         printf("Renaming 'regress::rename::other2 to 'sub2' on auto-commit\n");
         dir.renamePhysical("regress::rename::other2", "regress::rename::sub2", user, transaction);
         ASSERT(dir.exists("regress::rename::sub2", user, true, false) && "Renamed from other2 failed");
+    }
+
+    void testDFSClearAdd()
+    {
+        Owned<IDistributedFileTransaction> transaction = createDistributedFileTransaction(user); // disabled, auto-commit
+
+        if (dir.exists("regress::rename::other1",user,false,false))
+            ASSERT(dir.removeEntry("regress::rename::other1", user) && "Can't remove 'regress::rename::other1'");
+        if (dir.exists("regress::rename::other2",user,false,false))
+            ASSERT(dir.removeEntry("regress::rename::other2", user) && "Can't remove 'regress::rename::other2'");
+
+        setupDFS("clearadd");
+
+        // Sub-file deletion
+        logctx.CTXLOG("Creating regress::clearadd::super1 and attaching sub");
+        Owned<IDistributedSuperFile> sfile = dir.createSuperFile("regress::clearadd::super1", user, false, false, transaction);
+        sfile->addSubFile("regress::clearadd::sub1", false, NULL, false, transaction);
+        sfile->addSubFile("regress::clearadd::sub4", false, NULL, false, transaction);
+        sfile.clear();
+
+        sfile.setown(transaction->lookupSuperFileCached("regress::clearadd::super1"));
+        logctx.CTXLOG("Clearing regress::clearadd, within transaction");
+        sfile->removeSubFile(NULL, false, false, transaction);
+        logctx.CTXLOG("Adding back sub1 to super1, within transaction");
+        sfile->addSubFile("regress::clearadd::sub1", false, NULL, false, transaction);
+        sfile.clear();
     }
 };
 

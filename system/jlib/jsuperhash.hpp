@@ -383,6 +383,7 @@ class StringHTMapping : public CInterface
 public:
     StringHTMapping(const char *_fp, ET &_et) : fp(_fp), et(_et) { }
     const char *queryFindString() const { return fp; }
+    ET &query() { return this->et; }
 
 protected:
     ET &et;
@@ -396,7 +397,6 @@ class OwningStringHTMapping : public StringHTMapping<ET>
 public:
     OwningStringHTMapping(const char *fp, ET &et) : StringHTMapping<ET>(fp, et) { }
     ~OwningStringHTMapping() { this->et.Release(); }
-    ET &query() { return this->et; }
     ET &get() { this->et.Link(); return this->et; }
 };
 
