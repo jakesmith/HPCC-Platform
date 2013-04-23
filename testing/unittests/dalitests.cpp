@@ -462,7 +462,9 @@ class DaliTests : public CppUnit::TestFixture
 //        CPPUNIT_TEST(testDFSPromote);
 //        CPPUNIT_TEST(testDFSDel);
 //        CPPUNIT_TEST(testDFSRename);
-        CPPUNIT_TEST(testDFSClearAdd);
+//        CPPUNIT_TEST(testDFSClearAdd);
+//        CPPUNIT_TEST(testDFSRename2);
+        CPPUNIT_TEST(testDFSRename3);
     CPPUNIT_TEST_SUITE_END();
 
 #ifndef COMPAT
@@ -1509,28 +1511,123 @@ public:
 
     void testDFSClearAdd()
     {
-        Owned<IDistributedFileTransaction> transaction = createDistributedFileTransaction(user); // disabled, auto-commit
-
-        if (dir.exists("regress::rename::other1",user,false,false))
-            ASSERT(dir.removeEntry("regress::rename::other1", user) && "Can't remove 'regress::rename::other1'");
-        if (dir.exists("regress::rename::other2",user,false,false))
-            ASSERT(dir.removeEntry("regress::rename::other2", user) && "Can't remove 'regress::rename::other2'");
-
         setupDFS("clearadd");
 
-        // Sub-file deletion
+        Owned<IDistributedFileTransaction> transaction = createDistributedFileTransaction(user); // disabled, auto-commit
+
         logctx.CTXLOG("Creating regress::clearadd::super1 and attaching sub");
         Owned<IDistributedSuperFile> sfile = dir.createSuperFile("regress::clearadd::super1", user, false, false, transaction);
         sfile->addSubFile("regress::clearadd::sub1", false, NULL, false, transaction);
         sfile->addSubFile("regress::clearadd::sub4", false, NULL, false, transaction);
         sfile.clear();
 
-        sfile.setown(transaction->lookupSuperFileCached("regress::clearadd::super1"));
+        transaction.setown(createDistributedFileTransaction(user)); // disabled, auto-commit
+        transaction->start();
+
+        logctx.CTXLOG("Looking up regress::clearadd::super1");
+        sfile.setown(transaction->lookupSuperFile("regress::clearadd::super1"));
         logctx.CTXLOG("Clearing regress::clearadd, within transaction");
         sfile->removeSubFile(NULL, false, false, transaction);
+        sfile.clear();
+        sfile.setown(transaction->lookupSuperFileCached("regress::clearadd::super1"));
         logctx.CTXLOG("Adding back sub1 to super1, within transaction");
         sfile->addSubFile("regress::clearadd::sub1", false, NULL, false, transaction);
         sfile.clear();
+        try
+        {
+            transaction->commit();
+        }
+        catch (IException *e)
+        {
+            StringBuffer eStr;
+            e->errorMessage(eStr);
+            CPPUNIT_ASSERT_MESSAGE(eStr.str(), 0);
+            e->Release();
+        }
+    }
+
+    void testDFSRename2()
+    {
+        setupDFS("rename2");
+
+        Owned<IDistributedFileTransaction> transaction = createDistributedFileTransaction(user); // disabled, auto-commit
+
+        logctx.CTXLOG("Creating regress::rename2::super1 and attaching sub");
+        Owned<IDistributedSuperFile> sfile = dir.createSuperFile("regress::rename2::super1", user, false, false, transaction);
+        sfile->addSubFile("regress::rename2::sub1", false, NULL, false, transaction);
+        sfile->addSubFile("regress::rename2::sub4", false, NULL, false, transaction);
+        sfile.clear();
+
+        transaction.setown(createDistributedFileTransaction(user)); // disabled, auto-commit
+        transaction->start();
+
+        logctx.CTXLOG("Renaming regress::rename2::sub2 TO regress::rename2::renamedsub2");
+        dir.renamePhysical("regress::rename2::sub2", "regress::rename2::renamedsub2", user, transaction);
+
+        logctx.CTXLOG("Looking up regress::rename2::super1");
+        sfile.setown(transaction->lookupSuperFile("regress::rename2::super1"));
+        logctx.CTXLOG("Removing regress::rename2::sub1 from regress::rename2::super1");
+        sfile->removeSubFile("regress::rename2::sub1", false, false, transaction);
+        sfile.clear();
+        sfile.setown(transaction->lookupSuperFileCached("regress::rename2::super1"));
+        logctx.CTXLOG("Adding back sub1 to super1");
+        sfile->addSubFile("regress::rename2::sub1", false, NULL, false, transaction);
+        sfile.clear();
+        sfile.setown(transaction->lookupSuperFileCached("regress::rename2::super1"));
+        logctx.CTXLOG("Adding renamedsub2 to super1");
+        sfile->addSubFile("regress::rename2::renamedsub2", false, NULL, false, transaction);
+        sfile.clear();
+        try
+        {
+            transaction->commit();
+        }
+        catch (IException *e)
+        {
+            StringBuffer eStr;
+            e->errorMessage(eStr);
+            CPPUNIT_ASSERT_MESSAGE(eStr.str(), 0);
+            e->Release();
+        }
+    }
+
+    void testDFSRename3()
+    {
+        setupDFS("rename3");
+
+        Owned<IDistributedFileTransaction> transaction = createDistributedFileTransaction(user); // disabled, auto-commit
+
+        Owned<IDistributedFile> file = transaction->lookupFile("regress::rename3::sub1");
+        Owned<IFileDescriptor> fdesc = file->getFileDescriptor();
+        Owned<IGroup> grp1 = createIGroup("10.239.222.1");
+        ClusterPartDiskMapSpec mapping;
+        fdesc->setClusterGroup(0, grp1);
+
+        const char *fname = "regress::tenwayfile";
+
+        if (dir.exists(fname,user))
+            ASSERT(dir.removeEntry(fname, user) && "Can't remove");
+
+        Owned<IDistributedFile> dsub = dir.createNew(fdesc, fname);
+        dsub->attach(fname, user);
+        dsub.clear();
+
+        transaction.setown(createDistributedFileTransaction(user)); // disabled, auto-commit
+        transaction->start();
+
+        logctx.CTXLOG("Renaming regress::rename3::sub2 TO %s", fname);
+        dir.renamePhysical("regress::rename3::sub2", "regress::tenwayfile@mythor", user, transaction);
+
+        try
+        {
+            transaction->commit();
+        }
+        catch (IException *e)
+        {
+            StringBuffer eStr;
+            e->errorMessage(eStr);
+            CPPUNIT_ASSERT_MESSAGE(eStr.str(), 0);
+            e->Release();
+        }
     }
 };
 
