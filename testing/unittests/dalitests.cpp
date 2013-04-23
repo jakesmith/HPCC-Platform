@@ -461,10 +461,10 @@ class DaliTests : public CppUnit::TestFixture
 //        CPPUNIT_TEST(testDFSTrans);
 //        CPPUNIT_TEST(testDFSPromote);
 //        CPPUNIT_TEST(testDFSDel);
-//        CPPUNIT_TEST(testDFSRename);
+        CPPUNIT_TEST(testDFSRename);
 //        CPPUNIT_TEST(testDFSClearAdd);
 //        CPPUNIT_TEST(testDFSRename2);
-        CPPUNIT_TEST(testDFSRename3);
+//        CPPUNIT_TEST(testDFSRename3);
     CPPUNIT_TEST_SUITE_END();
 
 #ifndef COMPAT

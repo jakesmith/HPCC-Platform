@@ -7059,14 +7059,12 @@ public:
  */
 class CRenameFileAction: public CDFAction
 {
-    CDfsLogicalFileName logicalname;
-    CDfsLogicalFileName newName;
+    CDfsLogicalFileName fromName, toName;
     CDistributedFileDirectory *parent;
     Linked<IDistributedFile> file;
     IUserDescriptor *user;
-    bool mergeinto, splitfrom;
-    CDfsLogicalFileName toName;
-    StringBuffer oldcluster, newcluster;
+    bool renamed;
+    enum RenameAction { ra_regular, ra_splitfrom, ra_mergeinto } ra;
 
 public:
     CRenameFileAction(IDistributedFileTransaction *_transaction,
@@ -7076,69 +7074,71 @@ public:
                       const char *_newname)
         : CDFAction(_transaction), user(_user), parent(_parent)
     {
-        logicalname.set(_flname);
+        fromName.set(_flname);
         // Basic consistency checking
-        newName.set(_newname);
-        if (newName.isExternal())
+        toName.set(_newname);
+        if (toName.isExternal())
             throw MakeStringException(-1,"rename: cannot rename to external file");
-        if (newName.isForeign())
+        if (toName.isForeign())
             throw MakeStringException(-1,"rename: cannot rename to foreign file");
         // Make sure files are not the same
-        if (0 == strcmp(logicalname.get(), newName.get()))
-            ThrowStringException(-1, "rename: cannot rename file %s to itself", newName.get());
+        if (0 == strcmp(fromName.get(), toName.get()))
+            ThrowStringException(-1, "rename: cannot rename file %s to itself", toName.get());
 
-        // We *have* to make sure the source file exists and can be renamed
-        file.setown(transaction->lookupFile(logicalname.get(), SDS_SUB_LOCK_TIMEOUT));
-        if (!file)
-            ThrowStringException(-1, "rename: file %s doesn't exist in the file system", logicalname.get());
-        if (file->querySuperFile())
-            throw MakeStringException(-1,"rename: cannot rename file %s as is SuperFile",_flname);
-        StringBuffer reason;
-        if (!file->canRemove(reason))
-            throw MakeStringException(-1,"rename: %s",reason.str());
-        mergeinto = splitfrom = false;
+        ra = ra_regular;
+        renamed = false;
     }
-    virtual ~CRenameFileAction() {}
     bool prepare()
     {
+        // We *have* to make sure the source file exists and can be renamed
+        file.setown(transaction->lookupFile(fromName.get(), SDS_SUB_LOCK_TIMEOUT));
+        if (!file)
+            ThrowStringException(-1, "rename: file %s doesn't exist in the file system", fromName.get());
+        if (file->querySuperFile())
+            ThrowStringException(-1,"rename: cannot rename file %s as is SuperFile", fromName.get()); // Why not
+        StringBuffer reason;
+        if (!file->canRemove(reason))
+            ThrowStringException(-1,"rename: %s",reason.str());
         addFileLock(file);
-        mergeinto = splitfrom = false;
+        renamed = false;
         if (lock())
         {
-            logicalname.getCluster(oldcluster);
-            newName.getCluster(newcluster);
+            StringBuffer oldcluster, newcluster;
+            fromName.getCluster(oldcluster);
+            toName.getCluster(newcluster);
 
-            Owned<IDistributedFile> newFile = transaction->lookupFile(newName.get(), SDS_SUB_LOCK_TIMEOUT);
+            Owned<IDistributedFile> newFile = transaction->lookupFile(toName.get(), SDS_SUB_LOCK_TIMEOUT);
             if (newFile)
             {
                 if (newcluster.length())
                 {
                     if (oldcluster.length())
-                        throw MakeStringException(-1,"rename: cannot specify both source and destination clusters on rename");
+                        ThrowStringException(-1,"rename: cannot specify both source and destination clusters on rename");
                     if (newFile->findCluster(newcluster.str())!=NotFound)
-                        throw MakeStringException(-1,"rename: cluster %s already part of file %s",newcluster.str(),newName.get());
+                        ThrowStringException(-1,"rename: cluster %s already part of file %s",newcluster.str(),toName.get());
                     if (file->numClusters()!=1)
-                        throw MakeStringException(-1,"rename: source file %s has more than one cluster",logicalname.get());
+                        ThrowStringException(-1,"rename: source file %s has more than one cluster",fromName.get());
                     // check compatible here ** TBD
-                    mergeinto = true;
+                    ra = ra_mergeinto;
                 }
                 else
-                    ThrowStringException(-1, "rename: file %s already exist in the file system", newName.get());
+                    ThrowStringException(-1, "rename: file %s already exist in the file system", toName.get());
             }
             else if (oldcluster.length())
             {
                 if (newcluster.length())
-                    throw MakeStringException(-1,"rename: cannot specify both source and destination clusters on rename");
+                    ThrowStringException(-1,"rename: cannot specify both source and destination clusters on rename");
                 if (file->numClusters()==1)
-                    throw MakeStringException(-1,"rename: cannot rename sole cluster %s",oldcluster.str());
+                    ThrowStringException(-1,"rename: cannot rename sole cluster %s",oldcluster.str());
                 if (file->findCluster(oldcluster.str())==NotFound)
-                    throw MakeStringException(-1,"rename: cannot find cluster %s",oldcluster.str());
-                splitfrom = true;
+                    ThrowStringException(-1,"rename: cannot find cluster %s",oldcluster.str());
+                ra = ra_splitfrom;
             }
             else
             {
                 // TODO: something should check that file being renamed is not a subfile of a super where both created in transaction
-                transaction->noteRename(file, newName.get());
+                transaction->noteRename(file, toName.get());
+                ra = ra_regular;
             }
             return true;
         }
@@ -7147,27 +7147,44 @@ public:
     }
     void run()
     {
-        doRename(newName.get());
+        doRename(fromName, toName, ra);
+        renamed = true;
     }
-
     void rollback()
     {
         // Only roll back if already renamed
-        const char * filename = file->queryLogicalName();
-        if (strcmp(filename, logicalname.get()) != 0)
-            doRename(logicalname.get());
+        if (renamed)
+        {
+            switch (ra)
+            {
+                case ra_regular:
+                    doRename(toName, fromName, ra_regular);
+                    break;
+                case ra_splitfrom:
+                    doRename(toName, fromName, ra_mergeinto);
+                    break;
+                case ra_mergeinto:
+                    doRename(toName, fromName, ra_splitfrom);
+                    break;
+                default:
+                    throwUnexpected();
+            }
+            renamed = false;
+        }
         CDFAction::rollback();
     }
 
 private:
-    void doRename(const char *to)
+    void doRename(CDfsLogicalFileName &from, CDfsLogicalFileName &to, RenameAction ra)
     {
         CriticalBlock block(physicalChange);
 
-        // Rename current file to dest name
+        StringBuffer oldcluster, newcluster;
+        fromName.getCluster(oldcluster);
+        toName.getCluster(newcluster);
 
         Owned<IDistributedFile> oldfile;
-        if (splitfrom)
+        if (ra_splitfrom == ra)
         {
             oldfile.setown(file.getClear());
             Owned<IFileDescriptor> newdesc = oldfile->getFileDescriptor(oldcluster.str());
@@ -7176,38 +7193,47 @@ private:
 
         // Physical Rename
         Owned<IMultiException> exceptions = MakeMultiException();
-        if (!file->renamePhysicalPartFiles(newName.get(),newcluster,exceptions))
+        if (!file->renamePhysicalPartFiles(to.get(),newcluster,exceptions))
         {
             unlock();
             StringBuffer errors;
             exceptions->errorMessage(errors);
-            ThrowStringException(-1, "rename: could not rename logical file %s to %s: %s", logicalname.get(), newName.get(), errors.str());
+            ThrowStringException(-1, "rename: could not rename logical file %s to %s: %s", fromName.get(), to.get(), errors.str());
         }
 
         // Logical rename and cleanup
-        if (splitfrom)
+        switch (ra)
         {
-            oldfile->removeCluster(oldcluster.str());
-            file->attach(newName.get(), user);
-        }
-        else if (mergeinto)
-        {
-            Owned<IDistributedFile> newFile = transaction->lookupFile(newName.get(), SDS_SUB_LOCK_TIMEOUT);
-            ClusterPartDiskMapSpec mspec = file->queryPartDiskMapping(0);
-            // Unlock the old file
-            unlock();
-            file->detach();
-            newFile->addCluster(newcluster.str(),mspec);
-            parent->fixDates(newFile);
-            addFileLock(newFile);
-            lock();
-        }
-        else
-        {
-            // We need to unlock the old file / re-lock the new file
-            unlock();
-            file->rename(newName.get(),user);
-            lock();
+            case ra_splitfrom:
+            {
+                oldfile->removeCluster(oldcluster.str());
+                file->attach(to.get(), user);
+                break;
+            }
+            case ra_mergeinto:
+            {
+                Owned<IDistributedFile> newFile = transaction->lookupFile(to.get(), SDS_SUB_LOCK_TIMEOUT);
+                ClusterPartDiskMapSpec mspec = file->queryPartDiskMapping(0);
+                // Unlock the old file
+                unlock();
+                file->detach();
+                newFile->addCluster(newcluster.str(),mspec);
+                parent->fixDates(newFile);
+                addFileLock(newFile);
+                file.setown(newFile.getClear());
+                lock();
+                break;
+            }
+            case ra_regular:
+            {
+                // We need to unlock the old file / re-lock the new file
+                unlock();
+                file->rename(to.get(), user);
+                lock();
+                break;
+            }
+            default:
+                throwUnexpected();
         }
         // MORE: If the logical rename fails, we should roll back the physical renaming
         // What if the physical renaming-back fails?!
