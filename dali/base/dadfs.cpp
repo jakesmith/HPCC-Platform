@@ -845,6 +845,7 @@ interface IDistributedFileTransactionExt : extends IDistributedFileTransaction
     virtual void addAction(CDFAction *action)=0; // internal (so why is this on a public interface?)
     virtual void removeAction(CDFAction *action) = 0;
     virtual void addFile(IDistributedFile *file)=0;
+    virtual void clearFile(IDistributedFile *file)=0;
     virtual void clearFiles()=0; // internal (so why is this on a public interface?)
     virtual void noteAddSubFile(IDistributedSuperFile *super, const char *superName, IDistributedFile *sub) = 0;
     virtual void noteRemoveSubFile(IDistributedSuperFile *super, IDistributedFile *sub) = 0;
@@ -1196,7 +1197,6 @@ public:
 
     void doDelete() // Throw on error!
     {
-        // JCSMORE - what if file has been renamed b
         const char *logicalname = lfn.get();
         if (!checkLogicalName(lfn,user,true,true,true,"remove"))
             ThrowStringException(-1, "Logical Name fails for removal on %s", lfn.get());
@@ -1584,6 +1584,15 @@ public:
     {
         trackedFiles.kill();
         trackedFilesByName.kill();
+    }
+    void clearFile(IDistributedFile *file)
+    {
+        CTransactionFile *trackedFile = lookupTrackedFile(file);
+        if (trackedFile)
+        {
+            trackedFiles.removeExact(trackedFile);
+            trackedFilesByName.removeExact(trackedFile);
+        }
     }
 
     IUserDescriptor *queryUser()
@@ -2893,8 +2902,6 @@ public:
 
 class CDistributedFile: public CDistributedFileBase<IDistributedFile>
 {
-    // If detachment is logic-only (used *only* on rename)
-    bool detachLogic; // MORE: find a better way of doing this
 protected:
     Owned<IFileDescriptor> fdesc;
     CDistributedFilePartArray parts;            // use queryParts to access
@@ -2982,7 +2989,6 @@ public:
         setClusters(fdesc);
         setPreferredClusters(_parent->defprefclusters);
         setParts(fdesc,false);
-        detachLogic = false;
         //shrinkFileTree(root); // enable when safe!
     }
 
@@ -3042,7 +3048,6 @@ public:
 #ifdef EXTRA_LOGGING
         LOGPTREE("CDistributedFile.b root.2",root);
 #endif
-        detachLogic = false;
     }
 
     void killParts()
@@ -3530,19 +3535,12 @@ public:
 #endif
     void detachLogical(unsigned timeoutms=INFINITE)
     {
-        detachLogic = true;
-        try {
-            detach(timeoutms);
-        } catch (...) {
-            detachLogic = false;
-            throw;
-        }
-        detachLogic = false;
+        detach(timeoutms, false);
     }
 
 public:
 
-    void detach(unsigned timeoutms=INFINITE)
+    void detach(unsigned timeoutms=INFINITE, bool removePhysicalParts=true)
     {
         assert(proplockcount == 0 && "CDistributedFile detach: Some properties are still locked");
         assertex(!isAnon()); // not attached!
@@ -3552,9 +3550,8 @@ public:
         logicalName.getCluster(clustername);
 
         // Avoid removing physically when there is no physical representation
-        bool remphys = !detachLogic;
         if (logicalName.isMulti() || logicalName.isExternal())
-            remphys = false;
+            removePhysicalParts = false;
 
         // Clean up file and remove from SDS only if this is the last
         // cluster it belongs to, since we should be able to still remove
@@ -3584,7 +3581,8 @@ public:
         }
 
         // Remove parts, physically
-        if (remphys) {
+        if (removePhysicalParts)
+        {
             CriticalBlock block(physicalChange);
             Owned<IMultiException> exceptions = MakeMultiException("CDistributedFile::detach");
             removePhysicalPartFiles(clustername.str(),exceptions);
@@ -5111,7 +5109,7 @@ public:
         root.setown(conn->getRoot());
     }
 
-    void detach(unsigned timeoutms=INFINITE)
+    void detach(unsigned timeoutms=INFINITE, bool removePhysicalParts=true)
     {   
         // will need more thought but this gives limited support for anon
         if (isAnon())
@@ -7279,8 +7277,10 @@ private:
         {
             case ra_splitfrom:
             {
+                unlock();
                 oldfile->removeCluster(oldcluster.str());
                 file->attach(to.get(), user);
+                lock();
                 break;
             }
             case ra_mergeinto:
@@ -7289,17 +7289,26 @@ private:
                 ClusterPartDiskMapSpec mspec = file->queryPartDiskMapping(0);
                 // Unlock the old file
                 unlock();
-                file->detach();
+                file->detach(INFINITE, false); // don't delete physicals, now used by newFile
+                transaction->clearFile(file); // no long used in transaction
                 newFile->addCluster(newcluster.str(),mspec);
                 parent->fixDates(newFile);
-                addFileLock(newFile);
-                file.setown(newFile.getClear());
+                // need to clear and re-lookup as changed outside of transaction
+                // TBD: Allow 'addCluster' 'fixDates' etc. to be delayed/work inside transaction
+                transaction->clearFile(newFile);
+                newFile.clear();
+                file.setown(transaction->lookupFile(to.get(), SDS_SUB_LOCK_TIMEOUT));
+                addFileLock(file);
                 lock();
                 break;
             }
             case ra_regular:
             {
-                // We need to unlock the old file / re-lock the new file
+                /* It is not enough to unlock this action locks on the file being renamed,
+                 * because other actions, before and after may hold locks to the same file.
+                 * For now, IDistributeFile::rename, needs to work on a lock free instance.
+                 * TBD: Allow IDistributedFile::rename to work properly within transaction.
+                 */
                 DistributedFilePropertyLockFree unlock(file);
                 file->rename(to.get(), user);
                 break;
@@ -7445,7 +7454,7 @@ void CDistributedFileDirectory::renamePhysical(const char *oldname,const char *n
     else
         localtrans.setown(new CDistributedFileTransaction(user));
 
-    CRenameFileAction *action = new CRenameFileAction(this, user, oldlogicalname.get(), newname);
+    CRenameFileAction *action = new CRenameFileAction(this, user, oldname, newname);
     localtrans->addAction(action); // takes ownership
     localtrans->autoCommit();
 }

@@ -215,7 +215,7 @@ interface IDistributedFile: extends IInterface
     virtual const char *queryPartMask() = 0;                                    // default part name mask
 
     virtual void attach(const char *logicalname,IUserDescriptor *user) = 0;     // attach to name in DFS
-    virtual void detach(unsigned timeoutms=INFINITE) = 0;                       // no longer attached to name in DFS
+    virtual void detach(unsigned timeoutms=INFINITE, bool removePhysicalParts=true) = 0;                       // no longer attached to name in DFS
 
     virtual IPropertyTree &queryAttributes() = 0;                               // DFile attributes
 
