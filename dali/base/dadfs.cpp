@@ -835,6 +835,25 @@ public:
 };
 
 
+// Internal extension of transaction interface, used to manipulate and track transaction
+interface IDistributedFileTransactionExt : extends IDistributedFileTransaction
+{
+    virtual IUserDescriptor *queryUser()=0;
+    virtual void descend()=0;  // descend into a recursive call (can't autoCommit if depth is not zero)
+    virtual void ascend()=0;   // ascend back from the deep, one step at a time
+    virtual void autoCommit()=0; // if transaction not active, commit straight away
+    virtual void addAction(CDFAction *action)=0; // internal (so why is this on a public interface?)
+    virtual void removeAction(CDFAction *action) = 0;
+    virtual void addFile(IDistributedFile *file)=0;
+    virtual void clearFiles()=0; // internal (so why is this on a public interface?)
+    virtual void noteAddSubFile(IDistributedSuperFile *super, const char *superName, IDistributedFile *sub) = 0;
+    virtual void noteRemoveSubFile(IDistributedSuperFile *super, IDistributedFile *sub) = 0;
+    virtual void noteRename(IDistributedFile *file, const char *newName) = 0;
+    virtual void validateAddSubFile(IDistributedSuperFile *super, IDistributedFile *sub, const char *subName) = 0;
+    virtual bool isSubFile(IDistributedSuperFile *super, const char *subFile, bool sub) = 0;
+    virtual bool addDelayedDelete(CDfsLogicalFileName &lfn,unsigned timeoutms=INFINITE)=0; // used internally to delay deletes until commit
+};
+
 class CDistributedFileDirectory: public CInterface, implements IDistributedFileDirectory
 {
     Owned<IUserDescriptor> defaultudesc;
@@ -962,7 +981,7 @@ class CDFAction: public CInterface
 {
     unsigned locked;
 protected:
-    Linked<IDistributedFileTransaction> transaction;
+    IDistributedFileTransactionExt *transaction;
     IArrayOf<IDistributedFile> lockedFiles;
     DFTransactionState state;
     void addFileLock(IDistributedFile* file)
@@ -1005,14 +1024,22 @@ protected:
         lockedFiles.kill();
     }
 public:
-    CDFAction(IDistributedFileTransaction *_transaction) : locked(0), state(TAS_NONE)
+    CDFAction() : locked(0), state(TAS_NONE)
     {
-        assertex(_transaction);
-        transaction.set(_transaction);
-        transaction->addAction(this);
+        transaction = NULL;
     }
     // Clear all locked files (when re-using transaction on auto-commit mode)
-    virtual ~CDFAction() { unlock(); }
+    virtual ~CDFAction()
+    {
+        if (transaction)
+            unlock();
+    }
+    void setTransaction(IDistributedFileTransactionExt *_transaction)
+    {
+        assertex(_transaction);
+        assertex(!transaction);
+        transaction = _transaction;
+    }
     virtual bool prepare()=0;  // should call lock
     virtual void run()=0; // must override this
     // If some lock fails, call this
@@ -1187,7 +1214,7 @@ public:
     }
 };
 
-class CDistributedFileTransaction: public CInterface, implements IDistributedFileTransaction
+class CDistributedFileTransaction: public CInterface, implements IDistributedFileTransactionExt
 {
     class CTransactionFile : public CSimpleInterface
     {
@@ -1331,7 +1358,12 @@ public:
     }
     void addAction(CDFAction *action)
     {
-        actions.append(*action);
+        actions.append(*action); // takes ownership
+        action->setTransaction(this);
+    }
+    void removeAction(CDFAction *action)
+    {
+        actions.zap(*action);
     }
     void start()
     {
@@ -1476,7 +1508,8 @@ public:
     {
         IDistributedSuperFile *ret;
         IDistributedFile * f = findFile(name);
-        if (f) {
+        if (f)
+        {
             ret = f->querySuperFile();
             if (ret)
                 return LINK(ret);
@@ -1484,7 +1517,8 @@ public:
         ret = queryDistributedFileDirectory().lookupSuperFile(name,udesc,this,timeout);
         if (!ret)
             return NULL;
-        if (isactive) {
+        if (isactive)
+        {
             addFileToCache(ret);
             // initialize (or reinitialize) notion of this supers current subfiles
             CTransactionFile *trackedSuper = lookupTrackedFile(ret);
@@ -2383,6 +2417,13 @@ public:
         root.clear();
     }
 
+    unsigned setPropLockCount(unsigned _propLockCount)
+    {
+        unsigned prevPropLockCount = proplockcount;
+        proplockcount = _propLockCount;
+        return prevPropLockCount;
+    }
+
     bool isCompressed(bool *blocked)
     {
         return ::isCompressed(queryAttributes(),blocked);
@@ -3019,7 +3060,6 @@ public:
         killParts();
         clusters.kill();
     }
-
     IFileDescriptor *getFileDescriptor(const char *_clusterName)
     {
         CriticalBlock block (sect);
@@ -4242,11 +4282,10 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
         bool before;
         StringAttr other;
     public:
-        cAddSubFileAction(IDistributedFileTransaction *_transaction,const char *_parentlname,const char *_subfile,bool _before,const char *_other)
-            : CDFAction(_transaction), parentlname(_parentlname), subfile(_subfile), before(_before), other(_other)
+        cAddSubFileAction(const char *_parentlname,const char *_subfile,bool _before,const char *_other)
+            : parentlname(_parentlname), subfile(_subfile), before(_before), other(_other)
         {
         }
-        virtual ~cAddSubFileAction() {}
         bool prepare()
         {
             parent.setown(transaction->lookupSuperFile(parentlname));   
@@ -4324,11 +4363,10 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
         StringAttr subfile;
         bool remsub;
     public:
-        cRemoveSubFileAction(IDistributedFileTransaction *_transaction,const char *_parentlname,const char *_subfile,bool _remsub=false)
-            : CDFAction(_transaction), parentlname(_parentlname), subfile(_subfile), remsub(_remsub)
+        cRemoveSubFileAction(const char *_parentlname,const char *_subfile,bool _remsub=false)
+            : parentlname(_parentlname), subfile(_subfile), remsub(_remsub)
         {
         }
-        virtual ~cRemoveSubFileAction() {}
         bool prepare()
         {
             parent.setown(transaction->lookupSuperFile(parentlname,true));
@@ -4444,11 +4482,10 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
             return (refresh(parent.get()) || refresh(file.get()));
         }
     public:
-        cSwapFileAction(IDistributedFileTransaction *_transaction,const char *_parentlname,const char *_filelname)
-            : CDFAction(_transaction), parentlname(_parentlname), filelname(_filelname)
+        cSwapFileAction(const char *_parentlname,const char *_filelname)
+            : parentlname(_parentlname), filelname(_filelname)
         {
         }
-        virtual ~cSwapFileAction() {}
         bool prepare()
         {
             parent.setown(transaction->lookupSuperFile(parentlname));
@@ -4722,7 +4759,7 @@ protected:
         }
     }
 
-    void linkSubFile(unsigned pos,IDistributedFileTransaction *transaction,bool link=true)
+    void linkSubFile(unsigned pos,IDistributedFileTransactionExt *transaction,bool link=true)
     {
         IDistributedFile *subfile = &subfiles.item(pos);
         DistributedFilePropertyLock lock(subfile);
@@ -4739,7 +4776,7 @@ protected:
             lock.commit();
     }
 
-    void unlinkSubFile(unsigned pos,IDistributedFileTransaction *transaction)
+    void unlinkSubFile(unsigned pos,IDistributedFileTransactionExt *transaction)
     {
         linkSubFile(pos, transaction, false);
     }
@@ -5439,7 +5476,7 @@ private:
         if (NotFound!=findSubFile(sub->queryLogicalName()))
             throw MakeStringException(-1,"addSubFile: File %s is already a subfile of %s", sub->queryLogicalName(),queryLogicalName());
     }
-    void doAddSubFile(IDistributedFile *_sub,bool before,const char *other,IDistributedFileTransaction *transaction) // takes ownership of sub
+    void doAddSubFile(IDistributedFile *_sub,bool before,const char *other,IDistributedFileTransactionExt *transaction) // takes ownership of sub
     {
         Owned<IDistributedFile> sub = _sub;
         validateAddSubFile(sub); // shouldn't really be necessary, was validated in transaction before here
@@ -5464,7 +5501,7 @@ private:
     }
 
     bool doRemoveSubFile(const char *subfile,
-                         IDistributedFileTransaction *transaction)
+                         IDistributedFileTransactionExt *transaction)
     {
         // have to be quite careful here
         StringAttrArray subnames;
@@ -5517,7 +5554,7 @@ private:
     }
 
     bool doSwapSuperFile(IDistributedSuperFile *_file,
-                         IDistributedFileTransaction *transaction)
+            IDistributedFileTransactionExt *transaction)
     {
         assertex(transaction);
         CDistributedSuperFile *file = QUERYINTERFACE(_file,CDistributedSuperFile);
@@ -5568,31 +5605,36 @@ public:
         partscache.kill();
 
         // Create a local transaction that will be destroyed (MORE: make transaction compulsory)
-        Linked<IDistributedFileTransaction> localtrans;
-        if (transaction) {
-            localtrans.set(transaction);
-        } else {
-            localtrans.setown(new CDistributedFileTransaction(udesc));
+        Linked<IDistributedFileTransactionExt> localtrans;
+        if (transaction)
+        {
+            IDistributedFileTransactionExt *_transaction = dynamic_cast<IDistributedFileTransactionExt *>(transaction);
+            localtrans.set(_transaction);
         }
+        else
+            localtrans.setown(new CDistributedFileTransaction(udesc));
         localtrans->addFile(this);
 
-        if (addcontents) {
+        if (addcontents)
+        {
             localtrans->descend();
             StringArray subs;
             Owned<IDistributedSuperFile> sfile = localtrans->lookupSuperFile(subfile);
-            if (sfile) {
+            if (sfile)
+            {
                 Owned<IDistributedFileIterator> iter = sfile->getSubFileIterator();
                 ForEach(*iter)
                     subs.append(iter->query().queryLogicalName());
             }
             sfile.clear();
-            ForEachItemIn(i,subs) {
+            ForEachItemIn(i,subs)
                 addSubFile(subs.item(i),before,other,false,localtrans);
-            }
             localtrans->ascend();
-        } else {
-            // action is owned by transaction (acquired on CDFAction's c-tor) so don't unlink or delete!
-            cAddSubFileAction *action = new cAddSubFileAction(localtrans,queryLogicalName(),subfile,before,other);
+        }
+        else
+        {
+            cAddSubFileAction *action = new cAddSubFileAction(queryLogicalName(),subfile,before,other);
+            localtrans->addAction(action); // takes ownership
         }
 
         localtrans->autoCommit();
@@ -5610,17 +5652,21 @@ public:
         partscache.kill();
 
         // Create a local transaction that will be destroyed (MORE: make transaction compulsory)
-        Linked<IDistributedFileTransaction> localtrans;
-        if (transaction) {
-            localtrans.set(transaction);
-        } else {
-            localtrans.setown(new CDistributedFileTransaction(udesc));
+        Linked<IDistributedFileTransactionExt> localtrans;
+        if (transaction)
+        {
+            IDistributedFileTransactionExt *_transaction = dynamic_cast<IDistributedFileTransactionExt *>(transaction);
+            localtrans.set(_transaction);
         }
+        else
+            localtrans.setown(new CDistributedFileTransaction(udesc));
+
         // Make sure this file is in cache (reuse below)
         localtrans->addFile(this);
 
         // If recurring, traverse super-file subs (if super)
-        if (remcontents) {
+        if (remcontents)
+        {
             localtrans->descend();
             CDfsLogicalFileName logicalname;
             logicalname.set(subfile);
@@ -5628,7 +5674,8 @@ public:
             if (!sub)
                 return false;
             IDistributedSuperFile *sfile = sub->querySuperFile();
-            if (sfile) {
+            if (sfile)
+            {
                 Owned<IDistributedFileIterator> iter = sfile->getSubFileIterator(true);
                 bool ret = true;
                 StringArray toremove;
@@ -5636,17 +5683,18 @@ public:
                     toremove.append(iter->query().queryLogicalName());
                 iter.clear();
                 ForEachItemIn(i,toremove)
+                {
                     if (!sfile->removeSubFile(toremove.item(i),remsub,false,localtrans))
                         ret = false;
+                }
                 if (!ret||!remsub)
                     return ret;
             }
             localtrans->ascend();
         }
 
-        // action is owned by transaction (acquired on CDFAction's c-tor) so don't unlink or delete!
-        cRemoveSubFileAction *action = new cRemoveSubFileAction(localtrans,queryLogicalName(),subfile,remsub);
-
+        cRemoveSubFileAction *action = new cRemoveSubFileAction(queryLogicalName(),subfile,remsub);
+        localtrans->addAction(action); // takes ownership
         localtrans->autoCommit();
 
         // MORE - auto-commit will throw an exception, change this to void
@@ -5663,18 +5711,19 @@ public:
         partscache.kill();
 
         // Create a local transaction that will be destroyed (MORE: make transaction compulsory)
-        Linked<IDistributedFileTransaction> localtrans;
-        if (transaction) {
-            localtrans.set(transaction);
-        } else {
-            localtrans.setown(new CDistributedFileTransaction(udesc));
+        Linked<IDistributedFileTransactionExt> localtrans;
+        if (transaction)
+        {
+            IDistributedFileTransactionExt *_transaction = dynamic_cast<IDistributedFileTransactionExt *>(transaction);
+            localtrans.set(_transaction);
         }
+        else
+            localtrans.setown(new CDistributedFileTransaction(udesc));
         // Make sure this file is in cache
         localtrans->addFile(this);
 
-        // action is owned by transaction (acquired on CDFAction's c-tor) so don't unlink or delete!
-        cSwapFileAction *action = new cSwapFileAction(localtrans,queryLogicalName(),_file->queryLogicalName());
-
+        cSwapFileAction *action = new cSwapFileAction(queryLogicalName(),_file->queryLogicalName());
+        localtrans->addAction(action); // takes ownership
         localtrans->autoCommit();
 
         return true;
@@ -6947,6 +6996,35 @@ IDistributedFile *CDistributedFileDirectory::createNew(IFileDescriptor *fdesc,co
     return file;
 }
 
+////////////////////////////////////
+
+class DistributedFilePropertyLockFree
+{
+    unsigned lockedCount;
+    CDistributedFile *file;
+    CDistributedSuperFile *sfile;
+public:
+    DistributedFilePropertyLockFree(IDistributedFile *_file)
+    {
+        file = dynamic_cast<CDistributedFile *>(_file);
+        sfile = NULL;
+        if (file)
+            lockedCount = file->setPropLockCount(0);
+        else
+        {
+            sfile = dynamic_cast<CDistributedSuperFile *>(_file);
+            lockedCount = sfile->setPropLockCount(0);
+        }
+    }
+    ~DistributedFilePropertyLockFree()
+    {
+        if (file)
+            verifyex(0 == file->setPropLockCount(lockedCount));
+        else if (sfile)
+            verifyex(0 == sfile->setPropLockCount(lockedCount));
+    }
+};
+
 /**
  * Creates a super-file within a transaction.
  */
@@ -6956,31 +7034,29 @@ class CCreateSuperFileAction: public CDFAction
     CDistributedFileDirectory *parent;
     Linked<IDistributedSuperFile> super;
     IUserDescriptor *user;
-    IPropertyTree *root;
-    bool created;
+    bool interleaved, created;
 public:
-    CCreateSuperFileAction(IDistributedFileTransaction *_transaction,
-                           CDistributedFileDirectory *_parent,
+    CCreateSuperFileAction(CDistributedFileDirectory *_parent,
                            IUserDescriptor *_user,
                            const char *_flname,
-                           bool interleaved)
-        : CDFAction(_transaction), parent(_parent), user(_user), created(false)
+                           bool _interleaved)
+        : parent(_parent), user(_user), created(false), interleaved(_interleaved)
     {
         logicalname.set(_flname);
+    }
+    bool prepare()
+    {
         // We *have* to make sure the file doesn't exist here
         super.setown(transaction->lookupSuperFile(logicalname.get(), SDS_SUB_LOCK_TIMEOUT));
-        if (!super) {
+        if (!super)
+        {
             // Create file and link to transaction, so subsequent lookups won't fail
-            root = createPTree();
+            Owned<IPropertyTree> root = createPTree();
             root->setPropInt("@interleaved",interleaved?2:0); // this is ill placed
             super.setown(new CDistributedSuperFile(parent, root, logicalname, user));
             created = true;
         }
         addFileLock(super);
-    }
-    virtual ~CCreateSuperFileAction() {}
-    bool prepare()
-    {
         // Attach the file to DFS, if wasn't there already
         if (created)
             super->attach(logicalname.get(), user);
@@ -7019,13 +7095,15 @@ class CRemoveSuperFileAction: public CDFAction
     IUserDescriptor *user;
     bool delSub;
 public:
-    CRemoveSuperFileAction(IDistributedFileTransaction *_transaction,
-                           IUserDescriptor *_user,
+    CRemoveSuperFileAction(IUserDescriptor *_user,
                            const char *_flname,
                            bool _delSub)
-        : CDFAction(_transaction), user(_user), delSub(_delSub)
+        : user(_user), delSub(_delSub)
     {
         logicalname.set(_flname);
+    }
+    bool prepare()
+    {
         // We *have* to make sure the file exists here
         super.setown(transaction->lookupSuperFile(logicalname.get(), SDS_SUB_LOCK_TIMEOUT));
         if (!super)
@@ -7034,10 +7112,6 @@ public:
         // Adds actions to transactions before this one and gets executed only on commit
         if (delSub)
             super->removeSubFile(NULL, true, false, transaction);
-    }
-    virtual ~CRemoveSuperFileAction() {}
-    bool prepare()
-    {
         if (lock())
             return true;
         unlock();
@@ -7067,12 +7141,11 @@ class CRenameFileAction: public CDFAction
     enum RenameAction { ra_regular, ra_splitfrom, ra_mergeinto } ra;
 
 public:
-    CRenameFileAction(IDistributedFileTransaction *_transaction,
-                      CDistributedFileDirectory *_parent,
+    CRenameFileAction(CDistributedFileDirectory *_parent,
                       IUserDescriptor *_user,
                       const char *_flname,
                       const char *_newname)
-        : CDFAction(_transaction), user(_user), parent(_parent)
+        : user(_user), parent(_parent)
     {
         fromName.set(_flname);
         // Basic consistency checking
@@ -7227,9 +7300,8 @@ private:
             case ra_regular:
             {
                 // We need to unlock the old file / re-lock the new file
-                unlock();
+                DistributedFilePropertyLockFree unlock(file);
                 file->rename(to.get(), user);
-                lock();
                 break;
             }
             default:
@@ -7250,27 +7322,31 @@ IDistributedSuperFile *CDistributedFileDirectory::createSuperFile(const char *_l
     checkLogicalName(logicalname,user,true,true,false,"have a superfile with");
 
     // Create a local transaction that will be destroyed (MORE: make transaction compulsory)
-    Linked<IDistributedFileTransaction> localtrans;
-    if (transaction) {
-        localtrans.set(transaction);
-    } else {
-        localtrans.setown(new CDistributedFileTransaction(user));
+    Linked<IDistributedFileTransactionExt> localtrans;
+    if (transaction)
+    {
+        IDistributedFileTransactionExt *_transaction = dynamic_cast<IDistributedFileTransactionExt *>(transaction);
+        localtrans.set(_transaction);
     }
+    else
+        localtrans.setown(new CDistributedFileTransaction(user));
 
     IDistributedSuperFile *sfile = localtrans->lookupSuperFile(logicalname.get());
-    if (sfile) {
-        if (ifdoesnotexist) {
+    if (sfile)
+    {
+        if (ifdoesnotexist)
+        {
             // Cache, since we're going to use it
-            if (transaction && transaction->active())
-                transaction->addFile(sfile);
+            if (localtrans->active())
+                localtrans->addFile(sfile);
             return sfile;
-        } else
+        }
+        else
             throw MakeStringException(-1,"createSuperFile: SuperFile %s already exists",logicalname.get());
     }
 
-    // action is owned by transaction (acquired on CDFAction's c-tor) so don't unlink or delete!
-    CCreateSuperFileAction *action = new CCreateSuperFileAction(localtrans,this,user,_logicalname,_interleaved);
-
+    CCreateSuperFileAction *action = new CCreateSuperFileAction(this,user,_logicalname,_interleaved);
+    localtrans->addAction(action); // takes ownership
     localtrans->autoCommit();
 
     return localtrans->lookupSuperFile(_logicalname);
@@ -7284,16 +7360,17 @@ void CDistributedFileDirectory::removeSuperFile(const char *_logicalname, bool d
     checkLogicalName(logicalname,user,true,true,false,"have a superfile with");
 
     // Create a local transaction that will be destroyed (MORE: make transaction compulsory)
-    Linked<IDistributedFileTransaction> localtrans;
-    if (transaction) {
-        localtrans.set(transaction);
-    } else {
-        localtrans.setown(new CDistributedFileTransaction(user));
+    Linked<IDistributedFileTransactionExt> localtrans;
+    if (transaction)
+    {
+        IDistributedFileTransactionExt *_transaction = dynamic_cast<IDistributedFileTransactionExt *>(transaction);
+        localtrans.set(_transaction);
     }
+    else
+        localtrans.setown(new CDistributedFileTransaction(user));
 
-    // action is owned by transaction (acquired on CDFAction's c-tor) so don't unlink or delete!
-    CRemoveSuperFileAction *action = new CRemoveSuperFileAction(localtrans, user, _logicalname, delSubs);
-
+    CRemoveSuperFileAction *action = new CRemoveSuperFileAction(user, _logicalname, delSubs);
+    localtrans->addAction(action); // takes ownership
     localtrans->autoCommit();
 }
 
@@ -7304,12 +7381,14 @@ bool CDistributedFileDirectory::removeEntry(const char *name, IUserDescriptor *u
     checkLogicalName(logicalname,user,true,true,false,"delete");
 
     // Create a local transaction that will be destroyed (MORE: make transaction compulsory)
-    Linked<IDistributedFileTransaction> localtrans;
-    if (transaction) {
-        localtrans.set(transaction);
-    } else {
-        localtrans.setown(new CDistributedFileTransaction(user));
+    Linked<IDistributedFileTransactionExt> localtrans;
+    if (transaction)
+    {
+        IDistributedFileTransactionExt *_transaction = dynamic_cast<IDistributedFileTransactionExt *>(transaction);
+        localtrans.set(_transaction);
     }
+    else
+        localtrans.setown(new CDistributedFileTransaction(user));
 
     // Action will be executed at the end of the transaction (commit)
     localtrans->addDelayedDelete(logicalname, timeoutms);
@@ -7357,16 +7436,17 @@ void CDistributedFileDirectory::renamePhysical(const char *oldname,const char *n
     checkLogicalName(oldlogicalname,user,true,true,false,"rename");
 
     // Create a local transaction that will be destroyed (MORE: make transaction compulsory)
-    Linked<IDistributedFileTransaction> localtrans;
-    if (transaction) {
-        localtrans.set(transaction);
-    } else {
-        localtrans.setown(new CDistributedFileTransaction(user));
+    Linked<IDistributedFileTransactionExt> localtrans;
+    if (transaction)
+    {
+        IDistributedFileTransactionExt *_transaction = dynamic_cast<IDistributedFileTransactionExt *>(transaction);
+        localtrans.set(_transaction);
     }
+    else
+        localtrans.setown(new CDistributedFileTransaction(user));
 
-    // action is owned by transaction (acquired on CDFAction's c-tor) so don't unlink or delete!
-    CRenameFileAction *action = new CRenameFileAction(localtrans, this, user, oldlogicalname.get(), newname);
-
+    CRenameFileAction *action = new CRenameFileAction(this, user, oldlogicalname.get(), newname);
+    localtrans->addAction(action); // takes ownership
     localtrans->autoCommit();
 }
 
@@ -9988,7 +10068,7 @@ void CDistributedFileDirectory::promoteSuperFiles(unsigned numsf,const char **sf
         return;
 
     // Create a local transaction that will be destroyed
-    Owned<IDistributedFileTransaction> transaction = new CDistributedFileTransaction(user);
+    Owned<IDistributedFileTransactionExt> transaction = new CDistributedFileTransaction(user);
     transaction->start();
 
     // Lookup all files (keep them in transaction's cache)

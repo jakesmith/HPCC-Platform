@@ -178,26 +178,12 @@ interface IDistributedFileTransaction: extends IInterface
 {
     virtual void start()=0;
     virtual void commit()=0;
-    virtual void autoCommit()=0; // if transaction not active, commit straight away
     virtual void rollback()=0;
     virtual bool active()=0;
+// TBD: shouldn't really be necessary, lookups should auto-add to transaction
     virtual IDistributedFile *lookupFile(const char *lfn,unsigned timeout=INFINITE)=0;
     virtual IDistributedSuperFile *lookupSuperFile(const char *slfn,unsigned timeout=INFINITE)=0;
     virtual IDistributedSuperFile *lookupSuperFileCached(const char *slfn,unsigned timeout=INFINITE)=0;
-    virtual IUserDescriptor *queryUser()=0;
-    virtual bool addDelayedDelete(CDfsLogicalFileName &lfn,unsigned timeoutms=INFINITE)=0; // used internally to delay deletes until commit
-    virtual void descend()=0;  // descend into a recursive call (can't autoCommit if depth is not zero)
-    virtual void ascend()=0;   // ascend back from the deep, one step at a time
-    virtual bool isSubFile(IDistributedSuperFile *super, const char *subFile, bool sub) = 0;
-    virtual void validateAddSubFile(IDistributedSuperFile *super, IDistributedFile *sub, const char *subName) = 0;
-    virtual void noteAddSubFile(IDistributedSuperFile *super, const char *superName, IDistributedFile *sub) = 0;
-    virtual void noteRemoveSubFile(IDistributedSuperFile *super, IDistributedFile *sub) = 0;
-    virtual void noteRename(IDistributedFile *file, const char *newName) = 0;
-
-    // MORE: These need refactoring
-    virtual void addAction(CDFAction *action)=0; // internal (so why is this on a public interface?)
-    virtual void addFile(IDistributedFile *file)=0; // TODO: avoid this being necessary
-    virtual void clearFiles()=0; // internal (so why is this on a public interface?)
 };
 
 interface IDistributedSuperFileIterator: extends IIteratorOf<IDistributedSuperFile>

@@ -461,9 +461,9 @@ class DaliTests : public CppUnit::TestFixture
 //        CPPUNIT_TEST(testDFSTrans);
 //        CPPUNIT_TEST(testDFSPromote);
 //        CPPUNIT_TEST(testDFSDel);
-        CPPUNIT_TEST(testDFSRename);
+//        CPPUNIT_TEST(testDFSRename);
 //        CPPUNIT_TEST(testDFSClearAdd);
-//        CPPUNIT_TEST(testDFSRename2);
+        CPPUNIT_TEST(testDFSRename2);
 //        CPPUNIT_TEST(testDFSRename3);
     CPPUNIT_TEST_SUITE_END();
 
@@ -1527,7 +1527,8 @@ public:
         logctx.CTXLOG("Looking up regress::clearadd::super1");
         sfile.setown(transaction->lookupSuperFile("regress::clearadd::super1"));
         logctx.CTXLOG("Clearing regress::clearadd, within transaction");
-        sfile->removeSubFile(NULL, false, false, transaction);
+//        sfile->removeSubFile(NULL, false, false, transaction);
+        sfile->removeSubFile("regress::clearadd::sub1", false, false, transaction);
         sfile.clear();
         sfile.setown(transaction->lookupSuperFileCached("regress::clearadd::super1"));
         logctx.CTXLOG("Adding back sub1 to super1, within transaction");
