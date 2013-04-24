@@ -1275,6 +1275,13 @@ class CDistributedFileTransaction: public CInterface, implements IDistributedFil
                     }
                 }
             }
+            SuperHashIteratorOf<HTMapping> iter(subFilesByName);
+            ForEach(iter)
+            {
+                HTMapping &map = iter.query();
+                PROGLOG("subfile: %s", map.queryFindString());
+            }
+
             return false;
         }
         const void *queryFindParam() const { return &file; }
@@ -1506,17 +1513,16 @@ public:
 
     IDistributedSuperFile *lookupSuperFile(const char *name, unsigned timeout)
     {
-        IDistributedSuperFile *ret;
-        IDistributedFile * f = findFile(name);
+        Owned<IDistributedSuperFile> ret;
+        IDistributedFile *f = findFile(name);
         if (f)
+            ret.set(f->querySuperFile());
+        else
         {
-            ret = f->querySuperFile();
-            if (ret)
-                return LINK(ret);
+            ret.setown(queryDistributedFileDirectory().lookupSuperFile(name,udesc,this,timeout));
+            if (!ret)
+                return NULL;
         }
-        ret = queryDistributedFileDirectory().lookupSuperFile(name,udesc,this,timeout);
-        if (!ret)
-            return NULL;
         if (isactive)
         {
             addFileToCache(ret);
@@ -1527,7 +1533,7 @@ public:
             ForEach (*iter)
                 trackedSuper->noteAddSubFile(&iter->query());
         }
-        return ret;
+        return ret.getClear();
     }
 
     IDistributedSuperFile *lookupSuperFileCached(const char *name, unsigned timeout)
@@ -4286,7 +4292,7 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
         }
         bool prepare()
         {
-            parent.setown(transaction->lookupSuperFile(parentlname));   
+            parent.setown(transaction->lookupSuperFileCached(parentlname));
             if (!parent)
                 throw MakeStringException(-1,"addSubFile: SuperFile %s cannot be found",parentlname.get());
             if (!subfile.isEmpty())
@@ -4367,7 +4373,7 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
         }
         bool prepare()
         {
-            parent.setown(transaction->lookupSuperFile(parentlname,true));
+            parent.setown(transaction->lookupSuperFileCached(parentlname,true));
             if (!parent)
                 throw MakeStringException(-1,"removeSubFile: SuperFile %s cannot be found",parentlname.get());
             if (!subfile.isEmpty())
@@ -4486,10 +4492,10 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
         }
         bool prepare()
         {
-            parent.setown(transaction->lookupSuperFile(parentlname));
+            parent.setown(transaction->lookupSuperFileCached(parentlname));
             if (!parent)
                 throw MakeStringException(-1,"swapSuperFile: SuperFile %s cannot be found",parentlname.get());
-            file.setown(transaction->lookupSuperFile(filelname));
+            file.setown(transaction->lookupSuperFileCached(filelname));
             if (!file)
             {
                 parent.clear();
@@ -5463,8 +5469,6 @@ public:
             }
         }
     }
-
-private:
     void validateAddSubFile(IDistributedFile *sub)
     {
         if (strcmp(sub->queryLogicalName(),queryLogicalName())==0)
@@ -5474,6 +5478,8 @@ private:
         if (NotFound!=findSubFile(sub->queryLogicalName()))
             throw MakeStringException(-1,"addSubFile: File %s is already a subfile of %s", sub->queryLogicalName(),queryLogicalName());
     }
+
+private:
     void doAddSubFile(IDistributedFile *_sub,bool before,const char *other,IDistributedFileTransactionExt *transaction) // takes ownership of sub
     {
         Owned<IDistributedFile> sub = _sub;
@@ -5907,9 +5913,9 @@ void CDistributedFileTransaction::validateAddSubFile(IDistributedSuperFile *supe
     {
         CDistributedSuperFile *sf = dynamic_cast<CDistributedSuperFile *>(super);
         sf->checkFormatAttr(sub, "addSubFile");
+        if (trackedSuper->find(subName, false))
+            throw MakeStringException(-1,"addSubFile: File %s is already a subfile of %s", subName, superName);
     }
-    if (trackedSuper->find(subName, false))
-        throw MakeStringException(-1,"addSubFile: File %s is already a subfile of %s", subName, superName);
 }
 
 // --------------------------------------------------------
@@ -7045,7 +7051,7 @@ public:
     bool prepare()
     {
         // We *have* to make sure the file doesn't exist here
-        super.setown(transaction->lookupSuperFile(logicalname.get(), SDS_SUB_LOCK_TIMEOUT));
+        super.setown(transaction->lookupSuperFileCached(logicalname.get(), SDS_SUB_LOCK_TIMEOUT));
         if (!super)
         {
             // Create file and link to transaction, so subsequent lookups won't fail
@@ -7103,7 +7109,7 @@ public:
     bool prepare()
     {
         // We *have* to make sure the file exists here
-        super.setown(transaction->lookupSuperFile(logicalname.get(), SDS_SUB_LOCK_TIMEOUT));
+        super.setown(transaction->lookupSuperFileCached(logicalname.get(), SDS_SUB_LOCK_TIMEOUT));
         if (!super)
             ThrowStringException(-1, "Super File %s doesn't exist in the file system", logicalname.get());
         addFileLock(super);

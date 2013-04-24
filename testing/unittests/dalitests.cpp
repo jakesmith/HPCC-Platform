@@ -463,10 +463,10 @@ class DaliTests : public CppUnit::TestFixture
 //        CPPUNIT_TEST(testDFSDel);
 
 //        CPPUNIT_TEST(testDFSRename);
-//        CPPUNIT_TEST(testDFSClearAdd);
+        CPPUNIT_TEST(testDFSClearAdd);
 //        CPPUNIT_TEST(testDFSRename2);
 //        CPPUNIT_TEST(testDFSRenameThenDelete);
-        CPPUNIT_TEST(testDFSRename3);
+//        CPPUNIT_TEST(testDFSRename3);
     CPPUNIT_TEST_SUITE_END();
 
 #ifndef COMPAT
@@ -1511,6 +1511,40 @@ public:
         ASSERT(dir.exists("regress::rename::sub2", user, true, false) && "Renamed from other2 failed");
     }
 
+#if 1
+    void testDFSClearAdd()
+    {
+        setupDFS("clearadd");
+
+        try
+        {
+            Owned<IDistributedFileTransaction> transaction = createDistributedFileTransaction(user); // disabled, auto-commit
+//        transaction->start();
+
+            Owned<IDistributedSuperFile> sfile = dir.createSuperFile("regress::clearadd::super1", user, false, false, transaction);
+            sfile.clear();
+
+            logctx.CTXLOG("Adding back sub1 to super1, within transaction");
+            sfile.setown(transaction->lookupSuperFile("regress::clearadd::super1"));
+            sfile->addSubFile("regress::clearadd::sub1", false, NULL, false, transaction);
+            sfile.clear();
+
+            logctx.CTXLOG("Adding back sub1 to super1, within transaction");
+            sfile.setown(transaction->lookupSuperFile("regress::clearadd::super1"));
+            sfile->addSubFile("regress::clearadd::sub1", false, NULL, false, transaction);
+            sfile.clear();
+
+            transaction->commit();
+        }
+        catch (IException *e)
+        {
+            StringBuffer eStr;
+            e->errorMessage(eStr);
+            CPPUNIT_ASSERT_MESSAGE(eStr.str(), 0);
+            e->Release();
+        }
+    }
+#else
     void testDFSClearAdd()
     {
         setupDFS("clearadd");
@@ -1548,6 +1582,7 @@ public:
             e->Release();
         }
     }
+#endif
 
     void testDFSRename2()
     {
