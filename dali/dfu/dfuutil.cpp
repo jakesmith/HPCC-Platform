@@ -716,7 +716,7 @@ public:
         Owned<IDistributedFileTransaction> transaction = createDistributedFileTransaction(user);
         transaction->start();
 
-        Owned<IDistributedSuperFile> superfile = transaction->lookupSuperFile(superfname);
+        Owned<IDistributedSuperFile> superfile = transaction->lookupSuperFileCached(superfname);
         if (!superfile)
         {
             if (!autocreatesuper)

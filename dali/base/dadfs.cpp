@@ -842,9 +842,10 @@ interface IDistributedFileTransactionExt : extends IDistributedFileTransaction
     virtual void descend()=0;  // descend into a recursive call (can't autoCommit if depth is not zero)
     virtual void ascend()=0;   // ascend back from the deep, one step at a time
     virtual void autoCommit()=0; // if transaction not active, commit straight away
-    virtual void addAction(CDFAction *action)=0; // internal (so why is this on a public interface?)
+    virtual void addAction(CDFAction *action)=0;
     virtual void removeAction(CDFAction *action) = 0;
     virtual void addFile(IDistributedFile *file)=0;
+    virtual void ensureFile(IDistributedFile *file)=0;
     virtual void clearFile(IDistributedFile *file)=0;
     virtual void clearFiles()=0; // internal (so why is this on a public interface?)
     virtual void noteAddSubFile(IDistributedSuperFile *super, const char *superName, IDistributedFile *sub) = 0;
@@ -985,12 +986,10 @@ protected:
     IDistributedFileTransactionExt *transaction;
     IArrayOf<IDistributedFile> lockedFiles;
     DFTransactionState state;
-    void addFileLock(IDistributedFile* file)
+    void addFileLock(IDistributedFile *file)
     {
         // derived's prepare must call this before locking
         lockedFiles.append(*LINK(file));
-        // Make sure this is in transaction's cache
-        transaction->addFile(file);
     }
     bool lock(bool *dirty=NULL)
     {
@@ -1220,11 +1219,11 @@ class CDistributedFileTransaction: public CInterface, implements IDistributedFil
     {
         class HTMapping : public CInterface
         {
-            IDistributedFile &file;
+            IDistributedFile *file;
             StringAttr name;
         public:
-            HTMapping(const char *_name, IDistributedFile &_file) : name(_name), file(_file) { }
-            IDistributedFile &query() { return file; }
+            HTMapping(const char *_name, IDistributedFile *_file) : name(_name), file(_file) { }
+            IDistributedFile &query() { return *file; }
             const char *queryFindString() const { return name; }
             const void *queryFindParam() const { return &file; }
         };
@@ -1239,20 +1238,30 @@ class CDistributedFileTransaction: public CInterface, implements IDistributedFil
         }
         const char *queryName() const { return name; }
         IDistributedFile *queryFile() { return file; }
+        IDistributedFileIterator *getSubFiles()
+        {
+            IDistributedSuperFile *super = file->querySuperFile();
+            if (!super)
+                return NULL;
+            return super->getSubFileIterator();
+        }
         unsigned numSubFiles() const { return subFilesByName.count(); }
         void noteAddSubFile(IDistributedFile *sub)
         {
-            Owned<HTMapping> map = new HTMapping(sub->queryLogicalName(), *sub);
-            subFilesByName.replace(*map.getLink());
-            subFilesByIDF.replace(*map.getLink());
+            if (NULL == subFilesByName.find(sub->queryLogicalName()))
+            {
+                Owned<HTMapping> map = new HTMapping(sub->queryLogicalName(), sub);
+                subFilesByName.replace(*map.getLink());
+                subFilesByIDF.replace(*map.getLink());
+            }
         }
         void noteRemoveSubFile(IDistributedFile *sub)
         {
             HTMapping *map = subFilesByName.find(sub->queryLogicalName());
             if (map)
             {
-                subFilesByIDF.removeExact(map);
-                subFilesByName.removeExact(map);
+                verifyex(subFilesByIDF.removeExact(map));
+                verifyex(subFilesByName.removeExact(map));
             }
         }
         bool find(const char *subFile, bool sub)
@@ -1298,6 +1307,7 @@ class CDistributedFileTransaction: public CInterface, implements IDistributedFil
     // But we need all actions within transactions first to find out if there is
     // any exception to the rule used by addSubFile / removeSubFile
     unsigned depth;
+    unsigned prepared;
 
 
 
@@ -1325,11 +1335,10 @@ class CDistributedFileTransaction: public CInterface, implements IDistributedFil
 public:
     IMPLEMENT_IINTERFACE;
     CDistributedFileTransaction(IUserDescriptor *user)
-        : isactive(false), depth(0)
+        : isactive(false), depth(0), prepared(0)
     {
         setUserDescriptor(udesc,user);
     }
-
     ~CDistributedFileTransaction()
     {
         // New files should be removed automatically if not committed
@@ -1338,9 +1347,27 @@ public:
             rollback();
         assert(depth == 0);
     }
+    void ensureFile(IDistributedFile *file)
+    {
+        CTransactionFile *trackedFile = queryCreate(file->queryLogicalName(), file, false);
+        if (!trackedFile)
+            addFile(file);
+    }
     void addFile(IDistributedFile *file)
     {
-        queryCreate(file->queryLogicalName(), file, false);
+        CTransactionFile *trackedFile = queryCreate(file->queryLogicalName(), file, false);
+        // Also add subfiles to cache
+        IDistributedSuperFile *sfile = file->querySuperFile();
+        if (sfile)
+        {
+            Owned<IDistributedFileIterator> iter = sfile->getSubFileIterator();
+            ForEach(*iter)
+            {
+                IDistributedFile *f = &iter->query();
+                trackedFile->noteAddSubFile(f);
+                addFile(f);
+            }
+        }
     }
     void noteAddSubFile(IDistributedSuperFile *super, const char *superName, IDistributedFile *sub)
     {
@@ -1376,8 +1403,39 @@ public:
     {
         if (isactive)
             throw MakeStringException(-1,"Transaction already started");
+        clearFiles();
+        actions.kill();
         isactive = true;
+        prepared = 0;
         assertex(actions.ordinality()==0);
+    }
+    bool prepare()
+    {
+        prepared = 0;
+        unsigned toPrepare = actions.ordinality();
+        ForEachItemIn(i0,actions)
+        {
+            if (actions.item(i0).prepare())
+                ++prepared;
+            else
+                break;
+        }
+        return prepared == toPrepare;
+    }
+    void retry()
+    {
+        while (prepared) // unlock for retry
+            actions.item(--prepared).retry();
+    }
+    void run()
+    {
+        ForEachItemIn(i,actions)
+            actions.item(i).run();
+        while (actions.ordinality())  // if we get here everything should work!
+        {
+            Owned<CDFAction> action = &actions.popGet();
+            action->commit();
+        }
     }
     void commit()
     {
@@ -1386,55 +1444,55 @@ public:
         IException *rete=NULL;
         unsigned nlocked=0;
         // =============== PREPARE AND RETRY UNTIL READY
-        try {
-            loop {
-                ForEachItemIn(i0,actions) 
-                    if (actions.item(i0).prepare())
-                        nlocked++;
-                    else
-                        break;
-                if (nlocked==actions.ordinality())
+        try
+        {
+            loop
+            {
+                if (prepare())
                     break;
-                while (nlocked) // unlock for retry
-                    actions.item(--nlocked).retry();
+                else
+                    retry();
                 PROGLOG("CDistributedFileTransaction: Transaction pausing");
                 Sleep(SDS_TRANSACTION_RETRY/2+(getRandom()%SDS_TRANSACTION_RETRY)); 
             }
         }
-        catch (IException *e) {
+        catch (IException *e)
+        {
             rete = e;
         }
         // =============== RUN, COMMIT and CLEANUP
-        if (!rete) {
-            try {
-                ForEachItemIn(i,actions)
-                    actions.item(i).run();
-                while (actions.ordinality()) {  // if we get here everything should work!
-                    Owned<CDFAction> action = &actions.popGet();
-                    action->commit();
-                }
+        if (!rete)
+        {
+            try
+            {
+                run();
                 clearFiles();
                 isactive = false;
                 actions.kill();
                 deleteFiles();
                 return;
             }
-            catch (IException *e) {
+            catch (IException *e)
+            {
                 rete = e;
             }
         }
         // =============== ROLLBACK AND CLEANUP
-        try {
-            while (actions.ordinality()) {  
-                try {
+        try
+        {
+            while (actions.ordinality())
+            {
+                try
+                {
                     // we don't want to unlock what hasn't been locked
                     // if an exception was thrown while locking, but we
                     // do want to pop them all
                     Owned<CDFAction> action = &actions.popGet();
-                    if (actions.ordinality()<nlocked)
+                    if (actions.ordinality()<prepared)
                         action->rollback();
                 }
-                catch (IException *e) {
+                catch (IException *e)
+                {
                     if (rete)
                         e->Release();
                     else
@@ -1442,7 +1500,8 @@ public:
                 }
             }
         }
-        catch (IException *e) {
+        catch (IException *e)
+        {
             e->Release();
         }
         rollback();
@@ -1500,48 +1559,42 @@ public:
     }
     IDistributedFile *lookupFile(const char *name,unsigned timeout)
     {
-        IDistributedFile * ret = findFile(name);
+        IDistributedFile *ret = findFile(name);
         if (ret)
             return LINK(ret);
-        ret = queryDistributedFileDirectory().lookup(name, udesc, false, false, this, timeout);
-        if (!ret)
-            return NULL;
-        if (isactive)
-            queryCreate(name, ret, true);
-        return ret;
+        else
+        {
+            ret = queryDistributedFileDirectory().lookup(name, udesc, false, false, this, timeout);
+            if (ret)
+                queryCreate(name, ret, true);
+            return ret;
+        }
     }
 
     IDistributedSuperFile *lookupSuperFile(const char *name, unsigned timeout)
     {
-        Owned<IDistributedSuperFile> ret;
+        IDistributedSuperFile *ret;
         IDistributedFile *f = findFile(name);
         if (f)
-            ret.set(f->querySuperFile());
+            return LINK(f->querySuperFile());
         else
         {
-            ret.setown(queryDistributedFileDirectory().lookupSuperFile(name,udesc,this,timeout));
-            if (!ret)
-                return NULL;
+            ret = queryDistributedFileDirectory().lookupSuperFile(name,udesc,this,timeout);
+            if (ret)
+                addFile(ret);
+            return ret;
         }
-        if (isactive)
-        {
-            addFileToCache(ret);
-            // initialize (or reinitialize) notion of this supers current subfiles
-            CTransactionFile *trackedSuper = lookupTrackedFile(ret);
-            assertex(trackedSuper);
-            Owned<IDistributedFileIterator> iter = ret->getSubFileIterator(false);
-            ForEach (*iter)
-                trackedSuper->noteAddSubFile(&iter->query());
-        }
-        return ret.getClear();
     }
 
     IDistributedSuperFile *lookupSuperFileCached(const char *name, unsigned timeout)
     {
+        return lookupSuperFile(name, timeout);
+
         IDistributedSuperFile *ret;
         bool prev = isactive;
         isactive = true;
-        try {
+        try
+        {
             ret = lookupSuperFile(name, timeout);
         }
         catch (IException *)
@@ -1561,25 +1614,6 @@ public:
         return trackedSuper->find(subFile, sub);
     }
 
-private:
-    void addFileToCache(IDistributedFile *file)
-    {
-        addFile(file);
-        // Also add subfiles to cache
-        IDistributedSuperFile *sfile = file->querySuperFile();
-        if (sfile)
-        {
-            Owned<IDistributedFileIterator> iter = sfile->getSubFileIterator();
-            ForEach(*iter)
-            {
-                IDistributedFile *f = &iter->query();
-                if (f->querySuperFile())
-                    addFileToCache(f);
-                else
-                    addFile(f);
-            }
-        }
-    }
 public:
     bool active()
     {
@@ -1594,8 +1628,15 @@ public:
     void clearFile(IDistributedFile *file)
     {
         CTransactionFile *trackedFile = lookupTrackedFile(file);
+        IDistributedSuperFile *sfile = file->querySuperFile();
         if (trackedFile)
         {
+            Owned<IDistributedFileIterator> iter = trackedFile->getSubFiles();
+            if (iter)
+            {
+                ForEach(*iter)
+                    clearFile(&iter->query());
+            }
             trackedFiles.removeExact(trackedFile);
             trackedFilesByName.removeExact(trackedFile);
         }
@@ -5617,7 +5658,7 @@ public:
         }
         else
             localtrans.setown(new CDistributedFileTransaction(udesc));
-        localtrans->addFile(this);
+        localtrans->ensureFile(this);
 
         if (addcontents)
         {
@@ -5666,7 +5707,7 @@ public:
             localtrans.setown(new CDistributedFileTransaction(udesc));
 
         // Make sure this file is in cache (reuse below)
-        localtrans->addFile(this);
+        localtrans->ensureFile(this);
 
         // If recurring, traverse super-file subs (if super)
         if (remcontents)
@@ -5724,7 +5765,7 @@ public:
         else
             localtrans.setown(new CDistributedFileTransaction(udesc));
         // Make sure this file is in cache
-        localtrans->addFile(this);
+        localtrans->ensureFile(this);
 
         cSwapFileAction *action = new cSwapFileAction(queryLogicalName(),_file->queryLogicalName());
         localtrans->addAction(action); // takes ownership
@@ -7039,6 +7080,7 @@ class CCreateSuperFileAction: public CDFAction
     Linked<IDistributedSuperFile> super;
     IUserDescriptor *user;
     bool interleaved, created;
+
 public:
     CCreateSuperFileAction(CDistributedFileDirectory *_parent,
                            IUserDescriptor *_user,
@@ -7048,19 +7090,33 @@ public:
     {
         logicalname.set(_flname);
     }
-    bool prepare()
+    IDistributedSuperFile *getSuper()
     {
-        // We *have* to make sure the file doesn't exist here
-        super.setown(transaction->lookupSuperFileCached(logicalname.get(), SDS_SUB_LOCK_TIMEOUT));
         if (!super)
         {
-            // Create file and link to transaction, so subsequent lookups won't fail
-            Owned<IPropertyTree> root = createPTree();
-            root->setPropInt("@interleaved",interleaved?2:0); // this is ill placed
-            super.setown(new CDistributedSuperFile(parent, root, logicalname, user));
-            created = true;
+            Owned<IDistributedSuperFile> _super = transaction->lookupSuperFileCached(logicalname.get(), SDS_SUB_LOCK_TIMEOUT);
+            if (_super)
+                super.setown(_super.getClear());
+            else
+            {
+                /* No super, create one if necessary.
+                 * This really shouldn't have to work this way, looking up super early, or creating super stub now,
+                 * because other super file transactions are based on
+                 * TBD: There should be a way to obtain lock independently of actually attaching.
+                 */
+                Owned<IPropertyTree> root = createPTree();
+                root->setPropInt("@interleaved",interleaved?2:0); // this is ill placed
+                super.setown(new CDistributedSuperFile(parent, root, logicalname, user));
+                created = true;
+                transaction->addFile(super);
+            }
+            addFileLock(super);
         }
-        addFileLock(super);
+        return super.getLink();
+    }
+    bool prepare()
+    {
+        Owned<IDistributedFile> _super = getSuper();
         // Attach the file to DFS, if wasn't there already
         if (created)
             super->attach(logicalname.get(), user);
@@ -7115,19 +7171,102 @@ public:
         addFileLock(super);
         // Adds actions to transactions before this one and gets executed only on commit
         if (delSub)
+        {
+            class CTransW : public CDistributedFileTransaction
+            {
+                virtual void addAction(CDFAction *action)
+                {
+                    actions.append(action);
+                    action->setTransaction(transaction);
+                }
+            };
+            class CTransactionWrapper : public CSimpleInterface, implements IDistributedFileTransactionExt
+            {
+                IDistributedFileTransactionExt *transaction;
+                CIArrayOf<CDFAction> actions;
+            public:
+                CTransactionWrapper(IDistributedFileTransactionExt *_transaction) : transaction(_transaction)
+                {
+                }
+                virtual void start() { transaction->start(); }
+                virtual void commit() { transaction->commit(); }
+                virtual void rollback() { transaction->rollback(); }
+                virtual bool active() { return transaction->active(); }
+                virtual IDistributedFile *lookupFile(const char *lfn,unsigned timeout=INFINITE)
+                {
+                    return transaction->lookupFile(lfn, timeout);
+                }
+                virtual IDistributedSuperFile *lookupSuperFile(const char *slfn,unsigned timeout=INFINITE)
+                {
+                    return transaction->lookupSuperFile(slfn, timeout);
+                }
+                virtual IDistributedSuperFile *lookupSuperFileCached(const char *slfn,unsigned timeout=INFINITE)
+                {
+                    return transaction->lookupSuperFileCached(slfn, timeout);
+                }
+                virtual IUserDescriptor *queryUser() { return transaction->queryUser(); }
+                virtual void descend() { transaction->descend(); }
+                virtual void ascend() { transaction->ascend(); }
+                virtual void autoCommit() { throwUnexpected(); }
+                virtual void addAction(CDFAction *action)
+                {
+                    actions.append(action);
+                    action->setTransaction(transaction);
+                }
+                virtual void removeAction(CDFAction *action) { throwUnexpected(); }
+                virtual void addFile(IDistributedFile *file) { transaction->addFile(file); }
+                virtual void ensureFile(IDistributedFile *file) { transaction->ensureFile(file); }
+                virtual void clearFile(IDistributedFile *file) { transaction->clearFile(file); }
+                virtual void clearFiles() { transaction->clearFiles(); }
+                virtual void noteAddSubFile(IDistributedSuperFile *super, const char *superName, IDistributedFile *sub)
+                {
+                    transaction->noteAddSubFile(super, superName, sub);
+                }
+                virtual void noteRemoveSubFile(IDistributedSuperFile *super, IDistributedFile *sub)
+                {
+                    transaction->noteRemoveSubFile(super, sub);
+                }
+                virtual void noteRename(IDistributedFile *file, const char *newName)
+                {
+                    transaction->noteRename(file, newName);
+                }
+                virtual void validateAddSubFile(IDistributedSuperFile *super, IDistributedFile *sub, const char *subName)
+                {
+                    transaction->validateAddSubFile(super, sub, subName);
+                }
+                virtual bool isSubFile(IDistributedSuperFile *super, const char *subFile, bool sub)
+                {
+                    transaction->isSubFile(super, subFile, sub);
+                }
+                virtual bool addDelayedDelete(CDfsLogicalFileName &lfn,unsigned timeoutms=INFINITE);
+                {
+                    transaction->addDelayedDelete(lfn, timeoutms);
+                }
+            };
+
             super->removeSubFile(NULL, true, false, transaction);
+        }
         if (lock())
-            return true;
+        {
+            if (subTransaction)
+            {
+                if (subTransaction->prepare())
+                    return true;
+            }
+        }
         unlock();
         return false;
     }
     void run()
     {
-        // Removing here would make it hard to re-attach the sub files on rollback (FIXME?)
+        if (subTransaction)
+            subTransaction->run();
     }
     void commit()
     {
         super->detach();
+        if (delSub)
+            subTransaction->commit();
         CDFAction::commit();
     }
 };
@@ -7350,21 +7489,15 @@ IDistributedSuperFile *CDistributedFileDirectory::createSuperFile(const char *_l
     if (sfile)
     {
         if (ifdoesnotexist)
-        {
-            // Cache, since we're going to use it
-            if (localtrans->active())
-                localtrans->addFile(sfile);
             return sfile;
-        }
         else
             throw MakeStringException(-1,"createSuperFile: SuperFile %s already exists",logicalname.get());
     }
 
-    CCreateSuperFileAction *action = new CCreateSuperFileAction(this,user,_logicalname,_interleaved);
-    localtrans->addAction(action); // takes ownership
+    Owned<CCreateSuperFileAction> action = new CCreateSuperFileAction(this,user,_logicalname,_interleaved);
+    localtrans->addAction(action.getLink()); // takes ownership
     localtrans->autoCommit();
-
-    return localtrans->lookupSuperFile(_logicalname);
+    return action->getSuper();
 }
 
 // MORE: This should be implemented in DFSAccess later on
@@ -10090,7 +10223,7 @@ void CDistributedFileDirectory::promoteSuperFiles(unsigned numsf,const char **sf
     bool created = false;
     unsigned files = numsf;
     for (unsigned i=0; i<numsf; i++) {
-        Owned<IDistributedSuperFile> super = transaction->lookupSuperFile(sfnames[i]);
+        Owned<IDistributedSuperFile> super = transaction->lookupSuperFileCached(sfnames[i]);
         if (!super.get()) {
             if (created && createonlyonesuperfile) {
                 files = i;
@@ -10102,7 +10235,7 @@ void CDistributedFileDirectory::promoteSuperFiles(unsigned numsf,const char **sf
     }
 
     // If last file had sub-files, clean and fill outlinked
-    Owned<IDistributedSuperFile> last = transaction->lookupSuperFile(sfnames[files-1]);
+    Owned<IDistributedSuperFile> last = transaction->lookupSuperFileCached(sfnames[files-1]);
     assertex(last.get());
     unsigned lastSubs = last->numSubFiles();
     if (files == numsf && lastSubs > 0) {
@@ -10115,8 +10248,8 @@ void CDistributedFileDirectory::promoteSuperFiles(unsigned numsf,const char **sf
 
     // Move up, starting from last
     for (unsigned i=files-1; i; i--) {
-        Owned<IDistributedSuperFile> orig = transaction->lookupSuperFile(sfnames[i-1]);
-        Owned<IDistributedSuperFile> dest = transaction->lookupSuperFile(sfnames[i]);
+        Owned<IDistributedSuperFile> orig = transaction->lookupSuperFileCached(sfnames[i-1]);
+        Owned<IDistributedSuperFile> dest = transaction->lookupSuperFileCached(sfnames[i]);
         assertex(orig.get());
         assertex(dest.get());
         int common = hasCommonSubChildren(orig, dest);
@@ -10128,7 +10261,7 @@ void CDistributedFileDirectory::promoteSuperFiles(unsigned numsf,const char **sf
     }
 
     // Move new subs to first super, if any
-    Owned<IDistributedSuperFile> first = transaction->lookupSuperFile(sfnames[0]);
+    Owned<IDistributedSuperFile> first = transaction->lookupSuperFileCached(sfnames[0]);
     assertex(first.get());
     StringArray toadd;
     toadd.appendListUniq(addsubnames, ",");
