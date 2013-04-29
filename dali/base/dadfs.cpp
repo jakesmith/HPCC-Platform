@@ -1409,7 +1409,7 @@ public:
         prepared = 0;
         assertex(actions.ordinality()==0);
     }
-    bool prepare()
+    bool prepareActions()
     {
         prepared = 0;
         unsigned toPrepare = actions.ordinality();
@@ -1422,15 +1422,18 @@ public:
         }
         return prepared == toPrepare;
     }
-    void retry()
+    void retryActions()
     {
         while (prepared) // unlock for retry
             actions.item(--prepared).retry();
     }
-    void run()
+    void runActions()
     {
         ForEachItemIn(i,actions)
             actions.item(i).run();
+    }
+    void commitActions()
+    {
         while (actions.ordinality())  // if we get here everything should work!
         {
             Owned<CDFAction> action = &actions.popGet();
@@ -1442,41 +1445,41 @@ public:
         if (!isactive)
             return;
         IException *rete=NULL;
-        unsigned nlocked=0;
         // =============== PREPARE AND RETRY UNTIL READY
         try
         {
             loop
             {
-                if (prepare())
+                if (prepareActions())
                     break;
                 else
-                    retry();
+                    retryActions();
                 PROGLOG("CDistributedFileTransaction: Transaction pausing");
                 Sleep(SDS_TRANSACTION_RETRY/2+(getRandom()%SDS_TRANSACTION_RETRY)); 
             }
+            runAndCommit();
+            return;
         }
         catch (IException *e)
         {
             rete = e;
         }
+        rollback();
+        throw rete;
+    }
+    void runAndCommit()
+    {
         // =============== RUN, COMMIT and CLEANUP
-        if (!rete)
-        {
-            try
-            {
-                run();
-                clearFiles();
-                isactive = false;
-                actions.kill();
-                deleteFiles();
-                return;
-            }
-            catch (IException *e)
-            {
-                rete = e;
-            }
-        }
+        runActions();
+        commitActions();
+        clearFiles();
+        isactive = false;
+        actions.kill();
+        deleteFiles();
+    }
+
+    void rollback()
+    {
         // =============== ROLLBACK AND CLEANUP
         try
         {
@@ -1504,12 +1507,6 @@ public:
         {
             e->Release();
         }
-        rollback();
-        throw rete;
-    }
-
-    void rollback()
-    {
         actions.kill(); // should be empty
         clearFiles(); // release locks
         if (!isactive)
@@ -7154,6 +7151,7 @@ class CRemoveSuperFileAction: public CDFAction
     Linked<IDistributedSuperFile> super;
     IUserDescriptor *user;
     bool delSub;
+    Owned<IDistributedFileTransactionExt> nestedTransaction;
 public:
     CRemoveSuperFileAction(IUserDescriptor *_user,
                            const char *_flname,
@@ -7174,18 +7172,20 @@ public:
         {
             class CTransW : public CDistributedFileTransaction
             {
+                CIArray<CDFAction> actions;
+            public:
                 virtual void addAction(CDFAction *action)
                 {
                     actions.append(action);
                     action->setTransaction(transaction);
                 }
             };
-            class CTransactionWrapper : public CSimpleInterface, implements IDistributedFileTransactionExt
+            class CNestedTransaction : public CSimpleInterface, implements IDistributedFileTransactionExt
             {
                 IDistributedFileTransactionExt *transaction;
                 CIArrayOf<CDFAction> actions;
             public:
-                CTransactionWrapper(IDistributedFileTransactionExt *_transaction) : transaction(_transaction)
+                CNestedTransaction(IDistributedFileTransactionExt *_transaction) : transaction(_transaction)
                 {
                 }
                 virtual void start() { transaction->start(); }
@@ -7243,30 +7243,35 @@ public:
                     transaction->addDelayedDelete(lfn, timeoutms);
                 }
             };
-
-            super->removeSubFile(NULL, true, false, transaction);
+            nestedTransaction.setown(new CNestedTransaction(transaction);
+            super->removeSubFile(NULL, true, false, nestedTransaction);
         }
         if (lock())
         {
-            if (subTransaction)
+            if (nestedTransaction)
             {
-                if (subTransaction->prepare())
+                if (nestedTransaction->prepareActions())
                     return true;
+            	nestedTransactions->unlock();
             }
         }
         unlock();
         return false;
     }
+    void retry()
+    {
+        if (nestedTransaction)
+            nestedTransaction->retryActions();
+        CDFAction::retry();
+    }
     void run()
     {
-        if (subTransaction)
-            subTransaction->run();
     }
     void commit()
     {
         super->detach();
-        if (delSub)
-            subTransaction->commit();
+        if (nestedTransaction)
+            nestedTransactions->runAndCommit();
         CDFAction::commit();
     }
 };
