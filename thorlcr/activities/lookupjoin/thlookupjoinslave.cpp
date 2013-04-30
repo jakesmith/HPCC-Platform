@@ -407,6 +407,14 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     Owned<IException> leftexception;
     Semaphore leftstartsem;
     CThorExpandingRowArray rhs, ht;
+    class CFromToMap : public CSimpleInterface
+    {
+    public:
+        unsigned from, to;
+        CFromToMap(unsigned _from, unsigned _to) : from(_from), to(_to) { }
+        const void *queryFindParam() const { return &from; }
+    };
+    SimpleHashTableOf<CFromToMap, unsigned> filled;
     bool eos, needGlobal;
     unsigned flags;
     bool exclude;
@@ -1126,11 +1134,30 @@ public:
     {
         OwnedConstThorRow _p = p;
         unsigned h = rightHash->hash(p)%rhsTableLen;
+        unsigned from = NotFound;
+        CFromToMap *fromTo;
         loop
         {
             const void *e = ht.query(h);
             if (!e)
             {
+                if (NotFound != from) // for returnMany only, see below
+                {
+                    unsigned next = h+1>=rhsTableLen?0:h+1;
+                    CFromToMap *nextTo = filled.find(next);
+                    if (nextTo)
+                    {
+                        // found neighbouring range, merge it
+                        next = nextTo->to;
+                        filled.removeExact(nextTo);
+                    }
+                    else
+                        next = h;
+                    if (fromTo)
+                        fromTo->to = next; // update existing range
+                    else
+                        filled.replace(* new CFromToMap(from, next)); // create new range
+                }
                 ht.setRow(h, _p.getClear());
                 htCount++;
                 break;
@@ -1139,6 +1166,27 @@ public:
             {
                 htDedupCount++;
                 break; // implicit dedup
+            }
+            if (returnMany) // where expect a lot of clashes
+            {
+                // clashes track range of scan, and lookup here to resume scan from last marked
+                // NB: single elements can still exist after a marked range, since it only creates a new range on clash
+                if (NotFound == from)
+                {
+                    // mark starting point and see if exisiting range
+                    from = h;
+                    fromTo = filled.find(from);
+                    if (fromTo)
+                        h = fromTo->to; // start scan here
+                }
+                else
+                {
+                    // started scan from 'from', check for intermediate ranges, skip and consume
+                    CFromToMap *otherFromTo = filled.find(h);
+                    if (otherFromTo)
+                        h = otherFromTo->to;
+                    filled.removeExact(otherFromTo); // consumed, merge
+                }
             }
             h++;
             if (h>=rhsTableLen)
