@@ -407,6 +407,14 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     Owned<IException> leftexception;
     Semaphore leftstartsem;
     CThorExpandingRowArray rhs, ht;
+    class CFromToMap : public CSimpleInterface
+    {
+    public:
+        unsigned from, to;
+        CFromToMap(unsigned _from, unsigned _to) : from(_from), to(_to) { }
+        const void *queryFindParam() const { return &from; }
+    };
+    SimpleHashTableOf<CFromToMap, unsigned> filled;
     bool eos, needGlobal;
     unsigned flags;
     bool exclude;
@@ -1126,11 +1134,30 @@ public:
     {
         OwnedConstThorRow _p = p;
         unsigned h = rightHash->hash(p)%rhsTableLen;
+        unsigned from = NotFound;
+        CFromToMap *fromTo;
         loop
         {
             const void *e = ht.query(h);
             if (!e)
             {
+                if (NotFound != from) // for returnMany only, see below
+                {
+                    unsigned next = h+1>=rhsTableLen?0:h+1;
+                    CFromToMap *nextTo = filled.find(next);
+                    if (nextTo)
+                    {
+                        // found neighbouring range, merge it
+                        next = nextTo->to;
+                        filled.removeExact(nextTo);
+                    }
+                    else
+                        next = h;
+                    if (fromTo)
+                        fromTo->to = next; // update existing range
+                    else
+                        filled.replace(* new CFromToMap(from, next)); // create new range
+                }
                 ht.setRow(h, _p.getClear());
                 htCount++;
                 break;
@@ -1139,6 +1166,27 @@ public:
             {
                 htDedupCount++;
                 break; // implicit dedup
+            }
+            if (returnMany) // where expect a lot of clashes
+            {
+                // clashes track range of scan, and lookup here to resume scan from last marked
+                // NB: single elements can still exist after a marked range, since it only creates a new range on clash
+                if (NotFound == from)
+                {
+                    // mark starting point and see if exisiting range
+                    from = h;
+                    fromTo = filled.find(from);
+                    if (fromTo)
+                        h = fromTo->to; // start scan here
+                }
+                else
+                {
+                    // started scan from 'from', check for intermediate ranges, skip and consume
+                    CFromToMap *otherFromTo = filled.find(h);
+                    if (otherFromTo)
+                        h = otherFromTo->to;
+                    filled.removeExact(otherFromTo); // consumed, merge
+                }
             }
             h++;
             if (h>=rhsTableLen)
@@ -1205,6 +1253,7 @@ public:
     {
         if (gotRHS)
             return;
+        ActPrintLog("Collecting RHS");
         gotRHS = true;
         // if input counts known, get global aggregate and pre-allocate HT
         ThorDataLinkMetaInfo rightMeta;
@@ -1237,45 +1286,30 @@ public:
                 rhs.ensure((rowidx_t)rhsTotalCount);
             }
         }
-        Owned<IException> exception;
-        try
+        if (needGlobal)
         {
-            if (needGlobal)
-            {
-                rowProcessor.start();
-                broadcaster.start(this, mpTag, stopping);
-                sendRHS();
-                broadcaster.end();
-                rowProcessor.wait();
-            }
-            else if (!stopping)
-            {
-                while (!abortSoon)
-                {
-                    OwnedConstThorRow row = right->ungroupedNextRow();
-                    if (!row)
-                        break;
-                    addRow(row.getClear());
-                }
-            }
-            if (!stopping)
-                prepareRHS();
+            rowProcessor.start();
+            broadcaster.start(this, mpTag, stopping);
+            sendRHS();
+            broadcaster.end();
+            rowProcessor.wait();
         }
-        catch (IOutOfMemException *e) { exception.setown(e); }
-        if (exception.get())
+        else if (!stopping)
         {
-            StringBuffer errStr(joinStr);
-            errStr.append("(").append(container.queryId()).appendf(") right-hand side is too large (%"I64F"u bytes in %"RIPF"d rows) for %s : (",(unsigned __int64) rhs.serializedSize(),rhs.ordinality(),joinStr.get());
-            errStr.append(exception->errorCode()).append(", ");
-            exception->errorMessage(errStr);
-            errStr.append(")");
-            IException *e2 = MakeActivityException(this, TE_TooMuchData, "%s", errStr.str());
-            ActPrintLog(e2);
-            throw e2;
+            while (!abortSoon)
+            {
+                OwnedConstThorRow row = right->ungroupedNextRow();
+                if (!row)
+                    break;
+                addRow(row.getClear());
+            }
         }
+        if (!stopping)
+            prepareRHS();
     }
     void prepareRHS()
     {
+        ActPrintLog("Preparing RHS");
         if (needGlobal)
         {
             rowidx_t maxRows = 0;
@@ -1331,7 +1365,7 @@ public:
                 rows.kill(); // free up ptr table asap
             }
         }
-        ActPrintLog("rhs table: %d elements", rhsRows);
+        ActPrintLog("Prepared RHS table: %d elements", rhsRows);
         if (isLookup())
             rhsTable = ht.getRowArray();
         else
