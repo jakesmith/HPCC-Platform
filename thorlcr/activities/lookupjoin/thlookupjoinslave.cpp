@@ -1253,6 +1253,7 @@ public:
     {
         if (gotRHS)
             return;
+        ActPrintLog("Collecting RHS");
         gotRHS = true;
         // if input counts known, get global aggregate and pre-allocate HT
         ThorDataLinkMetaInfo rightMeta;
@@ -1285,45 +1286,30 @@ public:
                 rhs.ensure((rowidx_t)rhsTotalCount);
             }
         }
-        Owned<IException> exception;
-        try
+        if (needGlobal)
         {
-            if (needGlobal)
-            {
-                rowProcessor.start();
-                broadcaster.start(this, mpTag, stopping);
-                sendRHS();
-                broadcaster.end();
-                rowProcessor.wait();
-            }
-            else if (!stopping)
-            {
-                while (!abortSoon)
-                {
-                    OwnedConstThorRow row = right->ungroupedNextRow();
-                    if (!row)
-                        break;
-                    addRow(row.getClear());
-                }
-            }
-            if (!stopping)
-                prepareRHS();
+            rowProcessor.start();
+            broadcaster.start(this, mpTag, stopping);
+            sendRHS();
+            broadcaster.end();
+            rowProcessor.wait();
         }
-        catch (IOutOfMemException *e) { exception.setown(e); }
-        if (exception.get())
+        else if (!stopping)
         {
-            StringBuffer errStr(joinStr);
-            errStr.append("(").append(container.queryId()).appendf(") right-hand side is too large (%"I64F"u bytes in %"RIPF"d rows) for %s : (",(unsigned __int64) rhs.serializedSize(),rhs.ordinality(),joinStr.get());
-            errStr.append(exception->errorCode()).append(", ");
-            exception->errorMessage(errStr);
-            errStr.append(")");
-            IException *e2 = MakeActivityException(this, TE_TooMuchData, "%s", errStr.str());
-            ActPrintLog(e2);
-            throw e2;
+            while (!abortSoon)
+            {
+                OwnedConstThorRow row = right->ungroupedNextRow();
+                if (!row)
+                    break;
+                addRow(row.getClear());
+            }
         }
+        if (!stopping)
+            prepareRHS();
     }
     void prepareRHS()
     {
+        ActPrintLog("Preparing RHS");
         if (needGlobal)
         {
             rowidx_t maxRows = 0;
@@ -1379,7 +1365,7 @@ public:
                 rows.kill(); // free up ptr table asap
             }
         }
-        ActPrintLog("rhs table: %d elements", rhsRows);
+        ActPrintLog("Prepared RHS table: %d elements", rhsRows);
         if (isLookup())
             rhsTable = ht.getRowArray();
         else
