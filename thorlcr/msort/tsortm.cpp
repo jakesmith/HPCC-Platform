@@ -813,7 +813,8 @@ public:
             loop {
 #ifdef _TRACE
                 iter++;
-                ActPrintLog(activity, "Split: %d",iter);
+                unsigned pages=activity->queryJob().queryRowManager()->getMemoryUsage();
+                ActPrintLog(activity, "Split: %d, pages=%d",iter, pages);
 #endif
                 emin.serializeCompress(mbmn.clear());
                 emax.serializeCompress(mbmx.clear());
@@ -867,7 +868,11 @@ public:
                         void *p = NULL;
                         size32_t retlen=0;
                         if (slave.numrecs!=0) 
-                            slave.GetMultiMidPointStop(retlen,p);               
+                        {
+                            PROGLOG("calling slave %d - GetMultiMidPointStop", i);
+                            slave.GetMultiMidPointStop(retlen,p);
+                            PROGLOG("GetMultiMidPointStop got(retlen=%d)", retlen);
+                        }
                         if (i)
                             nextsem[i-1].wait();
                         unsigned base = totmid.ordinality();
@@ -946,7 +951,10 @@ public:
                 for (i=0;i<numnodes;i++) {
                     CSortNode &slave = slaves.item(i);
                     if (slave.numrecs!=0)
+                    {
+                        PROGLOG("calling MultiBinChopStart with buffer len = %d", mbmd.length());
                         slave.MultiBinChopStart(mbmd.length(),(const byte *)mbmd.bufferBase(),CMPFN_NORMAL);
+                    }
                 }
                 mbmd.clear();
                 for (i=0;i<numnodes;i++) {
