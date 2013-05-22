@@ -2461,6 +2461,7 @@ public:
                     if (numHeapPages == atomic_read(&totalHeapPages))
                     {
                         logctx.CTXLOG("RoxieMemMgr: Memory limit exceeded - current %u, requested %u, limit %u", pageCount, numRequested, pageLimit);
+                        PrintStackReport();
                         throw MakeStringException(ROXIEMM_MEMORY_LIMIT_EXCEEDED, "memory limit exceeded");
                     }
                 }
