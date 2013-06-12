@@ -2024,7 +2024,7 @@ class CChunkingRowManager : public CInterface, implements IRowManager
         if (map)
         {
             logctx.CTXLOG("RoxieMemMgr: activity report");
-            usageMap->report(logctx, allocatorCache);
+            map->report(logctx, allocatorCache);
         }
     }
 
