@@ -2320,6 +2320,7 @@ protected:
                 if (bkind==DXB_SuperFile)
                     ThrowStringException(-1, "Trying to remove cluster %s from superfile %s",cname.str(),lfn.get());
 
+                // Remove just cluster specified, unless it's the last, then it will fall through to remove File entry.
                 const char *group = froot->queryProp("@group");
                 if (group&&(strcmp(group,cname.str())!=0)) {    // see if only cluster (if it is remove entire)
                     StringBuffer query;
@@ -3391,11 +3392,6 @@ public:
         if (logicalName.isMulti() || logicalName.isExternal())
             remphys = false;
 
-        // Clean up file and remove from SDS only if this is the last
-        // cluster it belongs to, since we should be able to still remove
-        // the other clusters' files. Or if there are no clusters.
-        if ((clustername.length()==0) /* no cluster passed - ie. detach all */
-           ||((findCluster(clustername.str())==0)&&(numClusters()==1))) /* cluster is first, and no other clusters */
         {
             CriticalBlock block (sect);
             MemoryBuffer mb;

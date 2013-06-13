@@ -793,7 +793,6 @@ public:
 //                      destination->setClusterPartDefaultBaseDir(tmp.str(),basedir);
                 }
             }
-            options->setNoDelete(ctx.superoptions->getNoDelete());
             options->setNoSplit(ctx.superoptions->getNoSplit());
             options->setOverwrite(ctx.superoptions->getOverwrite());
             options->setReplicate(ctx.superoptions->getReplicate());
@@ -1402,10 +1401,7 @@ public:
                     source->getLogicalName(tmp.clear());
                     if (tmp.length()) {
                         runningconn.setown(setRunning(runningpath.str()));;
-                        if (options->getNoDelete())
-                            fdir.removeEntry(tmp.str(),userdesc);
-                        else
-                            fdir.removeEntry(tmp.str(),userdesc);
+                        fdir.removeEntry(tmp.str(),userdesc);
                         Audit("REMOVE",userdesc,tmp.clear(),NULL);
                         runningconn.clear();
                     }

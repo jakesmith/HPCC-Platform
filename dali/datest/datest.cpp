@@ -1773,6 +1773,25 @@ void TestSDS1()
     IRemoteConnection *conn;
     IPropertyTree *root;
 
+#if 1
+    {
+        const char *filename = testParams.item(0);
+        unsigned t = atoi(testParams.item(1));
+        PROGLOG("Loading filename = %s", filename);
+//        Owned<IDistributedFile> f1 = queryDistributedFileDirectory().lookup(filename,UNKNOWN_USER,false,true);
+        queryDistributedFileDirectory().removeEntry(filename,UNKNOWN_USER);
+        return;
+        for (unsigned i=0; i<t; i++)
+        {
+            PROGLOG("Sleeping for %d seconds", t-i);
+            MilliSleep(1000);
+        }
+        PROGLOG("unlocking file");
+
+        return;
+    }
+#endif
+
 #ifdef TSUB
     Owned<TestSubscription> ts = new TestSubscription();
     SubscriptionId id = querySDS().subscribe("/subtest", *ts, false, true);
