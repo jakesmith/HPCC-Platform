@@ -2301,6 +2301,8 @@ protected:
     // MORE: When the refactoring tips below get implemented, this method can go
     // And the appropriate sub methods can be created depending whether this is
     // a super-file or simply a file
+
+#if 0
     void doRemoveEntry(CDfsLogicalFileName &lfn, IUserDescriptor *user, unsigned timeoutms=INFINITE)
     {
         StringBuffer cname;
@@ -2328,7 +2330,9 @@ protected:
                     IPropertyTree *t = froot->queryPropTree(query.str());
                     if (t) {
                         if (froot->removeTree(t))
+                        {
                             return;
+                        }
                         else
                             ThrowStringException(-1, "Can't remove cluster %s from %s",cname.str(),lfn.get());
                     }
@@ -2375,6 +2379,90 @@ protected:
         // MORE: We shouldn't have to update all relationships if we had done a better job making sure
         // that all correct relationships were properly cleaned up
         queryDistributedFileDirectory().removeAllFileRelationships(lfn.get());
+    }
+#endif
+    void doRemoveEntry(IUserDescriptor *user, unsigned timeoutMs=INFINITE)
+    {
+        struct WriteLock
+        {
+            IRemoteConnection *conn;
+            Owned<IPropertyTree> &root;
+            unsigned timeoutMs, prevMode;
+            WriteLock(IRemoteConnection *_conn, unsigned _timeoutMs, Owned<IPropertyTree> &_root) : conn(_conn), timeoutMs(_timeoutMs), root(_root)
+            {
+                prevMode = conn->queryMode();
+                conn->changeMode(RTM_LOCK_WRITE, timeoutMs);
+                dfCheckRoot("doRemoveEntry, read->write", root, conn);
+            }
+            ~WriteLock()
+            {
+                conn->changeMode(prevMode, timeoutMs);
+                dfCheckRoot("doRemoveEntry, write->read", root, conn);
+            }
+        } writeLock(conn, timeoutMs, root);
+
+        // Remove Cluster from Logical file
+        StringBuffer cname;
+        logicalName.getCluster(cname);
+        if (cname.length())
+        {
+            if (querySuperFile())
+                ThrowStringException(-1, "Trying to remove cluster %s from superfile %s", cname.str(), logicalName.get());
+
+            // Remove just cluster specified, unless it's the last, then it will fall through to remove File entry.
+            if (clusters.ordinality()>1)
+            {
+                if (removeCluster(cname.str()))
+                    return;
+                else
+                    ThrowStringException(-1, "Cluster %s not present in file %s", cname.str(), logicalName.get());
+            }
+        }
+
+        // Remove SuperOwners from all sub files
+        if (querySuperFile())
+        {
+            Owned<IPropertyTreeIterator> iter = root->getElements("SubFile");
+            StringBuffer oquery;
+            oquery.append("SuperOwner[@name=\"").append(lfn.get()).append("\"]");
+            Owned<IMultiException> exceptions = MakeMultiException("CDelayedDelete::doRemoveEntry::SuperOwners");
+            ForEach(*iter)
+            {
+                const char *name = iter->query().queryProp("@name");
+                if (name&&*name)
+                {
+                    CDfsLogicalFileName subfn;
+                    subfn.set(name);
+                    CFileConnectLock fconnlockSub;
+                    DfsXmlBranchKind subbkind;
+                    // MORE: Use CDistributedSuperFile::linkSuperOwner(false) - ie. unlink
+                    if (fconnlockSub.initany("CDelayedDelete::doRemoveEntry", subfn, subbkind, false, false, false, timeoutMs))
+                    {
+                        IPropertyTree *subfroot = fconnlockSub.queryRoot();
+                        if (subfroot)
+                        {
+                            if (!subfroot->removeProp(oquery.str()))
+                                exceptions->append(*MakeStringException(-1, "CDelayedDelete::removeEntry: SubFile %s of %s not found for removal",name?name:"(NULL)",lfn.get()));
+                        }
+                    }
+                }
+            }
+            if (exceptions->ordinality())
+                throw exceptions.getClear();
+        }
+        root.clear();
+
+        // Remove from SDS and clean the lock
+        conn->close(true);
+        conn.clear();
+
+        // Update the file system
+        removeFileEmptyScope(logicalName, timeoutMs);
+        // MORE: We shouldn't have to update all relationships if we had done a better job making sure
+        // that all correct relationships were properly cleaned up
+        queryDistributedFileDirectory().removeAllFileRelationships(logicalName.get());
+
+        logicalName.clear();
     }
 
 public:
@@ -2789,6 +2877,28 @@ protected:
         }
     }
 
+    virtual bool doRemoveEntry(unsigned timeoutMs=INFINITE)
+    {
+        // returns true if succeeds - if can remove cluster entry.
+        StringBuffer cname;
+        logicalName.getCluster(cname);
+        if (cname.length())
+        {
+            if (querySuperFile())
+                ThrowStringException(-1, "Trying to remove cluster %s from superfile %s", cname.str(), logicalName.get());
+
+            // Remove just cluster specified, unless it's the last, then it will fall through to remove File entry.
+            if (clusters.ordinality()>1)
+            {
+                if (removeCluster(cname.str()))
+                    return true;
+                else
+                    ThrowStringException(-1, "Cluster %s not present in file %s", cname.str(), logicalName.get());
+            }
+        }
+        return false;
+    }
+
 protected: friend class CDistributedFilePart;
     CDistributedFilePartArray &queryParts()
     {
@@ -3072,7 +3182,7 @@ public:
         saveClusters();
     }
 
-    void removeCluster(const char *clustername)
+    bool removeCluster(const char *clustername)
     {
         CClustersLockedSection cls(CDistributedFileBase<IDistributedFile>::logicalName);
         reloadClusters();
@@ -3082,7 +3192,9 @@ public:
                 throw MakeStringException(-1,"CFileClusterOwner::removeCluster cannot remove sole cluster %s",clustername);
             clusters.remove(i);
             saveClusters();
+            return true;
         }
+        return false;
     }
 
     void setPreferredClusters(const char *clusterlist)
@@ -3399,17 +3511,8 @@ public:
             PROGLOG("CDistributedFile::detach(%s)",logicalName.get());
             LOGPTREE("CDistributedFile::detach root.1",root);
 #endif
-            root->serialize(mb);
-            conn.clear();
-            root.setown(createPTree(mb));
-            CDfsLogicalFileName lname;
-            lname.set(logicalName);
-            logicalName.clear();
-#ifdef EXTRA_LOGGING
-            LOGPTREE("CDistributedFile::detach root.2",root);
-#endif
             // Remove from SDS
-            doRemoveEntry(lname,udesc,timeoutms);
+            doRemoveEntry(udesc,timeoutms);
             // Make sure we remove *all* physical instances
             clustername.clear();
         }
@@ -4384,6 +4487,37 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
 protected:
     int interleaved; // 0 not interleaved, 1 interleaved old, 2 interleaved new
 
+    virtual bool doRemoveEntry(unsigned timeoutMs=INFINITE)
+    {
+        Owned<IPropertyTreeIterator> iter = root->getElements("SubFile");
+        StringBuffer oquery;
+        oquery.append("SuperOwner[@name=\"").append(lfn.get()).append("\"]");
+        Owned<IMultiException> exceptions = MakeMultiException("CDelayedDelete::doRemoveEntry::SuperOwners");
+        ForEach(*iter)
+        {
+            const char *name = iter->query().queryProp("@name");
+            if (name&&*name)
+            {
+                CDfsLogicalFileName subfn;
+                subfn.set(name);
+                CFileConnectLock fconnlockSub;
+                DfsXmlBranchKind subbkind;
+                // MORE: Use CDistributedSuperFile::linkSuperOwner(false) - ie. unlink
+                if (fconnlockSub.initany("CDelayedDelete::doRemoveEntry", subfn, subbkind, false, false, false, timeoutMs))
+                {
+                    IPropertyTree *subfroot = fconnlockSub.queryRoot();
+                    if (subfroot)
+                    {
+                        if (!subfroot->removeProp(oquery.str()))
+                            exceptions->append(*MakeStringException(-1, "CDelayedDelete::removeEntry: SubFile %s of %s not found for removal",name?name:"(NULL)",lfn.get()));
+                    }
+                }
+            }
+        }
+        if (exceptions->ordinality())
+            throw exceptions.getClear();
+    }
+
     static StringBuffer &getSubPath(StringBuffer &path,unsigned idx)
     {
         return path.append("SubFile[@num=\"").append(idx+1).append("\"]");
@@ -4934,14 +5068,6 @@ public:
         CriticalBlock block (sect);
         checkModify("CDistributedSuperFile::detach");
         subfiles.kill();    
-        MemoryBuffer mb;
-        root->serialize(mb);
-        root.clear();
-        conn.clear();
-        root.setown(createPTree(mb));
-        CDfsLogicalFileName lname;
-        lname.set(logicalName);
-        logicalName.clear();
 
         // Remove from SDS
         doRemoveEntry(lname,udesc,timeoutms);
@@ -5610,14 +5736,16 @@ public:
         subfiles.item(0).addCluster(clustername,mspec);
     }
 
-    virtual void removeCluster(const char *clustername)
+    virtual bool removeCluster(const char *clustername)
     {
+        bool tf=false;
         CriticalBlock block (sect);
         clusterscache.clear();
         ForEachItemIn(i,subfiles) {
             IDistributedFile &f=subfiles.item(i);
-            f.removeCluster(clustername);
+            tf |= f.removeCluster(clustername);
         }       
+        return tf;
     }
 
     void setPreferredClusters(const char *clusters)

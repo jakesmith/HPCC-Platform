@@ -63,19 +63,19 @@ bool LogicFileWrapper::doDeleteFile(const char* logicalName,const char *cluster,
     lfn.getCluster(cname);
     if (0 == cname.length()) // if has no cluster, use supplied cluster
         lfn.setCluster(cluster);
-    logicalName = lfn.get();
+    lfn.get(cname.clear(), false, true); // get file@cluster form;
 
     try
     {
-        Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(logicalName, udesc, true) ;
+        Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(cname.str(), udesc, true) ;
         if(!df)
         {
-            returnStr.appendf("<Message><Value>File %s not found</Value></Message>", logicalName);
+            returnStr.appendf("<Message><Value>File %s not found</Value></Message>", cname.str());
             return false;
         }
 
         df->detach();
-        returnStr.appendf("<Message><Value>Deleted File %s</Value></Message>", logicalName);
+        returnStr.appendf("<Message><Value>Deleted File %s</Value></Message>", cname.str());
         DBGLOG("%s", returnStr.str());
         return true;
     }
@@ -85,7 +85,7 @@ bool LogicFileWrapper::doDeleteFile(const char* logicalName,const char *cluster,
         e->errorMessage(returnStr);
         e->Release();
         PROGLOG("%s", errorMsg.str());
-        returnStr.appendf("<Message><Value>Failed to delete File %s, error: %s</Value></Message>", logicalName, errorMsg.str());
+        returnStr.appendf("<Message><Value>Failed to delete File %s, error: %s</Value></Message>", cname.str(), errorMsg.str());
     }
     return false;
 }

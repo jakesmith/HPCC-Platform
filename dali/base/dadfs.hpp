@@ -272,7 +272,7 @@ interface IDistributedFile: extends IInterface
     virtual void setECL(const char *ecl) = 0;
 
     virtual void addCluster(const char *clustername,const ClusterPartDiskMapSpec &mspec) = 0;
-    virtual void removeCluster(const char *clustername) = 0;    // doesn't delete parts
+    virtual bool removeCluster(const char *clustername) = 0;    // doesn't delete parts
     virtual bool checkClusterCompatible(IFileDescriptor &fdesc, StringBuffer &err) = 0;
     virtual void updatePartDiskMapping(const char *clustername,const ClusterPartDiskMapSpec &spec)=0;
 

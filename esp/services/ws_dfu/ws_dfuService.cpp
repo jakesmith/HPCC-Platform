@@ -1156,10 +1156,6 @@ bool CWsDfuEx::DFUDeleteFiles(IEspContext &context, IEspDFUArrayActionRequest &r
             if(!filename || !*filename)
                 continue;
 
-            CDfsLogicalFileName lfn;
-            lfn.set(filename);
-            filename = lfn.get();
-
             if (j>0)
             { // 2nd pass, now we want to skip superfiles and the files which cannot do the lookup.
 
