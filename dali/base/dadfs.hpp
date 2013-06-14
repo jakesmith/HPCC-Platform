@@ -241,9 +241,6 @@ interface IDistributedFile: extends IInterface
 
     virtual unsigned numCopies(unsigned partno) = 0;                            // number of copies
 
-    virtual bool removePhysicalPartFiles(const char *cluster=NULL,IMultiException *exceptions=NULL) = 0;          // removes all physical part files
-                                                                                // returns true if no major errors
-
     virtual bool existsPhysicalPartFiles(unsigned short port) = 0;              // returns true if physical patrs all exist (on primary OR secondary)
 
     virtual bool renamePhysicalPartFiles(const char *newlfn,const char *cluster=NULL,IMultiException *exceptions=NULL,const char *newbasedir=NULL) = 0;           // renames all physical part files

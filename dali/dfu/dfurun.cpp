@@ -867,9 +867,8 @@ public:
         if (dfile) {
             if (!ctx.superoptions->getOverwrite()) 
                 throw MakeStringException(-1,"Destination file %s already exists",dlfn.get());
-            if (dfile->querySuperFile()) 
-                dfile->detach();
-            else {
+            if (dfile->querySuperFile())
+            {
                 if (ctx.superoptions->getIfModified()&&
                     (ftree->hasProp("Attr/@fileCrc")&&ftree->getPropInt64("Attr/@size")&&
                     ((unsigned)ftree->getPropInt64("Attr/@fileCrc")==(unsigned)dfile->queryAttributes().getPropInt64("@fileCrc"))&&
@@ -877,9 +876,8 @@ public:
                     PROGLOG("File copy of %s not done as file unchanged",srclfn);
                     return;
                 }
-                dfile->detach();
-                dfile->removePhysicalPartFiles(NULL,NULL);
             }
+            dfile->detach();
             dfile.clear();
         }
         if (strcmp(ftree->queryName(),queryDfsXmlBranchName(DXB_File))==0) {
