@@ -198,6 +198,7 @@ public:
     }
     void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
+        ::initMetaInfo(info);
         if (global) {
             info.canBufferInput = true;
             info.isSequential = true;

@@ -24,7 +24,7 @@
 #include <sys/mman.h>
 #endif
 
-#ifdef _DEBUG
+#ifdef _ROXIEDEBUG
 #define _CLEAR_ALLOCATED_ROW
 //#define _CLEAR_ALLOCATED_HUGE_ROW
 #endif
@@ -82,7 +82,7 @@ Some thoughts on improving this memory manager:
 
 #define HEAPERROR(a) throw MakeStringException(ROXIEMM_HEAP_ERROR, a)
 
-#ifdef _DEBUG
+#ifdef _ROXIEDEBUG
 const unsigned maxLeakReport = 20;
 #else
 const unsigned maxLeakReport = 4;
@@ -1281,7 +1281,7 @@ private:
         const char * ptr = (const char *)_ptr;
         const char *baseptr = ptr - chunkHeaderSize;
         ChunkHeader * header = (ChunkHeader *)baseptr;
-#ifdef _DEBUG
+#ifdef _ROXIEDEBUG
         if (memTraceLevel >= 100)
         {
             DBGLOG("%s: Pointer %p %x", reason, ptr, *(unsigned *) baseptr);
@@ -2458,7 +2458,7 @@ public:
         activeBuffs = NULL;
         dataBuffPages = 0;
         ignoreLeaks = _ignoreLeaks;
-#ifdef _DEBUG
+#ifdef _ROXIEDEBUG
         trackMemoryByActivity = true; 
 #else
         trackMemoryByActivity = false;
@@ -3590,7 +3590,7 @@ class CDataBufferManager : public CInterface, implements IDataBufferManager
                     if (memTraceLevel >= 3)
                         DBGLOG("RoxieMemMgr: DataBufferBottom::allocate() freeing DataBuffers Page - addr=%p", goer);
                     goer->~DataBufferBottom(); 
-#ifdef _DEBUG
+#ifdef _ROXIEDEBUG
                     memset(goer, 0xcc, HEAP_ALIGNMENT_SIZE);
 #endif
                     subfree_aligned(goer, 1);
