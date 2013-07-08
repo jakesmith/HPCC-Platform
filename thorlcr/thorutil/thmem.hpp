@@ -211,6 +211,7 @@ graph_decl StringBuffer &getRecordString(const void *key, IOutputRowSerializer *
 #define SPILL_PRIORITY_OVERFLOWABLE_BUFFER SPILL_PRIORITY_DEFAULT
 #define SPILL_PRIORITY_SPILLABLE_STREAM SPILL_PRIORITY_DEFAULT
 #define SPILL_PRIORITY_RESULT SPILL_PRIORITY_DEFAULT
+#define SPILL_PRIORITY_LOOKUPJOIN 10
 
 enum StableSortFlag { stableSort_none, stableSort_earlyAlloc, stableSort_lateAlloc };
 class CThorSpillableRowArray;

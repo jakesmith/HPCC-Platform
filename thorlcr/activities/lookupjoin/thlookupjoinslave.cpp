@@ -445,7 +445,7 @@ public:
  * It also handles match conditions where there is no hard match (, ALL), in those cases no hash table is needed.
  * TODO: right outer/only joins
  */
-class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify, implements IBCastReceive
+class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify, implements IBCastReceive, implements roxiemem::IBufferedRowCallback
 {
     IHThorHashJoinArg *hashJoinHelper;
     IHThorAllJoinArg *allJoinHelper;
@@ -494,6 +494,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     bool eog, someSinceEog, leftMatch, grouped;
     Semaphore gotOtherROs;
     bool waitForOtherRO, fuzzyMatch, returnMany, dedup;
+    CriticalSection rowCrit;
 
     inline bool isLookup() { return (joinKind==join_lookup)||(joinKind==denormalize_lookup); }
     inline bool isAll() { return (joinKind==join_all)||(joinKind==denormalize_all); }
@@ -643,6 +644,14 @@ public:
             right.clear();
         }
     }
+    bool spill()
+    {
+        CriticalBlock b(rowCrit);
+        ForEachItemIn(a, rhsNodeRows)
+        {
+            CThorExpandingRowArray &rows = *rhsNodeRows.item(a);
+        }
+    }
 
 // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -774,6 +783,7 @@ public:
         rightAllocator.set(::queryRowAllocator(right));
         rightSerializer.set(::queryRowSerializer(right));
         rightDeserializer.set(::queryRowDeserializer(right));
+        queryJob().queryRowManager()->addRowBuffer(this);
 
         try
         {
@@ -1282,13 +1292,18 @@ public:
     }
     void processRHSRows(unsigned slave, MemoryBuffer &mb)
     {
+        CriticalBlock b(rowCrit);
         CThorExpandingRowArray &rows = *rhsNodeRows.item(slave-1);
         RtlDynamicRowBuilder rowBuilder(rightAllocator);
         CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
         while (!memDeserializer.eos())
         {
-            size32_t sz = rightDeserializer->deserialize(rowBuilder, memDeserializer);
-            OwnedConstThorRow fRow = rowBuilder.finalizeRowClear(sz);
+            OwnedConstThorRow fRow;
+            CriticalUnblock b(rowCrit);
+            {
+                size32_t sz = rightDeserializer->deserialize(rowBuilder, memDeserializer);
+                fRow.setown(rowBuilder.finalizeRowClear(sz));
+            }
             rows.append(fRow.getClear());
         }
     }
@@ -1435,6 +1450,15 @@ public:
     virtual void bCastReceive(CSendItem *sendItem)
     {
         rowProcessor.addBlock(sendItem);
+    }
+// IBufferedRowCallback
+    virtual unsigned getPriority() const
+    {
+        return SPILL_PRIORITY_LOOKUPJOIN;
+    }
+    virtual bool freeBufferedRows(bool critical)
+    {
+        return rowProcessor.spill();
     }
 };
 
