@@ -576,6 +576,36 @@ void CThorExpandingRowArray::clearRows()
     numRows = 0;
 }
 
+void CThorExpandingRowArray::compact()
+{
+    const void **freeFinger = rows;
+    const char **filledFinger = NULL;
+    const void **rowEnd = rows+numRows;
+    while (freeFinger != rowEnd)
+    {
+        if (NULL == *freeFinger)
+        {
+            if (!filledFinger)
+                filledFinger = freeFinger+1;
+            while (filledFinger != rowEnd)
+            {
+                if (*filledFinger)
+                {
+                    *freeFinger = *filledFinger;
+                    *filledFinger = NULL; // if !sparse, would prob. be better to memset at end
+                    ++filledFinger;
+                    break;
+                }
+                ++filledFinger;
+            }
+            if (filledFinger == rowEnd) // no more filled elements, so stop
+                break;
+        }
+        ++freeFinger;
+    }
+    // should this [optionally] shrink the row array too?
+}
+
 void CThorExpandingRowArray::kill()
 {
     clearRows();

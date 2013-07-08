@@ -71,6 +71,7 @@ public:
 interface IBCastReceive
 {
     virtual void bCastReceive(CSendItem *sendItem) = 0;
+    virtual void slaveStopped(CSendItem *sendItem) = 0;
 };
 
 /*
@@ -322,6 +323,7 @@ class CBroadcaster : public CSimpleInterface
                 case bcast_stop:
                 {
                     CriticalBlock b(allDoneLock);
+                    recvInterface->slaveStopped(sendItem); // signal last
                     if (slaveStop(sendItem->queryOrigin()-1) || allDone)
                     {
                         recvInterface->bCastReceive(NULL); // signal last
@@ -388,7 +390,7 @@ public:
     {
         {
             CriticalBlock b(allDoneLock);
-            slaveStop(myNode-1);
+            slaveStop(myNode-1, spilt ? myNode : 0);
             if (allDone)
                 return;
             allDoneWaiting = true;
@@ -420,10 +422,11 @@ public:
         broadcastToOthers(sendItem);
         return !allRequestStop;
     }
-    void final()
+    void final(MemoryBuffer &mb)
     {
         ActPrintLog(&activity, "CBroadcaster::final()");
         Owned<CSendItem> sendItem = newSendItem(bcast_stop);
+        sendItem->queryMsg().swapWith(mb);
         send(sendItem);
     }
 };
@@ -456,7 +459,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     ICompare *compareRight, *compareLeftRight;
 
     Owned<IThorDataLink> right;
-    Owned<IThorDataLink> left;
+    Owned<IRowStream> left;
     Owned<IEngineRowAllocator> rightAllocator;
     Owned<IEngineRowAllocator> leftAllocator;
     Owned<IEngineRowAllocator> allocator;
@@ -494,7 +497,12 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     bool eog, someSinceEog, leftMatch, grouped;
     Semaphore gotOtherROs;
     bool waitForOtherRO, fuzzyMatch, returnMany, dedup;
+
+    // Handling OOM
     CriticalSection rowCrit;
+    bool spilt, anySlaveSpilt;
+    rank_t myNode;
+    Owned<IHashDistributor> distributor;
 
     inline bool isLookup() { return (joinKind==join_lookup)||(joinKind==denormalize_lookup); }
     inline bool isAll() { return (joinKind==join_all)||(joinKind==denormalize_all); }
@@ -625,6 +633,8 @@ public:
         returnMany = false;
         candidateMatches = 0;
         atMost = 0;
+        spilt = anySlaveSpilt = false;
+        myNode = queryJob().queryMyRank();
         needGlobal = !container.queryLocal() && (container.queryJob().querySlaves() > 1);
     }
     ~CLookupJoinActivity()
@@ -636,21 +646,34 @@ public:
                 rows->Release();
         }
     }
-    void stopRightInput()
+    bool handleLowMem()
     {
-        if (right)
+        if (!needGlobal)
+            return false; // TODO
+        rowidx_t clearedRows = 0;
         {
-            stopInput(right, "(R)");
-            right.clear();
+            CriticalBlock b(rowCrit);
+            if (spilt)
+                return false; // for now
+            spilt = true;
+            ForEachItemIn(a, rhsNodeRows)
+            {
+                CThorExpandingRowArray &rows = *rhsNodeRows.item(a);
+                rowidx_t numRows = rows.ordinality();
+                for (unsigned r=0; r<numRows; r++)
+                {
+                    unsigned hv = rightHash->hash(rows.query(r));
+                    if (myNode != (hv % numNodes))
+                    {
+                        OwnedConstThorRow row = rows.getClear(r); // dispose of
+                        ++clearedRows;
+                    }
+                }
+                rows.compact();
+            }
         }
-    }
-    bool spill()
-    {
-        CriticalBlock b(rowCrit);
-        ForEachItemIn(a, rhsNodeRows)
-        {
-            CThorExpandingRowArray &rows = *rhsNodeRows.item(a);
-        }
+        ActPrintLog("handleLowMem: clearedRows = %"RCPF"d", clearedRows);
+        return 0 != clearedRows;
     }
 
 // IThorSlaveActivity overloaded methods
@@ -772,18 +795,26 @@ public:
         htCount = htDedupCount = 0;
         eos = false;
         grouped = inputs.item(0)->isGrouped();
-        left.set(inputs.item(0));
+
+        IThorDataLink *leftITDL = inputs.item(0);
         allocator.set(queryRowAllocator());
-        leftAllocator.set(::queryRowAllocator(left));
-        outputMeta.set(left->queryFromActivity()->queryContainer().queryHelper()->queryOutputMeta());
-        left.setown(createDataLinkSmartBuffer(this,left,LOOKUPJOINL_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(left->queryFromActivity()),grouped,RCUNBOUND,this,false,&container.queryJob().queryIDiskUsage()));       
+        leftAllocator.set(::queryRowAllocator(leftITDL));
+        outputMeta.set(leftITDL->queryFromActivity()->queryContainer().queryHelper()->queryOutputMeta());
+        leftITDL = createDataLinkSmartBuffer(this,leftITDL,LOOKUPJOINL_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(leftITDL->queryFromActivity()),grouped,RCUNBOUND,this,false,&container.queryJob().queryIDiskUsage());
+        left.setown(leftITDL);
         StringBuffer str(joinStr);
-        startInput(left);
+        startInput(leftITDL);
         right.set(inputs.item(1));
         rightAllocator.set(::queryRowAllocator(right));
         rightSerializer.set(::queryRowSerializer(right));
         rightDeserializer.set(::queryRowDeserializer(right));
-        queryJob().queryRowManager()->addRowBuffer(this);
+        spilt = anySlaveSpilt = false
+
+        if (hashJoinHelper) // only for LOOKUP not ALL
+        {
+            spilt = false;
+            queryJob().queryRowManager()->addRowBuffer(this);
+        }
 
         try
         {
@@ -850,12 +881,20 @@ public:
         if (!gotRHS)
             getRHS(true);
         clearRHS();
-        stopRightInput();
-        stopInput(left);
-        dataLinkStop();
-        left.clear();
-        right.clear();
+        if (right)
+        {
+            stopInput(right, "(R)");
+            right.clear();
+        }
         broadcaster.reset();
+        stopInput(left, "(L)");
+        left.clear();
+        if (distributor)
+        {
+            distributor->disconnect(true);
+            distributor->join();
+        }
+        dataLinkStop();
     }
     inline bool match(const void *lhs, const void *rhsrow)
     {
@@ -1288,23 +1327,31 @@ public:
             ActPrintLog(e, "CLookupJoinActivity::sendRHS: exception");
             throw;
         }
-        broadcaster.final(); // signal stop to others
+        MemoryBuffer mb;
+        mb.append(spilt)
+        broadcaster.final(mb); // signal stop to others
     }
     void processRHSRows(unsigned slave, MemoryBuffer &mb)
     {
-        CriticalBlock b(rowCrit);
         CThorExpandingRowArray &rows = *rhsNodeRows.item(slave-1);
         RtlDynamicRowBuilder rowBuilder(rightAllocator);
         CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
         while (!memDeserializer.eos())
         {
-            OwnedConstThorRow fRow;
-            CriticalUnblock b(rowCrit);
+            size32_t sz = rightDeserializer->deserialize(rowBuilder, memDeserializer);
+            OwnedConstThorRow fRow = rowBuilder.finalizeRowClear(sz);
+            CriticalBlock b(rowCrit);
+            if (spilt)
             {
-                size32_t sz = rightDeserializer->deserialize(rowBuilder, memDeserializer);
-                fRow.setown(rowBuilder.finalizeRowClear(sz));
+                // hash row and discard unless for this node
+                unsigned hv = rightHash->hash(fRow.get());
+                if (myNode == (hv % numNodes))
+                    rows.append(fRow.getClear());
             }
-            rows.append(fRow.getClear());
+            else
+            {
+                rows.append(fRow.getClear());
+            }
         }
     }
     void getRHS(bool stopping)
@@ -1353,6 +1400,14 @@ public:
                 sendRHS();
                 broadcaster.end();
                 rowProcessor.wait();
+
+                // This is effectively a barrier point
+                if (anySlaveSpilt)
+                {
+                    Linked<IRowInterfaces> rowIf = queryRowInterfaces(inputs.item(0));
+                    distributor.setown(createHashDistributor(this, queryJob().queryJobComm(), mpTag, abortSoon, false, NULL));
+                    left.setown(distributor->connect(rowIf, left.getClear(), leftHash, NULL));
+                }
             }
             else if (!stopping)
             {
@@ -1451,6 +1506,13 @@ public:
     {
         rowProcessor.addBlock(sendItem);
     }
+    virtual void slaveStopped(CSendItem *sendItem)
+    {
+        bool slaveSpilt;
+        sendItem->queryMsg().read(slaveSpilt);
+        if (slaveSpilt)
+            anySlaveSpilt = true;
+    }
 // IBufferedRowCallback
     virtual unsigned getPriority() const
     {
@@ -1458,7 +1520,7 @@ public:
     }
     virtual bool freeBufferedRows(bool critical)
     {
-        return rowProcessor.spill();
+        return handleLowMem();
     }
 };
 

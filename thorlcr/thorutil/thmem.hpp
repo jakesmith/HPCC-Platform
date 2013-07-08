@@ -357,6 +357,7 @@ public:
     void deserialize(size32_t sz, const void *buf);
     void deserializeExpand(size32_t sz, const void *data);
     bool ensure(rowidx_t requiredRows);
+    void compact();
 // IThorArrayLock
     virtual void lock() const { }
     virtual void unlock() const { }
