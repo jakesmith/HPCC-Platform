@@ -71,7 +71,7 @@ public:
 interface IBCastReceive
 {
     virtual void bCastReceive(CSendItem *sendItem) = 0;
-    virtual void slaveStopped(CSendItem *sendItem) = 0;
+    virtual void addExtra(CSendItem *sendItem) = 0;
 };
 
 /*
@@ -323,7 +323,6 @@ class CBroadcaster : public CSimpleInterface
                 case bcast_stop:
                 {
                     CriticalBlock b(allDoneLock);
-                    recvInterface->slaveStopped(sendItem); // signal last
                     if (slaveStop(sendItem->queryOrigin()-1) || allDone)
                     {
                         recvInterface->bCastReceive(NULL); // signal last
@@ -384,7 +383,13 @@ public:
     {
         if (stopping && (bcast_send==code))
             code = bcast_sendStopping;
-        return new CSendItem(code, myNode);
+        Owned<CSendItem> sendItem = new CSendItem(code, myNode);
+        recvInterface->addExtra(sendItem);
+    }
+    void resetSendItem(CSendItem *sendItem)
+    {
+        sendItem->reset();
+        recvInterface->addExtra(sendItem);
     }
     void waitReceiverDone()
     {
@@ -422,11 +427,10 @@ public:
         broadcastToOthers(sendItem);
         return !allRequestStop;
     }
-    void final(MemoryBuffer &mb)
+    void final()
     {
         ActPrintLog(&activity, "CBroadcaster::final()");
         Owned<CSendItem> sendItem = newSendItem(bcast_stop);
-        sendItem->queryMsg().swapWith(mb);
         send(sendItem);
     }
 };
@@ -458,8 +462,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     IHash *leftHash, *rightHash;
     ICompare *compareRight, *compareLeftRight;
 
-    Owned<IThorDataLink> right;
-    Owned<IRowStream> left;
+    Owned<IRowStream> left, right;
     Owned<IEngineRowAllocator> rightAllocator;
     Owned<IEngineRowAllocator> leftAllocator;
     Owned<IEngineRowAllocator> allocator;
@@ -502,7 +505,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     CriticalSection rowCrit;
     bool spilt, anySlaveSpilt;
     rank_t myNode;
-    Owned<IHashDistributor> distributor;
+    Owned<IHashDistributor> lhsDistributor, rhsDistributor;
 
     inline bool isLookup() { return (joinKind==join_lookup)||(joinKind==denormalize_lookup); }
     inline bool isAll() { return (joinKind==join_all)||(joinKind==denormalize_all); }
@@ -646,10 +649,8 @@ public:
                 rows->Release();
         }
     }
-    bool handleLowMem()
+    bool clearNonLocalRows()
     {
-        if (!needGlobal)
-            return false; // TODO
         rowidx_t clearedRows = 0;
         {
             CriticalBlock b(rowCrit);
@@ -804,10 +805,11 @@ public:
         left.setown(leftITDL);
         StringBuffer str(joinStr);
         startInput(leftITDL);
-        right.set(inputs.item(1));
-        rightAllocator.set(::queryRowAllocator(right));
-        rightSerializer.set(::queryRowSerializer(right));
-        rightDeserializer.set(::queryRowDeserializer(right));
+        IThorDataLink *rightITDL = inputs.item(1);
+        rightAllocator.set(::queryRowAllocator(rightITDL));
+        rightSerializer.set(::queryRowSerializer(rightITDL));
+        rightDeserializer.set(::queryRowDeserializer(rightITDL));
+        right.set(rightITDL);
         spilt = anySlaveSpilt = false
 
         if (hashJoinHelper) // only for LOOKUP not ALL
@@ -818,7 +820,7 @@ public:
 
         try
         {
-            startInput(right); 
+            startInput(rightITDL);
         }
         catch (CATCHALL)
         {
@@ -885,14 +887,19 @@ public:
         {
             stopInput(right, "(R)");
             right.clear();
+            if (rhsDistributor)
+            {
+                rhsDistributor->disconnect(true);
+                rhsDistributor->join();
+            }
         }
         broadcaster.reset();
         stopInput(left, "(L)");
         left.clear();
-        if (distributor)
+        if (lhsDistributor)
         {
-            distributor->disconnect(true);
-            distributor->join();
+            lhsDistributor->disconnect(true);
+            lhsDistributor->join();
         }
         dataLinkStop();
     }
@@ -1301,9 +1308,9 @@ public:
             Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_send);
             MemoryBuffer mb;
             CMemoryRowSerializer mbs(mb);
-            while (!abortSoon)
+            while (!abortSoon && !anySlaveSpilt)
             {
-                while (!abortSoon)
+                while (!abortSoon && !anySlaveSpilt)
                 {
                     OwnedConstThorRow row = right->ungroupedNextRow();
                     if (!row)
@@ -1319,7 +1326,7 @@ public:
                 if (!broadcaster.send(sendItem))
                     break;
                 mb.clear();
-                sendItem->reset();
+                broadcaster.resetSendItem(sendItem);
             }
         }
         catch (IException *e)
@@ -1327,9 +1334,7 @@ public:
             ActPrintLog(e, "CLookupJoinActivity::sendRHS: exception");
             throw;
         }
-        MemoryBuffer mb;
-        mb.append(spilt)
-        broadcaster.final(mb); // signal stop to others
+        broadcaster.final(); // signal stop to others
     }
     void processRHSRows(unsigned slave, MemoryBuffer &mb)
     {
@@ -1354,6 +1359,28 @@ public:
             }
         }
     }
+    void setupDistributors()
+    {
+        Linked<IRowInterfaces> rowIf = queryRowInterfaces(inputs.item(1));
+        rhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), mpTag, abortSoon, false, NULL));
+        right.setown(rhsDistributor->connect(rowIf, right.getClear(), rightHash, NULL));
+
+        Linked<IRowInterfaces> rowIf = queryRowInterfaces(inputs.item(0));
+        lhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), mpTag, abortSoon, false, NULL));
+        left.setown(lhsDistributor->connect(rowIf, left.getClear(), leftHash, NULL));
+    }
+    void gatherDistributedRHS()
+    {
+        CThorExpandingRowArray &localRhsRows = *rhsNodeRows.item(queryJob().queryMyRank()-1);
+        // distribute remaining 'right' rows
+        while (!abortSoon)
+        {
+            OwnedConstThorRow row = right->ungroupedNextRow();
+            if (!row)
+                break;
+            localRhsRows.append(row.getClear());
+        }
+    }
     void getRHS(bool stopping)
     {
         if (gotRHS)
@@ -1361,7 +1388,7 @@ public:
         gotRHS = true;
         // if input counts known, get global aggregate and pre-allocate HT
         ThorDataLinkMetaInfo rightMeta;
-        right->getMetaInfo(rightMeta);
+        inputs.item(1)->getMetaInfo(rightMeta);
         if (rightMeta.totalRowsMin == rightMeta.totalRowsMax)
             rhsTotalCount = rightMeta.totalRowsMax;
         if (needGlobal)
@@ -1401,12 +1428,12 @@ public:
                 broadcaster.end();
                 rowProcessor.wait();
 
-                // This is effectively a barrier point
+                // This is effectively a barrier point and MUST be true on all slaves
                 if (anySlaveSpilt)
                 {
-                    Linked<IRowInterfaces> rowIf = queryRowInterfaces(inputs.item(0));
-                    distributor.setown(createHashDistributor(this, queryJob().queryJobComm(), mpTag, abortSoon, false, NULL));
-                    left.setown(distributor->connect(rowIf, left.getClear(), leftHash, NULL));
+                    clearNonLocalRows(); // may have already been done by spill callback
+                    setupDistributors();
+                    gatherDistributedRHS(); // NB: This could cause further spilling,
                 }
             }
             else if (!stopping)
@@ -1504,14 +1531,18 @@ public:
 // IBCastReceive
     virtual void bCastReceive(CSendItem *sendItem)
     {
+        if (sendItem)
+        {
+            bool spilt;
+            sendItem->queryMsg().read(spilt);
+            if (spilt)
+                anySlaveSpilt = true;
+        }
         rowProcessor.addBlock(sendItem);
     }
-    virtual void slaveStopped(CSendItem *sendItem)
+    virtual void addExtra(CSendItem *sendItem)
     {
-        bool slaveSpilt;
-        sendItem->queryMsg().read(slaveSpilt);
-        if (slaveSpilt)
-            anySlaveSpilt = true;
+        sendItem->queryMsg().append(spilt);
     }
 // IBufferedRowCallback
     virtual unsigned getPriority() const
@@ -1520,7 +1551,9 @@ public:
     }
     virtual bool freeBufferedRows(bool critical)
     {
-        return handleLowMem();
+        if (!needGlobal)
+            return false; // TODO
+        return clearNonLocalRows();
     }
 };
 
