@@ -1775,23 +1775,29 @@ void TestSDS1()
 
 #ifdef TSUB
     Owned<TestSubscription> ts = new TestSubscription();
-    SubscriptionId id = querySDS().subscribe("/subtest", *ts, false, true);
 
     conn = sdsManager.connect("/", myProcessSession(), RTM_LOCK_WRITE, 2000*MDELAY);
     root = conn->queryRoot();
+    root = root->setPropTree("subtest", createPTree());
+    conn->commit();
 
-    unsigned i;
-    for (i=0; i<10; i++)
-    {
-        while (root->removeProp("subtest"));
-        conn->commit();
-        root->setPropInt("subtest", i+1);
-        root->setProp("subtest[1]/aaa", "2");
-        root->setProp("subtest[1]/aaa/aaasub", "2");
-        root->setProp("subtest[1]/bbb", "2");
-        root->setProp("blah", "3");
-        conn->commit();
-    }
+    SubscriptionId id = querySDS().subscribe("/subtest", *ts, true);
+
+    PROGLOG("Press a key to set/add hello");
+    getchar();
+    root->setProp("hello", "there");
+    conn->commit();
+    PROGLOG("press a key to remove 'hello'");
+    getchar();
+    root->removeProp("hello");
+//    conn->commit();
+//    PROGLOG("press a key to add back 'hello'");
+//    getchar();
+    root->setProp("hello", "there");
+    conn->commit();
+
+    PROGLOG("Press a key to finish");
+    getchar();
 
     conn->Release();
 

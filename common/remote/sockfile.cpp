@@ -37,7 +37,7 @@
 
 #include "remoteerr.hpp"
 
-#define SOCKET_CACHE_MAX 500
+#define SOCKET_CACHE_MAX 10
 
 #define MAX_THREADS             100
 #define TARGET_MIN_THREADS      20
@@ -732,6 +732,7 @@ public:
 
     }
     
+    unsigned queryNumSockets() const { return numsockets; }
 
 } *ConnectionTable = NULL;
 
@@ -1270,17 +1271,23 @@ public:
         }
     }
 
-    void disconnect()
+    void disconnect(bool force)
     {
         CriticalBlock block(crit);
         CriticalBlock block2(CConnectionTable::crit); // this shouldn't ever block
-        ISocket *s = socket.getClear();
-        if (ConnectionTable) {
+        if (ConnectionTable)
+        {
+        	if (!force && (ConnectionTable->queryNumSockets() < SOCKET_CACHE_MAX))
+        		return;
+            Owned<ISocket> s = socket.getClear();
             SocketEndpoint tep(ep);
             setDafsEndpointPort(tep);
             ConnectionTable->remove(tep,s);
         }
-        ::Release(s);
+        else if (force)
+        {
+        	Owned<ISocket> s = socket.getClear();
+        }
     }
 
     const char *queryLocalName()
@@ -2162,7 +2169,7 @@ void clientDisconnectRemoteFile(IFile *file)
 {
     CRemoteFile *cfile = QUERYINTERFACE(file,CRemoteFile);
     if (cfile)
-        cfile->disconnect();
+        cfile->disconnect(true);
 }
 
 bool clientResetFilename(IFile *file, const char *newname) // returns false if not remote
@@ -2230,8 +2237,7 @@ public:
                 e->Release();
             }
         }
-        if (disconnectonexit)
-            parent->disconnect();
+        parent->disconnect(disconnectonexit);
     }
 
     void close()
