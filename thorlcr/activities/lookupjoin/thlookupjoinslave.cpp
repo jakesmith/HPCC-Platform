@@ -1327,10 +1327,12 @@ public:
                         CriticalBlock b(rowCrit);
                         if (localHashJoin)
                         {
-                            // keep it, if it hash to my node
+                            // keep it only if it hashes to my node
                             unsigned hv = rightHash->hash(row.get());
                             if (myNode == (hv % numNodes))
                                 localRhsRows.append(row.getLink());
+                            // else throw away
+                            // JCSMORE - might be able to stream to correct node at this point.
                             break;
                         }
                         else
