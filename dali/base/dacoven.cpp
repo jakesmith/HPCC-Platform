@@ -41,11 +41,6 @@ extern void closedownDFS();
 #define MinClientVersion "1.5"
 
 
-// client side default versioning.
-static StringAttr ClientVersion("3.5");
-static StringAttr MinServerVersion("3.1");      // when this upped check initClientProcess instances
-static CDaliVersion _ServerVersion;
-
 
 #define COVEN_SERVER_TIMEOUT (1000*120)
 

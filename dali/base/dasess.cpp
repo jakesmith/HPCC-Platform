@@ -38,6 +38,14 @@
 #pragma warning (disable : 4355)
 #endif
 
+
+// client side default versioning.
+static StringAttr ClientVersion("3.5");
+static StringAttr MinServerVersion("3.1");      // when this upped check initClientProcess instances
+static CDaliVersion _ServerVersion;
+
+
+
 const char *queryRoleName(DaliClientRole role)
 {
     switch (role) {
@@ -1798,7 +1806,8 @@ bool registerClientProcess(ICommunicator *comm, IGroup *& retcoven,unsigned time
     unsigned t=REG_SLEEP;
     unsigned remaining;
     rank_t r;
-    while (!tm.timedout(&remaining)) {
+    while (!tm.timedout(&remaining))
+    {
         if (remaining>t)
             remaining = t;
         r = getRandom()%comm->queryGroup().ordinality();
@@ -1825,7 +1834,8 @@ bool registerClientProcess(ICommunicator *comm, IGroup *& retcoven,unsigned time
                 }
                 int run()
                 {
-                    try {
+                    try
+                    {
                         if (comm->verifyConnection(r,remaining))
                             ok = true;
                     }
@@ -1840,20 +1850,30 @@ bool registerClientProcess(ICommunicator *comm, IGroup *& retcoven,unsigned time
             t->start();
             t->sem.wait(remaining);
             ok = t->ok;
-            if (t->exc.get()) {
+            if (t->exc.get())
+            {
                 IException *e = t->exc.getClear();
                 t->Release();
                 throw e;
             }
             t->Release();
         }   
-        if (ok) {
+        if (ok)
+        {
             CMessageBuffer mb;
             mb.append((int)MSR_REGISTER_PROCESS_SESSION);
             queryMyNode()->serialize(mb);
             comm->queryGroup().queryNode(r).serialize(mb);
             mb.append((int)role);
-            if (comm->sendRecv(mb,r,MPTAG_DALI_SESSION_REQUEST,SESSIONREPLYTIMEOUT)) {
+
+
+            mb.append(ClientVersion);
+            mb.append(MinServerVersion);
+
+
+
+            if (comm->sendRecv(mb,r,MPTAG_DALI_SESSION_REQUEST,SESSIONREPLYTIMEOUT))
+            {
                 if (!mb.length())
                 {
                     // failed system capability match, 
@@ -1862,6 +1882,31 @@ bool registerClientProcess(ICommunicator *comm, IGroup *& retcoven,unsigned time
                 }
                 mb.read(mySessionId);
                 retcoven = deserializeIGroup(mb);
+
+
+                StringAttr serverVersion, minClientVersion;
+                mb.read(serverVersion);
+                _ServerVersion.set(serverVersion),
+                mb.read(minClientVersion);
+                CDaliVersion clientV(ClientVersion), minClientV(minClientVersion);
+
+                if (clientV.compare(minClientV) < 0)
+                {
+                    StringBuffer s("Client version ");
+                    s.append(ClientVersion).append(", server requires minimum client version ").append(minClientVersion);
+                    WARNLOG("%s", s.str());
+                    return false;
+                }
+                CDaliVersion minServerV(MinServerVersion);
+                if (_ServerVersion.compare(minServerV) < 0)
+                {
+                    StringBuffer s("Server version ");
+                    s.append(serverVersion).append(", client requires minimum server version ").append(MinServerVersion);
+                    WARNLOG("%s", s.str());
+                    return false;
+                }
+
+
                 return true;
             }
         }
