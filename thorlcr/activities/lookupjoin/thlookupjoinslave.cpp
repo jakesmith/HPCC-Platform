@@ -18,7 +18,6 @@
 
 /* TBD
  *
- * Check addExtra() hashFlushed msg mechanism
  * removeRowBuffer() callback fro LOOKUP,LOCAL too... (only adds for global at moment)
  */
 
@@ -87,7 +86,6 @@ public:
 interface IBCastReceive
 {
     virtual void bCastReceive(CSendItem *sendItem) = 0;
-    virtual void addExtra(CSendItem *sendItem) = 0;
 };
 
 /*
@@ -399,13 +397,11 @@ public:
     {
         if (stopping && (bcast_send==code))
             code = bcast_sendStopping;
-        Owned<CSendItem> sendItem = new CSendItem(code, myNode);
-        recvInterface->addExtra(sendItem);
+        return new CSendItem(code, myNode);
     }
     void resetSendItem(CSendItem *sendItem)
     {
         sendItem->reset();
-        recvInterface->addExtra(sendItem);
     }
     void waitReceiverDone()
     {
@@ -513,7 +509,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
 
     // Handling OOM
     CriticalSection localHashCrit;
-    bool hashFlushed, localHashJoin;
+    bool spiltBroadcastingRHS, localHashJoin;
     rank_t myNode;
     Owned<IHashDistributor> lhsDistributor, rhsDistributor;
     ICompare *compareLeft;
@@ -648,7 +644,7 @@ public:
         returnMany = false;
         candidateMatches = 0;
         atMost = 0;
-        hashFlushed = localHashJoin = false;
+        spiltBroadcastingRHS = localHashJoin = false;
         myNode = queryJob().queryMyRank();
         needGlobal = !container.queryLocal() && (container.queryJob().querySlaves() > 1);
     }
@@ -666,10 +662,10 @@ public:
         rowidx_t clearedRows = 0;
         {
             CriticalBlock b(localHashCrit);
-            if (hashFlushed)
+            if (spiltBroadcastingRHS)
                 return false;
             ActPrintLog("Clearing non-local rows - cause: %s", msg);
-            hashFlushed = localHashJoin = true;
+            spiltBroadcastingRHS = true;
             ForEachItemIn(a, rhsNodeRows)
             {
                 CThorExpandingRowArray &rows = *rhsNodeRows.item(a);
@@ -824,14 +820,12 @@ public:
         rightSerializer.set(::queryRowSerializer(rightITDL));
         rightDeserializer.set(::queryRowDeserializer(rightITDL));
         right.set(rightITDL);
-        hashFlushed = localHashJoin = false
+        spiltBroadcastingRHS = localHashJoin = false
 
         if (hashJoinHelper) // only for LOOKUP not ALL
         {
         	if (needGlobal)
         		queryJob().queryRowManager()->addRowBuffer(this);
-        	else
-        		localHashJoin = true;
         }
 
         try
@@ -1319,7 +1313,7 @@ public:
         else
             rhs.append(p);
     }
-    void sendRHS() // broadcasting local rhs
+    void broadcastRHS() // broadcasting local rhs
     {
         bool stopRHSBroadcast = false;
         Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_send);
@@ -1338,7 +1332,7 @@ public:
 
                     {
                         CriticalBlock b(localHashCrit);
-                        if (localHashJoin)
+                        if (spiltBroadcastingRHS)
                         {
                             // keep it only if it hashes to my node
                             unsigned hv = rightHash->hash(row.get());
@@ -1350,7 +1344,7 @@ public:
                             // but I may be half way through serializing rows here, which are mixed and this row
                             // may still need to be sent.
                             // The destination rowProcessor will take care of any that need post-filtering,
-                            // so ensure last buffer is sent, below before exiting sendRHS broadcast
+                            // so ensure last buffer is sent, below before exiting broadcastRHS broadcast
 
                             stopRHSBroadcast = true;
                         }
@@ -1377,7 +1371,7 @@ public:
         }
         catch (IException *e)
         {
-            ActPrintLog(e, "CLookupJoinActivity::sendRHS: exception");
+            ActPrintLog(e, "CLookupJoinActivity::broadcastRHS: exception");
             throw;
         }
         sendItem.setown(broadcaster.newSendItem(bcast_stop));
@@ -1396,7 +1390,7 @@ public:
             size32_t sz = rightDeserializer->deserialize(rowBuilder, memDeserializer);
             OwnedConstThorRow fRow = rowBuilder.finalizeRowClear(sz);
             CriticalBlock b(localHashCrit);
-            if (localHashJoin)
+            if (spiltBroadcastingRHS)
             {
                 /* NB: recvLoop should be winding down, a slave signal spilt and communicated to all
                  * So these will be the last few broadcast rows, when broadcaster is complete, the rest will be hash distributed
@@ -1462,11 +1456,9 @@ public:
 		{
 		    /* This is for isLookup(), what about ,ALL ? */
 
-
-
 			rowProcessor.start();
 			broadcaster.start(this, mpTag, stopping);
-			sendRHS();
+			broadcastRHS();
 			broadcaster.end();
 			rowProcessor.wait();
 
@@ -1479,7 +1471,7 @@ public:
 			broadcaster.reset();
 			broadcaster.start(this, mpTag, stopping);
 	        Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_stop);
-	        if (localHashJoin)
+	        if (spiltBroadcastingRHS)
 	            sendItem->setFlag(bcastflag_spilt);
 	        ActPrintLog("Sending final RHS broadcast packet");
 	        broadcaster.send(sendItem); // signals stop to others
@@ -1489,11 +1481,12 @@ public:
 			 * If any have, still need to distribute rest of RHS..
 			 */
 
-			if (localHashJoin)
+			if (spiltBroadcastingRHS)
 			{
+			    localHashJoin = true;
 				setupDistributors();
 
-				// ? local vs global lookup join..
+				// NB: callback will trigger different behaviour now that localHashJoin=true
                 queryJob().queryRowManager()->addRowBuffer(this);
 
                 // Now need to read from right hash distribute the rest of the RHS onto correct slaves
@@ -1505,58 +1498,75 @@ public:
 				        break;
                     localRhsRows.append(row.getClear());
 				}
-				// NB: At this state, there are still slaves*arrays of rows
+				// NB: At this point, there are still slaves*arrays of rows
+
+				// JCSMORE - would be good to dispose of the row ptr arrays too asap..
+                IArrayOf<IRowStream> streams;
+                ForEachItemIn(a, rhsNodeRows)
+                {
+                    CThorExpandingRowArray &rowArray = rhsNodeRows.item(a);
+                    streams.append(*rowArray.createRowStream());
+                }
+                right.setown(createConcatRowStream(streams.ordinality(), streams.getArray()));
 			}
+
+            if (localHashJoin)
+            {
+                // RHS
+                rowLoader.setown(createThorRowLoader(*this, queryRowInterfaces(inputs.item(1)), compareRight));
+                rowLoader->setOptions(rcflag_noAllInMemSort); // If fits into memory, don't want it sorted
+                right.setown(rowLoader->load(right, abortSoon, false, &rhs));
+                if (right)
+                {
+                    ActPrintLog("RHS Spilt to disk. Standard Join will be used.");
+                    ActPrintLog("Loading/Sorting LHS");
+
+                    // LHS
+                    rowLoader.setown(createThorRowLoader(*this, queryRowInterfaces(inputs.item(0)), compareLeft));
+                    left.setown(rowLoader->load(left, abortSoon, true));
+                    ActPrintLog("LHS loaded/sorted")
+
+                    // right stream is sorted
+                    // so now going to do a std. join on distributed sorted streams
+                    switch(container.getKind())
+                    {
+                        case join_lookup:
+                        {
+                            bool hintparallelmatch = container.queryXGMML().getPropInt("hint[@name=\"parallel_match\"]/@value")!=0;
+                            bool hintunsortedoutput = container.queryXGMML().getPropInt("hint[@name=\"unsorted_output\"]/@value")!=0;
+                            joinHelper.setown(createJoinHelper(*this, hashJoinHelper, queryRowAllocator(), hintparallelmatch, hintunsortedoutput));
+                            break;
+                        }
+                        case denormalize_lookup:
+                            joinHelper.setown(createDenormalizeHelper(*this, hashJoinHelper, queryRowAllocator()));
+                            break;
+                        default:
+                            throwUnexpected();
+                    }
+                    joinHelper->init(left, right, leftAllocator, rightAllocator, ::queryRowMetaData(inputs.item(0)), &abortSoon);
+                    return;
+                }
+                // else - if all fitted in memory they were transferred out back into localRhsRows
+                // Will be unsorted because of rcflag_noAllInMemSort
+            }
 		}
-
-		if (!stopping)
+		else if (!stopping)
 		{
-			if (localHashJoin)
-			{
-				// RHS
-				rowLoader.setown(createThorRowLoader(*this, queryRowInterfaces(inputs.item(1)), compareRight));
-				rowLoader->setOptions(rcflag_noAllInMemSort); // If fits into memory, don't want it sorted
-				right.setown(rowLoader->load(right, abortSoon, false, &rhs));
-				if (right)
-				{
-					ActPrintLog("RHS Spilt to disk. Standard Join will be used.");
-					ActPrintLog("Loading/Sorting LHS");
-
-					// LHS
-					rowLoader.setown(createThorRowLoader(*this, queryRowInterfaces(inputs.item(0)), compareLeft));
-					left.setown(rowLoader->load(left, abortSoon, true));
-					ActPrintLog("LHS loaded/sorted")
-
-					// right stream is sorted
-					// so now going to do a std. join on distributed sorted streams
-					switch(container.getKind())
-					{
-						case join_lookup:
-						{
-							bool hintparallelmatch = container.queryXGMML().getPropInt("hint[@name=\"parallel_match\"]/@value")!=0;
-							bool hintunsortedoutput = container.queryXGMML().getPropInt("hint[@name=\"unsorted_output\"]/@value")!=0;
-							joinHelper.setown(createJoinHelper(*this, hashJoinHelper, queryRowAllocator(), hintparallelmatch, hintunsortedoutput));
-							break;
-						}
-						case denormalize_lookup:
-							joinHelper.setown(createDenormalizeHelper(*this, hashJoinHelper, queryRowAllocator()));
-							break;
-						default:
-							throwUnexpected();
-					}
-					joinHelper->init(left, right, leftAllocator, rightAllocator, ::queryRowMetaData(inputs.item(0)), &abortSoon);
-					return;
-				}
-				// else - if all fitted in memory they were transferred out back into localRhsRows
-				// Will be unsorted because of rcflag_noAllInMemSort
-			}
+            // Local from outset, add directly, if size is know, HT will have been pre-sized and will add rows directly into HT.
+            while (!abortSoon)
+            {
+                OwnedConstThorRow row = right->ungroupedNextRow();
+                if (!row)
+                    break;
+                addRow(row.getClear());
+            }
 		}
 		if (!stopping)
 			prepareRHS();
     }
     void prepareRHS()
     {
-        if (!localHashJoin) // rhs will have been filled already if local or localHashJoin=true
+        if (needGlobal) // rhs will have been filled already if local
         {
             rowidx_t maxRows = 0;
             ForEachItemIn(a, rhsNodeRows)
@@ -1598,27 +1608,6 @@ public:
                 // else built up from rhsNodeRows
             }
         }
-        if (localHashJoin)
-        {
-			if (isLookup())
-			{
-				rowidx_t r=0;
-				for (; r<rhs.ordinality(); r++)
-					addRowHt(rhs.getClear(r));
-				rhs.kill(); // free up ptr table asap
-			}
-			else
-			{
-
-			}
-        }
-        else
-        {
-
-        }
-
-
-
         if (needGlobal)
         {
             // JCSMORE - would be nice to make this multi-core, clashes and compares can be expensive
@@ -1645,19 +1634,15 @@ public:
     {
         if (sendItem)
         {
-            bool hashFlushed;
-            sendItem->queryMsg().read(hashFlushed);
-            if (hashFlushed)
+            bool someSlaveFlushed;
+            sendItem->queryMsg().read(someSlaveFlushed);
+            if (someSlaveFlushed)
             {
                 StringBuffer msg("Notification that slave %d spilt", sendItem->queryOrigin());
                 clearNonLocalRows(msg.str());
             }
         }
         rowProcessor.addBlock(sendItem); // NB: NULL indicates end
-    }
-    virtual void addExtra(CSendItem *sendItem)
-    {
-        sendItem->queryMsg().append(hashFlushed);
     }
 // IBufferedRowCallback
     virtual unsigned getPriority() const
