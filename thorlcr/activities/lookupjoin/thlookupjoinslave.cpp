@@ -15,6 +15,13 @@
     limitations under the License.
 ############################################################################## */
 
+
+/* TBD
+ *
+ * Check addExtra() hashFlushed msg mechanism
+ * removeRowBuffer() callback fro LOOKUP,LOCAL too... (only adds for global at moment)
+ */
+
 #include "thlookupjoinslave.ipp"
 #include "thactivityutil.ipp"
 #include "javahash.hpp"
@@ -42,9 +49,9 @@ const char *joinActName[4] = { "LOOKUPJOIN", "ALLJOIN", "LOOKUPDENORMALIZE", "AL
 #define MAX_QUEUE_BLOCKS 5
 
 enum broadcast_code { bcast_none, bcast_send, bcast_sendStopping, bcast_stop };
-enum broadcast_type { bcasttype_broadcast, bcasttype_direct };
+enum broadcast_flags { bcastflag_spilt=0x01 };
 #define BROADCAST_CODE_MASK 0x00FF
-#define BROADCAST_TYPE_MASK 0xFF00
+#define BROADCAST_FLAG_MASK 0xFF00
 class CSendItem : public CSimpleInterface
 {
     CMessageBuffer msg;
@@ -53,7 +60,7 @@ class CSendItem : public CSimpleInterface
 public:
     CSendItem(broadcast_code _code, unsigned _origin) : info((unsigned)_code), origin(_origin)
     {
-        msg.append((unsigned)info);
+        msg.append(info);
         msg.append(origin);
         headerLen = msg.length();
     }
@@ -68,10 +75,11 @@ public:
     CMessageBuffer &queryMsg() { return msg; }
     broadcast_code queryCode() const { return (broadcast_code)(info & BROADCAST_CODE_MASK); }
     unsigned queryOrigin() const { return origin; }
-    broadcast_type queryType() const { return (broadcast_type)(info & BROADCAST_TYPE_MASK); }
-    void setType(broadcast_type _type)
+    broadcast_flags queryFlags() const { return (broadcast_flags)(info & BROADCAST_FLAG_MASK); }
+    void setFlag(broadcast_flags _flag)
     {
-        info = (info & ~BROADCAST_TYPE_MASK) | ((byte)_type << 8);
+        info = (info & ~BROADCAST_FLAG_MASK) | ((byte)_flag << 8);
+        msg.writeDirect(0, sizeof(info), &info); // update
     }
 };
 
@@ -303,28 +311,6 @@ class CBroadcaster : public CSimpleInterface
             }
         }
     }
-    void sendDirect(rank_t dst, CSendItem *sendItem)
-    {
-        mptag_t rt = createReplyTag();
-        CMessageBuffer replyMsg;
-        // sends to all in 1st pass, then waits for ack from all
-        CriticalBlock b(bcastOtherCrit);
-        for (unsigned sendRecv=0; sendRecv<2 && !activity.queryAbortSoon(); sendRecv++)
-        {
-            unsigned sendLen = sendItem->length();
-            if (0 == sendRecv) // send
-            {
-                CMessageBuffer &msg = sendItem->queryMsg();
-                msg.setReplyTag(rt); // simulate sendRecv
-                comm.send(msg, dst, mpTag);
-            }
-            else // recv reply
-            {
-                if (!activity.receiveMsg(replyMsg, dst, rt))
-                    break;
-            }
-        }
-    }
     // called by CRecv thread
     void cancelReceive()
     {
@@ -346,8 +332,7 @@ class CBroadcaster : public CSimpleInterface
             ActPrintLog(&activity, "Broadcast node %d received from node %d, origin node %d, size %d, code=%d", myNode, (unsigned)sendRank, sendItem->queryOrigin(), sendItem->length(), (unsigned)sendItem->queryCode());
 #endif
             comm.send(ackMsg, sendRank, replyTag); // send ack
-            if (bcasttype_broadcast == sendItem->queryType())
-                sender.addBlock(sendItem.getLink());
+            sender.addBlock(sendItem.getLink());
             assertex(myNode != sendItem->queryOrigin());
             switch (sendItem->queryCode())
             {
@@ -458,12 +443,6 @@ public:
         broadcastToOthers(sendItem);
         return !allRequestStop;
     }
-    void final()
-    {
-        ActPrintLog(&activity, "CBroadcaster::final()");
-        Owned<CSendItem> sendItem = newSendItem(bcast_stop);
-        send(sendItem);
-    }
 };
 
 
@@ -533,7 +512,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     bool waitForOtherRO, fuzzyMatch, returnMany, dedup;
 
     // Handling OOM
-    CriticalSection rowCrit, localHashCrit;
+    CriticalSection localHashCrit;
     bool hashFlushed, localHashJoin;
     rank_t myNode;
     Owned<IHashDistributor> lhsDistributor, rhsDistributor;
@@ -682,13 +661,14 @@ public:
                 rows->Release();
         }
     }
-    bool clearNonLocalRows()
+    bool clearNonLocalRows(const char *msg)
     {
         rowidx_t clearedRows = 0;
         {
             CriticalBlock b(localHashCrit);
             if (hashFlushed)
                 return false;
+            ActPrintLog("Clearing non-local rows - cause: %s", msg);
             hashFlushed = localHashJoin = true;
             ForEachItemIn(a, rhsNodeRows)
             {
@@ -1341,15 +1321,12 @@ public:
     }
     void sendRHS() // broadcasting local rhs
     {
-        enum joinstate { js_std, js_lhj };
-
-        joinstate state = js_std;
+        bool stopRHSBroadcast = false;
+        Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_send);
+        MemoryBuffer mb;
         try
         {
-            bool doingLHJ=false;
             CThorExpandingRowArray &localRhsRows = *rhsNodeRows.item(queryJob().queryMyRank()-1);
-            Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_send);
-            MemoryBuffer mb;
             CMemoryRowSerializer mbser(mb);
             while (!abortSoon)
             {
@@ -1359,111 +1336,43 @@ public:
                     if (!row)
                         break;
 
-                    localHashCrit.enter();
-                    if (localHashJoin)
                     {
-                        // keep it only if it hashes to my node
-                        unsigned hv = rightHash->hash(row.get());
-                        if (myNode == (hv % numNodes))
-                            localRhsRows.append(row.getLink());
-                        localHashCrit.leave();
-                        // ok so switch tactics.
-                        // clearNonLocalRows() will have cleared out non-locals,
-                        // but I may be half way through serializing rows here, which are mixed.
-                        // the destination rowProcessor will take care of any that need post-filtering.
-                        // but need to send off last buffer now.
-                        state = js_lhj;
-                    }
-                    else
-                    {
-                        localRhsRows.append(row.getLink());
-                        localHashCrit.leave();
+                        CriticalBlock b(localHashCrit);
+                        if (localHashJoin)
+                        {
+                            // keep it only if it hashes to my node
+                            unsigned hv = rightHash->hash(row.get());
+                            if (myNode == (hv % numNodes))
+                                localRhsRows.append(row.getLink());
 
-                        //JCSMORE - be careful, localHashJoin might have kicked in (non-locals flushed.
-                        rightSerializer->serialize(mbser, (const byte *)row.get());
-                        if (mb.length() >= MAX_SEND_SIZE)
-                            break;
+                            // ok so switch tactics.
+                            // clearNonLocalRows() will have cleared out non-locals by now
+                            // but I may be half way through serializing rows here, which are mixed and this row
+                            // may still need to be sent.
+                            // The destination rowProcessor will take care of any that need post-filtering,
+                            // so ensure last buffer is sent, below before exiting sendRHS broadcast
+
+                            stopRHSBroadcast = true;
+                        }
+                        else
+                            localRhsRows.append(row.getLink());
                     }
+
+                    rightSerializer->serialize(mbser, (const byte *)row.get());
+                    if (mb.length() >= MAX_SEND_SIZE)
+                        break;
                 }
                 if (0 == mb.length())
                     break;
-                // NB: if doingLHJ triggered, this will be the last broadcast packet
+                if (stopRHSBroadcast)
+                    sendItem->setFlag(bcastflag_spilt);
                 ThorCompress(mb, sendItem->queryMsg());
                 if (!broadcaster.send(sendItem))
                     break;
+                if (stopRHSBroadcast)
+                    break;
                 mb.clear();
                 broadcaster.resetSendItem(sendItem);
-
-                if (js_std != state)
-                    break;
-            }
-            if (js_lhj == state)
-            {
-                size32_t bufferedSz = 0;
-                class CSendBuffers
-                {
-                    unsigned nodes;
-                public:
-                    PointerArrayOf<MemoryBuffer> mbs;
-                    PointerArrayOf<CMemoryRowSerializer> mbsers;
-
-                    CSendBuffers(unsigned _nodes) : nodes(_nodes)
-                    {
-                        for (unsigned n=0; n<nodes; n++)
-                        {
-                            MemoryBuffer *mb = new MemoryBuffer;
-                            mbs.append(mb);
-                            mbsers.append(new CMemoryRowSerializer(*mb));
-                        }
-                    }
-                    ~CSendBuffers()
-                    {
-                        for (unsigned n=0; n<nodes; n++)
-                        {
-                            delete mbsers.item(n);
-                            delete mbs.item(n);
-                        }
-                    }
-                } sendBuffers(numNodes);
-
-                sendItem->setType(bcasttype_direct);
-                while (!abortSoon)
-                {
-                    while (!abortSoon)
-                    {
-                        OwnedConstThorRow row = right->ungroupedNextRow();
-                        if (!row)
-                            break;
-                        unsigned hv = rightHash->hash(row.get());
-                        rank_t dst = hv % numNodes;
-                        if (myNode == dst)
-                        {
-                            // NB: no need to protect with localHashCrit now, clearNonLocalRows() will not interfere again
-                            localRhsRows.append(row.getLink());
-                        }
-                        else
-                        {
-                            size32_t sz = mb.length();
-                            rightSerializer->serialize(sendBuffers.mbsers.item(dst), (const byte *)row.get());
-                            bufferedSz += mb.length() - sz;
-                            if (bufferedSz >= MAX_SEND_SIZE)
-                                break;
-                        }
-                    }
-                    if (0 == bufferedSz)
-                        break;
-                    // JCSMORE - this probably should be threaded
-                    for (unsigned n=0; n<numNodes; n++)
-                    {
-                        MemoryBuffer &mb = *sendBuffers.mbs.item(n);
-                        ThorCompress(mb, sendItem->queryMsg());
-                        if (!broadcaster.sendDirect(n+1, sendItem))
-                            break;
-                        broadcaster.resetSendItem(sendItem);
-                        mb.clear();
-                    }
-                    bufferedSz = 0;
-                }
             }
         }
         catch (IException *e)
@@ -1471,11 +1380,11 @@ public:
             ActPrintLog(e, "CLookupJoinActivity::sendRHS: exception");
             throw;
         }
-
-
-
-
-        broadcaster.final(); // signal stop to others
+        sendItem.setown(broadcaster.newSendItem(bcast_stop));
+        if (stopRHSBroadcast)
+            sendItem->setFlag(bcastflag_spilt);
+        ActPrintLog("Sending final RHS broadcast packet");
+        broadcaster.send(sendItem); // signals stop to others
     }
     void processRHSRows(unsigned slave, MemoryBuffer &mb)
     {
@@ -1486,7 +1395,7 @@ public:
         {
             size32_t sz = rightDeserializer->deserialize(rowBuilder, memDeserializer);
             OwnedConstThorRow fRow = rowBuilder.finalizeRowClear(sz);
-            CriticalBlock b(rowCrit);
+            CriticalBlock b(localHashCrit);
             if (localHashJoin)
             {
                 /* NB: recvLoop should be winding down, a slave signal spilt and communicated to all
@@ -1495,7 +1404,7 @@ public:
 
                 // hash row and discard unless for this node
                 unsigned hv = rightHash->hash(fRow.get());
-                if (myNode == (hv % numNodes))
+                if (myNode == (hv % numNodes)) // JCSMORE - I'm slightly assuming that IHashDistributor will do same modulus later (it does but..)
                     rows.append(fRow.getClear());
             }
             else
@@ -1551,36 +1460,52 @@ public:
 		Owned<IThorRowLoader> rowLoader;
 		if (needGlobal)
 		{
+		    /* This is for isLookup(), what about ,ALL ? */
+
+
+
 			rowProcessor.start();
 			broadcaster.start(this, mpTag, stopping);
 			sendRHS();
 			broadcaster.end();
 			rowProcessor.wait();
 
-
-/* This is for isLookup(), what about ,ALL ? */
-
-			/* Broadcast is complete, all sent, all received.
-			 * Remove callback and broadcast final message to others, to ensure other know if spilt
+			/* NB: Potentially one of the slave spilt late after broadcast and rowprocessor finished
+			 * Need to remove spill callback and broadcast one last message to know.
 			 */
+
 			queryJob().queryRowManager()->removeRowBuffer(this);
 
 			broadcaster.reset();
 			broadcaster.start(this, mpTag, stopping);
-			broadcaster.end(); // NB: this is enough to send a packet that will flag whether spilt or not.
+	        Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_stop);
+	        if (localHashJoin)
+	            sendItem->setFlag(bcastflag_spilt);
+	        ActPrintLog("Sending final RHS broadcast packet");
+	        broadcaster.send(sendItem); // signals stop to others
+			broadcaster.end();
+
+			/* All slaves now know whether any one spilt or not, i.e. whether to perform local hash join or not
+			 * If any have, still need to distribute rest of RHS..
+			 */
 
 			if (localHashJoin)
 			{
-				clearNonLocalRows(); // may have already been done by spill callback
 				setupDistributors();
 
-				IArrayOf<IRowStream> streams;
-				ForEachItemIn(a, rhsNodeRows)
+				// ? local vs global lookup join..
+                queryJob().queryRowManager()->addRowBuffer(this);
+
+                // Now need to read from right hash distribute the rest of the RHS onto correct slaves
+                CThorExpandingRowArray &localRhsRows = *rhsNodeRows.item(queryJob().queryMyRank()-1);
+				while (!abortSoon)
 				{
-					CThorExpandingRowArray &rowArray = rhsNodeRows.item(a);
-					streams.append(*rowArray.createRowStream());
+				    OwnedConstThorRow row = right->nextRow();
+				    if (!row)
+				        break;
+                    localRhsRows.append(row.getClear());
 				}
-				right.setown(createConcatRowStream(streams.ordinality(), streams.getArray()));
+				// NB: At this state, there are still slaves*arrays of rows
 			}
 		}
 
@@ -1724,11 +1649,11 @@ public:
             sendItem->queryMsg().read(hashFlushed);
             if (hashFlushed)
             {
-                CriticalBlock b(localHashCrit);
-                localHashJoin = true;
+                StringBuffer msg("Notification that slave %d spilt", sendItem->queryOrigin());
+                clearNonLocalRows(msg.str());
             }
         }
-        rowProcessor.addBlock(sendItem);
+        rowProcessor.addBlock(sendItem); // NB: NULL indicates end
     }
     virtual void addExtra(CSendItem *sendItem)
     {
@@ -1742,7 +1667,7 @@ public:
     virtual bool freeBufferedRows(bool critical)
     {
     	// NB: only installed if lookup join and global
-        return clearNonLocalRows();
+        return clearNonLocalRows("Out of memory callback");
     }
 };
 
@@ -1770,6 +1695,7 @@ CActivityBase *createAllDenormalizeSlave(CGraphElementBase *container)
 /////////////////////
 
 
+#if 0
 
 class CSendBucket : public CSimpleInterface, implements IRowStream
 {
@@ -2376,3 +2302,4 @@ public:
     }
     friend class CWriteHandler;
 };
+#endif
