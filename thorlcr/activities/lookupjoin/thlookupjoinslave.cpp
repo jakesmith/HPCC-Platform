@@ -1486,39 +1486,25 @@ public:
 			    localHashJoin = true;
 				setupDistributors();
 
-				// NB: callback will trigger different behaviour now that localHashJoin=true
-                queryJob().queryRowManager()->addRowBuffer(this);
-
-                // Now need to read from right hash distribute the rest of the RHS onto correct slaves
-                CThorExpandingRowArray &localRhsRows = *rhsNodeRows.item(queryJob().queryMyRank()-1);
-				while (!abortSoon)
-				{
-				    OwnedConstThorRow row = right->nextRow();
-				    if (!row)
-				        break;
-                    localRhsRows.append(row.getClear());
-				}
 				// NB: At this point, there are still slaves*arrays of rows
 
-				// JCSMORE - would be good to dispose of the row ptr arrays too asap..
                 IArrayOf<IRowStream> streams;
+                streams.append(*right.getLink()); // the input RHS, which because spilt during broadcast has not been exhausted
                 ForEachItemIn(a, rhsNodeRows)
                 {
                     CThorExpandingRowArray &rowArray = rhsNodeRows.item(a);
                     streams.append(*rowArray.createRowStream());
+    				// JCSMORE - would be good to dispose of the row ptr arrays as these 'rowArray's are consumed..
                 }
                 right.setown(createConcatRowStream(streams.ordinality(), streams.getArray()));
-			}
 
-            if (localHashJoin)
-            {
-                // RHS
                 rowLoader.setown(createThorRowLoader(*this, queryRowInterfaces(inputs.item(1)), compareRight));
                 rowLoader->setOptions(rcflag_noAllInMemSort); // If fits into memory, don't want it sorted
-                right.setown(rowLoader->load(right, abortSoon, false, &rhs));
-                if (right)
+                right.setown(rowLoader->load(right.getClear(), abortSoon, false, &rhs));
+
+                if (right) // NB: returned stream, implies spilt AND sorted, if not 'rhs' is filled
                 {
-                    ActPrintLog("RHS Spilt to disk. Standard Join will be used.");
+                    ActPrintLog("RHS spilt to disk. Standard Join will be used.");
                     ActPrintLog("Loading/Sorting LHS");
 
                     // LHS
@@ -1568,6 +1554,7 @@ public:
     {
         if (needGlobal) // rhs will have been filled already if local
         {
+        	// NB: applies whether performing regular lookup join, or spilt to localHashJoin
             rowidx_t maxRows = 0;
             ForEachItemIn(a, rhsNodeRows)
             {
