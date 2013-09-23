@@ -318,6 +318,8 @@ class CBroadcaster : public CSimpleInterface
     void recvLoop()
     {
         CMessageBuffer msg;
+
+        unsigned stdSendItemPackets = 0;
         while (!stopRecv && !activity.queryAbortSoon())
         {
             rank_t sendRank;
@@ -343,6 +345,9 @@ class CBroadcaster : public CSimpleInterface
                         ActPrintLog(&activity, "recvLoop, received last slaveStop");
                         // NB: this slave has nothing more to receive.
                         // However the sender will still be re-broadcasting some packets, including these stop packets
+
+                        PROGLOG("recvLoop() stdSendItemPackets = %d", stdSendItemPackets);
+
                         return;
                     }
                     break;
@@ -356,8 +361,12 @@ class CBroadcaster : public CSimpleInterface
                 }
                 case bcast_send:
                 {
+                    ++stdSendItemPackets;
                     if (!allRequestStop) // don't care if all stopping
+                    {
+                        PROGLOG("bast_send ; !allRequestStop");
                         recvInterface->bCastReceive(sendItem.getClear());
+                    }
                     break;
                 }
                 default:
@@ -450,6 +459,51 @@ public:
 
 */
 
+
+
+class CWrappedRight : public CSimpleInterface, implements IRowStream
+{
+    Linked<IRowStream> right;
+    StringAttr msg;
+    IOutputMetaData *meta;
+    bool logRows;
+public:
+    rowidx_t count;
+
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+    CWrappedRight(const char *_msg, IRowStream *_right, IOutputMetaData *_meta, bool _logRows) : msg(_msg), right(_right), meta(_meta), logRows(_logRows)
+    {
+        count = 0;
+        PROGLOG("%s: meta hasXML = %s", msg.get(), meta->hasXML()?"true":"false");
+    }
+    ~CWrappedRight()
+    {
+        PROGLOG("%s: CWrappedRight : read : %"RIPF"d rows", msg.get(), count);
+    }
+// IRowStream
+    // IRowStream
+    virtual const void *nextRow()
+    {
+        const void *row = right->nextRow();
+        if (!row)
+            return NULL;
+        if (logRows)
+        {
+            CommonXmlWriter xmlwrite(0);
+            if (meta->hasXML())
+            {
+                meta->toXML((byte *)row, xmlwrite);
+                PROGLOG("%s: row = %s", msg.get(), xmlwrite.str());
+            }
+        }
+        ++count;
+        return row;
+    }
+    virtual void stop() { right->stop(); }
+};
+
+
+
 /*
  * The main activity class
  * It's intended to be used when the RHS globally, is small enough to fit within the memory of a single node.
@@ -491,6 +545,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     const void *rhsNext;
     Owned<IOutputMetaData> outputMeta;
     rowcount_t rhsTotalCount;
+    mptag_t lhsDistributeTag, rhsDistributeTag;
 
     PointerArrayOf<CThorExpandingRowArray> rhsNodeRows;
     CBroadcaster broadcaster;
@@ -520,6 +575,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
 #ifdef _DEBUG
     rowidx_t rowProcessHashIgnored;
     rowidx_t processRHSRowCount;
+    unsigned processRHSRowsPackets;
 #endif
 
     inline bool isLookup() { return (joinKind==join_lookup)||(joinKind==denormalize_lookup); }
@@ -657,6 +713,7 @@ public:
         myNode = queryJob().queryMyRank();
         numNodes = queryJob().querySlaves();
         needGlobal = !container.queryLocal() && (container.queryJob().querySlaves() > 1);
+        lhsDistributeTag = rhsDistributeTag = TAG_NULL;
     }
     ~CLookupJoinActivity()
     {
@@ -679,17 +736,25 @@ public:
             ForEachItemIn(a, rhsNodeRows)
             {
                 CThorExpandingRowArray &rows = *rhsNodeRows.item(a);
+                ActPrintLog("pre-hash-clear - rows[%d] had %"RIPF"d rows", a, rows.ordinality());
                 rowidx_t numRows = rows.ordinality();
                 for (unsigned r=0; r<numRows; r++)
                 {
                     unsigned hv = rightHash->hash(rows.query(r));
-                    if (myNode != (hv % numNodes))
+                    if ((myNode-1) != (hv % numNodes))
                     {
                         OwnedConstThorRow row = rows.getClear(r); // dispose of
                         ++clearedRows;
                     }
                 }
+                rowidx_t chkCount = 0;
+                for (unsigned r=0; r<numRows; r++)
+                {
+                    if (NULL != rows.query(r))
+                        ++chkCount;
+                }
                 rows.compact();
+                ActPrintLog("post-hash-clear - rows[%d] has %"RIPF"d rows (chkCount=%"RIPF"d)", a, rows.ordinality(), chkCount);
             }
         }
 
@@ -780,7 +845,11 @@ public:
             joinType = JT_Inner;
 
         if (!container.queryLocal())
+        {
             mpTag = container.queryJob().deserializeMPTag(data);
+            lhsDistributeTag = container.queryJob().deserializeMPTag(data);
+            rhsDistributeTag = container.queryJob().deserializeMPTag(data);
+        }
 
         unsigned slaves = container.queryJob().querySlaves();
         rhsNodeRows.ensure(slaves);
@@ -890,6 +959,7 @@ public:
 #ifdef _DEBUG
         rowProcessHashIgnored = 0;
         processRHSRowCount = 0;
+        processRHSRowsPackets = 0;
 #endif
     }
     virtual void abort()
@@ -1329,6 +1399,7 @@ public:
         Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_send);
         MemoryBuffer mb;
         rowidx_t sent = 0;
+        unsigned packetsSent = 0;
         try
         {
             CThorExpandingRowArray &localRhsRows = *rhsNodeRows.item(queryJob().queryMyRank()-1);
@@ -1339,7 +1410,10 @@ public:
                 {
                     OwnedConstThorRow row = right->ungroupedNextRow();
                     if (!row)
+                    {
+                        ActPrintLog("broadcasting last row (!row)");
                         break;
+                    }
 
                     {
                         CriticalBlock b(localHashCrit);
@@ -1347,7 +1421,7 @@ public:
                         {
                             // keep it only if it hashes to my node
                             unsigned hv = rightHash->hash(row.get());
-                            if (myNode == (hv % numNodes))
+                            if ((myNode-1) == (hv % numNodes))
                                 localRhsRows.append(row.getLink());
 
                             // ok so switch tactics.
@@ -1370,14 +1444,24 @@ public:
                         break;
                 }
                 if (0 == mb.length())
+                {
+                    ActPrintLog("Stopped broadcasting because 0 == mb.length()");
                     break;
+                }
                 if (stopRHSBroadcast)
                     sendItem->setFlag(bcastflag_spilt);
                 ThorCompress(mb, sendItem->queryMsg());
                 if (!broadcaster.send(sendItem))
+                {
+                    ActPrintLog("Stopped broadcasting because !broadcaster.send(sendItem)");
                     break;
+                }
+                ++packetsSent;
                 if (stopRHSBroadcast)
+                {
+                    ActPrintLog("Stopped broadcasting because stopRHSBroadcast");
                     break;
+                }
                 mb.clear();
                 broadcaster.resetSendItem(sendItem);
             }
@@ -1389,7 +1473,7 @@ public:
         }
 
 #ifdef _DEBUG
-        ActPrintLog("broadcastRHS: sent %"RIPF"d", sent);
+        ActPrintLog("broadcastRHS: sent %"RIPF"d, packetsSent = %d", sent, packetsSent);
 #endif
 
         sendItem.setown(broadcaster.newSendItem(bcast_stop));
@@ -1400,8 +1484,9 @@ public:
     }
     void processRHSRows(unsigned slave, MemoryBuffer &mb)
     {
+        ++processRHSRowsPackets;
         CThorExpandingRowArray &rows = *rhsNodeRows.item(slave-1);
-        rowidx_t startCount = rows.ordinality();
+        rowidx_t thisCount = 0;
         RtlDynamicRowBuilder rowBuilder(rightAllocator);
         CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
         while (!memDeserializer.eos())
@@ -1417,22 +1502,27 @@ public:
 
                 // hash row and discard unless for this node
                 unsigned hv = rightHash->hash(fRow.get());
-                if (myNode == (hv % numNodes)) // JCSMORE - I'm slightly assuming that IHashDistributor will do same modulus later (it does but..)
+                if ((myNode-1) == (hv % numNodes)) // JCSMORE - I'm slightly assuming that IHashDistributor will do same modulus later (it does but..)
+                {
                     rows.append(fRow.getClear());
+                    ++thisCount;
+                }
                 else
                     ++rowProcessHashIgnored;
             }
             else
+            {
                 rows.append(fRow.getClear());
+                ++thisCount;
+            }
         }
-        processRHSRowCount += rows.ordinality() - startCount;
+        processRHSRowCount += thisCount;
     }
     void setupDistributors()
     {
-        rhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), mpTag, false, NULL));
+        rhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), rhsDistributeTag, false, NULL));
         right.setown(rhsDistributor->connect(queryRowInterfaces(rightITDL), right.getClear(), rightHash, NULL));
-
-        lhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), mpTag, false, NULL));
+        lhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), lhsDistributeTag, false, NULL));
         left.setown(lhsDistributor->connect(queryRowInterfaces(leftITDL), left.getClear(), leftHash, NULL));
     }
     void getRHS(bool stopping)
@@ -1482,7 +1572,7 @@ public:
 			rowProcessor.wait();
 
 #ifdef _DEBUG
-			PROGLOG("processRHSRows: total = %"RIPF"d - processRHSRowCount = %"RIPF"d, rowProcessHashIgnored = %"RIPF"d", processRHSRowCount + rowProcessHashIgnored, processRHSRowCount, rowProcessHashIgnored);
+			PROGLOG("processRHSRows: total = %"RIPF"d - processRHSRowCount = %"RIPF"d, rowProcessHashIgnored = %"RIPF"d, processRHSRowsPackets=%d", processRHSRowCount + rowProcessHashIgnored, processRHSRowCount, rowProcessHashIgnored, processRHSRowsPackets);
 #endif
 
 			/* NB: Potentially one of the slave spilt late after broadcast and rowprocessor finished
@@ -1510,42 +1600,19 @@ public:
                 ActPrintLog("Spilt whilst broadcasting, will attempt distribute local lookup join");
 				setupDistributors();
 
+#ifdef _DEBUG
+                left.setown(new CWrappedRight("distributed lhs", left, queryRowInterfaces(leftITDL)->queryRowMetaData(), true));
+#endif
+
+
 				// NB: At this point, there are still slaves*arrays of rows
 
-                IArrayOf<IRowStream> streams;
 #ifdef _DEBUG
-				class CWrappedRight : public CSimpleInterface, implements IRowStream
-				{
-				    Linked<IRowStream> right;
-				public:
-                    rowidx_t count;
-
-                    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-				    CWrappedRight(IRowStream *_right) : right(_right)
-				    {
-				        count = 0;
-				    }
-				    ~CWrappedRight()
-				    {
-				        PROGLOG("CWrappedRight : read : %"RIPF"d rows", count);
-				    }
-				// IRowStream
-				    // IRowStream
-                    virtual const void *nextRow()
-                    {
-                        const void *row = right->nextRow();
-                        if (!row)
-                            return NULL;
-                        ++count;
-                        return row;
-                    }
-                    virtual void stop() { right->stop(); }
-				};
-				IRowStream *_right = new CWrappedRight(right);
-                streams.append(*_right);
-#else
-                streams.append(*right.getLink()); // what remains of 'right' will be read through distributor
+                right.setown(new CWrappedRight("distributed rhs", right, queryRowInterfaces(rightITDL)->queryRowMetaData(), false));
 #endif
+
+                IArrayOf<IRowStream> streams;
+                streams.append(*right.getLink()); // what remains of 'right' will be read through distributor
 #ifdef _DEBUG
                 rowidx_t totalLocalHashed = 0;
 #endif
@@ -1590,6 +1657,10 @@ public:
 
             if (rightStream) // NB: returned stream, implies spilt AND sorted, if not 'rhs' is filled
             {
+#ifdef _DEBUG
+                rightStream.setown(new CWrappedRight("distributed rhs + local hash tables", rightStream, queryRowInterfaces(rightITDL)->queryRowMetaData(), true));
+#endif
+
                 ActPrintLog("RHS spilt to disk. Standard Join will be used.");
                 ActPrintLog("Loading/Sorting LHS");
 

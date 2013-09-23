@@ -582,6 +582,7 @@ void CThorExpandingRowArray::compact()
     const void **freeFinger = rows;
     const void **filledFinger = NULL;
     const void **rowEnd = rows+numRows;
+    rowidx_t newCount = 0;
     while (freeFinger != rowEnd)
     {
         if (NULL == *freeFinger)
@@ -592,6 +593,7 @@ void CThorExpandingRowArray::compact()
             {
                 if (*filledFinger)
                 {
+                    ++newCount;
                     *freeFinger = *filledFinger;
                     *filledFinger = NULL; // if !sparse, would prob. be better to memset at end
                     ++filledFinger;
@@ -602,8 +604,11 @@ void CThorExpandingRowArray::compact()
             if (filledFinger == rowEnd) // no more filled elements, so stop
                 break;
         }
+        else
+            ++newCount;
         ++freeFinger;
     }
+    numRows = newCount;
     // should this [optionally] shrink the row array too?
 }
 
@@ -1380,12 +1385,12 @@ protected:
                 if (iCompare && (1 == outStreams))
                 {
                     // Option(rcflag_noAllInMemSort) - avoid sorting allMemRows
-                    if ((NULL == allMemRows) || (0 != (options & rcflag_noAllInMemSort)))
+                    if ((NULL == allMemRows) || (0 == (options & rcflag_noAllInMemSort)))
                         spillableRows.sort(*iCompare, maxCores);
                 }
 
                 if ((rc_allDiskOrAllMem == diskMemMix) || // must supply allMemRows, only here if no spilling (see above)
-                    (NULL!=allMemRows && (rc_allMem == diskMemMix)) || // if allMemRows given, all in memory by definition
+                    (NULL!=allMemRows && (rc_allMem == diskMemMix)) ||
                     (NULL!=allMemRows && (rc_mixed == diskMemMix) && 0 == overflowCount) // if allMemRows given, only if no spilling
                    )
                 {
