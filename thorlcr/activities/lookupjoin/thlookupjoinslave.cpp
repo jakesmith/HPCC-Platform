@@ -517,6 +517,11 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     ICompare *compareLeft;
     Owned<IJoinHelper> joinHelper;
 
+#ifdef _DEBUG
+    rowidx_t rowProcessHashIgnored;
+    rowidx_t processRHSRowCount;
+#endif
+
     inline bool isLookup() { return (joinKind==join_lookup)||(joinKind==denormalize_lookup); }
     inline bool isAll() { return (joinKind==join_all)||(joinKind==denormalize_all); }
     inline bool isDenormalize() { return (joinKind==denormalize_all)||(joinKind==denormalize_lookup); }
@@ -562,13 +567,16 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
         ~CRowProcessor()
         {
             blockQueue.stop();
+ unsigned blocks=0;
             loop
             {
                 Owned<CSendItem> sendItem = blockQueue.dequeueNow();
                 if (NULL == sendItem)
                     break;
+                ++blocks;
             }
             wait();
+ PROGLOG("~CRowProcessor: cleared %d unhandled CSendItem's", blocks);
         }
         void start()
         {
@@ -878,6 +886,11 @@ public:
         if (rlsz)
             defaultLeft.setown(rl.finalizeRowClear(rlsz));
         dataLinkStart();
+
+#ifdef _DEBUG
+        rowProcessHashIgnored = 0;
+        processRHSRowCount = 0;
+#endif
     }
     virtual void abort()
     {
@@ -1374,6 +1387,11 @@ public:
             ActPrintLog(e, "CLookupJoinActivity::broadcastRHS: exception");
             throw;
         }
+
+#ifdef _DEBUG
+        ActPrintLog("broadcastRHS: sent %"RIPF"d", sent);
+#endif
+
         sendItem.setown(broadcaster.newSendItem(bcast_stop));
         if (stopRHSBroadcast)
             sendItem->setFlag(bcastflag_spilt);
@@ -1383,6 +1401,7 @@ public:
     void processRHSRows(unsigned slave, MemoryBuffer &mb)
     {
         CThorExpandingRowArray &rows = *rhsNodeRows.item(slave-1);
+        rowidx_t startCount = rows.ordinality();
         RtlDynamicRowBuilder rowBuilder(rightAllocator);
         CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
         while (!memDeserializer.eos())
@@ -1400,10 +1419,13 @@ public:
                 unsigned hv = rightHash->hash(fRow.get());
                 if (myNode == (hv % numNodes)) // JCSMORE - I'm slightly assuming that IHashDistributor will do same modulus later (it does but..)
                     rows.append(fRow.getClear());
+                else
+                    ++rowProcessHashIgnored;
             }
             else
                 rows.append(fRow.getClear());
         }
+        processRHSRowCount += rows.ordinality() - startCount;
     }
     void setupDistributors()
     {
@@ -1459,6 +1481,10 @@ public:
 			broadcaster.end();
 			rowProcessor.wait();
 
+#ifdef _DEBUG
+			PROGLOG("processRHSRows: total = %"RIPF"d - processRHSRowCount = %"RIPF"d, rowProcessHashIgnored = %"RIPF"d", processRHSRowCount + rowProcessHashIgnored, processRHSRowCount, rowProcessHashIgnored);
+#endif
+
 			/* NB: Potentially one of the slave spilt late after broadcast and rowprocessor finished
 			 * Need to remove spill callback and broadcast one last message to know.
 			 */
@@ -1486,6 +1512,8 @@ public:
 
 				// NB: At this point, there are still slaves*arrays of rows
 
+                IArrayOf<IRowStream> streams;
+#ifdef _DEBUG
 				class CWrappedRight : public CSimpleInterface, implements IRowStream
 				{
 				    Linked<IRowStream> right;
@@ -1514,17 +1542,27 @@ public:
                     virtual void stop() { right->stop(); }
 				};
 				IRowStream *_right = new CWrappedRight(right);
-                IArrayOf<IRowStream> streams;
-//                streams.append(*right.getLink()); // what remains of 'right' will be read through distributor
                 streams.append(*_right);
+#else
+                streams.append(*right.getLink()); // what remains of 'right' will be read through distributor
+#endif
+#ifdef _DEBUG
+                rowidx_t totalLocalHashed = 0;
+#endif
                 ForEachItemIn(a, rhsNodeRows)
                 {
                     CThorExpandingRowArray &rowArray = *rhsNodeRows.item(a);
 
+#ifdef _DEBUG
                     ActPrintLog("Post clear, rowArray[%d] has %"RIPF"d rows", a, rowArray.ordinality());
+                    totalLocalHashed += rowArray.ordinality();
+#endif
                     streams.append(*rowArray.createRowStream());
     				// JCSMORE - would be good to dispose of the row ptr arrays as these 'rowArray's are consumed..
                 }
+#ifdef _DEBUG
+                ActPrintLog("totalLocalHashed = %"RIPF"d", totalLocalHashed);
+#endif
                 right.setown(createConcatRowStream(streams.ordinality(), streams.getArray()));
 			}
 		}
