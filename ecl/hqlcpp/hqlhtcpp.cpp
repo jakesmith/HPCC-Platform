@@ -4837,7 +4837,7 @@ void HqlCppTranslator::buildGetResultInfo(BuildCtx & ctx, IHqlExpression * expr,
     case type_row:      UNIMPLEMENTED; break; //should be translated to rawData.
     default:
         PrintLog("%d", ttc);
-        assertex(!"No getResult defined for this type");
+        throwUnexpectedX("No getResult defined for this type");
         break;
     }
 
@@ -5302,7 +5302,8 @@ void HqlCppTranslator::buildHashClass(BuildCtx & ctx, const char * name, IHqlExp
     funcctx.addQuoted(s);
 
     bindTableCursor(funcctx, dataset.queryDataset(), "self", dataset.querySide(), dataset.querySelSeq());
-    buildReturn(funcctx, orderExpr);
+    OwnedITypeInfo returnType = makeIntType(4, false);
+    buildReturn(funcctx, orderExpr, returnType);
 
     endNestedClass();
 }

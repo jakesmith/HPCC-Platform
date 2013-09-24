@@ -284,6 +284,7 @@ void CWriteMasterBase::init()
             blockCompressed = true;
         if (blockCompressed)
             props.setPropBool("@blockCompressed", true);
+        props.setProp("@kind", "flat");
         if (TAKdiskwrite == container.getKind() && (0 != (diskHelperBase->getFlags() & TDXtemporary)) && container.queryOwner().queryOwner() && (!container.queryOwner().isGlobal())) // I am in a child query
         { // do early, because this will be local act. and will not come back to master until end of owning graph.
             publish();
@@ -392,7 +393,7 @@ const void *getAggregate(CActivityBase &activity, unsigned partialResults, IRowI
         }
     }
     RtlDynamicRowBuilder result(rowIf.queryRowAllocator(), false);
-    size32_t sz;
+    size32_t sz = 0;
     bool first = true;
     _partialResults = 0;
     for (;_partialResults<partialResults; _partialResults++)

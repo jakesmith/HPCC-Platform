@@ -526,6 +526,7 @@ EclAgent::EclAgent(IConstWorkUnit *wu, const char *_wuid, bool _checkVersion, bo
     abortmonitor->start();
     EnableSEHtoExceptionMapping();
     setSEHtoExceptionHandler(abortmonitor);
+    retcode = 0;
 
     StringAttrAdaptor adaptor(clusterType);
     wuRead->getDebugValue("targetClusterType", adaptor);
@@ -1417,7 +1418,7 @@ ILocalOrDistributedFile *EclAgent::resolveLFN(const char *fname, const char *err
                 if (optional) return NULL;
                 if (!errorTxt) return NULL;
                 StringBuffer errorMsg(errorTxt);
-                throw MakeStringException(0, "%s", errorMsg.append(": Superkey '").append(lfn).append("' is empty").str());
+                throw MakeStringExceptionDirect(0, errorMsg.append(": Superkey '").append(lfn).append("' is empty").str());
             }
 
             if (noteRead)
@@ -1432,7 +1433,7 @@ ILocalOrDistributedFile *EclAgent::resolveLFN(const char *fname, const char *err
         if (optional) return NULL;
         if (!errorTxt) return NULL;
         StringBuffer errorMsg(errorTxt);
-        throw MakeStringException(0, "%s", errorMsg.append(": Logical file name '").append(lfn).append("' could not be resolved").str());
+        throw MakeStringExceptionDirect(0, errorMsg.append(": Logical file name '").append(lfn).append("' could not be resolved").str());
     }
     return ldFile.getClear();
 }
@@ -1814,6 +1815,20 @@ IEclProcess *EclAgent::loadProcess()
     return factory();
 }
 
+int EclAgent::getRetcode()
+{
+    return retcode;
+}
+
+void EclAgent::setRetcode(int code)
+{
+    if (code > 255)
+        code = 255;
+    if (!code)
+        code = 1;
+    retcode = code;
+}
+
 void EclAgent::doProcess()
 {
 #ifdef _DEBUG
@@ -1870,6 +1885,7 @@ void EclAgent::doProcess()
     }
     catch (WorkflowException * e)
     {
+        setRetcode(e->errorCode());
         if (debugContext)
             debugContext->checkBreakpoint(DebugStateException, NULL, static_cast<IException *>(e));
         logException(e);
@@ -1877,6 +1893,7 @@ void EclAgent::doProcess()
     }
     catch (IException * e)
     {
+        setRetcode(e->errorCode());
         if (debugContext)
             debugContext->checkBreakpoint(DebugStateException, NULL, e);
         logException(e);
@@ -1884,12 +1901,14 @@ void EclAgent::doProcess()
     }
     catch (std::exception & e)
     {
+        setRetcode(4);
         if (debugContext)
             debugContext->checkBreakpoint(DebugStateException, NULL, NULL);
         logException(e);
     }
     catch (RELEASE_CATCH_ALL)
     {
+        setRetcode(8);
         if (debugContext)
             debugContext->checkBreakpoint(DebugStateFailed, NULL, NULL);
         logException((IException *) NULL);
@@ -2225,13 +2244,13 @@ void EclAgentWorkflowMachine::doExecutePersistItem(IRuntimeWorkflowItem & item)
     {
         StringBuffer errmsg;
         errmsg.append("Internal error in generated code: for wfid ").append(wfid).append(", persist CRC wfid ").append(item.queryPersistWfid()).append(" did not call returnPersistVersion");
-        throw MakeStringException(0, "%s", errmsg.str());
+        throw MakeStringExceptionDirect(0, errmsg.str());
     }
     if(strcmp(name.str(), persist->logicalName.get()) != 0)
     {
         StringBuffer errmsg;
         errmsg.append("Failed workflow/persist consistency check: wfid ").append(wfid).append(", WU persist name ").append(name.str()).append(", runtime persist name ").append(persist->logicalName.get());
-        throw MakeStringException(0, "%s", errmsg.str());
+        throw MakeStringExceptionDirect(0, errmsg.str());
     }
     if(agent.arePersistsFrozen())
     {
@@ -3047,6 +3066,7 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
     _CrtSetAllocHook(myhook);
 #endif
 #endif
+    int retcode = 0;
     addAbortHandler(ControlHandler);
     Owned<IProperties> globals = createProperties(true); // cmdline props only
     for (int i = 1; i < argc; i++) 
@@ -3336,6 +3356,7 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
 
                 agent.setStandAloneOptions(standAloneExe, isRemoteWorkunit, resolveFilesLocally, writeResultsToStdout, outputFmt, standAloneUDesc);
                 agent.doProcess();
+                retcode = agent.getRetcode();
             }
             else
             {
@@ -3353,6 +3374,7 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
                     e->Release();
                     WARNLOG("%s (%d)", msg.str(), code);
                 }
+                retcode = 255;
             }
         }
         catch (IException * e)
@@ -3380,7 +3402,7 @@ extern int HTHOR_API eclagent_main(int argc, const char *argv[], StringBuffer * 
     if (traceLevel)
         PrintLog("exiting");
 
-    return 0;
+    return retcode;
 }
 
 //=======================================================================================
