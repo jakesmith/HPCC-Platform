@@ -185,7 +185,6 @@ void CSlaveActivity::stopInput(IRowStream *itdl, const char *extra)
 #endif
 }
 
-
 void CSlaveActivity::abort()
 {
     CActivityBase::abort();

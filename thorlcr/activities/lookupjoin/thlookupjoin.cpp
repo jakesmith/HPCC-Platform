@@ -27,11 +27,11 @@ class CLookupJoinActivityMaster : public CMasterActivity
 public:
     CLookupJoinActivityMaster(CMasterGraphElement * info) : CMasterActivity(info)
     {
-        mpTag = container.queryJob().allocateMPTag(); // NB: base takes ownership and free's
         if (container.queryLocal())
             lhsDistributeTag = rhsDistributeTag = TAG_NULL;
         else
         {
+	        mpTag = container.queryJob().allocateMPTag(); // NB: base takes ownership and free's
             lhsDistributeTag = container.queryJob().allocateMPTag();
             rhsDistributeTag = container.queryJob().allocateMPTag();
         }

@@ -824,19 +824,19 @@ bool CThorExpandingRowArray::checkSorted(ICompare *icmp)
     return true;
 }
 
-IRowStream *CThorExpandingRowArray::createRowStream(rowidx_t start, rowidx_t num, bool streamOwns)
+IRowStream *CThorExpandingRowArray::createRowStream(rowidx_t start, rowidx_t num, bool streamOwns, bool clearAtEos)
 {
     class CStream : public CSimpleInterface, implements IRowStream
     {
         CThorExpandingRowArray &parent;
         rowidx_t pos, lastRow;
-        bool owns;
+        bool owns, clearAtEos;
 
     public:
         IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-        CStream(CThorExpandingRowArray &_parent, rowidx_t firstRow, rowidx_t _lastRow, bool _owns)
-            : parent(_parent), pos(firstRow), lastRow(_lastRow), owns(_owns)
+        CStream(CThorExpandingRowArray &_parent, rowidx_t firstRow, rowidx_t _lastRow, bool _owns, bool _clearAtEos)
+            : parent(_parent), pos(firstRow), lastRow(_lastRow), owns(_owns), clearAtEos(_clearAtEos)
         {
         }
 
@@ -844,13 +844,21 @@ IRowStream *CThorExpandingRowArray::createRowStream(rowidx_t start, rowidx_t num
         virtual const void *nextRow()
         {
             if (pos >= lastRow)
+            {
+                if (owns && clearAtEos)
+                    parent.kill();
                 return NULL;
+            }
             if (owns)
                 return parent.getClear(pos++);
             else
                 return parent.get(pos++);
         }
-        virtual void stop() { }
+        virtual void stop()
+        {
+            if (owns && clearAtEos)
+                parent.kill();
+        }
     };
 
     if (start>ordinality())
@@ -861,7 +869,7 @@ IRowStream *CThorExpandingRowArray::createRowStream(rowidx_t start, rowidx_t num
     else
         lastRow = start+num;
 
-    return new CStream(*this, start, lastRow, streamOwns);
+    return new CStream(*this, start, lastRow, streamOwns, clearAtEos);
 }
 
 void CThorExpandingRowArray::partition(ICompare &compare, unsigned num, UnsignedArray &out)

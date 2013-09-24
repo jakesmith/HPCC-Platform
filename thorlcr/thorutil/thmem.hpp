@@ -358,7 +358,7 @@ public:
     bool equal(ICompare *icmp, CThorExpandingRowArray &other);
     bool checkSorted(ICompare *icmp);
 
-    IRowStream *createRowStream(rowidx_t start=0, rowidx_t num=(rowidx_t)-1, bool streamOwns=true);
+    IRowStream *createRowStream(rowidx_t start=0, rowidx_t num=(rowidx_t)-1, bool streamOwns=true, bool clearAtEos=false);
 
     void partition(ICompare &compare, unsigned num, UnsignedArray &out); // returns num+1 points
 
@@ -490,7 +490,7 @@ public:
 };
 
 
-enum RowCollectorSpillFlags { rc_mixed, rc_allMem, rc_allDisk, rc_allDiskOrAllMem, rcflag_noinmemsort };
+enum RowCollectorSpillFlags { rc_mixed, rc_allMem, rc_allDisk, rc_allDiskOrAllMem };
 #define rcflag_noAllInMemSort 0x01
 interface IThorRowCollectorCommon : extends IInterface
 {
