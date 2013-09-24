@@ -1447,6 +1447,14 @@ protected:
             mmRegistered = false;
         }
     }
+    void enableSpillingCallback()
+    {
+        if (!mmRegistered && spillingEnabled())
+        {
+            activity.queryJob().queryRowManager()->addRowBuffer(this);
+            mmRegistered = true;
+        }
+    }
 public:
     CThorRowCollectorBase(CActivityBase &_activity, IRowInterfaces *_rowIf, ICompare *_iCompare, bool _isStable, RowCollectorSpillFlags _diskMemMix, unsigned _spillPriority)
         : activity(_activity),
@@ -1502,6 +1510,7 @@ public:
     {
         reset();
         spillableRows.transferFrom(src);
+        enableSpillingCallback();
     }
     virtual void setup(ICompare *_iCompare, bool _isStable, RowCollectorSpillFlags _diskMemMix, unsigned _spillPriority)
     {
@@ -1546,6 +1555,7 @@ class CThorRowLoader : public CThorRowCollectorBase, implements IThorRowLoader
     IRowStream *load(IRowStream *in, const bool &abort, TRLGroupFlag grouping, CThorExpandingRowArray *allMemRows, memsize_t *memUsage)
     {
         reset();
+        enableSpillingCallback();
         setPreserveGrouping(trl_preserveGrouping == grouping);
         while (!abort)
         {
@@ -1669,9 +1679,9 @@ public:
     {
         CThorRowCollectorBase::reset();
     }
-    virtual IRowStream *getStream(bool shared)
+    virtual IRowStream *getStream(bool shared, CThorExpandingRowArray *allMemRows)
     {
-        return CThorRowCollectorBase::getStream(NULL, NULL, shared);
+        return CThorRowCollectorBase::getStream(allMemRows, NULL, shared);
     }
 };
 

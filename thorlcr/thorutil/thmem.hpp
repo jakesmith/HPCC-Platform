@@ -515,7 +515,7 @@ interface IThorRowCollector : extends IThorRowCollectorCommon
     virtual void setPreserveGrouping(bool tf) = 0;
     virtual IRowWriter *getWriter() = 0;
     virtual void reset() = 0;
-    virtual IRowStream *getStream(bool shared=false) = 0;
+    virtual IRowStream *getStream(bool shared=false, CThorExpandingRowArray *allMemRows=NULL) = 0;
 };
 
 extern graph_decl IThorRowLoader *createThorRowLoader(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare=NULL, bool isStable=false, RowCollectorSpillFlags diskMemMix=rc_mixed, unsigned spillPriority=SPILL_PRIORITY_DEFAULT);

@@ -816,6 +816,8 @@ public:
         candidateMatches = 0;
         rhsTotalCount = RCUNSET;
         htCount = htDedupCount = 0;
+        rhsTableLen = 0;
+        rhsRows = RIUNSET;
         eos = eog = someSinceEog = false;
         leftITDL = inputs.item(0);
         rightITDL = inputs.item(1);
@@ -1440,6 +1442,27 @@ public:
     }
     void getRHS(bool stopping)
     {
+/*
+ * This handles LOOKUP and ALL, but most of the complexity is for LOOKUP handling OOM
+ * Global LOOKUP:
+ * 1) distributes RHS (using broadcaster)
+ * 2) sizes the hash table
+ * 3) If there is no OOM event, it is done and the RHS hash table is built.
+ *    ELSE -
+ * 4) If during 1) or 2) an OOM event occurs, all other slaves are notified.
+ *    If in the middle of broadcasting, it will stop sending RHS
+ *    The spill event will flush out all rows that do not hash to local slave
+ * 5) Hash distributor streams are setup for the [remaining] RHS and unread LHS.
+ * 6) The broadcast rows + the remaining RHS distributed stream are consumed into a single row array.
+ * 7) When done if it has not spilt, the RHS hash table is sized.
+ * 8) If there is no OOM event, the RHS is done and the RHS hash table is built
+ *    The distributed LHS stream is used to perform a local lookup join.
+ *    ELSE -
+ * 9) If during 6) or 7) an OOM event occurs, the stream loader, will spill and sort as necessary.
+ * 10) The LHS side is loaded and spilt and sorted if necessary
+ * 11) A regular join helper is created to perform a local join against the two hash distributed sorted sides.
+ */
+
         if (gotRHS)
             return;
         gotRHS = true;
@@ -1457,22 +1480,6 @@ public:
                 return;
             msg.read(rhsTotalCount);
         }
-        if (RCUNSET==rhsTotalCount)
-            rhsTableLen = 0; // set later after gather
-        else
-        {
-            if (isLookup())
-            {
-                rhsTableLen = getHTSize(rhsTotalCount);
-                ht.ensure(rhsTableLen);
-                ht.clearUnused();
-            }
-            else
-            {
-                rhsTableLen = 0;
-                rhs.ensure((rowidx_t)rhsTotalCount);
-            }
-        }
 		if (needGlobal)
 		{
 			rowProcessor.start();
@@ -1481,14 +1488,41 @@ public:
 			broadcaster.end();
 			rowProcessor.wait();
 
+			if (stopping)
+			{
+			    queryJob().queryRowManager()->removeRowBuffer(this);
+			    return;
+			}
+
+            rhsRows = 0;
+            {
+                CriticalBlock b(localHashCrit);
+                ForEachItemIn(a, rhsNodeRows)
+                {
+                    CThorExpandingRowArray &rows = *rhsNodeRows.item(a);
+                    rhsRows += rows.ordinality();
+                }
+            }
+
+            if (isLookup())
+            {
+                rhsTableLen = getHTSize(rhsRows);
+                // NB: This sizing could cause spilling callback to be triggered
+                ht.ensure(rhsTableLen); // Pessimistic if LOOKUP,KEEP(1)
+                /* JCSMORE - failure to size should not be failure condition
+                 * It will mark spiltBroadcastingRHS and try to degrade
+                 * JCS->GH: However, need to catch OOM somehow..
+                 */
+                ht.clearUnused();
+            }
+            else
+                rhs.ensure(rhsRows);
+
 			/* NB: Potentially one of the slaves spilt late after broadcast and rowprocessor finished
 			 * Need to remove spill callback and broadcast one last message to know.
 			 */
 
 			queryJob().queryRowManager()->removeRowBuffer(this);
-
-			if (stopping)
-			    return;
 
 			broadcaster.reset();
 			broadcaster.start(this, mpTag, false);
@@ -1513,9 +1547,8 @@ public:
                 if (grouped)
                     throw MakeActivityException(this, 0, "Degraded to distributed lookup join, LHS order cannot be preserved");
 
-                // Clear HT if it's been setup and reset rhsTotalCount to trigger HT to be size in prepareRHS later.
+                // If HT sized already (due to total from meta) and now spilt, too big clear and size later
 			    ht.kill();
-		        rhsTotalCount = RCUNSET;
 
 				setupDistributors();
 
@@ -1528,13 +1561,24 @@ public:
                 }
                 right.setown(createConcatRowStream(streams.ordinality(), streams.getArray()));
 			}
+			else
+			{
+	            if (rhsTotalCount != RCUNSET) // verify matches meta if set/calculated (and haven't spilt)
+	                assertex(rhsRows == rhsTotalCount);
+			}
 		}
 		else
 		{
-		    if (isLookup())
-		        localLookupJoin = true;
+            if (isLookup())
+                localLookupJoin = true;
 		    else
-		    {   // local ALL join, must fit into memory
+		    {
+	            if (RCUNSET != rhsTotalCount)
+	            {
+	                rhsRows = (rowidx_t)rhsTotalCount;
+	                rhs.ensure(rhsRows);
+	            }
+		        // local ALL join, must fit into memory
 	            while (!abortSoon)
 	            {
 	                OwnedConstThorRow row = right->ungroupedNextRow();
@@ -1542,15 +1586,46 @@ public:
 	                    break;
 	                rhs.append(row.getClear());
 	            }
+	            if (RIUNSET == rhsRows)
+	                rhsRows = rhs.ordinality();
 		    }
 		}
 
 		if (localLookupJoin) // NB: Can only be active for LOOKUP (not ALL)
 		{
-		    Owned<IThorRowLoader> rowLoader = createThorRowLoader(*this, queryRowInterfaces(rightITDL), compareRight);
+		    Owned<IThorRowLoader> rowLoader = createThorRowLoader(*this, queryRowInterfaces(rightITDL), compareRight, false, rc_mixed, SPILL_PRIORITY_LOOKUPJOIN);
             rowLoader->setOptions(rcflag_noAllInMemSort); // If fits into memory, don't want it sorted
             Owned<IRowStream> rightStream = rowLoader->load(right, abortSoon, false, &rhs);
 
+            if (!rightStream)
+            {
+                ActPrintLog("RHS local rows fitted in memory, count: %"RIPF"d", rhs.ordinality());
+                // all fitted in memory, rows were transferred out back into 'rhs'
+                // Will be unsorted because of rcflag_noAllInMemSort
+
+                /* Now need to size HT.
+                 * transfer rows back into a spillable container
+                 * If HT sizing DOESN'T cause spill, then, row will be transferred back into 'rhs'
+                 * If HT sizing DOES cause spill, sorted rightStream will be created.
+                 */
+
+                rowLoader.clear();
+                Owned<IThorRowCollector> collector = createThorRowCollector(*this, queryRowInterfaces(rightITDL), compareRight,false, rc_mixed, SPILL_PRIORITY_LOOKUPJOIN);
+                collector->setOptions(rcflag_noAllInMemSort); // If fits into memory, don't want it sorted
+                rhsRows = rhs.ordinality();
+                collector->transferRowsIn(rhs);
+                rhsTableLen = getHTSize(rhsRows);
+
+                // could cause spilling of 'rhs'
+                ht.ensure(rhsTableLen); // Pessimistic if LOOKUP,KEEP(1)
+                /* JCSMORE - failure to size should not be failure condition
+                 * If it failed, the 'collector' will have spilt and it will not need HT
+                 * JCS->GH: However, need to catch OOM somehow..
+                 */
+
+                ht.clearUnused();
+                rightStream.setown(collector->getStream(false, &rhs));
+            }
             if (rightStream) // NB: returned stream, implies spilt AND sorted, if not, 'rhs' is filled
             {
                 ht.kill(); // no longer needed
@@ -1590,12 +1665,6 @@ public:
                 joinHelper->init(left, rightStream, leftAllocator, rightAllocator, ::queryRowMetaData(leftITDL), &abortSoon);
                 return;
             }
-            else
-            {
-                ActPrintLog("RHS local rows : %"RIPF"d", rhs.ordinality());
-                // all fitted in memory, rows were transferred out back into 'rhs'
-                // Will be unsorted because of rcflag_noAllInMemSort
-            }
 		}
 		if (!stopping)
 			prepareRHS();
@@ -1603,41 +1672,6 @@ public:
     void prepareRHS()
     {
         // NB: this method is not used if we've failed over to a regular join in getRHS()
-        if (needGlobal)
-        {
-            rowidx_t maxRows = 0;
-            if (localLookupJoin)
-                maxRows = rhs.ordinality();
-            else
-            {
-                ForEachItemIn(a, rhsNodeRows)
-                {
-                    CThorExpandingRowArray &rows = *rhsNodeRows.item(a);
-                    maxRows += rows.ordinality();
-                }
-                if (rhsTotalCount != RCUNSET)
-                { // ht pre-expanded already
-                    assertex(maxRows == rhsTotalCount);
-                }
-            }
-            rhsRows = maxRows;
-        }
-        else
-        {
-            if (RCUNSET != rhsTotalCount)
-                rhsRows = rhsTotalCount;
-            else
-                rhsRows = rhs.ordinality(); // total wasn't known
-        }
-        if (RCUNSET == rhsTotalCount) //NB: if rhsTotalCount known, HT will have been sized earlier
-        {
-            if (isLookup())
-            {
-                rhsTableLen = getHTSize(rhsRows);
-                ht.ensure(rhsTableLen); // Pessimistic if LOOKUP,KEEP(1)
-                ht.clearUnused();
-            }
-        }
 
         // JCSMORE - would be nice to make this multi-core, clashes and compares can be expensive
         if (localLookupJoin)
