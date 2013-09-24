@@ -17,7 +17,6 @@
 
 /*
  * 1) Check lookup join varieties in child queries, i.e. restarability
- * 2) Shink size of pre-sized HT if switching to distributed local lookup
  */
 
 #include "thlookupjoinslave.ipp"
@@ -1432,7 +1431,6 @@ public:
                             // so ensure last buffer is sent, below before exiting broadcastRHS broadcast
 
                             stopRHSBroadcast = true;
-                            ActPrintLog("Spill interrupted broadcast, %"RIPF"d rows were sent", sent);
                         }
                         else
                             localRhsRows.append(row.getLink());
@@ -1440,7 +1438,7 @@ public:
 
                     ++sent;
                     rightSerializer->serialize(mbser, (const byte *)row.get());
-                    if (mb.length() >= MAX_SEND_SIZE)
+                    if (mb.length() >= MAX_SEND_SIZE || stopRHSBroadcast)
                         break;
                 }
                 if (0 == mb.length())
@@ -1657,6 +1655,7 @@ public:
 
             if (rightStream) // NB: returned stream, implies spilt AND sorted, if not 'rhs' is filled
             {
+                ht.kill(); // no longer needed
 #ifdef _DEBUG
                 rightStream.setown(new CWrappedRight("distributed rhs + local hash tables", rightStream, queryRowInterfaces(rightITDL)->queryRowMetaData(), true));
 #endif
