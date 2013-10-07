@@ -580,22 +580,10 @@ public:
 */
 
 
-/*
- * The main activity class
- * It's intended to be used when the RHS globally, is small enough to fit within the memory of a single node.
- * It performs the join, by 1st ensuring all RHS data is on all nodes, creating a hash table of this gathered set
- * then it streams the LHS through, matching against the RHS hash table entries.
- * It also handles match conditions where there is no hard match (, ALL), in those cases no hash table is needed.
- * TODO: right outer/only joins
- */
-class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify, implements IBCastReceive, implements roxiemem::IBufferedRowCallback
+class CLookupJoinActivityBase : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify, implements IBCastReceive, implements roxiemem::IBufferedRowCallback
 {
-    IHThorHashJoinArg *hashJoinHelper;
-    IHThorAllJoinArg *allJoinHelper;
     const void **rhsTable;
-    rowidx_t rhsTableLen, htCount, htDedupCount;
-    IHash *leftHash, *rightHash;
-    ICompare *compareRight, *compareLeftRight;
+    rowidx_t rhsTableLen, htDedupCount;
 
     IThorDataLink *leftITDL, *rightITDL;
     Owned<IRowStream> left, right;
@@ -611,8 +599,6 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     Owned<IException> leftexception;
     Semaphore leftstartsem;
     CThorExpandingRowArray rhs;
-    OwnedConstThorRow htMemory;
-    struct HtEntry { rowidx_t index, count; } *ht;
     bool eos, needGlobal;
     unsigned flags;
     bool exclude;
@@ -621,12 +607,10 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     unsigned candidateIndex;
     const void *rhsNext;
     Owned<IOutputMetaData> outputMeta;
-    mptag_t lhsDistributeTag, rhsDistributeTag, broadcast2MpTag;
 
     PointerArrayOf<CThorSpillableRowArray> rhsNodeRows;
     CBroadcaster broadcaster;
 
-    // AllJoin only
     rowidx_t nextRhsRow;
     unsigned keepLimit;
     unsigned joined;
@@ -638,18 +622,8 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     bool eog, someSinceEog, leftMatch, grouped;
     Semaphore gotOtherROs;
     bool waitForOtherRO, fuzzyMatch, returnMany, dedup;
-
-    // Handling failover to a) hashed local lookupjoin b) hash distributed standard join
-    atomic_t spiltBroadcastingRHS;
-    CriticalSection broadcastSpillingLock;
-    bool localLookupJoin, rhsCollated;
-    bool failoverToLocalLookupJoin, failoverToStdJoin;
     rank_t myNode;
     unsigned numNodes;
-    Owned<IHashDistributor> lhsDistributor, rhsDistributor;
-    ICompare *compareLeft;
-    Owned<IJoinHelper> joinHelper;
-    UnsignedArray flushedRowMarkers;
 
     inline bool isLookup() const
     {
@@ -712,9 +686,6 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
         }
         return false;
     }
-    inline bool hasBroadcastSpilt() const { return 0 != atomic_read(&spiltBroadcastingRHS); }
-    inline void setBroadcastingSpilt(bool tf) { atomic_set(&spiltBroadcastingRHS, (int)tf); }
-
     StringBuffer &getJoinTypeStr(StringBuffer &str)
     {
         switch(joinType)
@@ -728,14 +699,6 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
         }
         return str.append("---> Unknown Join Type <---");
     }
-    rowidx_t getHTSize(rowcount_t rows)
-    {
-        if (rows < 10) return 16;
-        rowcount_t res = rows/3*4; // make HT 1/3 bigger than # rows
-        if ((res < rows) || (res > RIMAX)) // check for overflow, or result bigger than rowidx_t size
-            throw MakeActivityException(this, 0, "Too many rows on RHS for hash table: %"RCPF"d", rows);
-        return (rowidx_t)res;
-    }
     /* Utility class, that is called from the broadcaster to queue up received blocks
      * It will block if it has > MAX_QUEUE_BLOCKS to process (on the queue)
      * Processing will decompress the incoming blocks and add them to a row array per slave
@@ -743,12 +706,12 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
     class CRowProcessor : implements IThreaded
     {
         CThreadedPersistent threaded;
-        CLookupJoinActivity &owner;
+        CLookupJoinActivityBase &owner;
         bool stopped;
         SimpleInterThreadQueueOf<CSendItem, true> blockQueue;
         Owned<IException> exception;
     public:
-        CRowProcessor(CLookupJoinActivity &_owner) : threaded("CRowProcessor", this), owner(_owner)
+        CRowProcessor(CLookupJoinActivityBase &_owner) : threaded("CRowProcessor", this), owner(_owner)
         {
             stopped = false;
             blockQueue.setLimit(MAX_QUEUE_BLOCKS);
@@ -814,7 +777,6 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
 
     void clearRHS()
     {
-        clearHt();
         rhs.kill();
         ForEachItemIn(a, rhsNodeRows)
         {
@@ -826,23 +788,19 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CLookupJoinActivity(CGraphElementBase *_container)
+    CLookupJoinActivityBase(CGraphElementBase *_container)
         : CSlaveActivity(_container), CThorDataLink(this), broadcaster(*this), rhs(*this, NULL),
           rowProcessor(*this)
     {
         gotRHS = false;
         nextRhsRow = 0;
         rhsNext = NULL;
-        atMost = 0;
-        setBroadcastingSpilt(false);
-        localLookupJoin = rhsCollated = false;
         myNode = queryJob().queryMyRank();
         numNodes = queryJob().querySlaves();
         needGlobal = !container.queryLocal() && (container.queryJob().querySlaves() > 1);
-        broadcast2MpTag = lhsDistributeTag = rhsDistributeTag = TAG_NULL;
 
         rhsTable = NULL;
-        rhsTableLen = htCount = htDedupCount = 0;
+        rhsTableLen = htDedupCount = 0;
         leftITDL = rightITDL = NULL;
         candidateIndex = 0;
         candidateMatches = 0;
@@ -857,58 +815,27 @@ public:
         fuzzyMatch = returnMany = dedup = false;
         waitForOtherRO = true;
 
-        hashJoinHelper = NULL;
-        allJoinHelper = NULL;
         exclude = false;
-        abortLimit = keepLimit = 0;
-        allJoinHelper = NULL;
-        hashJoinHelper = NULL;
-        leftHash = rightHash = NULL;
-        hashJoinHelper = NULL;
-        compareLeft = compareRight = compareLeftRight = NULL;
-
-        if (isAll())
+        keepLimit = 0;
+    }
+    ~CLookupJoinActivityBase()
+    {
+        ForEachItemIn(a, rhsNodeRows)
         {
-            allJoinHelper = (IHThorAllJoinArg *)queryHelper();
-            flags = allJoinHelper->getJoinFlags();
-            returnMany = true;
-            keepLimit = allJoinHelper->getKeepLimit();
-            fuzzyMatch = 0 != (JFmatchrequired & flags);
+            CThorSpillableRowArray *rows = rhsNodeRows.item(a);
+            if (rows)
+                delete rows;
         }
-        else
-        {
-            dbgassertex(isLookup());
+    }
 
-            hashJoinHelper = (IHThorHashJoinArg *)queryHelper();
-            flags = hashJoinHelper->getJoinFlags();
-            leftHash = hashJoinHelper->queryHashLeft();
-            rightHash = hashJoinHelper->queryHashRight();
-            compareRight = hashJoinHelper->queryCompareRight();
-            compareLeft = hashJoinHelper->queryCompareLeft();
-            compareLeftRight = hashJoinHelper->queryCompareLeftRight();
-            if (JFmanylookup & flags)
-                returnMany = true;
-            keepLimit = hashJoinHelper->getKeepLimit();
-            abortLimit = hashJoinHelper->getMatchAbortLimit();
-            atMost = hashJoinHelper->getJoinLimit();
+// IThorSlaveActivity overloaded methods
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    {
+        appendOutputLinked(this);
 
-            fuzzyMatch = 0 != (JFmatchrequired & flags);
-            bool maySkip = 0 != (flags & JFtransformMaySkip);
-            dedup = compareRight && !maySkip && !fuzzyMatch && !returnMany;
-            ht = NULL;
-
-            // code gen should spot invalid constants on KEEP with LOOKUP (without MANY)
-        }
         exclude = 0 != (flags & JFexclude);
-        if(0 == keepLimit)
+        if (0 == keepLimit)
             keepLimit = (unsigned)-1;
-        if (0 == abortLimit)
-            abortLimit = (unsigned)-1;
-        if (0 == atMost)
-            atMost = (unsigned)-1;
-        if (abortLimit < atMost)
-            atMost = abortLimit;
-
         if (flags & JFleftouter)
             joinType = exclude ? JT_LeftOnly : JT_LeftOuter;
         else if (flags & JFrightouter)
@@ -921,17 +848,323 @@ public:
             joinType = JT_Inner;
         StringBuffer str;
 
-        failoverToLocalLookupJoin = failoverToStdJoin = isSmart();
-        ActPrintLog("Join type is %s, failoverToLocalLookupJoin=%s, failoverToStdJoin=%s",
-                getJoinTypeStr(str).str(), failoverToLocalLookupJoin?"true":"false", failoverToStdJoin?"true":"false");
+        ActPrintLog("Join type is %s", getJoinTypeStr(str).str());
+
+        if (!container.queryLocal())
+            mpTag = container.queryJob().deserializeMPTag(data);
+
+        unsigned slaves = container.queryJob().querySlaves();
+        rhsNodeRows.ensure(slaves);
+        while (slaves--)
+            rhsNodeRows.append(new CThorSpillableRowArray(*this, NULL));
     }
-    ~CLookupJoinActivity()
+    virtual void onInputStarted(IException *except)
     {
+        leftexception.set(except);
+        leftstartsem.signal();
+    }
+    virtual bool startAsync()
+    {
+        return true;
+    }
+    virtual void onInputFinished(rowcount_t count)
+    {
+        ActPrintLog("LHS input finished, %"RCPF"d rows read", count);
+    }
+    virtual void start()
+    {
+        assertex(inputs.ordinality() == 2);
+        gotRHS = false;
+        nextRhsRow = 0;
+        joined = 0;
+        leftMatch = false;
+        rhsNext = NULL;
+        candidateMatches = 0;
+        rhsTableLen = htDedupCount = 0;
+        eos = eog = someSinceEog = false;
+        leftITDL = inputs.item(0);
+        rightITDL = inputs.item(1);
+        allocator.set(queryRowAllocator());
+        leftAllocator.set(::queryRowAllocator(leftITDL));
+        outputMeta.set(leftITDL->queryFromActivity()->queryContainer().queryHelper()->queryOutputMeta());
+
+        right.set(rightITDL);
+        rightAllocator.set(::queryRowAllocator(rightITDL));
+        rightSerializer.set(::queryRowSerializer(rightITDL));
+        rightDeserializer.set(::queryRowDeserializer(rightITDL));
+
+        leftITDL = createDataLinkSmartBuffer(this,leftITDL,LOOKUPJOINL_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(leftITDL->queryFromActivity()),grouped,RCUNBOUND,this,false,&container.queryJob().queryIDiskUsage());
+        left.setown(leftITDL);
+        startInput(leftITDL);
+
+        try
+        {
+            startInput(rightITDL);
+        }
+        catch (CATCHALL)
+        {
+            leftstartsem.wait();
+            left->stop();
+            throw;
+        }
+        leftstartsem.wait();
+        if (leftexception)
+        {
+            right->stop();
+            throw leftexception.getClear();
+        }
+        dataLinkStart();
+    }
+    virtual void abort()
+    {
+        CSlaveActivity::abort();
+        gotOtherROs.signal();
+        cancelReceiveMsg(RANK_ALL, mpTag);
+        broadcaster.cancel();
+        rowProcessor.abort();
+    }
+    virtual void stop()
+    {
+        // JCS->GH - if in a child query, it would be good to preserve RHS.. would need tip/flag from codegen that constant
+        clearRHS();
+
+        if (right)
+        {
+            stopInput(right, "(R)");
+            right.clear();
+        }
+        broadcaster.reset();
+        stopInput(left, "(L)");
+        left.clear();
+        dataLinkStop();
+    }
+    inline void nextRhs()
+    {
+        if ((unsigned)-1 != atMost)
+            rhsNext = candidateIndex < candidates.ordinality() ? candidates.item(candidateIndex++) : NULL;
+        else if (isLookup())
+            rhsNext = findNext(leftRow, nextRhsRow);
+        else if (++nextRhsRow<rhsTableLen)
+            rhsNext = rhsTable[nextRhsRow];
+        else
+            rhsNext = NULL;
+    }
+    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    {
+        initMetaInfo(info);
+        info.unknownRowsOutput = true;
+        info.canStall = true;
+    }
+    void broadcastRHS() // broadcasting local rhs
+    {
+        bool stopRHSBroadcast = false;
+        Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_send);
+        MemoryBuffer mb;
+        try
+        {
+            CThorSpillableRowArray &localRhsRows = *rhsNodeRows.item(queryJob().queryMyRank()-1);
+            CMemoryRowSerializer mbser(mb);
+            while (!abortSoon)
+            {
+                while (!abortSoon)
+                {
+                    OwnedConstThorRow row = right->ungroupedNextRow();
+                    if (!row)
+                        break;
+
+                    if (!addLocalRHSRow(localRhsRows, row))
+                        stopRHSBroadcast = true;
+
+                    rightSerializer->serialize(mbser, (const byte *)row.get());
+                    if (mb.length() >= MAX_SEND_SIZE || stopRHSBroadcast)
+                        break;
+                }
+                if (0 == mb.length())
+                    break;
+                if (stopRHSBroadcast)
+                    sendItem->setFlag(bcastflag_spilt);
+                ThorCompress(mb, sendItem->queryMsg());
+                if (!broadcaster.send(sendItem))
+                    break;
+                if (stopRHSBroadcast)
+                    break;
+                mb.clear();
+                broadcaster.resetSendItem(sendItem);
+            }
+        }
+        catch (IException *e)
+        {
+            ActPrintLog(e, "CLookupJoinActivityBase::broadcastRHS: exception");
+            throw;
+        }
+
+        sendItem.setown(broadcaster.newSendItem(bcast_stop));
+        if (stopRHSBroadcast)
+            sendItem->setFlag(bcastflag_spilt);
+        ActPrintLog("Sending final RHS broadcast packet");
+        broadcaster.send(sendItem); // signals stop to others
+    }
+    void processRHSRows(unsigned slave, MemoryBuffer &mb)
+    {
+        CThorSpillableRowArray &rows = *rhsNodeRows.item(slave-1);
+        RtlDynamicRowBuilder rowBuilder(rightAllocator);
+        CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
+        while (!memDeserializer.eos())
+        {
+            size32_t sz = rightDeserializer->deserialize(rowBuilder, memDeserializer);
+            OwnedConstThorRow fRow = rowBuilder.finalizeRowClear(sz);
+            if (hasBroadcastSpilt())
+            {
+                /* NB: recvLoop should be winding down, a slave signal spilt and communicated to all
+                 * So these will be the last few broadcast rows, when broadcaster is complete, the rest will be hash distributed
+                 */
+
+                // hash row and discard unless for this node
+                unsigned hv = rightHash->hash(fRow.get());
+                if ((myNode-1) == (hv % numNodes))
+                    rows.append(fRow.getClear());
+            }
+            else
+            {
+                /* NB: It could still spill here, i.e. before appending a non-local row
+                 * When all is done, a last pass is needed to clear out non-locals
+                 */
+                rows.append(fRow.getClear());
+            }
+        }
+    }
+    rowidx_t getGlobalRHS(bool stopping)
+    {
+        rowProcessor.start();
+        broadcaster.start(this, mpTag, stopping);
+        broadcastRHS();
+        broadcaster.end();
+        rowProcessor.wait();
+
+        CriticalBlock b(broadcastSpillingLock);
+        rowcount_t rhsRows = 0;
+        ForEachItemIn(a, rhsNodeRows)
+        {
+            CThorSpillableRowArray &rows = *rhsNodeRows.item(a);
+            rows.flush();
+            rhsRows += rows.numCommitted();
+            if (rhsRows > RIMAX)
+                throw MakeActivityException(this, 0, "Too many RHS rows: %"RCPF"d", rhsRows);
+        }
+        return (rowidx_t)rhsRows;
+    }
+
+    virtual bool addLocalRHSRow(CThorSpillableRowArray &localRhsRows, const void *row) = 0;
+};
+
+/*
+ * The main activity class
+ * It's intended to be used when the RHS globally, is small enough to fit within the memory of a single node.
+ * It performs the join, by 1st ensuring all RHS data is on all nodes, creating a hash table of this gathered set
+ * then it streams the LHS through, matching against the RHS hash table entries.
+ * It also handles match conditions where there is no hard match (, ALL), in those cases no hash table is needed.
+ * TODO: right outer/only joins
+ */
+class CLookupJoinActivity : public CLookupJoinActivityBase, public CThorDataLink, implements ISmartBufferNotify, implements IBCastReceive, implements roxiemem::IBufferedRowCallback
+{
+    IHThorHashJoinArg *hashJoinHelper;
+    IHash *leftHash, *rightHash;
+    ICompare *compareRight, *compareLeftRight;
+
+    OwnedConstThorRow htMemory;
+    struct HtEntry { rowidx_t index, count; } *ht;
+
+/* These should probably belong to lookupjoin only
+    unsigned abortLimit, atMost;
+    ConstPointerArray candidates;
+    unsigned candidateIndex;
+*/
+
+    mptag_t lhsDistributeTag, rhsDistributeTag, broadcast2MpTag;
+
+    // Handling failover to a) hashed local lookupjoin b) hash distributed standard join
+    bool localLookupJoin, rhsCollated;
+    bool failoverToLocalLookupJoin, failoverToStdJoin;
+    Owned<IHashDistributor> lhsDistributor, rhsDistributor;
+    ICompare *compareLeft;
+    Owned<IJoinHelper> joinHelper;
+    UnsignedArray flushedRowMarkers;
+
+    atomic_t spiltBroadcastingRHS;
+    CriticalSection broadcastSpillingLock;
+
+    inline bool isLookup() const
+    {
+        switch (container.getKind())
+        {
+            case TAKlookupjoin:
+            case TAKlookupdenormalize:
+            case TAKlookupdenormalizegroup:
+            case TAKsmartjoin:
+            case TAKsmartdenormalize:
+            case TAKsmartdenormalizegroup:
+                return true;
+        }
+        return false;
+    }
+    inline bool isAll() const
+    {
+        switch (container.getKind())
+        {
+            case TAKalljoin:
+            case TAKalldenormalize:
+            case TAKalldenormalizegroup:
+                return true;
+        }
+        return false;
+    }
+    inline bool isDenormalize() const
+    {
+        switch (container.getKind())
+        {
+            case TAKlookupdenormalize:
+            case TAKlookupdenormalizegroup:
+            case TAKalldenormalize:
+            case TAKalldenormalizegroup:
+            case TAKsmartdenormalize:
+            case TAKsmartdenormalizegroup:
+                return true;
+        }
+        return false;
+    }
+    inline bool isGroupOp() const
+    {
+        switch (container.getKind())
+        {
+            case TAKlookupdenormalizegroup:
+            case TAKsmartdenormalizegroup:
+            case TAKalldenormalizegroup:
+                return true;
+        }
+        return false;
+    }
+    inline bool isSmart() const
+    {
+        switch (container.getKind())
+        {
+            case TAKsmartjoin:
+            case TAKsmartdenormalize:
+            case TAKsmartdenormalizegroup:
+                return true;
+        }
+        return false;
+    }
+    inline bool hasBroadcastSpilt() const { return 0 != atomic_read(&spiltBroadcastingRHS); }
+    inline void setBroadcastingSpilt(bool tf) { atomic_set(&spiltBroadcastingRHS, (int)tf); }
+    void clearRHS()
+    {
+        clearHt();
+        rhs.kill();
         ForEachItemIn(a, rhsNodeRows)
         {
             CThorSpillableRowArray *rows = rhsNodeRows.item(a);
             if (rows)
-                delete rows;
+                rows->kill();
         }
     }
     rowidx_t clearNonLocalRows(CThorSpillableRowArray &rows, rowidx_t startPos)
@@ -996,11 +1229,65 @@ public:
         ActPrintLog("handleLowMem: clearedRows = %"RIPF"d", clearedRows);
         return 0 != clearedRows;
     }
+public:
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
+    CLookupJoinActivity(CGraphElementBase *_container)
+        : CSlaveActivity(_container), CThorDataLink(this), broadcaster(*this), rhs(*this, NULL),
+          rowProcessor(*this)
+    {
+        atMost = 0;
+        localLookupJoin = rhsCollated = false;
+        broadcast2MpTag = lhsDistributeTag = rhsDistributeTag = TAG_NULL;
+        setBroadcastingSpilt(false);
+
+        candidateIndex = 0;
+        candidateMatches = 0;
+
+        grouped = hashJoinHelper->queryOutputMeta()->isGrouped();
+
+        hashJoinHelper = (IHThorHashJoinArg *)queryHelper();
+        flags = hashJoinHelper->getJoinFlags();
+        leftHash = hashJoinHelper->queryHashLeft();
+        rightHash = hashJoinHelper->queryHashRight();
+        compareRight = hashJoinHelper->queryCompareRight();
+        compareLeft = hashJoinHelper->queryCompareLeft();
+        compareLeftRight = hashJoinHelper->queryCompareLeftRight();
+        if (JFmanylookup & flags)
+            returnMany = true;
+        keepLimit = hashJoinHelper->getKeepLimit();
+        abortLimit = hashJoinHelper->getMatchAbortLimit();
+        atMost = hashJoinHelper->getJoinLimit();
+
+        fuzzyMatch = 0 != (JFmatchrequired & flags);
+        bool maySkip = 0 != (flags & JFtransformMaySkip);
+        dedup = compareRight && !maySkip && !fuzzyMatch && !returnMany;
+        ht = NULL;
+
+        if (0 == abortLimit)
+            abortLimit = (unsigned)-1;
+        if (0 == atMost)
+            atMost = (unsigned)-1;
+        if (abortLimit < atMost)
+            atMost = abortLimit;
+
+        failoverToLocalLookupJoin = failoverToStdJoin = isSmart();
+        ActPrintLog("failoverToLocalLookupJoin=%s, failoverToStdJoin=%s",
+                failoverToLocalLookupJoin?"true":"false", failoverToStdJoin?"true":"false");
+    }
+    ~CLookupJoinActivity()
+    {
+        ForEachItemIn(a, rhsNodeRows)
+        {
+            CThorSpillableRowArray *rows = rhsNodeRows.item(a);
+            if (rows)
+                delete rows;
+        }
+    }
 // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
-        appendOutputLinked(this);
+        CLookupJoinActivityBase::init(data, slaveData);
 
         if (!container.queryLocal())
         {
@@ -1009,47 +1296,12 @@ public:
             lhsDistributeTag = container.queryJob().deserializeMPTag(data);
             rhsDistributeTag = container.queryJob().deserializeMPTag(data);
         }
-
-        unsigned slaves = container.queryJob().querySlaves();
-        rhsNodeRows.ensure(slaves);
-        while (slaves--)
-            rhsNodeRows.append(new CThorSpillableRowArray(*this, NULL));
-    }
-    virtual void onInputStarted(IException *except)
-    {
-        leftexception.set(except);
-        leftstartsem.signal();
-    }
-    virtual bool startAsync()
-    {
-        return true;
-    }
-    virtual void onInputFinished(rowcount_t count)
-    {
-        ActPrintLog("LHS input finished, %"RCPF"d rows read", count);
     }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
-        assertex(inputs.ordinality() == 2);
-        gotRHS = false;
-        nextRhsRow = 0;
-        joined = 0;
-        leftMatch = false;
-        rhsNext = NULL;
-        candidateMatches = 0;
-        rhsTableLen = htCount = htDedupCount = 0;
-        eos = eog = someSinceEog = false;
-        leftITDL = inputs.item(0);
-        rightITDL = inputs.item(1);
-        allocator.set(queryRowAllocator());
-        leftAllocator.set(::queryRowAllocator(leftITDL));
-        outputMeta.set(leftITDL->queryFromActivity()->queryContainer().queryHelper()->queryOutputMeta());
 
-        right.set(rightITDL);
-        rightAllocator.set(::queryRowAllocator(rightITDL));
-        rightSerializer.set(::queryRowSerializer(rightITDL));
-        rightDeserializer.set(::queryRowDeserializer(rightITDL));
+        CLookupJoinActivityBase::start();
 
         setBroadcastingSpilt(false);
         localLookupJoin = rhsCollated = false;
@@ -1061,65 +1313,25 @@ public:
                 queryJob().queryRowManager()->addRowBuffer(this);
         }
 
-        RtlDynamicRowBuilder rr(rightAllocator);
         if ((flags & JFonfail) || (flags & JFleftouter))
+        {
+            RtlDynamicRowBuilder rr(rightAllocator);
             rr.ensureRow();
-        RtlDynamicRowBuilder rl(leftAllocator);
+            size32_t rrsz = hashJoinHelper->createDefaultRight(rr);
+            defaultRight.setown(rr.finalizeRowClear(rrsz));
+        }
         if (flags & JFrightouter)
+        {
+            RtlDynamicRowBuilder rl(leftAllocator);
             rl.ensureRow();
-        size32_t rrsz=0;
-        size32_t rlsz=0;
-
-        if (isAll())
-        {
-            if (rr.exists())
-                rrsz = allJoinHelper->createDefaultRight(rr);
-            if (rl.exists())
-                rlsz = allJoinHelper->createDefaultLeft(rl);
-            grouped = allJoinHelper->queryOutputMeta()->isGrouped();
+            size32_t rlsz= hashJoinHelper->createDefaultLeft(rl);
+            defaultLeft.setown(rl.finalizeRowClear(rlsz));
         }
-        else
+        if (!isSmart())
         {
-            dbgassertex(isLookup());
-            if (rr.exists())
-                rrsz = hashJoinHelper->createDefaultRight(rr);
-            if (rl.exists())
-                rlsz = hashJoinHelper->createDefaultLeft(rl);
-            grouped = hashJoinHelper->queryOutputMeta()->isGrouped();
+            bool inputGrouped = leftITDL->isGrouped();
+            dbgassertex(inputGrouped == grouped); // std. lookup join expects these to match
         }
-
-        leftITDL = createDataLinkSmartBuffer(this,leftITDL,LOOKUPJOINL_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(leftITDL->queryFromActivity()),grouped,RCUNBOUND,this,false,&container.queryJob().queryIDiskUsage());
-        left.setown(leftITDL);
-        startInput(leftITDL);
-
-        try
-        {
-            if (isLookup() && !isSmart())
-            {
-                bool inputGrouped = leftITDL->isGrouped();
-                dbgassertex(inputGrouped == grouped); // std. lookup join expects these to match
-            }
-
-            if (rrsz)
-                defaultRight.setown(rr.finalizeRowClear(rrsz));
-            if (rlsz)
-                defaultLeft.setown(rl.finalizeRowClear(rlsz));
-
-            startInput(rightITDL);
-        }
-        catch (CATCHALL)
-        {
-            leftstartsem.wait();
-            left->stop();
-            throw;
-        }
-        leftstartsem.wait();
-        if (leftexception)
-        {
-            right->stop();
-            throw leftexception.getClear();
-        }
-        dataLinkStart();
     }
     virtual void abort()
     {
@@ -1196,12 +1408,12 @@ public:
         return NULL;
     }
     // find routines for lookup only (compareRight!=NULL), ALL will not call
-    const void *find(const void *r, unsigned &h) 
+    const void *find(const void *r, unsigned &h)
     {
         loop
         {
             const void *e = rhsTable[h];
-            if (!e) 
+            if (!e)
                 break;
             if (0 == compareLeftRight->docompare(r,e))
                 return e;
@@ -1211,12 +1423,12 @@ public:
         }
         return NULL;
     }
-    const void *findFirst(const void *r, unsigned &h) 
+    const void *findFirst(const void *r, unsigned &h)
     {
         h = leftHash->hash(r)%rhsTableLen;
         return find(r, h);
     }
-    const void *findNext(const void *r, unsigned &h) 
+    const void *findNext(const void *r, unsigned &h)
     {
         h++;
         if (h>=rhsTableLen)
@@ -1241,9 +1453,9 @@ public:
     {
         if (waitForOtherRO)
         {
-            gotOtherROs.wait();         
+            gotOtherROs.wait();
             waitForOtherRO = false;
-        }       
+        }
         if (eog)
         {
             loop
@@ -1379,7 +1591,7 @@ public:
                                         }
                                         candidates.append(rhsNext);
                                         rhsNext = findNext(leftRow, nextRhsRow);
-                                    }                               
+                                    }
                                     if (0 == candidateMatches)
                                         rhsNext = NULL;
                                     else if (candidates.ordinality())
@@ -1420,7 +1632,7 @@ public:
                     ConstPointerArray filteredRhs;
                     while (rhsNext)
                     {
-                        if (abortSoon) 
+                        if (abortSoon)
                             return NULL;
                         if (!fuzzyMatch || (isAll()?allJoinHelper->match(leftRow, rhsNext):hashJoinHelper->match(leftRow, rhsNext)))
                         {
@@ -1548,113 +1760,11 @@ public:
             {
                 e.index = index;
                 e.count = count;
-                htCount++;
                 break;
             }
             h++;
             if (h>=rhsTableLen)
                 h = 0;
-        }
-    }
-    void broadcastRHS() // broadcasting local rhs
-    {
-        bool stopRHSBroadcast = false;
-        Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_send);
-        MemoryBuffer mb;
-        try
-        {
-            CThorSpillableRowArray &localRhsRows = *rhsNodeRows.item(queryJob().queryMyRank()-1);
-            CMemoryRowSerializer mbser(mb);
-            while (!abortSoon)
-            {
-                while (!abortSoon)
-                {
-                    OwnedConstThorRow row = right->ungroupedNextRow();
-                    if (!row)
-                        break;
-
-                    {
-                        if (hasBroadcastSpilt())
-                        {
-                            // keep it only if it hashes to my node
-                            unsigned hv = rightHash->hash(row.get());
-                            if ((myNode-1) == (hv % numNodes))
-                                localRhsRows.append(row.getLink());
-
-                            // ok so switch tactics.
-                            // clearAllNonLocalRows() will have cleared out non-locals by now
-                            // but I may be half way through serializing rows here, which are mixed and this row
-                            // may still need to be sent.
-                            // The destination rowProcessor will take care of any that need post-filtering,
-                            // so ensure last buffer is sent, below before exiting broadcastRHS broadcast
-
-                            stopRHSBroadcast = true;
-                        }
-                        else
-                        {
-                            /* NB: It could still spill here, i.e. before appending a non-local row
-                             * When all is done, a last pass is needed to clear out non-locals
-                             */
-                            localRhsRows.append(row.getLink());
-                        }
-                    }
-
-                    rightSerializer->serialize(mbser, (const byte *)row.get());
-                    if (mb.length() >= MAX_SEND_SIZE || stopRHSBroadcast)
-                        break;
-                }
-                if (0 == mb.length())
-                    break;
-                if (stopRHSBroadcast)
-                    sendItem->setFlag(bcastflag_spilt);
-                ThorCompress(mb, sendItem->queryMsg());
-                if (!broadcaster.send(sendItem))
-                    break;
-                if (stopRHSBroadcast)
-                    break;
-                mb.clear();
-                broadcaster.resetSendItem(sendItem);
-            }
-        }
-        catch (IException *e)
-        {
-            ActPrintLog(e, "CLookupJoinActivity::broadcastRHS: exception");
-            throw;
-        }
-
-        sendItem.setown(broadcaster.newSendItem(bcast_stop));
-        if (stopRHSBroadcast)
-            sendItem->setFlag(bcastflag_spilt);
-        ActPrintLog("Sending final RHS broadcast packet");
-        broadcaster.send(sendItem); // signals stop to others
-    }
-    void processRHSRows(unsigned slave, MemoryBuffer &mb)
-    {
-        CThorSpillableRowArray &rows = *rhsNodeRows.item(slave-1);
-        RtlDynamicRowBuilder rowBuilder(rightAllocator);
-        CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
-        while (!memDeserializer.eos())
-        {
-            size32_t sz = rightDeserializer->deserialize(rowBuilder, memDeserializer);
-            OwnedConstThorRow fRow = rowBuilder.finalizeRowClear(sz);
-            if (hasBroadcastSpilt())
-            {
-                /* NB: recvLoop should be winding down, a slave signal spilt and communicated to all
-                 * So these will be the last few broadcast rows, when broadcaster is complete, the rest will be hash distributed
-                 */
-
-                // hash row and discard unless for this node
-                unsigned hv = rightHash->hash(fRow.get());
-                if ((myNode-1) == (hv % numNodes))
-                    rows.append(fRow.getClear());
-            }
-            else
-            {
-                /* NB: It could still spill here, i.e. before appending a non-local row
-                 * When all is done, a last pass is needed to clear out non-locals
-                 */
-                rows.append(fRow.getClear());
-            }
         }
     }
     void setupDistributors()
@@ -2053,9 +2163,317 @@ public:
         // NB: only installed if lookup join and global
         return clearAllNonLocalRows("Out of memory callback");
     }
+
+// overloaded
+    virtual bool addLocalRHSRow(CThorSpillableRowArray &localRhsRows, const void *row)
+    {
+        if (hasBroadcastSpilt())
+        {
+            // keep it only if it hashes to my node
+            unsigned hv = rightHash->hash(row);
+            if ((myNode-1) == (hv % numNodes))
+            {
+                LinkThorRow(row);
+                localRhsRows.append(row);
+            }
+
+            // ok so switch tactics.
+            // clearAllNonLocalRows() will have cleared out non-locals by now
+            // but I may be half way through serializing rows here, which are mixed and this row
+            // may still need to be sent.
+            // The destination rowProcessor will take care of any that need post-filtering,
+            // so ensure last buffer is sent, below before exiting broadcastRHS broadcast
+
+            return false;
+        }
+        else
+        {
+            /* NB: It could still spill here, i.e. before appending a non-local row
+             * When all is done, a last pass is needed to clear out non-locals
+             */
+            LinkThorRow(row);
+            localRhsRows.append(row);
+        }
+        return true;
+    }
+};
+
+/*
+ * The main activity class
+ * It's intended to be used when the RHS globally, is small enough to fit within the memory of a single node.
+ * It performs the join, by 1st ensuring all RHS data is on all nodes, creating a hash table of this gathered set
+ * then it streams the LHS through, matching against the RHS hash table entries.
+ * It also handles match conditions where there is no hard match (, ALL), in those cases no hash table is needed.
+ * TODO: right outer/only joins
+ */
+class CAllJoinActivity : public CLookupJoinActivityBase, public CThorDataLink, implements ISmartBufferNotify, implements IBCastReceive
+{
+    IHThorAllJoinArg *allJoinHelper;
+
+    PointerArrayOf<CThorSpillableRowArray> rhsNodeRows;
+
+    inline bool isLookup() const
+    {
+        switch (container.getKind())
+        {
+            case TAKlookupjoin:
+            case TAKlookupdenormalize:
+            case TAKlookupdenormalizegroup:
+            case TAKsmartjoin:
+            case TAKsmartdenormalize:
+            case TAKsmartdenormalizegroup:
+                return true;
+        }
+        return false;
+    }
+    inline bool isAll() const
+    {
+        switch (container.getKind())
+        {
+            case TAKalljoin:
+            case TAKalldenormalize:
+            case TAKalldenormalizegroup:
+                return true;
+        }
+        return false;
+    }
+    inline bool isDenormalize() const
+    {
+        switch (container.getKind())
+        {
+            case TAKlookupdenormalize:
+            case TAKlookupdenormalizegroup:
+            case TAKalldenormalize:
+            case TAKalldenormalizegroup:
+            case TAKsmartdenormalize:
+            case TAKsmartdenormalizegroup:
+                return true;
+        }
+        return false;
+    }
+    inline bool isGroupOp() const
+    {
+        switch (container.getKind())
+        {
+            case TAKlookupdenormalizegroup:
+            case TAKsmartdenormalizegroup:
+            case TAKalldenormalizegroup:
+                return true;
+        }
+        return false;
+    }
+public:
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+
+    CAllJoinActivity(CGraphElementBase *_container)
+        : CSlaveActivity(_container), CThorDataLink(this), broadcaster(*this), rhs(*this, NULL),
+          rowProcessor(*this)
+    {
+
+        allJoinHelper = (IHThorAllJoinArg *)queryHelper();
+        flags = allJoinHelper->getJoinFlags();
+        returnMany = true;
+        keepLimit = allJoinHelper->getKeepLimit();
+        fuzzyMatch = 0 != (JFmatchrequired & flags);
+        grouped = allJoinHelper->queryOutputMeta()->isGrouped();
+
+        abortLimit = (unsigned)-1;
+        atMost = (unsigned)-1;
+    }
+    ~CAllJoinActivity()
+    {
+    }
+// IThorSlaveActivity overloaded methods
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    {
+        appendOutputLinked(this);
+
+        unsigned slaves = container.queryJob().querySlaves();
+        rhsNodeRows.ensure(slaves);
+        while (slaves--)
+            rhsNodeRows.append(new CThorSpillableRowArray(*this, NULL));
+
+        CLookupJoinActivityBase::init(data, slaveData);
+    }
+    virtual void start()
+    {
+        ActivityTimer s(totalCycles, timeActivities, NULL);
+
+        CLookupJoinActivityBase::start();
+
+        if ((flags & JFonfail) || (flags & JFleftouter))
+        {
+            RtlDynamicRowBuilder rr(rightAllocator);
+            rr.ensureRow();
+            size32_t rrsz = allJoinHelper->createDefaultRight(rr);
+            defaultRight.setown(rr.finalizeRowClear(rrsz));
+        }
+        if (flags & JFrightouter)
+        {
+            RtlDynamicRowBuilder rl(leftAllocator);
+            rl.ensureRow();
+            size32_t rlsz= allJoinHelper->createDefaultLeft(rl);
+            defaultLeft.setown(rl.finalizeRowClear(rlsz));
+        }
+        dataLinkStart();
+    }
+    virtual void abort()
+    {
+        CSlaveActivity::abort();
+        gotOtherROs.signal();
+        cancelReceiveMsg(RANK_ALL, mpTag);
+        broadcaster.cancel();
+        rowProcessor.abort();
+    }
+    virtual void stop()
+    {
+        if (!gotRHS && needGlobal)
+            getRHS(true); // If global, need to handle RHS until all are slaves stop
+
+        // JCS->GH - if in a child query, it would be good to preserve RHS.. would need tip/flag from codegen that constant
+        clearRHS();
+
+        if (right)
+        {
+            stopInput(right, "(R)");
+            right.clear();
+        }
+        broadcaster.reset();
+        stopInput(left, "(L)");
+        left.clear();
+        dataLinkStop();
+    }
+    inline bool match(const void *lhs, const void *rhsrow)
+    {
+        return allJoinHelper->match(lhs, rhsrow);
+    }
+    inline const void *joinTransform(const void *lhs, const void *rhsrow)
+    {
+        RtlDynamicRowBuilder row(allocator);
+        size32_t thisSize = allJoinHelper->transform(row, lhs, rhsrow);
+        if (thisSize)
+            return row.finalizeRowClear(thisSize);
+        return NULL;
+    }
+    inline void nextRhs()
+    {
+        if ((unsigned)-1 != atMost)
+            rhsNext = candidateIndex < candidates.ordinality() ? candidates.item(candidateIndex++) : NULL;
+        else if (++nextRhsRow<rhsTableLen)
+            rhsNext = rhsTable[nextRhsRow];
+        else
+            rhsNext = NULL;
+    }
+    CATCH_NEXTROW()
+    {
+        ActivityTimer t(totalCycles, timeActivities, NULL);
+        if (!gotRHS)
+            getRHS(false);
+        OwnedConstThorRow row = lookupNextRow();
+        if (!row.get())
+            return NULL;
+        dataLinkIncrement();
+        return row.getClear();
+    }
+    virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
+    void getRHS(bool stopping)
+    {
+        if (gotRHS)
+            return;
+        gotRHS = true;
+
+        // if input counts known, get global aggregate and pre-allocate RHS size
+        ThorDataLinkMetaInfo rightMeta;
+        rightITDL->getMetaInfo(rightMeta);
+        rowcount_t rhsTotalCount;
+        if (rightMeta.totalRowsMin == rightMeta.totalRowsMax)
+            rhsTotalCount = rightMeta.totalRowsMax;
+        else
+            rhsTotalCount = RCUNSET;
+        // ALL join must fit into memory
+        if (needGlobal)
+        {
+            CMessageBuffer msg;
+            msg.append(rhsTotalCount);
+            container.queryJob().queryJobComm().send(msg, 0, mpTag);
+            if (!receiveMsg(msg, 0, mpTag))
+                return;
+            msg.read(rhsTotalCount);
+            if (RCUNSET != rhsTotalCount)
+            {
+                if (rhsTotalCount > RIMAX)
+                    throw MakeActivityException(this, 0, "Too many rows on RHS for ALL join: %"RCPF"d", rhsTotalCount);
+                rhsTableLen = (rowidx_t)rhsTotalCount;
+                rhs.ensure(rhsTableLen);
+            }
+            rowidx_t rhsRows = getGlobalRHS(stopping);
+
+            if (stopping) // broadcast done and no-one spilt, this node can now stop
+                return;
+
+            if (rhsTotalCount != RCUNSET)
+                assertex(rhsRows == rhsTotalCount);
+            else
+            {
+                rhsTableLen = (rowidx_t)rhsRows;
+                rhs.ensure(rhsTableLen);
+            }
+            ForEachItemIn(a2, rhsNodeRows)
+            {
+                CThorSpillableRowArray &rows = *rhsNodeRows.item(a2);
+                rowidx_t r=0;
+                for (; r<rows.numCommitted(); r++)
+                    rhs.append(rows.getClear(r));
+                rows.kill(); // free up ptr table asap
+            }
+        }
+        else
+        {
+            if (stopping) // if local can stop now
+                return;
+            if (RCUNSET != rhsTotalCount)
+            {
+                if (rhsTotalCount > RIMAX)
+                    throw MakeActivityException(this, 0, "Too many rows on RHS for ALL join: %"RCPF"d", rhsTotalCount);
+                rhsTableLen = (rowidx_t)rhsTotalCount;
+                rhs.ensure(rhsTableLen);
+            }
+            while (!abortSoon)
+            {
+                OwnedConstThorRow row = right->ungroupedNextRow();
+                if (!row)
+                    break;
+                rhs.append(row.getClear());
+            }
+            rhsTableLen = rhs.ordinality();
+            if (rhsTotalCount != RCUNSET) // verify matches meta if set/calculated
+                assertex(rhsTableLen == rhsTotalCount);
+        }
+        ActPrintLog("rhs table: %d elements", rhsTableLen);
+        rhsTable = rhs.getRowArray();
+    }
+// IBCastReceive
+    virtual void bCastReceive(CSendItem *sendItem)
+    {
+        if (sendItem)
+        {
+            if (0 != (sendItem->queryFlags() & bcastflag_spilt))
+            {
+                VStringBuffer msg("Notification that slave %d spilt", sendItem->queryOrigin());
+                clearAllNonLocalRows(msg.str());
+            }
+        }
+        rowProcessor.addBlock(sendItem); // NB: NULL indicates end
+    }
 };
 
 CActivityBase *createLookupJoinSlave(CGraphElementBase *container) 
 { 
     return new CLookupJoinActivity(container);
 }
+
+CActivityBase *createAllJoinSlave(CGraphElementBase *container)
+{
+    return new CAllJoinActivity(container);
+}
+
