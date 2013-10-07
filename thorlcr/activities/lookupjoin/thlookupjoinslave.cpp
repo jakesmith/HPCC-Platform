@@ -443,7 +443,7 @@ class CMarker
     NonReentrantSpinLock lock;
     ICompare *cmp;
     Owned<IBitSet> bitSet; // should be roxiemem, so can cause spilling
-    void **base;
+    const void **base;
     rowidx_t startRow, endRow, chunkSize, next;
     unsigned unique;
 
@@ -458,6 +458,7 @@ class CMarker
         {
         }
         void start() { threaded.start(); }
+        void join() { threaded.join(); }
     // IThreaded
         virtual void main()
         {
@@ -466,54 +467,47 @@ class CMarker
     };
     CIArrayOf<CCompareThread> threads;
 
-    rowidx_t getMore(rowidx_t &lastRow)
+    rowidx_t getMore(rowidx_t &_startRow)
     {
         NonReentrantSpinBlock block(lock);
         if (startRow == endRow)
             return 0;
-        rowidx_t ret = startRow;
+        _startRow = startRow;
         if (endRow-startRow <= chunkSize)
             startRow = endRow;
         else
             startRow += chunkSize;
-        lastRow = startRow;
-        return ret;
+        return startRow;
     }
     inline void mark(rowidx_t i)
     {
         ++unique;
         bitSet->set(i); // mark boundary
     }
-    void run(rowidx_t start, rowidx_t end)
+    void run(rowidx_t myStart, rowidx_t myEnd)
     {
         loop
         {
-            const void **rows = base+start;
-            for (rowidx_t i=start; i<(end-1); i++, rows++)
+            const void **rows = base+myStart;
+            rowidx_t i=myStart;
+            for (; i<(myStart-1); i++, rows++)
             {
                 int r = cmp->docompare(*rows, *(rows+1));
                 if (r)
                     mark(i);
-                else
-                {
-                    loop
-                    {
-                        i = (end-start)/2
-                        rows = base+i;
-                        r = cmp->docompare(*rows, *(rows+1));
-                        if (r)
-                        {
-                            mark(i);
-                            break;
-                        }
-                        // so between start and midpoint all same too
-                        start = i+1;
-                    }
-                    while (0 == r);
-                }
+                // JCSMORE - wonder if I could binchop ahead somehow, to process duplicates more quickly..
             }
-            start = getMore(end);
-            if (0 == start)
+            if (myEnd == endRow)
+                mark(myEnd-1); // last row is implicitly end of group
+            else
+            {
+                // final row, cross boundary with next chunk, i.e. { last-row-of-my-chunk , first-row-of-next }
+                int r = cmp->docompare(*rows, *(rows+1));
+                if (r)
+                    mark(i);
+            }
+            myEnd = getMore(myStart);
+            if (0 == myEnd)
                 break; // done
         }
     }
@@ -543,7 +537,7 @@ public:
         unique = 0;
         startRow = next = 0;
         endRow = startRow+rowCount;
-        base = (void **)rows.getRowArray();
+        base = rows.getRowArray();
         bitSet.setown(createBitSet());
         for (unsigned t=0; t<threadCount; t++)
         {
@@ -561,9 +555,10 @@ public:
         }
         ForEachItemIn(t, threads)
             threads.item(t).start();
-        ForEachItemIn(t, threads)
-            threads.item(t).join();
+        ForEachItemIn(t2, threads)
+            threads.item(t2).join();
         threads.kill();
+            mark(endRow-1); // last row is implictly end of group
         cmp = NULL;
         return unique;
     }
@@ -819,7 +814,7 @@ class CLookupJoinActivity : public CSlaveActivity, public CThorDataLink, impleme
 
     void clearRHS()
     {
-        ht.kill();
+        clearHt();
         rhs.kill();
         ForEachItemIn(a, rhsNodeRows)
         {
@@ -1533,40 +1528,17 @@ public:
         info.unknownRowsOutput = true;
         info.canStall = true;
     }
-    void addRowHt(const void *p)
-    {
-        OwnedConstThorRow _p = p;
-        unsigned h = rightHash->hash(p)%rhsTableLen;
-        loop
-        {
-            const void *e = ht.query(h);
-            if (!e)
-            {
-                ht.setRow(h, _p.getClear());
-                htCount++;
-                break;
-            }
-            if (dedup && 0 == compareRight->docompare(e,p))
-            {
-                htDedupCount++;
-                break; // implicit dedup
-            }
-            h++;
-            if (h>=rhsTableLen)
-                h = 0;
-        }
-    }
-    void addRowsToHt(CThorExpandingRowArray &rows)
+    void addRowsToHt(CThorExpandingRowArray &rows, CMarker &marker)
     {
         rowidx_t pos=0;
         rowidx_t pos2;
         loop
         {
             pos2 = marker.findNextBoundary();
-            addEntry(rhs.query(pos), index, pos2-pos);
+            addEntry(rhs.query(pos), pos, pos2-pos);
         }
     }
-    void addEntry(const void *row, rowidx_t index, rowidx_t count)
+    inline void addEntry(const void *row, rowidx_t index, rowidx_t count)
     {
         unsigned h = rightHash->hash(row)%rhsTableLen;
         loop
@@ -1702,13 +1674,14 @@ public:
         htMemory.setown(queryJob().queryRowManager()->allocate(sz, queryContainer().queryId()));
         ht = (HtEntry *)htMemory.get();
         memset(ht, 0, sz);
+        rhsTableLen = size;
     }
-    void clearHT()
+    void clearHt()
     {
         ht = NULL;
         htMemory.clear();
     }
-    rowidx_t getGlobalRHS()
+    rowidx_t getGlobalRHS(bool stopping)
     {
         rowProcessor.start();
         broadcaster.start(this, mpTag, stopping);
@@ -1716,7 +1689,7 @@ public:
         broadcaster.end();
         rowProcessor.wait();
 
-        CriticalBlock b(crit);
+        CriticalBlock b(broadcastSpillingLock);
         rowcount_t rhsRows = 0;
         ForEachItemIn(a, rhsNodeRows)
         {
@@ -1762,10 +1735,11 @@ public:
         CMarker marker(*this);
         if (needGlobal)
         {
-            rowidx_t rhsRows = getGlobalRHS();
-            rhs.ensure(rhsRows);
+            rowidx_t rhsRows = getGlobalRHS(stopping);
+            if (!hasBroadcastSpilt())
+                rhs.ensure(rhsRows);
 
-            // NB: no more rows can be added to rhsNodeRows at this point, but they could stil be flushed
+            // NB: no more rows can be added to rhsNodeRows at this point, but they could still be flushed
 
             if (isSmart() && getOptBool(THOROPT_LKJOIN_LOCALFAILOVER, getOptBool(THOROPT_LKJOIN_HASHJOINFAILOVER))) // For testing purposes only
                 clearAllNonLocalRows("testing");
@@ -1790,38 +1764,41 @@ public:
 
             if (!hasBroadcastSpilt())
             {
-                rhsTableLen = marker.calculate(rhs, compareRight);
+                rowidx_t uniqueKeys = marker.calculate(rhs, compareRight);
 
                 // NB: This sizing could cause spilling callback to be triggered
-                setupHt(rhsTableLen);
+                setupHt(uniqueKeys);
                 /* JCSMORE - failure to size should not be failure condition
                  * It will mark spiltBroadcastingRHS and try to degrade
                  * JCS->GH: However, need to catch OOM somehow..
                  */
             }
 
-            /* NB: Potentially one of the slaves spilt late after broadcast and rowprocessor finished
-             * Need to remove spill callback and broadcast one last message to know.
-             */
+            if (failoverToLocalLookupJoin)
+            {
+                /* NB: Potentially one of the slaves spilt late after broadcast and rowprocessor finished
+                 * Need to remove spill callback and broadcast one last message to know.
+                 */
 
-            queryJob().queryRowManager()->removeRowBuffer(this);
+                queryJob().queryRowManager()->removeRowBuffer(this);
 
-            ActPrintLog("Broadcasting final split status");
-            broadcaster.reset();
-            // NB: using a different tag from 1st broadcast, as 2nd on other nodes can start sending before 1st on this has quit receiving
-            broadcaster.start(this, broadcast2MpTag, false);
-            Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_stop);
-            if (hasBroadcastSpilt())
-                sendItem->setFlag(bcastflag_spilt);
-            broadcaster.send(sendItem); // signals stop to others
-            broadcaster.end();
+                ActPrintLog("Broadcasting final split status");
+                broadcaster.reset();
+                // NB: using a different tag from 1st broadcast, as 2nd on other nodes can start sending before 1st on this has quit receiving
+                broadcaster.start(this, broadcast2MpTag, false);
+                Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_stop);
+                if (hasBroadcastSpilt())
+                    sendItem->setFlag(bcastflag_spilt);
+                broadcaster.send(sendItem); // signals stop to others
+                broadcaster.end();
+            }
 
             /* All slaves now know whether any one spilt or not, i.e. whether to perform local hash join or not
              * If any have, still need to distribute rest of RHS..
              */
 
             // flush spillable row arrays, and clear any non-locals if spiltBroadcastingRHS and compact
-            if (hasBroadcastSpilt()) // NB: Can only be active for LOOKUP
+            if (hasBroadcastSpilt())
             {
                 ActPrintLog("Spilt whilst broadcasting, will attempt distribute local lookup join");
                 localLookupJoin = true;
@@ -1831,7 +1808,7 @@ public:
                     throw MakeActivityException(this, 0, "Degraded to distributed lookup join, LHS order cannot be preserved");
 
                 // If HT sized already and now spilt, too big clear and size when local size known
-                clearHT();
+                clearHt();
 
                 setupDistributors();
 
@@ -1905,8 +1882,8 @@ public:
                 // i.e. will fire OOM if runs out of memory loading local right
                 rowLoader.setown(createThorRowLoader(*this, queryRowInterfaces(rightITDL), compareRight, false, rc_allMem, SPILL_PRIORITY_DISABLE));
             }
-            Owned<IRowStream> rightStream = rowLoader->load(right, abortSoon, false, &rhs);
 
+            Owned<IRowStream> rightStream = rowLoader->load(right, abortSoon, false, &rhs);
             if (!rightStream)
             {
                 ActPrintLog("RHS local rows fitted in memory, count: %"RIPF"d", rhs.ordinality());
@@ -1924,10 +1901,10 @@ public:
                 collector->setOptions(rcflag_noAllInMemSort); // If fits into memory, don't want it sorted
                 collector->transferRowsIn(rhs);
 
-                rhsTableLen = marker.calculate(rhs, compareRight);
+                rowidx_t uniqueKeys = marker.calculate(rhs, compareRight);
 
                 // could cause spilling of 'rhs'
-                setupHt(rhsTableLen);
+                setupHt(uniqueKeys);
                 /* JCSMORE - failure to size should not be failure condition
                  * If it failed, the 'collector' will have spilt and it will not need HT
                  * JCS->GH: However, need to catch OOM somehow..
@@ -1978,7 +1955,7 @@ public:
 
         // JCSMORE - would be nice to make this multi-core, clashes and compares can be expensive
 
-        addRowsToHt(rhs);
+        addRowsToHt(rhs, marker);
         ActPrintLog("rhs table: %d elements", rhsTableLen);
     }
     void doGetAllRHS(bool stopping)
@@ -2007,7 +1984,7 @@ public:
                 rhsTableLen = (rowidx_t)rhsTotalCount;
                 rhs.ensure(rhsTableLen);
             }
-            rowidx_t rhsRows = getGlobalRHS();
+            rowidx_t rhsRows = getGlobalRHS(stopping);
 
             if (stopping) // broadcast done and no-one spilt, this node can now stop
                 return;
