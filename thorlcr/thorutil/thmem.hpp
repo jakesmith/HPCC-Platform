@@ -349,6 +349,7 @@ public:
     void transferFrom(CThorSpillableRowArray &src);
     void removeRows(rowidx_t start, rowidx_t n);
     bool appendRows(CThorExpandingRowArray &inRows, bool takeOwnership);
+    bool appendRows(CThorSpillableRowArray &inRows, bool takeOwnership);
     void clearUnused();
     void sort(ICompare &compare, unsigned maxCores);
     void reorder(rowidx_t start, rowidx_t num, rowidx_t *neworder);
@@ -481,6 +482,7 @@ public:
     void deserialize(size32_t sz, const void *buf, bool hasNulls){ CThorExpandingRowArray::deserialize(sz, buf); }
     void deserializeRow(IRowDeserializerSource &in) { CThorExpandingRowArray::deserializeRow(in); }
     bool ensure(rowidx_t requiredRows) { return CThorExpandingRowArray::ensure(requiredRows); }
+    void transferRowsCopy(const void **outRows, bool takeOwnership);
 
     virtual IThorArrayLock &queryLock() { return *this; }
 // IThorArrayLock
