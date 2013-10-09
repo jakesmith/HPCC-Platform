@@ -541,7 +541,9 @@ public:
         if (rowCount < minForParallel)
         {
             chunkSize = minForParallel;
-            run(startRow, endRow);
+            rowidx_t s = startRow;
+            startRow = endRow;
+            run(s, endRow);
         }
         else
         {
@@ -558,6 +560,7 @@ public:
                 if (startRow+chunkSize >= endRow)
                 {
                     threads.append(* new CCompareThread(*this, startRow, endRow));
+                    startRow = endRow;
                     break;
                 }
                 else
@@ -1118,6 +1121,7 @@ class CLookupJoinActivityBase : public CInMemJoinBase, implements roxiemem::IBuf
             unsigned h = rightHash->hash(row)%rhsTableLen;
             // NB: 'pos' and 'count' won't be used if dedup variety
             ht.addEntry(row, h, pos, count);
+            pos = pos2;
         }
     }
     void setupDistributors()
