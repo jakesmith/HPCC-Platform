@@ -587,7 +587,7 @@ public:
 
 */
 
-class CLookupJoinActivityBase : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify, implements IBCastReceive
+class CInMemJoinBase : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify, implements IBCastReceive
 {
     Semaphore leftstartsem;
     Owned<IException> leftexception;
@@ -600,12 +600,12 @@ protected:
     class CRowProcessor : implements IThreaded
     {
         CThreadedPersistent threaded;
-        CLookupJoinActivityBase &owner;
+        CInMemJoinBase &owner;
         bool stopped;
         SimpleInterThreadQueueOf<CSendItem, true> blockQueue;
         Owned<IException> exception;
     public:
-        CRowProcessor(CLookupJoinActivityBase &_owner) : threaded("CRowProcessor", this), owner(_owner)
+        CRowProcessor(CInMemJoinBase &_owner) : threaded("CRowProcessor", this), owner(_owner)
         {
             stopped = false;
             blockQueue.setLimit(MAX_QUEUE_BLOCKS);
@@ -782,7 +782,7 @@ protected:
         }
         catch (IException *e)
         {
-            ActPrintLog(e, "CLookupJoinActivityBase::broadcastRHS: exception");
+            ActPrintLog(e, "CInMemJoinBase::broadcastRHS: exception");
             throw;
         }
 
@@ -795,7 +795,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CLookupJoinActivityBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this),
+    CInMemJoinBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this),
         broadcaster(*this), rhs(*this, NULL), rowProcessor(*this)
     {
         gotRHS = false;
@@ -811,12 +811,12 @@ public:
         joined = 0;
         leftMatch = false;
         grouped = false;
-        fuzzyMatch = returnMany = dedup = false;
+        fuzzyMatch = returnMany = false;
 
         exclude = false;
         keepLimit = 0;
     }
-    ~CLookupJoinActivityBase()
+    ~CInMemJoinBase()
     {
         ForEachItemIn(a, rhsNodeRows)
         {
@@ -968,14 +968,15 @@ public:
  * It also handles match conditions where there is no hard match (, ALL), in those cases no hash table is needed.
  * TODO: right outer/only joins
  */
-class CLookupJoinActivity : public CLookupJoinActivityBase, implements roxiemem::IBufferedRowCallback
+
+template <class HTType>
+class CLookupJoinActivityBase : public CInMemJoinBase, implements roxiemem::IBufferedRowCallback
 {
     IHThorHashJoinArg *hashJoinHelper;
     IHash *leftHash, *rightHash;
     ICompare *compareRight, *compareLeftRight;
 
-    OwnedConstThorRow htMemory;
-    struct HtEntry { rowidx_t index, count; } *ht;
+    HTType ht;
 
     unsigned abortLimit, atMost;
     ConstPointerArray candidates;
@@ -1072,10 +1073,7 @@ class CLookupJoinActivity : public CLookupJoinActivityBase, implements roxiemem:
     {
         loop
         {
-            HtEntry &e = ht[h];
-            if (!e.count)
-                break;
-            const void *right = rhs.query(e.index);
+            const void *right = ht.getRow(h);
             if (0 == compareLeftRight->docompare(left, right))
                 return right;
             h++;
@@ -1108,24 +1106,10 @@ class CLookupJoinActivity : public CLookupJoinActivityBase, implements roxiemem:
              * It feels like we should only dedup if code gen spots, rather than have LOOKUP without MANY option
              * i.e. feels like LOOKUP without MANY should be deprecated..
             */
-            addEntry(rhs.query(pos), pos, count);
-        }
-    }
-    inline void addEntry(const void *row, rowidx_t index, rowidx_t count)
-    {
-        unsigned h = rightHash->hash(row)%rhsTableLen;
-        loop
-        {
-            HtEntry &e = ht[h];
-            if (!e.count)
-            {
-                e.index = index;
-                e.count = count;
-                break;
-            }
-            h++;
-            if (h>=rhsTableLen)
-                h = 0;
+            const void *row = rhs.query(pos);
+            unsigned h = rightHash->hash(row)%rhsTableLen;
+            // NB: 'pos' and 'count' won't be used if dedup variety
+            ht.addEntry(row, h, pos, count);
         }
     }
     void setupDistributors()
@@ -1138,18 +1122,15 @@ class CLookupJoinActivity : public CLookupJoinActivityBase, implements roxiemem:
             left.setown(lhsDistributor->connect(queryRowInterfaces(leftITDL), left.getClear(), leftHash, NULL));
         }
     }
-    void setupHt(rowidx_t size)
+    void setupHt(rowidx_t size, const void **rows)
     {
-        size32_t sz = sizeof(HtEntry)*rhsTableLen;
-        htMemory.setown(queryJob().queryRowManager()->allocate(sz, queryContainer().queryId()));
-        ht = (HtEntry *)htMemory.get();
-        memset(ht, 0, sz);
+        ht.setup(size, rows);
         rhsTableLen = size;
     }
     void clearHt()
     {
-        ht = NULL;
-        htMemory.clear();
+        ht.reset();
+        rhsTableLen = 0;
     }
 
 protected:
@@ -1308,7 +1289,7 @@ protected:
                 rowidx_t uniqueKeys = marker.calculate(rhs, compareRight);
 
                 // NB: This sizing could cause spilling callback to be triggered
-                setupHt(uniqueKeys);
+                setupHt(uniqueKeys, rhs.getRowArray());
                 /* JCSMORE - failure to size should not be failure condition
                  * It will mark spiltBroadcastingRHS and try to degrade
                  * JCS->GH: However, need to catch OOM somehow..
@@ -1444,7 +1425,7 @@ protected:
                 rowidx_t uniqueKeys = marker.calculate(rhs, compareRight);
 
                 // could cause spilling of 'rhs'
-                setupHt(uniqueKeys);
+                setupHt(uniqueKeys, rhs.getRowArray());
                 /* JCSMORE - failure to size should not be failure condition
                  * If it failed, the 'collector' will have spilt and it will not need HT
                  * JCS->GH: However, need to catch OOM somehow..
@@ -1499,7 +1480,7 @@ protected:
         ActPrintLog("rhs table: %d elements", rhsTableLen);
     }
 public:
-    CLookupJoinActivity(CGraphElementBase *_container) : CLookupJoinActivityBase(_container)
+    CLookupJoinActivityBase(CGraphElementBase *_container) : CInMemJoinBase(_container), ht(*this)
     {
         atMost = 0;
         localLookupJoin = rhsCollated = false;
@@ -1534,8 +1515,6 @@ public:
             else
                 dedup = true;
         }
-        ht = NULL;
-
         if (0 == abortLimit)
             abortLimit = (unsigned)-1;
         if (0 == atMost)
@@ -1550,7 +1529,7 @@ public:
 // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
-        CLookupJoinActivityBase::init(data, slaveData);
+        CInMemJoinBase::init(data, slaveData);
 
         if (!container.queryLocal())
         {
@@ -1564,7 +1543,7 @@ public:
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
 
-        CLookupJoinActivityBase::start();
+        CInMemJoinBase::start();
 
         setBroadcastingSpilt(false);
         localLookupJoin = rhsCollated = false;
@@ -1591,7 +1570,7 @@ public:
     }
     virtual void abort()
     {
-    	CLookupJoinActivityBase::abort();
+    	CInMemJoinBase::abort();
         if (rhsDistributor)
             rhsDistributor->abort();
         if (lhsDistributor)
@@ -1615,7 +1594,7 @@ public:
             lhsDistributor->join();
         }
         joinHelper.clear();
-        CLookupJoinActivityBase::stop();
+        CInMemJoinBase::stop();
     }
     virtual bool isGrouped()
     {
@@ -1651,7 +1630,7 @@ public:
             // keep it only if it hashes to my node
             unsigned hv = rightHash->hash(row);
             if ((myNode-1) == (hv % numNodes))
-                CLookupJoinActivityBase::addLocalRHSRow(localRhsRows, row);
+                CInMemJoinBase::addLocalRHSRow(localRhsRows, row);
             // ok so switch tactics.
             // clearAllNonLocalRows() will have cleared out non-locals by now
             // Returning false here, will stop the broadcaster
@@ -1663,14 +1642,140 @@ public:
             /* NB: It could still spill here, i.e. before appending a non-local row
              * When all is done, a last pass is needed to clear out non-locals
              */
-            CLookupJoinActivityBase::addLocalRHSRow(localRhsRows, row);
+            CInMemJoinBase::addLocalRHSRow(localRhsRows, row);
         }
         return true;
     }
 };
 
 
-class CAllJoinActivity : public CLookupJoinActivityBase
+class CHTBase
+{
+protected:
+    CInMemJoinBase &activity;
+    rowidx_t htSz;
+    OwnedConstThorRow htMemory;
+public:
+    CHTBase(CInMemJoinBase &_activity) : activity(_activity)
+    {
+        htSz = 0;
+    }
+    void reset()
+    {
+        htMemory.clear();
+        htSz = 0;
+    }
+};
+
+class CHTDirect : public CHTBase
+{
+    const void **ht;
+public:
+    CHTDirect(CInMemJoinBase &activity) : CHTBase(activity)
+    {
+        ht = NULL;
+    }
+    void setup(rowidx_t size, const void **_rows) // _rows unused
+    {
+        size32_t sz = sizeof(const void *)*size;
+        htMemory.setown(activity.queryJob().queryRowManager()->allocate(sz, activity.queryContainer().queryId()));
+        ht = (const void **)htMemory.get();
+        memset(ht, 0, sz);
+    }
+    void reset()
+    {
+        CHTBase::reset();
+        ht = NULL;
+    }
+    inline const void *getRow(unsigned pos)
+    {
+        return ht[pos];
+    }
+    inline void addEntry(const void *row, unsigned hash, rowidx_t index, rowidx_t count)
+    {
+        loop
+        {
+            const void *&htRow = ht[hash];
+            if (!htRow)
+            {
+                htRow = row;
+                break;
+            }
+            hash++;
+            if (hash>=htSz)
+                hash = 0;
+        }
+    }
+};
+
+class CHTIndexCount : public CHTBase
+{
+    struct HtEntry { rowidx_t index, count; } *ht;
+    const void **rows;
+public:
+    CHTIndexCount(CInMemJoinBase &activity) : CHTBase(activity)
+    {
+        rows = NULL;
+        ht = NULL;
+    }
+    void setup(rowidx_t size, const void **_rows)
+    {
+        size32_t sz = sizeof(HtEntry)*size;
+        htMemory.setown(activity.queryJob().queryRowManager()->allocate(sz, activity.queryContainer().queryId()));
+        ht = (HtEntry *)htMemory.get();
+        memset(ht, 0, sz);
+        rows = _rows;
+    }
+    void reset()
+    {
+        CHTBase::reset();
+        htMemory.clear();
+        rows = NULL;
+        htSz = 0;
+    }
+    inline const void *getRow(unsigned hash)
+    {
+        HtEntry &e = ht[hash];
+        if (e.count)
+            return NULL;
+        return rows[e.index];
+    }
+    inline void addEntry(const void *row, unsigned hash, rowidx_t index, rowidx_t count)
+    {
+        loop
+        {
+            HtEntry &e = ht[hash];
+            if (!e.count)
+            {
+                e.index = index;
+                e.count = count;
+                break;
+            }
+            hash++;
+            if (hash>=htSz)
+                hash = 0;
+        }
+    }
+};
+
+class CLookupJoinActivity : public CLookupJoinActivityBase<CHTDirect>
+{
+public:
+    CLookupJoinActivity(CGraphElementBase *_container) : CLookupJoinActivityBase(_container)
+    {
+    }
+};
+
+class CLookupManyJoinActivity : public CLookupJoinActivityBase<CHTIndexCount>
+{
+public:
+    CLookupManyJoinActivity(CGraphElementBase *_container) : CLookupJoinActivityBase(_container)
+    {
+    }
+};
+
+
+class CAllJoinActivity : public CInMemJoinBase
 {
     IHThorAllJoinArg *allJoinHelper;
     const void **rhsTable;
@@ -1785,7 +1890,7 @@ protected:
         rhsTable = rhs.getRowArray();
     }
 public:
-    CAllJoinActivity(CGraphElementBase *_container) : CLookupJoinActivityBase(_container)
+    CAllJoinActivity(CGraphElementBase *_container) : CInMemJoinBase(_container)
     {
         allJoinHelper = (IHThorAllJoinArg *)queryHelper();
         flags = allJoinHelper->getJoinFlags();
@@ -1798,13 +1903,13 @@ public:
 // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
-        CLookupJoinActivityBase::init(data, slaveData);
+        CInMemJoinBase::init(data, slaveData);
     }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
 
-        CLookupJoinActivityBase::start();
+        CInMemJoinBase::start();
 
         if ((flags & JFonfail) || (flags & JFleftouter))
         {
@@ -1819,7 +1924,7 @@ public:
     {
         if (!gotRHS && needGlobal)
             getRHS(true); // If global, need to handle RHS until all are slaves stop
-        CLookupJoinActivityBase::stop();
+        CInMemJoinBase::stop();
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
 // IBCastReceive
@@ -2048,6 +2153,30 @@ public:
     }
 };
 
+
+class CLookupManyJoinSlaveActivity : public CInMemJoinSlave<CLookupManyJoinActivity>
+{
+public:
+    CLookupManyJoinSlaveActivity(CGraphElementBase *container) : CInMemJoinSlave<CLookupManyJoinActivity>(container)
+    {
+    }
+    CATCH_NEXTROW()
+    {
+        ActivityTimer t(totalCycles, timeActivities, NULL);
+        if (!gotRHS)
+            getRHS(false);
+        OwnedConstThorRow row;
+        if (joinHelper) // regular join (hash join)
+            row.setown(joinHelper->nextRow());
+        else
+            row.setown(lookupNextRow());
+        if (!row.get())
+            return NULL;
+        dataLinkIncrement();
+        return row.getClear();
+    }
+};
+
 class CLookupJoinSlaveActivity : public CInMemJoinSlave<CLookupJoinActivity>
 {
 public:
@@ -2092,7 +2221,22 @@ public:
 
 CActivityBase *createLookupJoinSlave(CGraphElementBase *container) 
 { 
-    return new CLookupJoinSlaveActivity(container);
+    IHThorHashJoinArg *hashJoinHelper = (IHThorHashJoinArg *)container->queryHelper();
+    unsigned flags = hashJoinHelper->getJoinFlags();
+    if (JFmanylookup & flags)
+    {
+        bool dedup = false;
+        if (0 == (flags & (JFtransformMaySkip|JFmatchrequired)))
+        {
+            unsigned keepLimit = hashJoinHelper->getKeepLimit();
+            unsigned abortLimit = hashJoinHelper->getMatchAbortLimit();
+            unsigned atMost = hashJoinHelper->getJoinLimit();
+            dedup = (1==keepLimit) && (0==atMost) && (0==abortLimit);
+        }
+        if (dedup)
+            return new CLookupJoinSlaveActivity(container);
+    }
+    return new CLookupManyJoinSlaveActivity(container);
 }
 
 CActivityBase *createAllJoinSlave(CGraphElementBase *container)
