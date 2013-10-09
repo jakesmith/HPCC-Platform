@@ -491,7 +491,7 @@ class CMarker
         {
             const void **rows = base+myStart;
             rowidx_t i=myStart;
-            for (; i<(myStart-1); i++, rows++)
+            for (; i<(myEnd-1); i++, rows++)
             {
                 int r = cmp->docompare(*rows, *(rows+1));
                 if (r)
@@ -527,8 +527,12 @@ public:
     unsigned calculate(CThorExpandingRowArray &rows, ICompare *_cmp)
     {
         cmp = _cmp;
-        unsigned threadCount = activity.queryMaxCores();
+        unsigned threadCount = activity.getOptInt(THOROPT_JOINHELPER_THREADS, activity.queryMaxCores());
+        if (0 == threadCount)
+            threadCount = getAffinityCpus();
         rowidx_t rowCount = rows.ordinality();
+        if (0 == rowCount)
+            return 0;
         unique = 0;
         startRow = next = 0;
         endRow = startRow+rowCount;
@@ -545,7 +549,10 @@ public:
             if (chunkSize > parallelChunkSize)
                 chunkSize = parallelChunkSize;
             else if (chunkSize < parallelMinChunkSize)
+            {
                 chunkSize = parallelMinChunkSize;
+                threadCount = rowCount / chunkSize;
+            }
             for (unsigned t=0; t<threadCount; t++)
             {
                 if (startRow+chunkSize >= endRow)
@@ -1096,6 +1103,7 @@ class CLookupJoinActivityBase : public CInMemJoinBase, implements roxiemem::IBuf
     }
     void addRowsToHt(CThorExpandingRowArray &rows, CMarker &marker)
     {
+        ht.setRows(rows.getRowArray());
         rowidx_t pos=0;
         rowidx_t pos2;
         loop
@@ -1122,9 +1130,9 @@ class CLookupJoinActivityBase : public CInMemJoinBase, implements roxiemem::IBuf
             left.setown(lhsDistributor->connect(queryRowInterfaces(leftITDL), left.getClear(), leftHash, NULL));
         }
     }
-    void setupHt(rowidx_t size, const void **rows)
+    void setupHt(rowidx_t size)
     {
-        ht.setup(size, rows);
+        ht.setup(size);
         rhsTableLen = size;
     }
     void clearHt()
@@ -1289,7 +1297,7 @@ protected:
                 rowidx_t uniqueKeys = marker.calculate(rhs, compareRight);
 
                 // NB: This sizing could cause spilling callback to be triggered
-                setupHt(uniqueKeys, rhs.getRowArray());
+                setupHt(uniqueKeys);
                 /* JCSMORE - failure to size should not be failure condition
                  * It will mark spiltBroadcastingRHS and try to degrade
                  * JCS->GH: However, need to catch OOM somehow..
@@ -1420,12 +1428,13 @@ protected:
                 rowLoader.clear();
                 Owned<IThorRowCollector> collector = createThorRowCollector(*this, queryRowInterfaces(rightITDL), compareRight,false, rc_mixed, SPILL_PRIORITY_LOOKUPJOIN);
                 collector->setOptions(rcflag_noAllInMemSort); // If fits into memory, don't want it sorted
-                collector->transferRowsIn(rhs);
 
                 rowidx_t uniqueKeys = marker.calculate(rhs, compareRight);
 
+                collector->transferRowsIn(rhs); // can spill after this
+
                 // could cause spilling of 'rhs'
-                setupHt(uniqueKeys, rhs.getRowArray());
+                setupHt(uniqueKeys);
                 /* JCSMORE - failure to size should not be failure condition
                  * If it failed, the 'collector' will have spilt and it will not need HT
                  * JCS->GH: However, need to catch OOM somehow..
@@ -1482,6 +1491,8 @@ protected:
 public:
     CLookupJoinActivityBase(CGraphElementBase *_container) : CInMemJoinBase(_container), ht(*this)
     {
+        hashJoinHelper = (IHThorHashJoinArg *)queryHelper();
+
         atMost = 0;
         localLookupJoin = rhsCollated = false;
         broadcast2MpTag = lhsDistributeTag = rhsDistributeTag = TAG_NULL;
@@ -1491,8 +1502,6 @@ public:
         candidateMatches = 0;
 
         grouped = hashJoinHelper->queryOutputMeta()->isGrouped();
-
-        hashJoinHelper = (IHThorHashJoinArg *)queryHelper();
         flags = hashJoinHelper->getJoinFlags();
         leftHash = hashJoinHelper->queryHashLeft();
         rightHash = hashJoinHelper->queryHashRight();
@@ -1533,7 +1542,6 @@ public:
 
         if (!container.queryLocal())
         {
-            mpTag = container.queryJob().deserializeMPTag(data);
             broadcast2MpTag = container.queryJob().deserializeMPTag(data);
             lhsDistributeTag = container.queryJob().deserializeMPTag(data);
             rhsDistributeTag = container.queryJob().deserializeMPTag(data);
@@ -1675,13 +1683,14 @@ public:
     {
         ht = NULL;
     }
-    void setup(rowidx_t size, const void **_rows) // _rows unused
+    void setup(rowidx_t size)
     {
         size32_t sz = sizeof(const void *)*size;
         htMemory.setown(activity.queryJob().queryRowManager()->allocate(sz, activity.queryContainer().queryId()));
         ht = (const void **)htMemory.get();
         memset(ht, 0, sz);
     }
+    void setRows(const void **_rows) { }
     void reset()
     {
         CHTBase::reset();
@@ -1718,14 +1727,14 @@ public:
         rows = NULL;
         ht = NULL;
     }
-    void setup(rowidx_t size, const void **_rows)
+    void setup(rowidx_t size)
     {
         size32_t sz = sizeof(HtEntry)*size;
         htMemory.setown(activity.queryJob().queryRowManager()->allocate(sz, activity.queryContainer().queryId()));
         ht = (HtEntry *)htMemory.get();
         memset(ht, 0, sz);
-        rows = _rows;
     }
+    void setRows(const void **_rows) { rows = _rows; }
     void reset()
     {
         CHTBase::reset();
