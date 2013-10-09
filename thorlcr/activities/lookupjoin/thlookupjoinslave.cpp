@@ -670,8 +670,7 @@ protected:
     } rowProcessor;
 
     CBroadcaster broadcaster;
-    const void **rhsTable;
-    rowidx_t rhsTableLen, htDedupCount;
+    rowidx_t rhsTableLen;
 
     IThorDataLink *leftITDL, *rightITDL;
     Owned<IRowStream> left, right;
@@ -806,8 +805,7 @@ public:
         numNodes = queryJob().querySlaves();
         needGlobal = !container.queryLocal() && (container.queryJob().querySlaves() > 1);
 
-        rhsTable = NULL;
-        rhsTableLen = htDedupCount = 0;
+        rhsTableLen = 0;
         leftITDL = rightITDL = NULL;
 
         joined = 0;
@@ -858,7 +856,7 @@ public:
         joined = 0;
         leftMatch = false;
         rhsNext = NULL;
-        rhsTableLen = htDedupCount = 0;
+        rhsTableLen = 0;
         leftITDL = inputs.item(0);
         rightITDL = inputs.item(1);
         allocator.set(queryRowAllocator());
@@ -1070,32 +1068,33 @@ class CLookupJoinActivity : public CLookupJoinActivityBase, implements roxiemem:
         ActPrintLog("handleLowMem: clearedRows = %"RIPF"d", clearedRows);
         return 0 != clearedRows;
     }
-    const void *find(const void *r, unsigned &h)
+    const void *find(const void *left, unsigned &h)
     {
         loop
         {
-            const void *e = rhsTable[h];
-            if (!e)
+            HtEntry &e = ht[h];
+            if (!e.count)
                 break;
-            if (0 == compareLeftRight->docompare(r,e))
-                return e;
+            const void *right = rhs.query(e.index);
+            if (0 == compareLeftRight->docompare(left, right))
+                return right;
             h++;
             if (h>=rhsTableLen)
                 h = 0;
         }
         return NULL;
     }
-    const void *findFirst(const void *r, unsigned &h)
+    const void *findFirst(const void *left, unsigned &h)
     {
-        h = leftHash->hash(r)%rhsTableLen;
-        return find(r, h);
+        h = leftHash->hash(left)%rhsTableLen;
+        return find(left, h);
     }
-    const void *findNext(const void *r, unsigned &h)
+    const void *findNext(const void *left, unsigned &h)
     {
         h++;
         if (h>=rhsTableLen)
             h = 0;
-        return find(r, h);
+        return find(left, h);
     }
     void addRowsToHt(CThorExpandingRowArray &rows, CMarker &marker)
     {
@@ -1104,7 +1103,12 @@ class CLookupJoinActivity : public CLookupJoinActivityBase, implements roxiemem:
         loop
         {
             pos2 = marker.findNextBoundary();
-            addEntry(rhs.query(pos), pos, pos2-pos);
+            rowidx_t count = dedup ? 1 : pos2-pos;
+            /* JCS->GH - Could you/do you spot LOOKUP MANY, followed by DEDUP(key) ?
+             * It feels like we should only dedup if code gen spots, rather than have LOOKUP without MANY option
+             * i.e. feels like LOOKUP without MANY should be deprecated..
+            */
+            addEntry(rhs.query(pos), pos, count);
         }
     }
     inline void addEntry(const void *row, rowidx_t index, rowidx_t count)
@@ -1522,7 +1526,14 @@ public:
 
         fuzzyMatch = 0 != (JFmatchrequired & flags);
         bool maySkip = 0 != (flags & JFtransformMaySkip);
-        dedup = compareRight && !maySkip && !fuzzyMatch && !returnMany;
+        dedup = false;
+        if (compareRight && !maySkip && !fuzzyMatch)
+        {
+            if (returnMany)
+                dedup = (1==keepLimit) && (0==atMost) && (0==abortLimit);
+            else
+                dedup = true;
+        }
         ht = NULL;
 
         if (0 == abortLimit)
@@ -1662,6 +1673,7 @@ public:
 class CAllJoinActivity : public CLookupJoinActivityBase
 {
     IHThorAllJoinArg *allJoinHelper;
+    const void **rhsTable;
 
 protected:
 /* This class becomes the base class of template CInMemJoinSlave
@@ -1781,6 +1793,7 @@ public:
         keepLimit = allJoinHelper->getKeepLimit();
         fuzzyMatch = 0 != (JFmatchrequired & flags);
         grouped = allJoinHelper->queryOutputMeta()->isGrouped();
+        rhsTable = NULL;
     }
 // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -1800,6 +1813,7 @@ public:
             size32_t rrsz = allJoinHelper->createDefaultRight(rr);
             defaultRight.setown(rr.finalizeRowClear(rrsz));
         }
+        rhsTable = NULL;
     }
     virtual void stop()
     {
