@@ -724,6 +724,31 @@ protected:
     rank_t myNode;
     unsigned numNodes;
 
+    inline bool isGroupOp() const
+    {
+        switch (container.getKind())
+        {
+            case TAKlookupdenormalizegroup:
+            case TAKsmartdenormalizegroup:
+            case TAKalldenormalizegroup:
+                return true;
+        }
+        return false;
+    }
+    inline bool isDenormalize() const
+    {
+        switch (container.getKind())
+        {
+            case TAKlookupdenormalize:
+            case TAKlookupdenormalizegroup:
+            case TAKalldenormalize:
+            case TAKalldenormalizegroup:
+            case TAKsmartdenormalize:
+            case TAKsmartdenormalizegroup:
+                return true;
+        }
+        return false;
+    }
     StringBuffer &getJoinTypeStr(StringBuffer &str)
     {
         switch(joinType)
@@ -746,12 +771,6 @@ protected:
             if (rows)
                 rows->kill();
         }
-    }
-    inline void resetRhsNext()
-    {
-        nextRhsRow = 0;
-        joined = 0;
-        leftMatch = false;
     }
     void processRHSRows(unsigned slave, MemoryBuffer &mb)
     {
@@ -993,7 +1012,7 @@ public:
     CAllOrLookupHelper() { }
     void setHelper(HELPER *_helper)
     {
-        helper = (HELPER *)_helper;
+        helper = _helper;
     }
     inline bool match(const void *lhs, const void *rhsrow)
     {
@@ -1012,7 +1031,6 @@ public:
         return helper->transform(rowBuilder, left, right, count);
     }
 };
-
 
 
 
@@ -1037,15 +1055,20 @@ public:
  * TODO: right outer/only joins
  */
 
-class CLookupJoinActivityBase : public CInMemJoinBase, CAllOrLookupHelper<IHThorHashJoinArg>, implements roxiemem::IBufferedRowCallback
+template <class HTHELPER>
+class CLookupJoinActivityBase : public CInMemJoinBase, implements roxiemem::IBufferedRowCallback
 {
+    CAllOrLookupHelper<IHThorHashJoinArg> helper;
+    HTHELPER ht;
+
+    OwnedConstThorRow leftRow;
+    bool eos, eog, someSinceEog;
+
     IHThorHashJoinArg *hashJoinHelper;
     IHash *leftHash, *rightHash;
     ICompare *compareRight, *compareLeftRight;
 
     unsigned abortLimit, atMost;
-    ConstPointerArray candidates;
-    unsigned candidateIndex, candidateMatches;
 
     mptag_t lhsDistributeTag, rhsDistributeTag, broadcast2MpTag;
 
@@ -1144,30 +1167,69 @@ class CLookupJoinActivityBase : public CInMemJoinBase, CAllOrLookupHelper<IHThor
             left.setown(lhsDistributor->connect(queryRowInterfaces(leftITDL), left.getClear(), leftHash, NULL));
         }
     }
-
+    virtual void setupHt(rowidx_t size)
+    {
+        rhsTableLen = size;
+        ht.setup(size);
+    }
+    virtual void clearHt()
+    {
+        rhsTableLen = 0;
+        ht.clearHt();
+    }
+    inline void resetRhsNext()
+    {
+        nextRhsRow = 0;
+        joined = 0;
+        leftMatch = false;
+    }
 protected:
     Owned<IJoinHelper> joinHelper;
 
-/* This class becomes the base class of template CInMemJoinSlave
- * The following methods are then directly called by CInMemJoinSlave::lookupNextRow() to avoid virtuals being used
- */
-    inline bool match(const void *left, const void *right)
+    inline const void *getRHSRow(rowidx_t i)
     {
-        return hashJoinHelper->match(left, right);
+        return rhs.query(i);
     }
-    inline size32_t joinTransform(RtlDynamicRowBuilder &rowBuilder, const void *left, const void *right)
+    bool exceedsLimit(rowidx_t count, const void *left, const void *right, const void *&failRow)
     {
-        return hashJoinHelper->transform(rowBuilder, left, right);
+        if ((unsigned)-1 != atMost)
+        {
+            failRow = NULL;
+            if (count>abortLimit)
+            {
+
+                if (0 == (JFmatchAbortLimitSkips & flags))
+                {
+                    Owned<IException> e;
+                    try
+                    {
+                        if (hashJoinHelper)
+                            hashJoinHelper->onMatchAbortLimitExceeded();
+                        CommonXmlWriter xmlwrite(0);
+                        if (outputMeta && outputMeta->hasXML())
+                            outputMeta->toXML((const byte *) leftRow, xmlwrite);
+                        throw MakeActivityException(this, 0, "More than %d match candidates in join for row %s", abortLimit, xmlwrite.str());
+                    }
+                    catch (IException *_e)
+                    {
+                        if (0 == (JFonfail & flags))
+                            throw;
+                        e.setown(_e);
+                    }
+                    RtlDynamicRowBuilder ret(allocator);
+                    size32_t transformedSize = hashJoinHelper->onFailTransform(ret, leftRow, defaultRight, e.get());
+                    if (transformedSize)
+                        failRow = ret.finalizeRowClear(transformedSize);
+                }
+                else
+                    leftMatch = true; // there was a lhs match, even though rhs group exceeded limit. Therefore this lhs will not be considered left only/left outer
+                return true;
+            }
+            else if (count>atMost)
+                return true;
+        }
+        return false;
     }
-    inline const size32_t joinTransform(ARowBuilder &rowBuilder, const void *left, const void *right, unsigned numRows, const void **rows)
-    {
-        return hashJoinHelper->transform(rowBuilder, left, right, numRows, rows);
-    }
-    inline const size32_t joinTransform(ARowBuilder &rowBuilder, const void *left, const void *right, unsigned count)
-    {
-        return hashJoinHelper->transform(rowBuilder, left, right, count);
-    }
-// The above methods are used by CInMemJoinSlave::lookupNextRow()
     void getRHS(bool stopping)
     {
         if (gotRHS)
@@ -1422,19 +1484,163 @@ protected:
         addRowsToHt(rhs, marker);
         ActPrintLog("rhs table: %d elements", rhsTableLen);
     }
-public:
-    CLookupJoinActivityBase(CGraphElementBase *_container) : CInMemJoinBase(_container), ht(*this)
+    inline const void *denormalizeNextRow()
     {
-        CAllOrLookupHelper::setHelper(queryHelper());
+        ConstPointerArray filteredRhs;
+        while (rhsNext)
+        {
+            if (abortSoon)
+                return NULL;
+            if (!fuzzyMatch || (helper.match(leftRow, rhsNext)))
+            {
+                leftMatch = true;
+                if (exclude)
+                {
+                    rhsNext = NULL;
+                    break;
+                }
+                ++joined;
+                filteredRhs.append(rhsNext);
+            }
+            if (!returnMany || joined == keepLimit)
+            {
+                rhsNext = NULL;
+                break;
+            }
+            rhsNext = ht.getNextRHS(leftRow);
+        }
+        if (filteredRhs.ordinality() || (!leftMatch && 0!=(flags & JFleftouter)))
+        {
+            unsigned rcCount = 0;
+            OwnedConstThorRow ret;
+            RtlDynamicRowBuilder rowBuilder(allocator);
+            unsigned numRows = filteredRhs.ordinality();
+            const void *rightRow = numRows ? filteredRhs.item(0) : defaultRight.get();
+            if (isGroupOp())
+            {
+                size32_t sz = helper.joinTransform(rowBuilder, leftRow, rightRow, numRows, filteredRhs.getArray());
+                if (sz)
+                    ret.setown(rowBuilder.finalizeRowClear(sz));
+            }
+            else
+            {
+                ret.set(leftRow);
+                if (filteredRhs.ordinality())
+                {
+                    size32_t rowSize = 0;
+                    loop
+                    {
+                        const void *rightRow = filteredRhs.item(rcCount);
+                        size32_t sz = helper.joinTransform(rowBuilder, ret, rightRow, ++rcCount);
+                        if (sz)
+                        {
+                            rowSize = sz;
+                            ret.setown(rowBuilder.finalizeRowClear(sz));
+                        }
+                        if (rcCount == filteredRhs.ordinality())
+                            break;
+                        rowBuilder.ensureRow();
+                    }
+                    if (!rowSize)
+                        ret.clear();
+                }
+            }
+            return ret.getClear();
+        }
+        else
+            return NULL;
+    }
+    const void *lookupNextRow()
+    {
+        if (!abortSoon && !eos)
+        {
+            loop
+            {
+                if (NULL == rhsNext)
+                {
+                    leftRow.setown(left->nextRow());
+                    if (leftRow)
+                    {
+                        eog = false;
+                        if (rhsTableLen)
+                        {
+                            resetRhsNext();
+                            const void *failRow = NULL;
+                            rhsNext = ht.getFirstRHSMatch(leftRow, failRow); // also checks abortLimit/atMost
+                            if (failRow)
+                                return failRow;
+                        }
+                    }
+                    else
+                    {
+                        if (eog)
+                            eos = true;
+                        else
+                        {
+                            eog = true;
+                            if (!someSinceEog)
+                                continue; // skip empty 'group'
+                            someSinceEog = false;
+                        }
+                        break;
+                    }
+                }
+                OwnedConstThorRow ret;
+                if (isDenormalize())
+                    ret.setown(denormalizeNextRow());
+                else
+                {
+                    RtlDynamicRowBuilder rowBuilder(allocator);
+                    while (rhsNext)
+                    {
+                        if (!fuzzyMatch || helper.match(leftRow, rhsNext))
+                        {
+                            leftMatch = true;
+                            if (!exclude)
+                            {
+                                size32_t sz = helper.joinTransform(rowBuilder, leftRow, rhsNext);
+                                if (sz)
+                                {
+                                    OwnedConstThorRow row = rowBuilder.finalizeRowClear(sz);
+                                    someSinceEog = true;
+                                    if (++joined == keepLimit)
+                                        rhsNext = NULL;
+                                    else if (!returnMany)
+                                        rhsNext = NULL;
+                                    else
+                                        rhsNext = ht.getNextRHS();
+                                    return row.getClear();
+                                }
+                            }
+                        }
+                        rhsNext = ht.getNextRHS();
+                    }
+                    if (!leftMatch && NULL == rhsNext && 0!=(flags & JFleftouter))
+                    {
+                        size32_t sz = helper.joinTransform(rowBuilder, leftRow, defaultRight);
+                        if (sz)
+                            ret.setown(rowBuilder.finalizeRowClear(sz));
+                    }
+                }
+                if (ret)
+                {
+                    someSinceEog = true;
+                    return ret.getClear();
+                }
+            }
+        }
+        return NULL;
+    }
+public:
+    CLookupJoinActivityBase(CGraphElementBase *_container) : CInMemJoinBase(_container)
+    {
+        helper.setHelper((IHThorHashJoinArg *)queryHelper());
         hashJoinHelper = (IHThorHashJoinArg *)queryHelper();
 
         atMost = 0;
         localLookupJoin = rhsCollated = false;
         broadcast2MpTag = lhsDistributeTag = rhsDistributeTag = TAG_NULL;
         setBroadcastingSpilt(false);
-
-        candidateIndex = 0;
-        candidateMatches = 0;
 
         grouped = hashJoinHelper->queryOutputMeta()->isGrouped();
         flags = hashJoinHelper->getJoinFlags();
@@ -1469,6 +1675,8 @@ public:
         if (abortLimit < atMost)
             atMost = abortLimit;
 
+        eos = eog = someSinceEog = false;
+
         failoverToLocalLookupJoin = failoverToStdJoin = isSmart();
         ActPrintLog("failoverToLocalLookupJoin=%s, failoverToStdJoin=%s",
                 failoverToLocalLookupJoin?"true":"false", failoverToStdJoin?"true":"false");
@@ -1494,7 +1702,7 @@ public:
         setBroadcastingSpilt(false);
         localLookupJoin = rhsCollated = false;
         flushedRowMarkers.kill();
-        candidateIndex = candidateMatches = 0;
+        eos = eog = someSinceEog = false;
 
         if (failoverToLocalLookupJoin)
         {
@@ -1513,6 +1721,21 @@ public:
             bool inputGrouped = leftITDL->isGrouped();
             dbgassertex(inputGrouped == grouped); // std. lookup join expects these to match
         }
+    }
+    CATCH_NEXTROW()
+    {
+        ActivityTimer t(totalCycles, timeActivities, NULL);
+        if (!gotRHS)
+            getRHS(false);
+        OwnedConstThorRow row;
+        if (joinHelper) // regular join (hash join)
+            row.setown(joinHelper->nextRow());
+        else
+            row.setown(lookupNextRow());
+        if (!row.get())
+            return NULL;
+        dataLinkIncrement();
+        return row.getClear();
     }
     virtual void abort()
     {
@@ -1593,25 +1816,20 @@ public:
         return true;
     }
     virtual void addRowsToHt(CThorExpandingRowArray &rows, CMarker &marker) = 0;
-    virtual void setupHt(rowidx_t size)
-    {
-        rhsTableLen = size;
-    }
-    virtual void clearHt()
-    {
-        rhsTableLen = 0;
-    }
 };
 
 
 class CHTBase
 {
 protected:
-    CInMemJoinBase &activity;
     rowidx_t htSz;
     OwnedConstThorRow htMemory;
+    IHash *leftHash
+    ICompare *compareLeftRight;
+    unsigned htSize;
 public:
-    CHTBase(CInMemJoinBase &_activity) : activity(_activity)
+    CHTBase(IHash *_leftHash, ICompare *_compareLeftRight, unsigned _htSize)
+        : leftHash(_leftHash), compareLeftRight(_compareLeftRight), htSize(_htSize)
     {
         htSz = 0;
     }
@@ -1626,11 +1844,34 @@ public:
     }
 };
 
-class CHTDirect : public CHTBase
+class CLookupHT : public CHTBase
 {
+    CLookupJoinActivityBase<CLookupHT> &activity;
     const void **ht;
+
+    inline const void *lookup(unsigned pos)
+    {
+        return ht[pos];
+    }
+    const void *findFirst(const void *left)
+    {
+        unsigned h = leftHash->hash(left)%htSize;
+        loop
+        {
+            const void *right = lookup(h);
+            if (!right)
+                break;
+            if (0 == compareLeftRight->docompare(left, right))
+                return right;
+            h++;
+            if (h>=htSize)
+                h = 0;
+        }
+        return NULL;
+    }
 public:
-    CHTDirect(CInMemJoinBase &activity) : CHTBase(activity)
+    CLookupHT(CLookupJoinActivityBase &_activity, IHash *leftHash, ICompare *compareLeftRight, unsigned htSize)
+        : CHTBase(leftHash, compareLeftRight, htSize), activity(_activity)
     {
         ht = NULL;
     }
@@ -1647,10 +1888,6 @@ public:
         CHTBase::reset();
         ht = NULL;
     }
-    inline const void *lookup(unsigned pos)
-    {
-        return ht[pos];
-    }
     inline void addEntry(const void *row, unsigned hash)
     {
         loop
@@ -1666,14 +1903,54 @@ public:
                 hash = 0;
         }
     }
+    inline const void *getNextRHS(const void *leftRow)
+    {
+        return NULL; // no next in LOOKUP without MANY
+    }
+    inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow)
+    {
+        failRow = NULL;
+        return findFirst(leftRow);
+    }
 };
 
 struct HtEntry { rowidx_t index, count; };
-class CHTIndexCount : public CHTBase
+class CLookupManyHT : public CHTBase
 {
+    CLookupJoinActivityBase<CLookupManyHT> &activity;
     HtEntry *ht;
+    HtEntry currentHashEntry;
+
+    inline HtEntry *lookup(unsigned hash)
+    {
+        HtEntry *e = ht+hash;
+        if (0 == e->count)
+            return NULL;
+        return e;
+    }
+    const void *findFirst(const void *left)
+    {
+        unsigned h = leftHash->hash(left)%htSize;
+        loop
+        {
+            HtEntry *e = lookup(h);
+            if (!e)
+                break;
+            const void *right = activity.getRHSRow(e->index);
+            if (0 == compareLeftRight->docompare(left, right))
+            {
+                currentHashEntry = *e;
+                return right;
+            }
+            h++;
+            if (h>=htSize)
+                h = 0;
+        }
+        return NULL;
+    }
 public:
-    CHTIndexCount(CInMemJoinBase &activity) : CHTBase(activity)
+    CLookupManyHT(CLookupJoinActivityBase &_activity, IHash *leftHash, ICompare *compareLeftRight, unsigned htSize)
+        : CHTBase(leftHash, compareLeftRight, htSize), activity(_activity)
     {
         ht = NULL;
     }
@@ -1684,13 +1961,6 @@ public:
         htMemory.setown(activity.queryJob().queryRowManager()->allocate(sz, activity.queryContainer().queryId()));
         ht = (HtEntry *)htMemory.get();
         memset(ht, 0, sz);
-    }
-    inline HtEntry *lookup(unsigned hash)
-    {
-        HtEntry *e = ht+hash;
-        if (0 == e->count)
-            return NULL;
-        return e;
     }
     inline void addEntry(const void *row, unsigned hash, rowidx_t index, rowidx_t count)
     {
@@ -1708,49 +1978,36 @@ public:
                 hash = 0;
         }
     }
-};
-
-class CLookupJoinActivity : public CLookupJoinActivityBase
-{
-    CHTDirect ht;
-
-    const void *findFirst(const void *left)
+    void reset()
     {
-        unsigned h = leftHash->hash(left)%rhsTableLen;
-        loop
-        {
-            const void *right = ht.lookup(h);
-            if (!right)
-                break;
-            if (0 == compareLeftRight->docompare(left, right))
-                return right;
-            h++;
-            if (h>=rhsTableLen)
-                h = 0;
-        }
-        return NULL;
-    }
-public:
-    CLookupJoinActivity(CGraphElementBase *_container) : CLookupJoinActivityBase(_container)
-    {
+        CHTBase::reset();
+        ht = NULL;
     }
     inline const void *getNextRHS(const void *leftRow)
     {
-        return NULL; // no next in LOOKUP without MANY
+        if (1 == currentHashEntry.count)
+            return NULL;
+        --currentHashEntry.count;
+        return activity.getRHSRow(++currentHashEntry.index);
     }
     inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow)
     {
-        return findFirst(leftRow);
+        const void *right = findFirst(leftRow);
+        if (right)
+        {
+            const void *failRow;
+            if (activity.exceedsLimit(currentHasnEntry.count, leftRow, right, failRow))
+                return failRow; // can be NULL, if skipped or atmost
+        }
+        return right;
     }
-    virtual void setupHt(rowidx_t size)
+};
+
+class CLookupJoinActivity : public CLookupJoinActivityBase<CLookupHT>
+{
+public:
+    CLookupJoinActivity(CGraphElementBase *_container) : CLookupJoinActivityBase<CLookupHT>(_container)
     {
-        ht.setup(size);
-        CLookupJoinActivityBase::setupHt(size);
-    }
-    virtual void clearHt()
-    {
-        ht.reset();
-        CLookupJoinActivityBase::clearHt();
     }
     virtual void addRowsToHt(CThorExpandingRowArray &rows, CMarker &marker)
     {
@@ -1769,97 +2026,11 @@ public:
     }
 };
 
-class CLookupManyJoinActivity : public CLookupJoinActivityBase
+class CLookupManyJoinActivity : public CLookupJoinActivityBase<CLookupManyHT>
 {
-    CHTIndexCount ht;
-    HtEntry currentHashEntry;
-    rowidx_t manyCount, manyNext;
-
-    const void *findFirst(const void *left)
-    {
-        unsigned h = leftHash->hash(left)%rhsTableLen;
-        loop
-        {
-            HtEntry *e = ht.lookup(h);
-            if (!e)
-                break;
-            const void *right = rhs.query(e->index);
-            if (0 == compareLeftRight->docompare(left, right))
-            {
-                currentHashEntry = *e;
-                return right;
-            }
-            h++;
-            if (h>=rhsTableLen)
-                h = 0;
-        }
-        return NULL;
-    }
 public:
-    CLookupManyJoinActivity(CGraphElementBase *_container) : CLookupJoinActivityBase(_container)
+    CLookupManyJoinActivity(CGraphElementBase *_container) : CLookupJoinActivityBase<CLookupManyHT>(_container)
     {
-    }
-    inline const void *getNextRHS(const void *leftRow)
-    {
-        if (1 == currentHashEntry.count)
-            return NULL;
-        --currentHashEntry.count;
-        return rhs.query(++currentHashEntry.index);
-    }
-    inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow)
-    {
-        const void *right = findFirst(leftRow);
-        if (right)
-        {
-            if ((unsigned)-1 != atMost)
-            {
-                if (currentHashEntry.count>abortLimit)
-                {
-                    rhsNext = NULL;
-                    if (0 == (JFmatchAbortLimitSkips & flags))
-                    {
-                        Owned<IException> e;
-                        try
-                        {
-                            if (hashJoinHelper)
-                                hashJoinHelper->onMatchAbortLimitExceeded();
-                            CommonXmlWriter xmlwrite(0);
-                            if (outputMeta && outputMeta->hasXML())
-                                outputMeta->toXML((const byte *) leftRow, xmlwrite);
-                            throw MakeActivityException(this, 0, "More than %d match candidates in join for row %s", abortLimit, xmlwrite.str());
-                        }
-                        catch (IException *_e)
-                        {
-                            if (0 == (JFonfail & flags))
-                                throw;
-                            e.setown(_e);
-                        }
-                        RtlDynamicRowBuilder ret(allocator);
-                        size32_t transformedSize = hashJoinHelper->onFailTransform(ret, leftRow, defaultRight, e.get());
-                        if (transformedSize)
-                        {
-                            right = NULL;
-                            failRow = ret.finalizeRowClear(transformedSize);
-                        }
-                    }
-                    else
-                        leftMatch = true; // there was a lhs match, even though rhs group exceeded limit. Therefore this lhs will not be considered left only/left outer
-                }
-                else if (currentHashEntry.count>atMost)
-                    right = NULL;
-            }
-        }
-        return right;
-    }
-    virtual void setupHt(rowidx_t size)
-    {
-        ht.setup(size);
-        CLookupJoinActivityBase::setupHt(size);
-    }
-    virtual void clearHt()
-    {
-        ht.reset();
-        CLookupJoinActivityBase::clearHt();
     }
     virtual void addRowsToHt(CThorExpandingRowArray &rows, CMarker &marker)
     {
@@ -1886,13 +2057,11 @@ public:
 
 class CAllJoinActivity : public CInMemJoinBase
 {
+    CAllOrLookupHelper<IHThorAllJoinArg> helper;
     IHThorAllJoinArg *allJoinHelper;
     const void **rhsTable;
 
 protected:
-/* This class becomes the base class of template CInMemJoinSlave
- * The following methods are then directly called by CInMemJoinSlave::lookupNextRow() to avoid virtuals being used
- */
     inline void setRhsNext(const void *leftRow)
     {
         if (++nextRhsRow<rhsTableLen)
@@ -1905,23 +2074,6 @@ protected:
         rhsNext = rhsTable[0];
         return NULL;
     }
-    inline bool match(const void *lhs, const void *rhsrow)
-    {
-        return allJoinHelper->match(lhs, rhsrow);
-    }
-    inline const size32_t joinTransform(ARowBuilder &rowBuilder, const void *lhs, const void *rhsrow)
-    {
-        return allJoinHelper->transform(rowBuilder, lhs, rhsrow);
-    }
-    inline const size32_t joinTransform(ARowBuilder &rowBuilder, const void *left, const void *right, unsigned numRows, const void **rows)
-    {
-        return allJoinHelper->transform(rowBuilder, left, right, numRows, rows);
-    }
-    inline const size32_t joinTransform(ARowBuilder &rowBuilder, const void *left, const void *right, unsigned count)
-    {
-        return allJoinHelper->transform(rowBuilder, left, right, count);
-    }
-// The above methods are used by CInMemJoinSlave::lookupNextRow()
     void getRHS(bool stopping)
     {
         if (gotRHS)
@@ -2001,6 +2153,7 @@ protected:
 public:
     CAllJoinActivity(CGraphElementBase *_container) : CInMemJoinBase(_container)
     {
+        helper.setHelper((IHThorAllJoinArg *)queryHelper());
         allJoinHelper = (IHThorAllJoinArg *)queryHelper();
         flags = allJoinHelper->getJoinFlags();
         returnMany = true;
@@ -2029,6 +2182,17 @@ public:
         }
         rhsTable = NULL;
     }
+    CATCH_NEXTROW()
+    {
+        ActivityTimer t(totalCycles, timeActivities, NULL);
+        if (!gotRHS)
+            getRHS(false);
+        OwnedConstThorRow row = lookupNextRow();
+        if (!row.get())
+            return NULL;
+        dataLinkIncrement();
+        return row.getClear();
+    }
     virtual void stop()
     {
         if (!gotRHS && needGlobal)
@@ -2043,291 +2207,6 @@ public:
     }
 };
 
-// template to avoid virtual calls from lookupNextRow()
-template <class BASE>
-class CInMemJoinSlave : public BASE
-{
-    using BASE::left;
-    using BASE::allocator;
-    using BASE::rhsNext;
-    using BASE::rhsTableLen;
-
-    using BASE::setRhsNextFirst;
-    using BASE::setRhsNext;
-    using BASE::match;
-    using BASE::joinTransform;
-
-    using BASE::abortSoon;
-    using BASE::exclude;
-    using BASE::joined;
-    using BASE::returnMany;
-    using BASE::flags;
-    using BASE::fuzzyMatch;
-    using BASE::leftMatch;
-    using BASE::nextRhsRow;
-    using BASE::keepLimit;
-    using BASE::defaultRight;
-
-    OwnedConstThorRow leftRow;
-    bool eos, eog, someSinceEog;
-
-    inline void resetRhsNext()
-    {
-        nextRhsRow = 0;
-        joined = 0;
-        leftMatch = false;
-    }
-    inline bool isGroupOp() const
-    {
-        switch (container.getKind())
-        {
-            case TAKlookupdenormalizegroup:
-            case TAKsmartdenormalizegroup:
-            case TAKalldenormalizegroup:
-                return true;
-        }
-        return false;
-    }
-    inline bool isDenormalize() const
-    {
-        switch (container.getKind())
-        {
-            case TAKlookupdenormalize:
-            case TAKlookupdenormalizegroup:
-            case TAKalldenormalize:
-            case TAKalldenormalizegroup:
-            case TAKsmartdenormalize:
-            case TAKsmartdenormalizegroup:
-                return true;
-        }
-        return false;
-    }
-protected:
-    using BASE::container;
-public:
-    CInMemJoinSlave(CGraphElementBase *container) : BASE(container)
-    {
-        eos = eog = someSinceEog = false;
-    }
-    virtual void start()
-    {
-        BASE::start();
-        eos = eog = someSinceEog = false;
-    }
-    inline const void *denormalizeNextRow()
-    {
-        ConstPointerArray filteredRhs;
-        while (rhsNext)
-        {
-            if (abortSoon)
-                return NULL;
-            if (!fuzzyMatch || (match(leftRow, rhsNext)))
-            {
-                leftMatch = true;
-                if (exclude)
-                {
-                    rhsNext = NULL;
-                    break;
-                }
-                ++joined;
-                filteredRhs.append(rhsNext);
-            }
-            if (!returnMany || joined == keepLimit)
-            {
-                rhsNext = NULL;
-                break;
-            }
-            rhsNext = getNextRHS(leftRow);
-        }
-        if (filteredRhs.ordinality() || (!leftMatch && 0!=(flags & JFleftouter)))
-        {
-            unsigned rcCount = 0;
-            OwnedConstThorRow ret;
-            RtlDynamicRowBuilder rowBuilder(allocator);
-            unsigned numRows = filteredRhs.ordinality();
-            const void *rightRow = numRows ? filteredRhs.item(0) : defaultRight.get();
-            if (isGroupOp())
-            {
-                size32_t sz = joinTransform(rowBuilder, leftRow, rightRow, numRows, filteredRhs.getArray());
-                if (sz)
-                    ret.setown(rowBuilder.finalizeRowClear(sz));
-            }
-            else
-            {
-                ret.set(leftRow);
-                if (filteredRhs.ordinality())
-                {
-                    size32_t rowSize = 0;
-                    loop
-                    {
-                        const void *rightRow = filteredRhs.item(rcCount);
-                        size32_t sz = joinTransform(rowBuilder, ret, rightRow, ++rcCount);
-                        if (sz)
-                        {
-                            rowSize = sz;
-                            ret.setown(rowBuilder.finalizeRowClear(sz));
-                        }
-                        if (rcCount == filteredRhs.ordinality())
-                            break;
-                        rowBuilder.ensureRow();
-                    }
-                    if (!rowSize)
-                        ret.clear();
-                }
-            }
-            return ret.getClear();
-        }
-        else
-            return NULL;
-    }
-    const void *lookupNextRow()
-    {
-        if (!abortSoon && !eos)
-        {
-            loop
-            {
-                if (NULL == rhsNext)
-                {
-                    leftRow.setown(left->nextRow());
-                    if (leftRow)
-                    {
-                        eog = false;
-                        if (rhsTableLen)
-                        {
-                            resetRhsNext();
-                            const void *failRow = NULL;
-                            rhsNext = getFirstRHSMatch(leftRow, failRow); // also checks abortLimit/atMost
-                            if (failRow)
-                                return failRow;
-                        }
-                    }
-                    else
-                    {
-                        if (eog)
-                            eos = true;
-                        else
-                        {
-                            eog = true;
-                            if (!someSinceEog)
-                                continue; // skip empty 'group'
-                            someSinceEog = false;
-                        }
-                        break;
-                    }
-                }
-                OwnedConstThorRow ret;
-                if (isDenormalize())
-                    ret.setown(denormalizeNextRow());
-                else
-                {
-                    RtlDynamicRowBuilder rowBuilder(allocator);
-                    while (rhsNext)
-                    {
-                        if (!fuzzyMatch || match(leftRow, rhsNext))
-                        {
-                            leftMatch = true;
-                            if (!exclude)
-                            {
-                                size32_t sz = joinTransform(rowBuilder, leftRow, rhsNext);
-                                if (sz)
-                                {
-                                    OwnedConstThorRow row = rowBuilder.finalizeRowClear(sz);
-                                    someSinceEog = true;
-                                    if (++joined == keepLimit)
-                                        rhsNext = NULL;
-                                    else if (!returnMany)
-                                        rhsNext = NULL;
-                                    else
-                                        rhsNext = getNextRHS();
-                                    return row.getClear();
-                                }
-                            }
-                        }
-                        rhsNext = getNextRHS();
-                    }
-                    if (!leftMatch && NULL == rhsNext && 0!=(flags & JFleftouter))
-                    {
-                        size32_t sz = joinTransform(rowBuilder, leftRow, defaultRight);
-                        if (sz)
-                            ret.setown(rowBuilder.finalizeRowClear(sz));
-                    }
-                }
-                if (ret)
-                {
-                    someSinceEog = true;
-                    return ret.getClear();
-                }
-            }
-        }
-        return NULL;
-    }
-};
-
-
-class CLookupManyJoinSlaveActivity : public CInMemJoinSlave<CLookupManyJoinActivity>
-{
-public:
-    CLookupManyJoinSlaveActivity(CGraphElementBase *container) : CInMemJoinSlave<CLookupManyJoinActivity>(container)
-    {
-    }
-    CATCH_NEXTROW()
-    {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
-        if (!gotRHS)
-            getRHS(false);
-        OwnedConstThorRow row;
-        if (joinHelper) // regular join (hash join)
-            row.setown(joinHelper->nextRow());
-        else
-            row.setown(lookupNextRow());
-        if (!row.get())
-            return NULL;
-        dataLinkIncrement();
-        return row.getClear();
-    }
-};
-
-class CLookupJoinSlaveActivity : public CInMemJoinSlave<CLookupJoinActivity>
-{
-public:
-    CLookupJoinSlaveActivity(CGraphElementBase *container) : CInMemJoinSlave<CLookupJoinActivity>(container)
-    {
-    }
-    CATCH_NEXTROW()
-    {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
-        if (!gotRHS)
-            getRHS(false);
-        OwnedConstThorRow row;
-        if (joinHelper) // regular join (hash join)
-            row.setown(joinHelper->nextRow());
-        else
-            row.setown(lookupNextRow());
-        if (!row.get())
-            return NULL;
-        dataLinkIncrement();
-        return row.getClear();
-    }
-};
-
-class CAllJoinSlaveActivity : public CInMemJoinSlave<CAllJoinActivity>
-{
-public:
-    CAllJoinSlaveActivity(CGraphElementBase *container) : CInMemJoinSlave<CAllJoinActivity>(container)
-    {
-    }
-    CATCH_NEXTROW()
-    {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
-        if (!gotRHS)
-            getRHS(false);
-        OwnedConstThorRow row = lookupNextRow();
-        if (!row.get())
-            return NULL;
-        dataLinkIncrement();
-        return row.getClear();
-    }
-};
 
 CActivityBase *createLookupJoinSlave(CGraphElementBase *container) 
 { 
