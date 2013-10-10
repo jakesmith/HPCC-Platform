@@ -436,7 +436,12 @@ public:
     }
 };
 
-
+/* CMarker processes a sorted set of rows, comparing every adjacent row.
+ * It creates a bitmap, where 1 represents row N mismatches N+1
+ * Multiple threads are used to process blocks of the table in parallel
+ * When complete, it knows how unique values there are in the table
+ * which can be stepped through with findNextBoundary()
+ */
 class CMarker
 {
     CActivityBase &activity;
@@ -582,21 +587,29 @@ public:
     }
     rowidx_t findNextBoundary()
     {
+        if (next==endRow)
+            return 0;
         rowidx_t ret = bitSet->scan(next, true);
-        ++next;
-        return next;
+        next = ret+1;
+        return ret;
     }
 };
 
 
 /* 
-    This activity loads the RIGHT hand stream into the hash table, therefore
+    These activity load the RIGHT hand stream into a table, therefore
     the right hand stream -should- contain the fewer records
 
     Inner, left outer and left only joins supported
-
 */
 
+/* Base common to:
+ * 1) Lookup Many
+ * 2) Lookup
+ * 3) All
+ *
+ * Handles the initialization, broadcast and processing of RHS
+ */
 class CInMemJoinBase : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify, implements IBCastReceive
 {
     Semaphore leftstartsem;
@@ -970,23 +983,65 @@ public:
     }
 };
 
-/*
+
+
+template <class HELPER>
+class CAllOrLookupHelper
+{
+    HELPER *helper;
+public:
+    CAllOrLookupHelper() { }
+    void setHelper(HELPER *_helper)
+    {
+        helper = (HELPER *)_helper;
+    }
+    inline bool match(const void *lhs, const void *rhsrow)
+    {
+        return helper->match(lhs, rhsrow);
+    }
+    inline const size32_t joinTransform(ARowBuilder &rowBuilder, const void *lhs, const void *rhsrow)
+    {
+        return helper->transform(rowBuilder, lhs, rhsrow);
+    }
+    inline const size32_t joinTransform(ARowBuilder &rowBuilder, const void *left, const void *right, unsigned numRows, const void **rows)
+    {
+        return helper->transform(rowBuilder, left, right, numRows, rows);
+    }
+    inline const size32_t joinTransform(ARowBuilder &rowBuilder, const void *left, const void *right, unsigned count)
+    {
+        return helper->transform(rowBuilder, left, right, count);
+    }
+};
+
+
+
+
+/* Base class for:
+ * 1) Lookup Many
+ * 2) Lookup
+ * They use different hash table representations, Lookup Many represents entries as {index, count}
+ * Where as Lookup represents as simply hash table to rows
  * The main activity class
- * It's intended to be used when the RHS globally, is small enough to fit within the memory of a single node.
+ * Both varieties do common work in this base class
+ *
  * It performs the join, by 1st ensuring all RHS data is on all nodes, creating a hash table of this gathered set
  * then it streams the LHS through, matching against the RHS hash table entries.
  * It also handles match conditions where there is no hard match (, ALL), in those cases no hash table is needed.
+ *
+ * This base class also handles the 'SMART' functionality.
+ * If RHS doesn't fit into memory, this class handles failover to local lookupjoin, by hashing the RHS to local
+ * and hash distributing the LHS.
+ * If the local RHS table still doesn't fit into memory, it will failover to a standard hash join, i.e. it will
+ * need to sort both sides
+ *
  * TODO: right outer/only joins
  */
 
-template <class HTType>
-class CLookupJoinActivityBase : public CInMemJoinBase, implements roxiemem::IBufferedRowCallback
+class CLookupJoinActivityBase : public CInMemJoinBase, CAllOrLookupHelper<IHThorHashJoinArg>, implements roxiemem::IBufferedRowCallback
 {
     IHThorHashJoinArg *hashJoinHelper;
     IHash *leftHash, *rightHash;
     ICompare *compareRight, *compareLeftRight;
-
-    HTType ht;
 
     unsigned abortLimit, atMost;
     ConstPointerArray candidates;
@@ -1079,51 +1134,6 @@ class CLookupJoinActivityBase : public CInMemJoinBase, implements roxiemem::IBuf
         ActPrintLog("handleLowMem: clearedRows = %"RIPF"d", clearedRows);
         return 0 != clearedRows;
     }
-    const void *find(const void *left, unsigned &h)
-    {
-        loop
-        {
-            const void *right = ht.getRow(h);
-            if (0 == compareLeftRight->docompare(left, right))
-                return right;
-            h++;
-            if (h>=rhsTableLen)
-                h = 0;
-        }
-        return NULL;
-    }
-    const void *findFirst(const void *left, unsigned &h)
-    {
-        h = leftHash->hash(left)%rhsTableLen;
-        return find(left, h);
-    }
-    const void *findNext(const void *left, unsigned &h)
-    {
-        h++;
-        if (h>=rhsTableLen)
-            h = 0;
-        return find(left, h);
-    }
-    void addRowsToHt(CThorExpandingRowArray &rows, CMarker &marker)
-    {
-        ht.setRows(rows.getRowArray());
-        rowidx_t pos=0;
-        rowidx_t pos2;
-        loop
-        {
-            pos2 = marker.findNextBoundary();
-            rowidx_t count = dedup ? 1 : pos2-pos;
-            /* JCS->GH - Could you/do you spot LOOKUP MANY, followed by DEDUP(key) ?
-             * It feels like we should only dedup if code gen spots, rather than have LOOKUP without MANY option
-             * i.e. feels like LOOKUP without MANY should be deprecated..
-            */
-            const void *row = rhs.query(pos);
-            unsigned h = rightHash->hash(row)%rhsTableLen;
-            // NB: 'pos' and 'count' won't be used if dedup variety
-            ht.addEntry(row, h, pos, count);
-            pos = pos2;
-        }
-    }
     void setupDistributors()
     {
         if (!rhsDistributor)
@@ -1134,16 +1144,6 @@ class CLookupJoinActivityBase : public CInMemJoinBase, implements roxiemem::IBuf
             left.setown(lhsDistributor->connect(queryRowInterfaces(leftITDL), left.getClear(), leftHash, NULL));
         }
     }
-    void setupHt(rowidx_t size)
-    {
-        ht.setup(size);
-        rhsTableLen = size;
-    }
-    void clearHt()
-    {
-        ht.reset();
-        rhsTableLen = 0;
-    }
 
 protected:
     Owned<IJoinHelper> joinHelper;
@@ -1151,76 +1151,6 @@ protected:
 /* This class becomes the base class of template CInMemJoinSlave
  * The following methods are then directly called by CInMemJoinSlave::lookupNextRow() to avoid virtuals being used
  */
-    inline void setRhsNext(const void *leftRow)
-    {
-        if ((unsigned)-1 != atMost)
-            rhsNext = candidateIndex < candidates.ordinality() ? candidates.item(candidateIndex++) : NULL;
-        else
-            rhsNext = findNext(leftRow, nextRhsRow);
-    }
-    inline const void *setRhsNextFirst(const void *leftRow) // only returns row if onFail row created
-    {
-        candidateMatches = 0;
-        if ((unsigned)-1 != atMost)
-        {
-            candidates.kill();
-            candidateIndex = 1;
-        }
-        rhsNext = findFirst(leftRow, nextRhsRow);
-        if ((unsigned)-1 != atMost) // have to build candidates to know
-        {
-            while (rhsNext)
-            {
-                ++candidateMatches;
-                if (candidateMatches>abortLimit)
-                {
-                    if (0 == (JFmatchAbortLimitSkips & flags))
-                    {
-                        Owned<IException> e;
-                        try
-                        {
-                            if (hashJoinHelper)
-                                hashJoinHelper->onMatchAbortLimitExceeded();
-                            CommonXmlWriter xmlwrite(0);
-                            if (outputMeta && outputMeta->hasXML())
-                                outputMeta->toXML((const byte *) leftRow, xmlwrite);
-                            throw MakeActivityException(this, 0, "More than %d match candidates in join for row %s", abortLimit, xmlwrite.str());
-                        }
-                        catch (IException *_e)
-                        {
-                            if (0 == (JFonfail & flags))
-                                throw;
-                            e.setown(_e);
-                        }
-                        RtlDynamicRowBuilder ret(allocator);
-                        size32_t transformedSize = hashJoinHelper->onFailTransform(ret, leftRow, defaultRight, e.get());
-                        rhsNext = NULL;
-                        if (transformedSize)
-                        {
-                            candidateMatches = 0;
-                            return ret.finalizeRowClear(transformedSize);
-                        }
-                    }
-                    else
-                        leftMatch = true; // there was a lhs match, even though rhs group exceeded limit. Therefore this lhs will not be considered left only/left outer
-                    candidateMatches = 0;
-                    break;
-                }
-                else if (candidateMatches>atMost)
-                {
-                    candidateMatches = 0;
-                    break;
-                }
-                candidates.append(rhsNext);
-                rhsNext = findNext(leftRow, nextRhsRow);
-            }
-            if (0 == candidateMatches)
-                rhsNext = NULL;
-            else if (candidates.ordinality())
-                rhsNext = candidates.item(0);
-        }
-        return NULL;
-    }
     inline bool match(const void *left, const void *right)
     {
         return hashJoinHelper->match(left, right);
@@ -1495,6 +1425,7 @@ protected:
 public:
     CLookupJoinActivityBase(CGraphElementBase *_container) : CInMemJoinBase(_container), ht(*this)
     {
+        CAllOrLookupHelper::setHelper(queryHelper());
         hashJoinHelper = (IHThorHashJoinArg *)queryHelper();
 
         atMost = 0;
@@ -1521,10 +1452,13 @@ public:
         fuzzyMatch = 0 != (JFmatchrequired & flags);
         bool maySkip = 0 != (flags & JFtransformMaySkip);
         dedup = false;
-        if (compareRight && !maySkip && !fuzzyMatch)
+        if (!maySkip && !fuzzyMatch)
         {
             if (returnMany)
+            {
                 dedup = (1==keepLimit) && (0==atMost) && (0==abortLimit);
+                returnMany = false; // JCS->GH - Any exceptions?
+            }
             else
                 dedup = true;
         }
@@ -1582,7 +1516,7 @@ public:
     }
     virtual void abort()
     {
-    	CInMemJoinBase::abort();
+        CInMemJoinBase::abort();
         if (rhsDistributor)
             rhsDistributor->abort();
         if (lhsDistributor)
@@ -1658,6 +1592,15 @@ public:
         }
         return true;
     }
+    virtual void addRowsToHt(CThorExpandingRowArray &rows, CMarker &marker) = 0;
+    virtual void setupHt(rowidx_t size)
+    {
+        rhsTableLen = size;
+    }
+    virtual void clearHt()
+    {
+        rhsTableLen = 0;
+    }
 };
 
 
@@ -1671,6 +1614,10 @@ public:
     CHTBase(CInMemJoinBase &_activity) : activity(_activity)
     {
         htSz = 0;
+    }
+    void setup(rowidx_t size)
+    {
+        htSz = size;
     }
     void reset()
     {
@@ -1689,22 +1636,22 @@ public:
     }
     void setup(rowidx_t size)
     {
+        CHTBase::setup(size);
         size32_t sz = sizeof(const void *)*size;
         htMemory.setown(activity.queryJob().queryRowManager()->allocate(sz, activity.queryContainer().queryId()));
         ht = (const void **)htMemory.get();
         memset(ht, 0, sz);
     }
-    void setRows(const void **_rows) { }
     void reset()
     {
         CHTBase::reset();
         ht = NULL;
     }
-    inline const void *getRow(unsigned pos)
+    inline const void *lookup(unsigned pos)
     {
         return ht[pos];
     }
-    inline void addEntry(const void *row, unsigned hash, rowidx_t index, rowidx_t count)
+    inline void addEntry(const void *row, unsigned hash)
     {
         loop
         {
@@ -1721,37 +1668,29 @@ public:
     }
 };
 
+struct HtEntry { rowidx_t index, count; };
 class CHTIndexCount : public CHTBase
 {
-    struct HtEntry { rowidx_t index, count; } *ht;
-    const void **rows;
+    HtEntry *ht;
 public:
     CHTIndexCount(CInMemJoinBase &activity) : CHTBase(activity)
     {
-        rows = NULL;
         ht = NULL;
     }
     void setup(rowidx_t size)
     {
+        CHTBase::setup(size);
         size32_t sz = sizeof(HtEntry)*size;
         htMemory.setown(activity.queryJob().queryRowManager()->allocate(sz, activity.queryContainer().queryId()));
         ht = (HtEntry *)htMemory.get();
         memset(ht, 0, sz);
     }
-    void setRows(const void **_rows) { rows = _rows; }
-    void reset()
+    inline HtEntry *lookup(unsigned hash)
     {
-        CHTBase::reset();
-        htMemory.clear();
-        rows = NULL;
-        htSz = 0;
-    }
-    inline const void *getRow(unsigned hash)
-    {
-        HtEntry &e = ht[hash];
-        if (e.count)
+        HtEntry *e = ht+hash;
+        if (0 == e->count)
             return NULL;
-        return rows[e.index];
+        return e;
     }
     inline void addEntry(const void *row, unsigned hash, rowidx_t index, rowidx_t count)
     {
@@ -1771,22 +1710,179 @@ public:
     }
 };
 
-class CLookupJoinActivity : public CLookupJoinActivityBase<CHTDirect>
+class CLookupJoinActivity : public CLookupJoinActivityBase
 {
+    CHTDirect ht;
+
+    const void *findFirst(const void *left)
+    {
+        unsigned h = leftHash->hash(left)%rhsTableLen;
+        loop
+        {
+            const void *right = ht.lookup(h);
+            if (!right)
+                break;
+            if (0 == compareLeftRight->docompare(left, right))
+                return right;
+            h++;
+            if (h>=rhsTableLen)
+                h = 0;
+        }
+        return NULL;
+    }
 public:
     CLookupJoinActivity(CGraphElementBase *_container) : CLookupJoinActivityBase(_container)
     {
     }
+    inline const void *getNextRHS(const void *leftRow)
+    {
+        return NULL; // no next in LOOKUP without MANY
+    }
+    inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow)
+    {
+        return findFirst(leftRow);
+    }
+    virtual void setupHt(rowidx_t size)
+    {
+        ht.setup(size);
+        CLookupJoinActivityBase::setupHt(size);
+    }
+    virtual void clearHt()
+    {
+        ht.reset();
+        CLookupJoinActivityBase::clearHt();
+    }
+    virtual void addRowsToHt(CThorExpandingRowArray &rows, CMarker &marker)
+    {
+        rowidx_t pos=0;
+        rowidx_t pos2;
+        loop
+        {
+            pos2 = marker.findNextBoundary();
+            if (0 == pos2)
+                break;
+            const void *row = rhs.query(pos);
+            unsigned h = rightHash->hash(row)%rhsTableLen;
+            ht.addEntry(row, h);
+            pos = pos2+1;
+        }
+    }
 };
 
-class CLookupManyJoinActivity : public CLookupJoinActivityBase<CHTIndexCount>
+class CLookupManyJoinActivity : public CLookupJoinActivityBase
 {
+    CHTIndexCount ht;
+    HtEntry currentHashEntry;
+    rowidx_t manyCount, manyNext;
+
+    const void *findFirst(const void *left)
+    {
+        unsigned h = leftHash->hash(left)%rhsTableLen;
+        loop
+        {
+            HtEntry *e = ht.lookup(h);
+            if (!e)
+                break;
+            const void *right = rhs.query(e->index);
+            if (0 == compareLeftRight->docompare(left, right))
+            {
+                currentHashEntry = *e;
+                return right;
+            }
+            h++;
+            if (h>=rhsTableLen)
+                h = 0;
+        }
+        return NULL;
+    }
 public:
     CLookupManyJoinActivity(CGraphElementBase *_container) : CLookupJoinActivityBase(_container)
     {
     }
+    inline const void *getNextRHS(const void *leftRow)
+    {
+        if (1 == currentHashEntry.count)
+            return NULL;
+        --currentHashEntry.count;
+        return rhs.query(++currentHashEntry.index);
+    }
+    inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow)
+    {
+        const void *right = findFirst(leftRow);
+        if (right)
+        {
+            if ((unsigned)-1 != atMost)
+            {
+                if (currentHashEntry.count>abortLimit)
+                {
+                    rhsNext = NULL;
+                    if (0 == (JFmatchAbortLimitSkips & flags))
+                    {
+                        Owned<IException> e;
+                        try
+                        {
+                            if (hashJoinHelper)
+                                hashJoinHelper->onMatchAbortLimitExceeded();
+                            CommonXmlWriter xmlwrite(0);
+                            if (outputMeta && outputMeta->hasXML())
+                                outputMeta->toXML((const byte *) leftRow, xmlwrite);
+                            throw MakeActivityException(this, 0, "More than %d match candidates in join for row %s", abortLimit, xmlwrite.str());
+                        }
+                        catch (IException *_e)
+                        {
+                            if (0 == (JFonfail & flags))
+                                throw;
+                            e.setown(_e);
+                        }
+                        RtlDynamicRowBuilder ret(allocator);
+                        size32_t transformedSize = hashJoinHelper->onFailTransform(ret, leftRow, defaultRight, e.get());
+                        if (transformedSize)
+                        {
+                            right = NULL;
+                            failRow = ret.finalizeRowClear(transformedSize);
+                        }
+                    }
+                    else
+                        leftMatch = true; // there was a lhs match, even though rhs group exceeded limit. Therefore this lhs will not be considered left only/left outer
+                }
+                else if (currentHashEntry.count>atMost)
+                    right = NULL;
+            }
+        }
+        return right;
+    }
+    virtual void setupHt(rowidx_t size)
+    {
+        ht.setup(size);
+        CLookupJoinActivityBase::setupHt(size);
+    }
+    virtual void clearHt()
+    {
+        ht.reset();
+        CLookupJoinActivityBase::clearHt();
+    }
+    virtual void addRowsToHt(CThorExpandingRowArray &rows, CMarker &marker)
+    {
+        rowidx_t pos=0;
+        rowidx_t pos2;
+        loop
+        {
+            pos2 = marker.findNextBoundary();
+            if (0 == pos2)
+                break;
+            rowidx_t count = pos2-pos+1;
+            /* JCS->GH - Could you/do you spot LOOKUP MANY, followed by DEDUP(key) ?
+             * It feels like we should only dedup if code gen spots, rather than have LOOKUP without MANY option
+             * i.e. feels like LOOKUP without MANY should be deprecated..
+            */
+            const void *row = rhs.query(pos);
+            unsigned h = rightHash->hash(row)%rhsTableLen;
+            // NB: 'pos' and 'count' won't be used if dedup variety
+            ht.addEntry(row, h, pos, count);
+            pos = pos2+1;
+        }
+    }
 };
-
 
 class CAllJoinActivity : public CInMemJoinBase
 {
@@ -2041,7 +2137,7 @@ public:
                 rhsNext = NULL;
                 break;
             }
-            setRhsNext(leftRow);
+            rhsNext = getNextRHS(leftRow);
         }
         if (filteredRhs.ordinality() || (!leftMatch && 0!=(flags & JFleftouter)))
         {
@@ -2099,9 +2195,10 @@ public:
                         if (rhsTableLen)
                         {
                             resetRhsNext();
-                            const void *onFailRow = setRhsNextFirst(leftRow);
-                            if (onFailRow)
-                                return onFailRow;
+                            const void *failRow = NULL;
+                            rhsNext = getFirstRHSMatch(leftRow, failRow); // also checks abortLimit/atMost
+                            if (failRow)
+                                return failRow;
                         }
                     }
                     else
@@ -2141,12 +2238,12 @@ public:
                                     else if (!returnMany)
                                         rhsNext = NULL;
                                     else
-                                        setRhsNext(leftRow);
+                                        rhsNext = getNextRHS();
                                     return row.getClear();
                                 }
                             }
                         }
-                        setRhsNext(leftRow);
+                        rhsNext = getNextRHS();
                     }
                     if (!leftMatch && NULL == rhsNext && 0!=(flags & JFleftouter))
                     {
