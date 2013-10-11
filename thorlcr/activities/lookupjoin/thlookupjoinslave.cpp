@@ -591,7 +591,7 @@ public:
             return 0;
         rowidx_t ret = bitSet->scan(next, true);
         next = ret+1;
-        return ret;
+        return next;
     }
 };
 
@@ -1357,6 +1357,10 @@ protected:
             ForEachItemIn(a, rhsNodeRows)
             {
                 CThorSpillableRowArray &rows = *rhsNodeRows.item(a);
+                /* Record point to which clearNonLocalRows will reach
+                 * so that can resume from that point, when done adding/flushing
+                 */
+                flushedRowMarkers.append(rows.numCommitted());
                 clearedRows += clearNonLocalRows(rows, 0);
             }
         }
@@ -1375,6 +1379,15 @@ protected:
     }
     void setupHt(rowidx_t size)
     {
+        if (size < 10)
+            size = 16;
+        else
+        {
+            rowcount_t res = size/3*4; // make HT 1/3 bigger than # rows
+            if ((res < size) || (res > RIMAX)) // check for overflow, or result bigger than rowidx_t size
+                throw MakeActivityException(this, 0, "Too many rows on RHS for hash table: %"RCPF"d", res);
+            size = (rowidx_t)res;
+        }
         rhsTableLen = size;
         table.setup(this, size, leftHash, compareLeftRight);
     }
@@ -1670,8 +1683,11 @@ public:
         {
             if (returnMany)
             {
-                dedup = (1==keepLimit) && (0==atMost) && (0==abortLimit);
-                returnMany = false; // JCS->GH - Any exceptions?
+                if ((1==keepLimit) && (0==atMost) && (0==abortLimit))
+                {
+                    dedup = true;
+                    returnMany = false; // JCS->GH - Any exceptions?
+                }
             }
             else
                 dedup = true;
@@ -1698,7 +1714,6 @@ public:
             failRow = NULL;
             if (count>abortLimit)
             {
-
                 if (0 == (JFmatchAbortLimitSkips & flags))
                 {
                     Owned<IException> e;
@@ -1717,10 +1732,7 @@ public:
                             throw;
                         e.setown(_e);
                     }
-
-
                     RtlDynamicRowBuilder ret(allocator);
-
                     size32_t transformedSize = hashJoinHelper->onFailTransform(ret, leftRow, defaultRight, e.get());
                     if (transformedSize)
                         failRow = ret.finalizeRowClear(transformedSize);
@@ -1924,7 +1936,7 @@ public:
     {
         reset();
     }
-    void setup(CLookupJoinActivityBase<CLookupHT> *_activity, rowidx_t size, IHash *_leftHash, ICompare *_compareLeftRight)
+    void setup(CLookupJoinActivityBase<CLookupHT> *_activity, rowidx_t size, IHash *leftHash, ICompare *compareLeftRight)
     {
         CHTBase::setup(size, leftHash, compareLeftRight);
         activity = _activity;
@@ -2003,7 +2015,7 @@ public:
     {
         reset();
     }
-    void setup(CLookupJoinActivityBase<CLookupManyHT> *_activity, rowidx_t size, IHash *_leftHash, ICompare *_compareLeftRight)
+    void setup(CLookupJoinActivityBase<CLookupManyHT> *_activity, rowidx_t size, IHash *leftHash, ICompare *compareLeftRight)
     {
         activity = _activity;
         CHTBase::setup(size, leftHash, compareLeftRight);
@@ -2045,9 +2057,8 @@ public:
         const void *right = findFirst(leftRow);
         if (right)
         {
-            const void *failRow;
             if (activity->exceedsLimit(currentHashEntry.count, leftRow, right, failRow))
-                return failRow; // can be NULL, if skipped or atmost
+                return NULL;
         }
         return right;
     }
@@ -2073,6 +2084,8 @@ public:
             table.addEntry(row, h);
             pos = pos2+1;
         }
+        // Rows now in hash table, rhs arrays no longe needed
+        clearRHS();
     }
 };
 
@@ -2091,7 +2104,7 @@ public:
             pos2 = marker.findNextBoundary();
             if (0 == pos2)
                 break;
-            rowidx_t count = pos2-pos+1;
+            rowidx_t count = pos2-pos;
             /* JCS->GH - Could you/do you spot LOOKUP MANY, followed by DEDUP(key) ?
              * It feels like we should only dedup if code gen spots, rather than have LOOKUP without MANY option
              * i.e. feels like LOOKUP without MANY should be deprecated..
@@ -2100,7 +2113,7 @@ public:
             unsigned h = rightHash->hash(row)%rhsTableLen;
             // NB: 'pos' and 'count' won't be used if dedup variety
             table.addEntry(row, h, pos, count);
-            pos = pos2+1;
+            pos = pos2;
         }
     }
 };
@@ -2238,10 +2251,6 @@ public:
         grouped = allJoinHelper->queryOutputMeta()->isGrouped();
     }
 // IThorSlaveActivity overloaded methods
-    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
-    {
-        PARENT::init(data, slaveData);
-    }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities, NULL);
