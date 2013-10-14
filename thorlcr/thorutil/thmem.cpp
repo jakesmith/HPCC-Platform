@@ -713,6 +713,23 @@ bool CThorExpandingRowArray::appendRows(CThorExpandingRowArray &inRows, bool tak
     return true;
 }
 
+bool CThorExpandingRowArray::appendRows(CThorSpillableRowArray &inRows, bool takeOwnership)
+{
+    rowidx_t num = inRows.numCommitted();
+    if (0 == num)
+        return true;
+    if (numRows+num >= maxRows)
+    {
+        if (!ensure(numRows + num))
+            return false;
+    }
+    const void **newRows = rows+numRows;
+    inRows.transferRowsCopy(newRows, takeOwnership);
+
+    numRows += num;
+    return true;
+}
+
 void CThorExpandingRowArray::clearUnused()
 {
     if (rows)
@@ -1258,6 +1275,27 @@ void CThorSpillableRowArray::swap(CThorSpillableRowArray &other)
 
     firstRow = otherFirstRow;
     commitRows = otherCommitRows;
+}
+
+void CThorSpillableRowArray::transferRowsCopy(const void **outRows, bool takeOwnership)
+{
+    if (0 == numRows)
+        return;
+    assertex(numRows == commitRows);
+    memcpy(outRows, rows, numRows*sizeof(void **));
+    if (takeOwnership)
+        firstRow = commitRows = numRows = 0;
+    else
+    {
+        const void **lastNewRow = outRows+numRows-1;
+        loop
+        {
+            LinkThorRow(*outRows);
+            if (outRows == lastNewRow)
+                break;
+            outRows++;
+        }
+    }
 }
 
 IRowStream *CThorSpillableRowArray::createRowStream()
