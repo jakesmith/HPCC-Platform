@@ -1004,35 +1004,16 @@ static bool doFix()
 
 static void checksuperfile(const char *lfn,bool fix=false)
 {
-    if (strcmp(lfn,"*")==0) {
-        class csuperfilescan: public CSDSFileScanner
-        {
-
-            virtual bool checkScopeOk(const char *scopename)
-            {
-                OUTLOG("Processing scope %s",scopename);
-                return true;
-            }
-
-            void processSuperFile(IPropertyTree &superfile,StringBuffer &name)
-            {
-                try {
-                    checksuperfile(name.str(),fix);
-                }
-                catch (IException *e) {
-                    EXCLOG(e,"processSuperFiles");
-                    e->Release();
-                }
-            }
-
-        public:
-            bool fix;
-
-        } superfilescan;
-        superfilescan.fix = fix;
-
+    if (strchr(lfn, '*'))
+    {
         Owned<IRemoteConnection> conn = querySDS().connect("/Files", myProcessSession(), 0, 100000);
-        superfilescan.scan(conn,false,true);
+        Owned<IPropertyTreeIterator> iter = conn->getElements("//SuperFile", iptiter_remoteget);
+        ForEach(*iter)
+        {
+            const char *OrigName = iter->query().queryProp("OrigName");
+            if (OrigName)
+                checksuperfile(OrigName, fix);
+        }
         return;
     }
     bool fixed = false;
