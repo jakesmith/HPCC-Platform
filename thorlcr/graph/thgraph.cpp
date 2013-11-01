@@ -678,7 +678,24 @@ bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *par
                     return true;
                 break;
             }
-        }
+            case TAKifaction:
+            {
+                onCreate();
+                IHThorIfArg *helper = (IHThorIfArg *)baseHelper.get();
+                int controlId = helper->getCondition() ? 1 : 2;
+                executeDependencies(parentExtractSz, parentExtract, controlId, async);
+                return false; // IfAction in subgraph of it's own, so don't execute this pseudo graph
+            }
+            case TAKsequential:
+            case TAKparallel:
+            {
+                onCreate();
+                unsigned numBranches = TAKsequential == getKind() ? ((IHThorSequentialArg *)baseHelper.get())->numBranches()
+                                                                  : ((IHThorParallelArg *)baseHelper.get())->numBranches();
+                for (unsigned branch=1; branch <= numBranches; branch++)
+                    executeDependencies(parentExtractSz, parentExtract, branch, async);
+                return false; // TAKsequential and TAKparallel are in subgraphs of their own, so don't execute these pseudo graph
+            }        }
         ForEachItemIn(i, inputs)
         {
             CGraphElementBase *input = inputs.item(i)->activity;
