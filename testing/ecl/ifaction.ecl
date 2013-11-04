@@ -16,9 +16,7 @@
 ############################################################################## */
 
 #option ('resourceConditionalActions', true)
-
-//skip type==thorlcr TBD
-//nothor
+#option ('actionLinkInNewGraph', false)
 
 r := { string x{maxlength(256)}; };
 
