@@ -326,6 +326,8 @@ public:
                         CJobSlave *job = jobs.find(jobKey.get());
                         if (!job)
                             throw MakeStringException(0, "Job not found: %s", jobKey.get());
+                        bool includeConditionalSinks;
+                        msg.read(includeConditionalSinks);
                         Owned<IPropertyTree> graphNode = createPTree(msg);
                         Owned<CSlaveGraph> subGraph = (CSlaveGraph *)job->createGraph();
                         subGraph->createFromXGMML(graphNode, NULL, NULL, NULL);
@@ -344,6 +346,8 @@ public:
                         job->addSubGraph(*LINK(subGraph));
                         job->addDependencies(job->queryXGMML(), false);
 
+                        if (includeConditionalSinks)
+                            subGraph->setIncludeConditionalSinks();
                         subGraph->execute(0, NULL, true, true);
 
                         msg.clear();

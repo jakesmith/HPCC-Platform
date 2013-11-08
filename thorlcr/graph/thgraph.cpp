@@ -412,14 +412,24 @@ void CGraphElementBase::addDependsOn(CGraphBase *graph, int controlId)
     dependsOn.append(*new CGraphDependency(graph, controlId));
 }
 
+void CGraphElementBase::addDependency(CGraphBase *graph, int controlId)
+{
+    dependencies.append(*new CGraphDependency(graph, controlId));
+}
+
 IThorGraphIterator *CGraphElementBase::getAssociatedChildGraphs() const
 {
     return new CGraphArrayIterator(associatedChildGraphs);
 }
 
-IThorGraphDependencyIterator *CGraphElementBase::getDependsIterator() const
+IThorGraphDependencyIterator *CGraphElementBase::getDependsOnIterator() const
 {
     return new ArrayIIteratorOf<const CGraphDependencyArray, CGraphDependency, IThorGraphDependencyIterator>(dependsOn);
+}
+
+IThorGraphDependencyIterator *CGraphElementBase::getDependedOnByIterator() const
+{
+    return new ArrayIIteratorOf<const CGraphDependencyArray, CGraphDependency, IThorGraphDependencyIterator>(dependencies);
 }
 
 void CGraphElementBase::reset()
@@ -515,7 +525,8 @@ void CGraphElementBase::serializeCreateContext(MemoryBuffer &mb)
 
 void CGraphElementBase::serializeStartContext(MemoryBuffer &mb)
 {
-    assertex(onStartCalled);
+    if (!onStartCalled) return;
+    mb.append(queryId());
     DelayedSizeMarker sizeMark(mb);
     queryHelper()->serializeStartContext(mb);
     sizeMark.write();
@@ -572,12 +583,15 @@ void CGraphElementBase::onStart(size32_t parentExtractSz, const byte *parentExtr
 
 bool CGraphElementBase::executeDependencies(size32_t parentExtractSz, const byte *parentExtract, int controlId, bool async)
 {
-    Owned<IThorGraphDependencyIterator> deps = getDependsIterator();
+    Owned<IThorGraphDependencyIterator> deps = getDependsOnIterator();
     ForEach(*deps)
     {
         CGraphDependency &dep = deps->query();
         if (dep.controlId == controlId)
+        {
+            dep.graph->setIncludeConditionalSinks();
             dep.graph->execute(parentExtractSz, parentExtract, true, async);
+        }
         if (owner->queryJob().queryAborted() || owner->queryAborted()) return false;
     }
     return true;
@@ -588,7 +602,7 @@ bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *par
     try
     {
         bool _shortCircuit = shortCircuit;
-        Owned<IThorGraphDependencyIterator> deps = getDependsIterator();
+        Owned<IThorGraphDependencyIterator> deps = getDependsOnIterator();
         bool depsDone = true;
         ForEach(*deps)
         {
@@ -632,6 +646,11 @@ bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *par
                 onStart(parentExtractSz, parentExtract);
                 IHThorIfArg *helper = (IHThorIfArg *)baseHelper.get();
                 whichBranch = helper->getCondition() ? 0 : 1;       // True argument preceeds false...
+                if (TAKifaction == getKind())
+                {
+                    if (!executeDependencies(parentExtractSz, parentExtract, whichBranch+1, async)) //NB whenId 1 based
+                        return false;
+                }
                 if (inputs.queryItem(whichBranch))
                 {
                     if (!whichBranchBitSet->testSet(whichBranch)) // if not set, new
@@ -1035,6 +1054,7 @@ CGraphBase::CGraphBase(CJobBase &_job) : job(_job)
     parent = owner = NULL;
     graphId = 0;
     complete = false;
+    includeConditionalSinks = false;
     reinit = false; // should graph reinitialize each time it is called (e.g. in loop graphs)
                     // This is currently for 'init' (Create time) info and onStart into
     sentInitData = false;
@@ -1073,7 +1093,6 @@ void CGraphBase::clean()
 void CGraphBase::serializeCreateContexts(MemoryBuffer &mb)
 {
     DelayedSizeMarker sizeMark(mb);
-//    Owned<IThorActivityIterator> iter = (queryOwner() && !isGlobal()) ? getIterator() : getTraverseIterator(true); // all if non-global-child, or graph with conditionals
     Owned<IThorActivityIterator> iter = getIterator();
     ForEach (*iter)
     {
@@ -1087,11 +1106,10 @@ void CGraphBase::serializeCreateContexts(MemoryBuffer &mb)
 void CGraphBase::serializeStartContexts(MemoryBuffer &mb)
 {
     DelayedSizeMarker sizeMark(mb);
-    Owned<IThorActivityIterator> iter = getTraverseIterator();
+    Owned<IThorActivityIterator> iter = getIterator();
     ForEach (*iter)
     {
         CGraphElementBase &element = iter->query();
-        mb.append(element.queryId());
         element.serializeStartContext(mb);
     }
     mb.append((activity_id)0);
@@ -1127,6 +1145,7 @@ void CGraphBase::deserializeStartContexts(MemoryBuffer &mb)
 void CGraphBase::reset()
 {
     setCompleteEx(false);
+    includeConditionalSinks = false;
     graphCancelHandler.reset();
     if (0 == containers.count())
     {
@@ -1136,10 +1155,10 @@ void CGraphBase::reset()
     }
     else
     {
-        CGraphElementIterator iterC(containers);
-        ForEach(iterC)
+        Owned<IThorActivityIterator> iter = getIterator();
+        ForEach(*iter)
         {
-            CGraphElementBase &element = iterC.query();
+            CGraphElementBase &element = iter->query();
             element.reset();
         }
         dependentSubGraphs.kill();
@@ -1171,7 +1190,7 @@ bool CGraphBase::fireException(IException *e)
 
 bool CGraphBase::preStart(size32_t parentExtractSz, const byte *parentExtract)
 {
-    Owned<IThorActivityIterator> iter = getTraverseIterator();
+    Owned<IThorActivityIterator> iter = getConnectedIterator();
     ForEach(*iter)
     {
         CGraphElementBase &element = iter->query();
@@ -1279,7 +1298,7 @@ void CGraphBase::doExecute(size32_t parentExtractSz, const byte *parentExtract, 
     {
         if (started)
             reset();
-        Owned<IThorActivityIterator> iter = getTraverseIterator();
+        Owned<IThorActivityIterator> iter = getConnectedIterator();
         ForEach(*iter)
         {
             CGraphElementBase &element = iter->query();
@@ -1346,6 +1365,7 @@ bool CGraphBase::prepare(size32_t parentExtractSz, const byte *parentExtract, bo
     if (isComplete()) return false;
     bool needToExecute = false;
     ifs.kill();
+    calculateSinks();
     ForEachItemIn(s, sinks)
     {
         CGraphElementBase &sink = sinks.item(s);
@@ -1358,10 +1378,10 @@ bool CGraphBase::prepare(size32_t parentExtractSz, const byte *parentExtract, bo
 
 void CGraphBase::create(size32_t parentExtractSz, const byte *parentExtract)
 {
-    CGraphElementIterator iterC(containers);
-    ForEach(iterC)
+    Owned<IThorActivityIterator> iter = getIterator();
+    ForEach(*iter)
     {
-        CGraphElementBase &element = iterC.query();
+        CGraphElementBase &element = iter->query();
         element.clearConnections();
     }
     ForEachItemIn(s, sinks)
@@ -1370,9 +1390,9 @@ void CGraphBase::create(size32_t parentExtractSz, const byte *parentExtract)
         sink.createActivity(parentExtractSz, parentExtract);
     }
     connectedSinks.kill();
-    ForEach(iterC)
+    ForEach(*iter)
     {
-        CGraphElementBase &element = iterC.query();
+        CGraphElementBase &element = iter->query();
         if (0 != element.connectedInputs.ordinality() && 0 == element.connectedOutputs.ordinality())
             connectedSinks.append(*LINK(&element));
     }
@@ -1382,7 +1402,7 @@ void CGraphBase::create(size32_t parentExtractSz, const byte *parentExtract)
 void CGraphBase::done()
 {
     if (aborted) return; // activity done methods only called on success
-    Owned<IThorActivityIterator> iter = getTraverseIterator();
+    Owned<IThorActivityIterator> iter = getConnectedIterator();
     ForEach (*iter)
     {
         CGraphElementBase &element = iter->query();
@@ -1569,12 +1589,9 @@ public:
     }
 };
 
-IThorActivityIterator *CGraphBase::getTraverseIterator(bool all)
+IThorActivityIterator *CGraphBase::getConnectedIterator()
 {
-    if (all)
-        return new CGraphTraverseIterator(*this); // all sinks + conditionals
-    else
-        return new CGraphTraverseConnectedIterator(*this);
+    return new CGraphTraverseConnectedIterator(*this);
 }
 
 bool CGraphBase::wait(unsigned timeout)
@@ -1602,7 +1619,7 @@ bool CGraphBase::wait(unsigned timeout)
             throw MakeGraphException(graph, 0, "Timed out waiting for graph to end");
         }
     } waitException(this);
-    Owned<IThorActivityIterator> iter = getTraverseIterator();
+    Owned<IThorActivityIterator> iter = getConnectedIterator();
     ForEach (*iter)
     {
         CGraphElementBase &element = iter->query();
@@ -1664,7 +1681,7 @@ void CGraphBase::abort(IException *e)
     }
     if (started && !graphDone)
     {
-        Owned<IThorActivityIterator> iter = getTraverseIterator();
+        Owned<IThorActivityIterator> iter = getConnectedIterator();
         ForEach (*iter)
         {
             iter->query().abort(e); // JCSMORE - could do in parallel, they can take some time to timeout
@@ -1701,9 +1718,9 @@ void CGraphBase::GraphPrintLog(IException *e)
 
 void CGraphBase::setLogging(bool tf)
 {
-    CGraphElementIterator iterC(containers);
-    ForEach(iterC)
-        iterC.query().setLogging(tf);
+    Owned<IThorActivityIterator> iter = getIterator();
+    ForEach(*iter)
+        iter->query().setLogging(tf);
 }
 
 void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGraphBase *_parent, CGraphBase *resultsGraph)
@@ -1784,18 +1801,38 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         CGraphElementBase *target = queryElement(edge.getPropInt("@target"));
         target->addInput(targetInput, source, sourceOutput);
     }
-    // collect sinks
-    CGraphElementIterator iterC(containers);
-    ForEach(iterC)
+    init();
+}
+
+void CGraphBase::calculateSinks()
+{
+    Owned<IThorActivityIterator> iter = getIterator();
+    ForEach(*iter)
     {
-        CGraphElementBase &element = iterC.query();
+        CGraphElementBase &element = iter->query();
         if (0 == element.getOutputs())
         {
-            if (!element.queryXGMML().getPropBool("att[@name=\"_internal\"]/@value"))
+            bool executableSink = 0 == element.queryXGMML().getPropBool("att[@name=\"_internal\"]/@value");
+            if (executableSink || includeConditionalSinks)
                 sinks.append(*LINK(&element));
+            else
+            {
+                // internal, but is it an unconditional sink
+                VStringBuffer depStr("Dependency[@id=\"%d\"]", element.queryId());
+                Owned<IPropertyTreeIterator> iter = queryXGMML().getElements(depStr.str());
+                ForEach(*iter)
+                {
+                    IPropertyTree &dependencyFor = iter->query();
+                    if (0 == dependencyFor.getPropInt("@conditionalId"))
+                    {
+                        // if any dependency is unconditional, need to execute this sink
+                        sinks.append(*LINK(&element));
+                        break;
+                    }
+                }
+            }
         }
     }
-    init();
 }
 
 void CGraphBase::executeChildGraphs(size32_t parentExtractSz, const byte *parentExtract)
@@ -1982,7 +2019,7 @@ static bool isLocalOnly(const CGraphBase &graph) // checks all dependencies, if 
 
 static bool isLocalOnly(const CGraphElementBase &activity)
 {
-    Owned<IThorGraphDependencyIterator> deps = activity.getDependsIterator();
+    Owned<IThorGraphDependencyIterator> deps = activity.getDependsOnIterator();
     ForEach(*deps)
     {
         if (!isLocalOnly(*(deps->query().graph)))
@@ -2555,7 +2592,7 @@ static void getGlobalDeps(CGraphBase &graph, CopyCIArrayOf<CGraphDependency> &de
     ForEach(*iter)
     {
         CGraphElementBase &elem = iter->query();
-        Owned<IThorGraphDependencyIterator> dependIterator = elem.getDependsIterator();
+        Owned<IThorGraphDependencyIterator> dependIterator = elem.getDependsOnIterator();
         ForEach(*dependIterator)
         {
             CGraphDependency &dependency = dependIterator->query();
@@ -2566,10 +2603,23 @@ static void getGlobalDeps(CGraphBase &graph, CopyCIArrayOf<CGraphDependency> &de
     }
 }
 
+static void noteDependency(CGraphElementBase *targetActivity, CGraphElementBase *sourceActivity, CGraphBase *targetGraph, CGraphBase *sourceGraph, unsigned controlId)
+{
+    targetActivity->addDependsOn(sourceGraph, controlId);
+    sourceActivity->addDependency(targetGraph, controlId);
+    // NB: record dependency in source graph, serialized to slaves, used to decided if should run dependency sinks or not
+    Owned<IPropertyTree> dependencyFor = createPTree();
+    dependencyFor->setPropInt("@id", sourceActivity->queryId());
+    dependencyFor->setPropInt("@graphId", targetGraph->queryGraphId());
+    if (controlId)
+        dependencyFor->setPropInt("@conditionalId", controlId);
+    sourceGraph->queryXGMML().addPropTree("Dependency", dependencyFor.getClear());
+}
+
 void CJobBase::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
 {
     CGraphArrayCopy childGraphs;
-    CGraphElementArrayCopy targetActivities;
+    CGraphElementArrayCopy targetActivities, sourceActivities;
 
     Owned<IPropertyTreeIterator> iter = xgmml->getElements("edge");
     ForEach(*iter)
@@ -2605,7 +2655,7 @@ void CJobBase::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
                 targetActivity = targetGraph->queryElement(targetGraphContext);
             }
             assertex(targetActivity && sourceActivity);
-            targetActivity->addDependsOn(source, controlId);
+            noteDependency(targetActivity, sourceActivity, target, source, controlId);
         }
         else if (edge.getPropBool("att[@name=\"_conditionSource\"]/@value", false))
         { /* Ignore it */ }
@@ -2614,18 +2664,20 @@ void CJobBase::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
             // NB: any dependencies of the child acts. are dependencies of this act.
             childGraphs.append(*source);
             targetActivities.append(*targetActivity);
+            sourceActivities.append(*sourceActivity);
         }
         else
         {
             if (!edge.getPropBool("att[@name=\"_childGraph\"]/@value", false)) // JCSMORE - not sure if necess. roxie seem to do.
                 controlId = edge.getPropInt("att[@name=\"_when\"]/@value", 0);
-            targetActivity->addDependsOn(source, controlId);
+            noteDependency(targetActivity, sourceActivity, target, source, controlId);
         }
     }
     ForEachItemIn(c, childGraphs)
     {
         CGraphBase &childGraph = childGraphs.item(c);
         CGraphElementBase &targetActivity = targetActivities.item(c);
+        CGraphElementBase &sourceActivity = sourceActivities.item(c);
         if (!childGraph.isGlobal())
         {
             CopyCIArrayOf<CGraphDependency> globalChildGraphDeps;
@@ -2633,7 +2685,7 @@ void CJobBase::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
             ForEachItemIn(gcd, globalChildGraphDeps)
             {
                 CGraphDependency &globalDep = globalChildGraphDeps.item(gcd);
-                targetActivity.addDependsOn(globalDep.graph, globalDep.controlId);
+                noteDependency(&targetActivity, &sourceActivity, globalDep.graph, &childGraph, globalDep.controlId);
             }
         }
     }

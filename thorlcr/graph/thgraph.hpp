@@ -255,7 +255,7 @@ protected:
     bool isLocal, isLocalData, isGrouped, sink, prepared, onCreateCalled, onStartCalled, onlyUpdateIfChanged, nullAct, log;
     Owned<CActivityBase> activity;
     CGraphBase *resultsGraph, *owner;
-    CGraphDependencyArray dependsOn;
+    CGraphDependencyArray dependsOn, dependencies;
     Owned<IThorBoundLoopGraph> loopGraph; // really only here as master and slave derivatives set/use
     MemoryBuffer createCtxMb, startCtxMb;
     bool haveCreateCtx, haveStartCtx;
@@ -286,7 +286,9 @@ public:
     void addAssociatedChildGraph(CGraphBase *childGraph);
     void releaseIOs();
     void addDependsOn(CGraphBase *graph, int controlId);
-    IThorGraphDependencyIterator *getDependsIterator() const;
+    void addDependency(CGraphBase *graph, int controlId);
+    IThorGraphDependencyIterator *getDependsOnIterator() const;
+    IThorGraphDependencyIterator *getDependedOnByIterator() const;
     void ActPrintLog(const char *format, ...)  __attribute__((format(printf, 2, 3)));
     void ActPrintLog(IException *e, const char *format, ...) __attribute__((format(printf, 3, 4)));
     void ActPrintLog(IException *e);
@@ -537,7 +539,7 @@ protected:
     IBarrier *startBarrier, *waitBarrier, *doneBarrier;
     mptag_t mpTag, startBarrierTag, waitBarrierTag, doneBarrierTag;
     bool created, connected, started, aborted, graphDone, prepared, sequential;
-    bool reinit, sentInitData, sentStartCtx;
+    bool reinit, sentInitData, sentStartCtx, includeConditionalSinks;
     CJobBase &job;
     graph_id graphId;
     mptag_t executeReplyTag;
@@ -546,56 +548,7 @@ protected:
     unsigned counter;
     CReplyCancelHandler graphCancelHandler;
 
-    class CGraphGraphActElementIterator : public CInterface, implements IThorActivityIterator
-    {
-    protected:
-        CGraphBase &graph;
-        IPropertyTree &xgmml;
-        Owned<IPropertyTreeIterator> iter;
-        CGraphElementBase *current;
-    public:
-        IMPLEMENT_IINTERFACE;
-
-        CGraphGraphActElementIterator(CGraphBase &_graph, IPropertyTree &_xgmml) : graph(_graph), xgmml(_xgmml)
-        {
-            iter.setown(xgmml.getElements("node"));
-        }
-        virtual bool first()
-        {
-            if (iter->first())
-            {
-                IPropertyTree &node = iter->query();
-                current = graph.queryElement(node.getPropInt("@id"));
-                if (current)
-                    return true;
-                else if (next())
-                    return true;
-            }
-            current = NULL;
-            return false;
-        }
-        virtual bool next()
-        {
-            loop
-            {
-                if (!iter->next())
-                    break;
-                IPropertyTree &node = iter->query();
-                current = graph.queryElement(node.getPropInt("@id"));
-                if (current)
-                    return true;
-            }
-            current = NULL;
-            return false;
-        }
-        virtual bool isValid() { return NULL!=current; }
-        virtual CGraphElementBase & query()
-        {
-            return *current;
-        }
-        CGraphElementBase & get() { CGraphElementBase &c = query(); c.Link(); return c; }
-    };
-
+    void calculateSinks();
 public:
     IMPLEMENT_IINTERFACE;
 
@@ -608,7 +561,6 @@ public:
     const void *queryFindParam() const { return &queryGraphId(); } // for SimpleHashTableOf
 
     virtual void init() { }
-    IThorActivityIterator *getTraverseIterator(bool all=false); // all traverses and includes conditionals, others traverses connected nodes only
     void GraphPrintLog(const char *msg, ...) __attribute__((format(printf, 2, 3)));
     void GraphPrintLog(IException *e, const char *msg, ...) __attribute__((format(printf, 3, 4)));
     void GraphPrintLog(IException *e);
@@ -629,6 +581,7 @@ public:
     void setCompleteEx(bool tf=true) { complete = tf; }
     void setGlobal(bool tf) { global = tf; }
     void setLogging(bool tf);
+    void setIncludeConditionalSinks() { includeConditionalSinks = true; }
     const byte *setParentCtx(size32_t _parentExtractSz, const byte *parentExtract)
     {
         parentExtractSz = _parentExtractSz;
@@ -659,8 +612,9 @@ public:
     virtual void execute(size32_t parentExtractSz, const byte *parentExtract, bool checkDependencies, bool async);
     IThorActivityIterator *getIterator()
     {
-        return new CGraphGraphActElementIterator(*this, *xgmml);
+        return new CGraphElementIterator(containers);
     }
+    IThorActivityIterator *getConnectedIterator();
     IThorActivityIterator *getSinkIterator() const
     {
         return new CGraphElementArrayIterator(connectedSinks);
