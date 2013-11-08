@@ -589,7 +589,7 @@ bool CGraphElementBase::executeDependencies(size32_t parentExtractSz, const byte
         CGraphDependency &dep = deps->query();
         if (dep.controlId == controlId)
         {
-            dep.graph->setIncludeConditionalSinks();
+            dep.graph->setIncludeConditionalSinks(); // JCSMORE - a bit kludgy
             dep.graph->execute(parentExtractSz, parentExtract, true, async);
         }
         if (owner->queryJob().queryAborted() || owner->queryAborted()) return false;
@@ -645,12 +645,13 @@ bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *par
                 onCreate();
                 onStart(parentExtractSz, parentExtract);
                 IHThorIfArg *helper = (IHThorIfArg *)baseHelper.get();
-                whichBranch = helper->getCondition() ? 0 : 1;       // True argument preceeds false...
+                whichBranch = helper->getCondition() ? 0 : 1;       // True argument precedes false...
                 if (TAKifaction == getKind())
                 {
                     if (!executeDependencies(parentExtractSz, parentExtract, whichBranch+1, async)) //NB whenId 1 based
                         return false;
                 }
+                // JCS->GH - will it ever have conditional dependency and inline conditional arm?
                 if (inputs.queryItem(whichBranch))
                 {
                     if (!whichBranchBitSet->testSet(whichBranch)) // if not set, new
@@ -696,6 +697,17 @@ bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *par
                 }
                 if (isEof)
                     return true;
+                break;
+            }
+            case TAKsequential:
+            case TAKparallel:
+            {
+                for (unsigned s=1; s<=dependsOn.ordinality(); s++)
+                {
+                    if (!executeDependencies(parentExtractSz, parentExtract, s, async))
+                        return false;
+                }
+                // JCS->GH - will it ever have conditional dependency and inline conditional arm?
                 break;
             }
         }
@@ -790,6 +802,19 @@ void CGraphElementBase::createActivity(size32_t parentExtractSz, const byte *par
                     input->createActivity(parentExtractSz, parentExtract);
                 }
                 break;
+            case TAKsequential:
+            case TAKparallel:
+            {
+                ForEachItemIn(i, inputs)
+                {
+                    if (inputs.queryItem(i))
+                    {
+                        CGraphElementBase *input = inputs.item(i)->activity;
+                        input->createActivity(parentExtractSz, parentExtract);
+                    }
+                }
+                break;
+            }
             default:
                 if (!isEof)
                 {
