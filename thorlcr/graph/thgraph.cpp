@@ -625,6 +625,7 @@ bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *par
                 owner->ifs.append(*this);
                 // fall through
             case TAKif:
+            case TAKifaction:
             {
                 if (_shortCircuit) return true;
                 onCreate();
@@ -761,6 +762,13 @@ void CGraphElementBase::createActivity(size32_t parentExtractSz, const byte *par
                     onCreate();
                     if (!activity)
                         factorySet(TAKnull);
+                }
+                break;
+            case TAKifaction:
+                if (inputs.queryItem(whichBranch))
+                {
+                    CGraphElementBase *input = inputs.item(whichBranch)->activity;
+                    input->createActivity(parentExtractSz, parentExtract);
                 }
                 break;
             default:
@@ -1059,12 +1067,14 @@ void CGraphBase::clean()
     disconnectActivities();
     containers.kill();
     sinks.kill();
+    connectedSinks.kill();
 }
 
 void CGraphBase::serializeCreateContexts(MemoryBuffer &mb)
 {
     DelayedSizeMarker sizeMark(mb);
-    Owned<IThorActivityIterator> iter = (queryOwner() && !isGlobal()) ? getIterator() : getTraverseIterator(true); // all if non-global-child, or graph with conditionals
+//    Owned<IThorActivityIterator> iter = (queryOwner() && !isGlobal()) ? getIterator() : getTraverseIterator(true); // all if non-global-child, or graph with conditionals
+    Owned<IThorActivityIterator> iter = getIterator();
     ForEach (*iter)
     {
         CGraphElementBase &element = iter->query();
@@ -1359,6 +1369,13 @@ void CGraphBase::create(size32_t parentExtractSz, const byte *parentExtract)
         CGraphElementBase &sink = sinks.item(s);
         sink.createActivity(parentExtractSz, parentExtract);
     }
+    connectedSinks.kill();
+    ForEach(iterC)
+    {
+        CGraphElementBase &element = iterC.query();
+        if (0 != element.connectedInputs.ordinality() && 0 == element.connectedOutputs.ordinality())
+            connectedSinks.append(*LINK(&element));
+    }
     created = true;
 }
 
@@ -1514,6 +1531,7 @@ public:
             switch (cur->getKind())
             {
                 case TAKif:
+                case TAKifaction:
                 case TAKchildif:
                 case TAKchildcase:
                 case TAKcase:
@@ -1765,6 +1783,17 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         CGraphElementBase *source = queryElement(edge.getPropInt("@source"));
         CGraphElementBase *target = queryElement(edge.getPropInt("@target"));
         target->addInput(targetInput, source, sourceOutput);
+    }
+    // collect sinks
+    CGraphElementIterator iterC(containers);
+    ForEach(iterC)
+    {
+        CGraphElementBase &element = iterC.query();
+        if (0 == element.getOutputs())
+        {
+            if (!element.queryXGMML().getPropBool("att[@name=\"_internal\"]/@value"))
+                sinks.append(*LINK(&element));
+        }
     }
     init();
 }

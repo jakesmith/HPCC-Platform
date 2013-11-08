@@ -2117,7 +2117,8 @@ void CMasterGraph::abort(IException *e)
 void CMasterGraph::serializeCreateContexts(MemoryBuffer &mb)
 {
     CGraphBase::serializeCreateContexts(mb);
-    Owned<IThorActivityIterator> iter = (queryOwner() && !isGlobal()) ? getIterator() : getTraverseIterator();
+//    Owned<IThorActivityIterator> iter = (queryOwner() && !isGlobal()) ? getIterator() : getTraverseIterator();
+    Owned<IThorActivityIterator> iter = getIterator();
     ForEach (*iter)
     {
         CMasterGraphElement &element = (CMasterGraphElement &)iter->query();

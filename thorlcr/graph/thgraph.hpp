@@ -426,7 +426,7 @@ class graph_decl CGraphBase : public CInterface, implements IEclGraphResults, im
     mutable CriticalSection crit;
     CriticalSection evaluateCrit;
     CGraphElementTable containers;
-    CGraphElementArray sinks;
+    CGraphElementArray sinks, connectedSinks;
     bool sink, complete, global, localChild;
     mutable int localOnly;
     activity_id parentActivityId;
@@ -663,7 +663,7 @@ public:
     }
     IThorActivityIterator *getSinkIterator() const
     {
-        return new CGraphElementArrayIterator(sinks);
+        return new CGraphElementArrayIterator(connectedSinks);
     }
     IPropertyTree &queryXGMML() const { return *xgmml; }
     void addActivity(CGraphElementBase *element)
@@ -673,16 +673,7 @@ public:
             element->Release();
             return;
         }
-
         containers.replace(*element);
-        if (element->isSink())
-            sinks.append(*LINK(element));
-    }
-    bool removeActivity(CGraphElementBase *element)
-    {
-        bool res = containers.removeExact(element);
-        sinks.zap(* element);
-        return res;
     }
     unsigned activityCount() const
     {
