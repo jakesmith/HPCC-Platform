@@ -138,7 +138,8 @@ extern mp_decl IGroup *deserializeIGroup(MemoryBuffer &src);
 
 extern mp_decl INode *queryNullNode(); 
 extern mp_decl INode * queryMyNode();
-extern mp_decl void initMyNode(unsigned short port);
+extern mp_decl void initMyNode(const SocketEndpoint &ep);
+extern mp_decl void initMyNode(unsigned port);
 
 // Exceptions
 

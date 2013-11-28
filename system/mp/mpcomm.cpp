@@ -109,7 +109,7 @@ public:
             nextseq = sequence+1;
     }
 
-    PacketHeader(size32_t _size, SocketEndpoint &_sender, SocketEndpoint &_target, mptag_t _tag, mptag_t _replytag)
+    PacketHeader(size32_t _size, const SocketEndpoint &_sender, const SocketEndpoint &_target, mptag_t _tag, mptag_t _replytag)
     {
         size = _size;
         tag = _tag;
@@ -397,13 +397,13 @@ class CMPConnectThread: public Thread
     CMPServer *parent;
     void checkSelfDestruct(void *p,size32_t sz);
 public:
-    CMPConnectThread(CMPServer *_parent, unsigned port);
+    CMPConnectThread(CMPServer *_parent);
     ~CMPConnectThread()
     {
         ::Release(listensock);
     }
     int run();
-    void start(unsigned short port);
+    void start(const SocketEndpoint &ep);
     void stop()
     {
         if (running) {
@@ -425,7 +425,7 @@ class CMPNotifyClosedThread;
 
 static class CMPServer: private SuperHashTableOf<CMPChannel,SocketEndpoint>
 {
-    unsigned short              port;
+    SocketEndpoint              ep;
     ISocketSelectHandler        *selecthandler;
     CMPConnectThread            *connectthread;
     CBufferQueue                receiveq;
@@ -445,12 +445,12 @@ public:
     UserPacketHandler           *userpackethandler;         // default
 
 
-    CMPServer(unsigned _port);
+    CMPServer(const SocketEndpoint &ep);
     ~CMPServer();
     void start();
     void stop();
-    unsigned short getPort() { return port; }
-    void setPort(unsigned short _port) { port = _port; }
+    const SocketEndpoint &getEndpoint() const { return ep; }
+    void setPort(unsigned short _port) { ep.port = _port; }
     CMPChannel &lookup(const SocketEndpoint &remoteep);
     ISocketSelectHandler &querySelectHandler() { return *selecthandler; };
     CBufferQueue &getReceiveQ() { return receiveq; }
@@ -668,9 +668,8 @@ protected: friend class CMPPacketReader;
 #endif
 
                 SocketEndpointV4 id[2];
-                SocketEndpoint hostep;
-                hostep.setLocalHost(parent->getPort());
-                id[0].set(hostep);
+                const SocketEndpoint &hostep = parent->getEndpoint();
+                id[0].set(parent->getEndpoint());
                 id[1].set(remoteep);
                 newsock->write(&id[0],sizeof(id)); 
 #ifdef _FULLTRACE
@@ -1332,7 +1331,7 @@ CMPChannel::CMPChannel(CMPServer *_parent,SocketEndpoint &_remoteep)
     channelsock = NULL;
     parent = _parent;
     remoteep = _remoteep;
-    localep.set(parent->getPort());
+    localep.set(parent->getEndpoint());
     multitag = TAG_NULL;
     reader = new CMPPacketReader(this);
     closed = false;
@@ -1501,8 +1500,7 @@ bool CMPChannel::sendPing(CTimeMon &tm)
     tm.timedout(&remaining);
     if (!sendmutex.lockWait(remaining))
         return false;
-    SocketEndpoint myep(parent->getPort());
-    PacketHeader hdr(sizeof(PacketHeader),myep,remoteep,TAG_SYS_PING,TAG_SYS_PING_REPLY);
+    PacketHeader hdr(sizeof(PacketHeader),parent->getEndpoint(),remoteep,TAG_SYS_PING,TAG_SYS_PING_REPLY);
     bool ret = false;
     try {
         ret = parent->pingpackethandler->send(this,hdr,tm)&&!tm.timedout(&remaining);
@@ -1524,14 +1522,13 @@ bool CMPChannel::sendPingReply(unsigned timeout,bool identifyself)
     mon.timedout(&remaining);
     if (!sendmutex.lockWait(remaining))
         return false;
-    SocketEndpoint myep(parent->getPort());
     MemoryBuffer mb;
     if (identifyself) {
 #ifdef _WIN32
         mb.append(GetCommandLine());
 #endif
     }
-    PacketHeader hdr(mb.length()+sizeof(PacketHeader),myep,remoteep,TAG_SYS_PING_REPLY,TAG_NULL);
+    PacketHeader hdr(mb.length()+sizeof(PacketHeader),parent->getEndpoint(),remoteep,TAG_SYS_PING_REPLY,TAG_NULL);
 
     bool ret;
     try {
@@ -1547,11 +1544,12 @@ bool CMPChannel::sendPingReply(unsigned timeout,bool identifyself)
 }
     
 // --------------------------------------------------------
-CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port)
+CMPConnectThread::CMPConnectThread(CMPServer *_parent)
     : Thread("MP Connection Thread")
 {
     parent = _parent;
-    if (!port)
+    SocketEndpoint ep = parent->getEndpoint();
+    if (!ep.port)
     {
         // need to connect early to resolve clash
         Owned<IPropertyTree> env = getHPCCEnvironment();
@@ -1571,10 +1569,10 @@ CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port)
         unsigned numPorts = maxPort - minPort + 1;
         for (int retries = 0; retries < numPorts * 3; retries++)
         {
-            port = minPort + getRandom() % numPorts;
+            ep.port = minPort + getRandom() % numPorts;
             try
             {
-                listensock = ISocket::create(port, 16);  // better not to have *too* many waiting
+                listensock = ISocket::create(ep, 16);  // better not to have *too* many waiting
                 break;
             }
             catch (IJSOCK_Exception *e)
@@ -1589,7 +1587,7 @@ CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port)
     }
     else 
         listensock = NULL;  // delay create till running
-    parent->setPort(port);
+    parent->setPort(ep.port);
 #ifdef _TRACE
     LOG(MCdebugInfo(100), unknownJob, "MP Connect Thread Init Port = %d", port);
 #endif
@@ -1631,10 +1629,10 @@ void CMPConnectThread::checkSelfDestruct(void *p,size32_t sz)
 
 }
 
-void CMPConnectThread::start(unsigned short port)
+void CMPConnectThread::start(const SocketEndpoint &ep)
 {
     if (!listensock)
-        listensock = ISocket::create(port,16);  
+        listensock = ISocket::create(ep, 16);
     running = true;
     Thread::start();
 }
@@ -1792,11 +1790,11 @@ CMPChannel &CMPServer::lookup(const SocketEndpoint &endpoint)
 }
 
 
-CMPServer::CMPServer(unsigned _port)
+CMPServer::CMPServer(const SocketEndpoint &_ep)
 {
-    port = 0;   // connectthread tells me what port it actually connected on
+    ep.set(_ep); // connectthread tells me what port it actually connected on
     checkclosed = false;
-    connectthread = new CMPConnectThread(this, _port);
+    connectthread = new CMPConnectThread(this);
     selecthandler = createSocketSelectHandler();
     pingpackethandler = new PingPacketHandler;              // TAG_SYS_PING
     pingreplypackethandler = new PingReplyPacketHandler;    // TAG_SYS_PING_REPLY
@@ -1806,7 +1804,7 @@ CMPServer::CMPServer(unsigned _port)
     userpackethandler = new UserPacketHandler(this);        // default
     notifyclosedthread = new CMPNotifyClosedThread(this);
     notifyclosedthread->start();
-    initMyNode(port); // NB port set by connectthread constructor
+    initMyNode(ep); // NB ep.port will have been set by connectthread constructor
     selecthandler->start();
 }
 
@@ -1971,7 +1969,7 @@ unsigned CMPServer::probe(const SocketEndpoint *ep, mptag_t tag,CTimeMon &tm,Soc
 
 void CMPServer::start()
 {
-    connectthread->start(getPort());    
+    connectthread->start(getEndpoint());
 }
 
 void CMPServer::stop()
@@ -2515,7 +2513,7 @@ IInterCommunicator &queryWorldCommunicator()
     return *worldcomm;
 }
 
-void startMPServer(unsigned port, bool paused)
+void startMPServer(const SocketEndpoint &ep, bool paused)
 {
     assertex(sizeof(PacketHeader)==32);
     CriticalBlock block(CMPServer::serversect); 
@@ -2524,18 +2522,24 @@ void startMPServer(unsigned port, bool paused)
         if (!CMPServer::serverpaused)
         {
             delete MPserver;
-            MPserver = new CMPServer(port);
+            MPserver = new CMPServer(ep);
         }
         if (paused)
         {
             CMPServer::serverpaused = true;
             return;
         }
-        queryLogMsgManager()->setPort(MPserver->getPort());
+        queryLogMsgManager()->setPort(MPserver->getEndpoint().port);
         MPserver->start();
         CMPServer::serverpaused = false;
     }
     CMPServer::servernest++;
+}
+
+void startMPServer(unsigned port, bool paused)
+{
+    SocketEndpoint ep(port);
+    startMPServer(ep, paused);
 }
 
 

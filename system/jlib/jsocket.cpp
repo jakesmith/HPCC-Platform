@@ -2429,6 +2429,17 @@ ISocket* ISocket::create(unsigned short p,int listen_queue_size)
     return sock.getClear();
 }
 
+ISocket* ISocket::create(const SocketEndpoint &ep, int listen_queue_size)
+{
+    if (ep.port==0)
+        THROWJSOCKEXCEPTION2(JSOCKERR_bad_address);
+    Owned<CSocket> sock = new CSocket(ep,sm_tcp_server,NULL);
+    sock->open(listen_queue_size);
+    return sock.getClear();
+}
+
+
+
 
 ISocket* ISocket::create_ip(unsigned short p,const char *host,int listen_queue_size)
 {

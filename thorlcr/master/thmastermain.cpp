@@ -470,7 +470,7 @@ int main( int argc, char *argv[]  )
     if (master)
     {
         thorEp.set(master);
-        thorEp.setLocalHost(thorEp.port);
+        localHostToNIC(thorEp);
     }
     else
         thorEp.setLocalHost(0);
@@ -510,14 +510,18 @@ int main( int argc, char *argv[]  )
         Owned<IGroup> serverGroup = createIGroup(daliServer.str(), DALI_SERVER_PORT);
 
         unsigned retry = 0;
-        loop {
-            try {
-                unsigned port = getFixedPort(TPORT_mp);
-                LOG(MCdebugProgress, thorJob, "calling initClientProcess Port %d", port);
-                initClientProcess(serverGroup, DCR_ThorMaster, port);
+        loop
+        {
+            try
+            {
+                SocketEndpoint mpEp = thorEp;
+                mpEp.port = getFixedPort(TPORT_mp);
+                LOG(MCdebugProgress, thorJob, "calling initClientProcess Port %d", mpEp.port);
+                initClientProcess(serverGroup, DCR_ThorMaster, mpEp);
                 break;
             }
-            catch (IJSOCK_Exception *e) { 
+            catch (IJSOCK_Exception *e)
+            {
                 if ((e->errorCode()!=JSOCKERR_port_in_use))
                     throw;
                 FLLOG(MCexception(e), thorJob, e,"InitClientProcess");

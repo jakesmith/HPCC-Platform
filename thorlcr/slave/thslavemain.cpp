@@ -296,7 +296,9 @@ int main( int argc, char *argv[]  )
         slfEp.port = getMachinePortBase();
         startSlaveLog();
 
-        startMPServer(getFixedPort(TPORT_mp));
+        SocketEndpoint mpEp = slfEp;
+        mpEp.port = getFixedPort(TPORT_mp);
+        startMPServer(mpEp);
 #ifdef USE_MP_LOG
         startLogMsgParentReceiver();
         LOG(MCdebugProgress, thorJob, "MPServer started on port %d", getFixedPort(TPORT_mp));

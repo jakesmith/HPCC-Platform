@@ -88,11 +88,11 @@ IDaliClient_Exception *createClientException(DaliClientError err, const char *ms
 
 
 
-bool initClientProcess(IGroup *servergrp, DaliClientRole role, unsigned mpport, const char *clientVersion, const char *minServerVersion, unsigned timeout)
+bool initClientProcess(IGroup *servergrp, DaliClientRole role, const SocketEndpoint &mpEp, const char *clientVersion, const char *minServerVersion, unsigned timeout)
 {
     assertex(servergrp);
     daliClientIsActive = true;
-    startMPServer(mpport);
+    startMPServer(mpEp);
     Owned<ICommunicator> comm(createCommunicator(servergrp,true));
     IGroup * covengrp;
     if (!registerClientProcess(comm.get(),covengrp,timeout,role))
@@ -105,6 +105,13 @@ bool initClientProcess(IGroup *servergrp, DaliClientRole role, unsigned mpport, 
     queryLogMsgManager()->setSession(myProcessSession());
     return true;
 }
+
+bool initClientProcess(IGroup *servergrp, DaliClientRole role, unsigned mpport, const char *clientVersion, const char *minServerVersion, unsigned timeout)
+{
+    SocketEndpoint ep(mpport);
+    return initClientProcess(servergrp, role, ep, clientVersion, minServerVersion, timeout);
+}
+
 
 void addShutdownHook(IDaliClientShutdown &shutdown)
 {

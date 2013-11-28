@@ -351,8 +351,8 @@ int main(int argc, char* argv[])
                 epa.append(ep);
             }
         }
-        unsigned short myport = epa.item(myrank).port;
-        startMPServer(myport,true);
+        SocketEndpoint &daliEp = epa.item(myrank);
+        startMPServer(daliEp,true);
         setMsgLevel(fileMsgHandler, serverConfig->getPropInt("SDS/@msgLevel", 100));
         startLogMsgChildReceiver(); 
         startLogMsgParentReceiver();
@@ -424,7 +424,7 @@ int main(int argc, char* argv[])
             throw;
         }
         PrintLog("DASERVER[%d] starting - listening to port %d",myrank,queryMyNode()->endpoint().port);
-        startMPServer(myport,false);
+        startMPServer(daliEp,false);
         bool ok = true;
         ForEachItemIn(i2,servers)
         {

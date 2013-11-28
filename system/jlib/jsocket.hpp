@@ -247,6 +247,9 @@ public:
                                           const char *host,
                                           int listen_queue_size =   DEFAULT_LISTEN_QUEUE_SIZE);
 
+    static ISocket*  create( const SocketEndpoint &ep,
+                                       int listen_queue_size =  DEFAULT_LISTEN_QUEUE_SIZE);
+
     //
     // Create server UDP socket
     //

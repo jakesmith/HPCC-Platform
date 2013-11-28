@@ -89,7 +89,8 @@ extern mp_decl mptag_t createReplyTag(); // creates (short-lived) reply-tag;
 extern mp_decl ICommunicator *createCommunicator(IGroup *group,bool outer=false); // outer allows nodes outside group to send
 extern mp_decl IInterCommunicator &queryWorldCommunicator();
 
-extern mp_decl void startMPServer(unsigned port,bool paused=false);
+extern mp_decl void startMPServer(unsigned port, bool paused=false);
+extern mp_decl void startMPServer(const SocketEndpoint &ep, bool paused=false);
 extern mp_decl void stopMPServer();
 
 interface IConnectionMonitor: extends IInterface

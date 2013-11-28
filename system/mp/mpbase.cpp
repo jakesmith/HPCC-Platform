@@ -710,13 +710,13 @@ IGroup *deserializeIGroup(MemoryBuffer &src)
 
 
 
-void initMyNode(unsigned short port)
+void initMyNode(const SocketEndpoint &ep)
 {
-    setNodeCaching(port != 0);
+    setNodeCaching(ep.port != 0);
     ::Release(MyNode);
     MyNode = NULL;
-    if (port) {
-        SocketEndpoint ep(port);
+    if (ep.port)
+    {
         MyNode = new MPNode(ep);
         if (ep.isLoopBack()) {
             DBGLOG("MP Warning - localhost used for MP host address, NIC adaptor not identified");
@@ -728,6 +728,12 @@ void initMyNode(unsigned short port)
         ::Release(NullNode);
         NullNode = NULL;
     }
+}
+
+void initMyNode(unsigned port)
+{
+    SocketEndpoint ep(port);
+    initMyNode(ep);
 }
 
 INode *queryMyNode()
