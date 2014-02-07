@@ -2446,6 +2446,36 @@ protected:
     Linked<IUserDescriptor> udesc;
     unsigned defaultTimeout;
     bool dirty;
+
+    /* Use a CFileAttrWriteLock as a write lock to change attributes, that are allowed to change whilst a file is being read
+     * NB: It 1st checks if the *file* is already write locked, in which case it implies an update is pending and the connection
+     * unless rolledback will be commited.
+     * If it is not locked (by definition it is at least read locked), it will create an write lock to the file's Attr.
+     * and commit the change on exit
+     */
+    class CFileAttrWriteLock
+    {
+        CFileConnectLock fConn;
+        CDistributedFileBase<INTERFACE> &owner;
+        bool performedLock;
+    public:
+        CFileAttrWriteLock(CDistributedFileBase<INTERFACE> &_owner, const char *msg) : owner(_owner), fConn(true)
+        {
+            performedLock = false;
+            if (owner.conn && !owner.proplockcount) // NB: If locked, already have exclusive access to file
+            {
+                DfsXmlBranchKind bkind;
+                if (!fConn.initany(msg, owner.logicalName, bkind, true, false, false, owner.defaultTimeout))
+                    return; // timeout will raise exception
+                performedLock = true;
+            }
+        }
+        ~CFileAttrWriteLock()
+        {
+            if (performedLock)
+                owner.conn->commit();
+        }
+    };
 public:
 
     IPropertyTree *queryRoot() { return root; }
@@ -2821,7 +2851,9 @@ public:
     {
         if (!superfile||!*superfile)
             return;
-        if (conn) {
+        if (conn)
+        {
+            CFileAttrWriteLock attrLock(*this, "CDistributedFile::linkSuperOwner");
             Owned<IPropertyTree> t = getNamedPropTree(root,"SuperOwner","@name",superfile,false);
             if (t && !link)
                 root->removeTree(t);
@@ -3039,6 +3071,9 @@ protected:
                     throw MakeStringException(-1,"detach: %s", reason.str());
             }
             // detach this IDistributeFile
+            /* JCS - this is really overcomplicates it and leaves a windows for mishap.
+             * should lock for exclusive write, then delete without reverting to read lock and _then_ removing root from Dali.
+             */
             writeLock.clear();
             root.setown(closeConnection(removeFile));
             // NB: The file is now unlocked
@@ -4286,15 +4321,7 @@ public:
             parent->setFileAccessed(logicalName,udesc,dt);
         else
         {
-            CFileConnectLock fconnattrlock(true);
-            bool performedLock = false;
-            if (conn && !proplockcount) // NB: If locked, already have exclusive access to file
-            {
-                DfsXmlBranchKind bkind;
-                if (!fconnattrlock.initany("CDistributedFile::setAccessedTime", logicalName, bkind, true, false, false, defaultTimeout))
-                    return; // timeout will raise exception
-                performedLock = true;
-            }
+            CFileAttrWriteLock attrLock(*this, "CDistributedFile::setAccessedTime");
             if (dt.isNull())
                 queryAttributes().removeProp("@accessed");
             else
@@ -4302,12 +4329,10 @@ public:
                 StringBuffer str;
                 queryAttributes().setProp("@accessed",dt.getString(str).str());
             }
-            if (performedLock)
-                conn->commit();
         }
     }
 
-    void setAccessed()                              
+    void setAccessed()
     {
         CDateTime dt;
         dt.setNow();
@@ -4721,6 +4746,10 @@ protected:
 
     void clearSuperOwners(unsigned timeoutMs)
     {
+        /* JCS - Why on earth is this doing this way?
+         * We are in a super file, we already have [read] locks to sub files (in 'subfiles' array)
+         * This should iterate through those and call unlinkSubFile I think.
+         */
         Owned<IPropertyTreeIterator> iter = root->getElements("SubFile");
         StringBuffer oquery;
         oquery.append("SuperOwner[@name=\"").append(logicalName.get()).append("\"]");
@@ -5333,6 +5362,16 @@ public:
         subfiles.kill();    
 
         // Remove from SDS
+
+        /* this looks very kludgy...
+         * We have readlock, this dode is doing
+         * 1) change to write lock (not using lockProperties or DistributedFilePropertyLock to do so) [using CFileChangeWriteLock]
+         *    CFileChangeWriteLock doesn't preserve lock mode quite right.. (see 'newMode')
+         * 2) manually deleting SuperOwner from subfiles (in clearSuperOwners)
+         * 3) Using the connection to delete the SuperFile from Dali (clones to 'root' in process)
+         * 4) ~CFileChangeWriteLock() [writeLock.clear()], restores read lock from write to read
+         * 5) updateFS (housekeeping of empty scopes, relationships) - ok
+         */
         CFileChangeWriteLock writeLock(conn, timeoutMs);
         clearSuperOwners(timeoutMs);
         writeLock.clear();
