@@ -4407,7 +4407,6 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
             }
             // Try to lock all files
             addFileLock(parent);
-            addFileLock(sub);
             bool dirty=false;
             if (lock(&dirty))
             {
@@ -4484,7 +4483,7 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
             }
             // Try to lock all files
             addFileLock(parent);
-            if (sub)
+            if (sub && remsub) // NB: I only need to lock (for exclusivity, if going to delete
                 addFileLock(sub);
             bool dirty=false;
             if (lock(&dirty))
@@ -4670,6 +4669,9 @@ class CDistributedSuperFile: public CDistributedFileBase<IDistributedSuperFile>
                 throw MakeStringException(-1,"swapSuperFile: SuperFile %s cannot be found",filelname.get());
             }
             // Try to lock all files
+
+            /* For adding/removing super file ownership... what locks are actually needed? */
+
             addFileLock(parent);
             for (unsigned i=0; i<parent->numSubFiles(); i++)
                 addFileLock(&parent->querySubFile(i));
@@ -4990,7 +4992,6 @@ protected:
     void linkSubFile(unsigned pos,IDistributedFileTransactionExt *transaction,bool link=true)
     {
         IDistributedFile *subfile = &subfiles.item(pos);
-        DistributedFilePropertyLock lock(subfile);
         IDistributedSuperFile *ssub = subfile->querySuperFile();
         if (ssub) {
             CDistributedSuperFile *cdsuper = QUERYINTERFACE(ssub,CDistributedSuperFile);
