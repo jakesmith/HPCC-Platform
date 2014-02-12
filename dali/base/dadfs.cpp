@@ -4992,6 +4992,7 @@ protected:
     void linkSubFile(unsigned pos,IDistributedFileTransactionExt *transaction,bool link=true)
     {
         IDistributedFile *subfile = &subfiles.item(pos);
+        DistributedFilePropertyLock lock(subfile);
         IDistributedSuperFile *ssub = subfile->querySuperFile();
         if (ssub) {
             CDistributedSuperFile *cdsuper = QUERYINTERFACE(ssub,CDistributedSuperFile);
