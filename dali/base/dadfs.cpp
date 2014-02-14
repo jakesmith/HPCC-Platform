@@ -44,6 +44,8 @@
 //#define TRACE_LOCKS
 #endif
 
+#define _NO_DALIUSER_STACKTRACE
+
 #define SDS_CONNECT_TIMEOUT  (1000*60*60*2)     // better than infinite
 #define SDS_SUB_LOCK_TIMEOUT (10000)
 #define SDS_TRANSACTION_RETRY (60000)
