@@ -1861,11 +1861,22 @@ bool CMPServer::recv(CMessageBuffer &mbuf, const SocketEndpoint *ep, mptag_t tag
         }
         bool notifyClosed(SocketEndpoint &_closedEp) // called when connection closed
         {
+ StringBuffer epStr, closedEpStr;
+ _closedEp.getUrlStr(closedEpStr);
+ if (ep)
+     ep->getUrlStr(epStr);
+ PROGLOG("notifyClosed( %s ), ep = %s", closedEpStr.str(), epStr.str());
+ PrintStackReport();
             if (NULL == ep) { // ep is NULL if receiving on RANK_ALL
-                closedEp = _closedEp;
-                ep = &closedEp; // used for abort info
-                aborted = true;
-                return true;
+                if (_closedEp.isNull())
+                    PROGLOG("closedEp is NULL, ignoring");
+                else
+                {
+                    closedEp = _closedEp;
+                    ep = &closedEp; // used for abort info
+                    aborted = true;
+                    return true;
+                }
             }
             else if (ep->equals(_closedEp)) {
                 aborted = true;
