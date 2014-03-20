@@ -127,7 +127,7 @@ public:
         try {
 
             StringBuffer epstr;
-            ActPrintLog(activity, "Connect to %s:%d",endpoint.getIpText(epstr).str(),(unsigned)mpport);
+            ActPrintLog(*activity, "Connect to %s:%d",endpoint.getIpText(epstr).str(),(unsigned)mpport);
             SocketEndpoint ep = endpoint;
             ep.port = mpport;
             Owned<INode> node = createINode(ep);
@@ -300,7 +300,7 @@ public:
 
     void ConnectSlaves()
     {
-        ActPrintLog(activity, "CSortMaster::ConnectSlaves");
+        ActPrintLog(*activity, "CSortMaster::ConnectSlaves");
 #ifdef CONNECT_IN_PARALLEL
         class casyncfor: public CAsyncFor
         {
@@ -312,7 +312,7 @@ public:
                 if (!slave.doConnect(i,slaves.ordinality())) {
                     char url[100];
                     slave.endpoint.getUrlStr(url,sizeof(url));
-                    throw MakeActivityException(owner.activity,TE_CannotConnectToSlave,"CSortMaster::ConnectSlaves: Could not connect to %s",url);
+                    throw MakeActivityException(*owner.activity,TE_CannotConnectToSlave,"CSortMaster::ConnectSlaves: Could not connect to %s",url);
                 }
             }
         private:
@@ -326,7 +326,7 @@ public:
             if (!slave.doConnect(i,slaves.ordinality())) {
                 char url[100];
                 slave.endpoint.getUrlStr(url,sizeof(url));
-                throw MakeActivityException(activity,TE_CannotConnectToSlave,"CSortMaster::ConnectSlaves: Could not connect to %s",url);
+                throw MakeActivityException(*activity,TE_CannotConnectToSlave,"CSortMaster::ConnectSlaves: Could not connect to %s",url);
             }
         }
 #endif
@@ -382,7 +382,7 @@ public:
             if (slave.state !=state)
                 left--;
         }
-        ActPrintLog(activity, " Left=%d",left);
+        ActPrintLog(*activity, " Left=%d",left);
         if (left<5) {
             StringBuffer s;
             ForEachItemIn(j,slaves) {
@@ -392,14 +392,14 @@ public:
                     slave.endpoint.getIpText(s);
                 }
             }
-            ActPrintLog(activity, "%s",s.str());
+            ActPrintLog(*activity, "%s",s.str());
         }
     }
 
 
     void SortSetup(IRowInterfaces *_rowif,ICompare *_icompare,ISortKeySerializer *_keyserializer,bool cosort,bool needconnect,const char *_cosortfilenames,IRowInterfaces *_auxrowif)
     {
-        ActPrintLog(activity, "Sort setup cosort=%s, needconnect=%s %s",cosort?"true":"false",needconnect?"true":"false",_keyserializer?"has key serializer":"");
+        ActPrintLog(*activity, "Sort setup cosort=%s, needconnect=%s %s",cosort?"true":"false",needconnect?"true":"false",_keyserializer?"has key serializer":"");
         rowif.set(_rowif);
         if (_auxrowif&&_auxrowif->queryRowMetaData())
             auxrowif.set(_auxrowif);
@@ -418,7 +418,7 @@ public:
         estrecsize = 100;
         if (!partitioninfo) { // if cosort use aux
             if (cosort) {
-                ActPrintLog(activity, "Cosort with no prior partition");
+                ActPrintLog(*activity, "Cosort with no prior partition");
                 partitioninfo = new PartitionInfo(activity, auxrowif);
             }
             else
@@ -442,7 +442,7 @@ public:
         }
         if (keyserializer&&cosort&&!partitioninfo->IsOK()) {
             keyserializer = NULL; // when joining to 0 rows can't use (LHS) serializer getMinMax will tell slave
-            ActPrintLog(activity, "Suppressing key serializer on master");
+            ActPrintLog(*activity, "Suppressing key serializer on master");
         }
         assertex(icompare);
         if (needconnect) // if cosort set, already done!
@@ -455,7 +455,7 @@ public:
             CSortNode &slave = slaves.item(k);          
             slave.StartGather();
         }
-        ActPrintLog(activity, "Sort Setup Complete");
+        ActPrintLog(*activity, "Sort Setup Complete");
     }
 
     ~CSortMaster()
@@ -473,7 +473,7 @@ public:
 
     virtual void SortDone()
     {
-        ActPrintLog(activity, "Sort Done in");
+        ActPrintLog(*activity, "Sort Done in");
         synchronized proc(slavemutex);
         if (activity->queryAbortSoon())
             return;
@@ -507,13 +507,13 @@ public:
             slaves.item(i).Close();
         }
 #endif
-        ActPrintLog(activity, "Sort Done");
+        ActPrintLog(*activity, "Sort Done");
     }
 
 
     bool GetNode(unsigned num,SocketEndpoint &endpoint)
     {
-        ActPrintLog(activity, "GetNode %u",num);
+        ActPrintLog(*activity, "GetNode %u",num);
         if (num<slaves.ordinality()) {
             CSortNode &slave = slaves.item(num);            
             endpoint = slave.endpoint;
@@ -575,11 +575,11 @@ public:
         if (min&&max) {
             int cmp=icompare->docompare(min,max);
             if (cmp==0) 
-                ActPrintLog(activity, "Min == Max : All keys equal!");
+                ActPrintLog(*activity, "Min == Max : All keys equal!");
             else if (cmp>0)
-                ActPrintLog(activity, "ERROR: Min > Max!");
+                ActPrintLog(*activity, "ERROR: Min > Max!");
         }
-        ActPrintLog(activity, "Tot = %"I64F"d", tot);
+        ActPrintLog(*activity, "Tot = %"I64F"d", tot);
 #endif
         return tot;
     }
@@ -657,7 +657,7 @@ public:
 #endif
 #ifdef TRACE_PARTITION2
         {
-            ActPrintLog(activity, "partition points");
+            ActPrintLog(*activity, "partition points");
             for (unsigned i=0;i<sample.ordinality();i++) {
                 const byte *k = sample.query(i);
                 StringBuffer str;
@@ -680,7 +680,7 @@ public:
         }
 #ifdef TRACE_PARTITION2
         {
-            ActPrintLog(activity, "merged partitions");
+            ActPrintLog(*activity, "merged partitions");
             for (unsigned i=0;i<mid.ordinality();i++) {
                 const void *k = mid.query(i);
                 StringBuffer str;
@@ -813,7 +813,7 @@ public:
             loop {
 #ifdef _TRACE
                 iter++;
-                ActPrintLog(activity, "Split: %d",iter);
+                ActPrintLog(*activity, "Split: %d",iter);
 #endif
                 emin.serializeCompress(mbmn.clear());
                 emax.serializeCompress(mbmx.clear());
@@ -906,9 +906,9 @@ public:
                         if (logging) {
                             MemoryBuffer buf;
                             for (j=0;j<numsplits;j++) {
-                                ActPrintLog(activity, "Min(%d): ",j); traceKey(rowif->queryRowSerializer(),"    ",emin.query(j));
-                                ActPrintLog(activity, "Mid(%d): ",j); traceKey(rowif->queryRowSerializer(),"    ",totmid.query(j+base));
-                                ActPrintLog(activity, "Max(%d): ",j); traceKey(rowif->queryRowSerializer(),"    ",emax.query(j));
+                                ActPrintLog(*activity, "Min(%d): ",j); traceKey(rowif->queryRowSerializer(),"    ",emin.query(j));
+                                ActPrintLog(*activity, "Mid(%d): ",j); traceKey(rowif->queryRowSerializer(),"    ",totmid.query(j+base));
+                                ActPrintLog(*activity, "Max(%d): ",j); traceKey(rowif->queryRowSerializer(),"    ",emax.query(j));
                             }
                         }
 #endif
@@ -941,7 +941,7 @@ public:
                         if (logging) {
                             MemoryBuffer buf;
                             const void *b =totmid.query(mi);
-                            ActPrintLog(activity, "%d: %d %d",i,mi,amid.ordinality()/2);
+                            ActPrintLog(*activity, "%d: %d %d",i,mi,amid.ordinality()/2);
                             traceKey(rowif->queryRowSerializer(),"mid",b);
                         }
 #endif
@@ -990,7 +990,7 @@ public:
                     unsigned __int64 wanted = nodewanted*(i+1); // scaled total assumed >> numnodes
 #ifdef _DEBUG
                     if (logging) 
-                        ActPrintLog(activity, "  wanted = %"CF"d, %stotal = %"CF"d, loc = %"CF"d, locwanted = %"CF"d\n",wanted,(total!=stotal)?"scaled ":"",tot,loc,nodewanted);
+                        ActPrintLog(*activity, "  wanted = %"CF"d, %stotal = %"CF"d, loc = %"CF"d, locwanted = %"CF"d\n",wanted,(total!=stotal)?"scaled ":"",tot,loc,nodewanted);
 #endif
                     bool isdone=false;
                     unsigned __int64 error = (loc>nodewanted)?(loc-nodewanted):(nodewanted-loc);
@@ -1013,7 +1013,7 @@ public:
                     break; // reached steady state 
                 }
                 if ((maxerror*10000<nodewanted)||((iter>3)&&(maxerror<variancelimit))) { // within .01% or within variancelimit 
-                    ActPrintLog(activity, "maxerror = %"CF"d, nodewanted = %"CF"d, variancelimit=%"CF"d, estrecsize=%u, maxdeviance=%u",
+                    ActPrintLog(*activity, "maxerror = %"CF"d, nodewanted = %"CF"d, variancelimit=%"CF"d, estrecsize=%u, maxdeviance=%u",
                              maxerror,nodewanted,variancelimit,estrecsize,maxdeviance);
                     break;
                 }
@@ -1027,7 +1027,7 @@ public:
             e->errorMessage(str);
             str.append("\nKey size too large for distributed sort?");
             e->Release();
-            throw MakeActivityException(activity,-1,"%s",str.str());
+            throw MakeActivityException(*activity,-1,"%s",str.str());
         }
         partitioninfo->splitkeys.transfer(mid);
         partitioninfo->numnodes = numnodes;
@@ -1039,7 +1039,7 @@ public:
                 for (j=0;j<numnodes;j++) {
                     str.appendf("%"RCPF"d, ",splitmap[j+i*numnodes]);
                 }
-                ActPrintLog(activity, "%s",str.str());
+                ActPrintLog(*activity, "%s",str.str());
             }
         }
 #endif
@@ -1052,7 +1052,7 @@ public:
         unsigned i;
 #ifdef _TRACE
 #ifdef TRACE_PARTITION
-        ActPrintLog(activity, "UsePartitionInfo %s",uppercmp?"upper":"");
+        ActPrintLog(*activity, "UsePartitionInfo %s",uppercmp?"upper":"");
         for (i=0;i<pi.splitkeys.ordinality();i++) {
             StringBuffer s;
             s.appendf("%d: ",i);
@@ -1083,8 +1083,8 @@ public:
                     rowcount_t n = *resp;
                     *mapp = n;
                     if (p>n) {
-                        ActPrintLog(activity, "ERROR: Split positions out of order!");
-                        throw MakeActivityException(activity, TE_SplitPostionsOutOfOrder,"CSortMaster::UsePartitionInfo: Split positions out of order!");
+                        ActPrintLog(*activity, "ERROR: Split positions out of order!");
+                        throw MakeActivityException(*activity, TE_SplitPostionsOutOfOrder,"CSortMaster::UsePartitionInfo: Split positions out of order!");
                     }
                     resp++;
                     mapp++;
@@ -1096,7 +1096,7 @@ public:
         }
 #ifdef _TRACE
 #ifdef TRACE_PARTITION
-        ActPrintLog(activity, "UsePartitionInfo result");
+        ActPrintLog(*activity, "UsePartitionInfo result");
         rowcount_t *p = splitMap;
         for (i=0;i<numnodes;i++) {
             StringBuffer s;
@@ -1105,7 +1105,7 @@ public:
                 s.appendf(" %" RCPF "d,",*p);
                 p++;
             }
-            ActPrintLog(activity, "%s",s.str());
+            ActPrintLog(*activity, "%s",s.str());
         }
 #endif
 #endif
@@ -1147,7 +1147,7 @@ public:
 
     void CalcPreviousPartition()
     {
-        ActPrintLog(activity, "Previous partition");
+        ActPrintLog(*activity, "Previous partition");
         unsigned numsplits=numnodes-1;
         CThorExpandingRowArray splits(*activity, auxrowif, true);
         unsigned i;
@@ -1184,18 +1184,18 @@ public:
         if (skewError<0.000000001)
             skewError = 1.0/(double) n;
         double cSkew = ((double)n*(double)max/(double)total - 1.0) / ((double)n-1.0);
-        ActPrintLog(activity, "Skew check: Threshold %"I64F"d/%"I64F"d  Skew: %f/[warning=%f, error=%f]",
+        ActPrintLog(*activity, "Skew check: Threshold %"I64F"d/%"I64F"d  Skew: %f/[warning=%f, error=%f]",
                   (unsigned __int64)max*(unsigned __int64)estrecsize,threshold,cSkew,skewWarning,skewError);
         if ((unsigned __int64)max*(unsigned __int64)estrecsize>threshold)
         {
             if (cSkew > skewError)
             {
-                Owned<IThorException> e = MakeActivityException(activity, TE_SkewError, "Exceeded skew limit: %f, estimated skew: %f", skewError, cSkew);
+                Owned<IThorException> e = MakeActivityException(*activity, TE_SkewError, "Exceeded skew limit: %f, estimated skew: %f", skewError, cSkew);
                 return e.getClear();
             }
             else if (skewWarning && cSkew > skewWarning)
             {
-                Owned<IThorException> e = MakeActivityWarning(activity, TE_SkewWarning, "Exceeded skew warning limit: %f, estimated skew: %f", skewWarning, cSkew);
+                Owned<IThorException> e = MakeActivityWarning(*activity, TE_SkewWarning, "Exceeded skew warning limit: %f, estimated skew: %f", skewWarning, cSkew);
                 activity->fireException(e);
             }
         }
@@ -1210,10 +1210,10 @@ public:
             minisortthreshold = roxiemem::getTotalMemoryLimit()/2;
         if (skewError>0.0 && skewWarning > skewError)
         {
-            ActPrintLog(activity, "WARNING: Skew warning %f > skew error %f", skewWarning, skewError);
+            ActPrintLog(*activity, "WARNING: Skew warning %f > skew error %f", skewWarning, skewError);
             skewWarning = 0.0;
         }
-        ActPrintLog(activity, "Sort: canoptimizenullcolumns=%s, usepartitionrow=%s, betweensort=%s skewWarning=%f skewError=%f minisortthreshold=%"I64F"d",canoptimizenullcolumns?"true":"false",usepartitionrow?"true":"false",betweensort?"true":"false",skewWarning,skewError,(__int64)minisortthreshold);
+        ActPrintLog(*activity, "Sort: canoptimizenullcolumns=%s, usepartitionrow=%s, betweensort=%s skewWarning=%f skewError=%f minisortthreshold=%"I64F"d",canoptimizenullcolumns?"true":"false",usepartitionrow?"true":"false",betweensort?"true":"false",skewWarning,skewError,(__int64)minisortthreshold);
         assertex(partitioninfo);
         maxdeviance = _maxdeviance;
         unsigned i;
@@ -1234,9 +1234,9 @@ public:
             if (slave.numrecs<minrecsonnode)
                 minrecsonnode = slave.numrecs;
         }
-        ActPrintLog(activity,"Total recs in mem = %"RCPF"d scaled recs= %"RCPF"d size = %"CF"d bytes, minrecsonnode = %"RCPF"d, maxrecsonnode = %"RCPF"d",total,stotal,totalmem,minrecsonnode,maxrecsonnode);
+        ActPrintLog(*activity,"Total recs in mem = %"RCPF"d scaled recs= %"RCPF"d size = %"CF"d bytes, minrecsonnode = %"RCPF"d, maxrecsonnode = %"RCPF"d",total,stotal,totalmem,minrecsonnode,maxrecsonnode);
         if (!usepartitionrow&&!betweensort&&(totalmem<minisortthreshold)&&!overflowed) {
-            ActPrintLog(activity, "Performing minisort of %"RCPF"d records", total);
+            ActPrintLog(*activity, "Performing minisort of %"RCPF"d records", total);
             sorted = MiniSort(total);
             return;
         }
@@ -1292,7 +1292,7 @@ public:
 #endif
                     }
                     if (!partitioninfo->splitkeys.checkSorted(icompare)) {
-                        ActPrintLog(activity, "ERROR: Split keys out of order!");
+                        ActPrintLog(*activity, "ERROR: Split keys out of order!");
                         partitioninfo->splitkeys.sort(*icompare, activity->queryMaxCores());
                     }
                 }
@@ -1319,7 +1319,7 @@ public:
                     }
                 }
                 if (numspilt==0)
-                    ActPrintLog(activity, "Gather - no nodes spilt to disk");
+                    ActPrintLog(*activity, "Gather - no nodes spilt to disk");
                 else {
                     unsigned mostspilt = 0;
                     unsigned spiltmax = 0;
@@ -1328,13 +1328,13 @@ public:
                             spiltmax = spilln.item(smi);
                             mostspilt = smi;
                         }
-                    ActPrintLog(activity, "Gather - %d nodes spilt to disk, most %d times",numspilt,mostspilt);
+                    ActPrintLog(*activity, "Gather - %d nodes spilt to disk, most %d times",numspilt,mostspilt);
                     for (i=0;i<numnodes;i++) {
                         CSortNode &slave = slaves.item(i);
                         if (slave.scale!=mostspilt+1) {
                             char url[100];
                             slave.endpoint.getUrlStr(url,sizeof(url));
-                            ActPrintLog(activity, "Gather - node %s spilled %d times to disk",url,slave.scale-1);
+                            ActPrintLog(*activity, "Gather - node %s spilled %d times to disk",url,slave.scale-1);
                         }
                     }
                     MemoryBuffer mbsk;
@@ -1392,7 +1392,7 @@ public:
                     CSortNode &slave = slaves.item(i);
                     char url[100];
                     slave.endpoint.getUrlStr(url,sizeof(url));
-                    ActPrintLog(activity, "Split point %d: %"RCPF"d rows on %s", i, tot[i], url);
+                    ActPrintLog(*activity, "Split point %d: %"RCPF"d rows on %s", i, tot[i], url);
                 }
                 Owned<IThorException> e = CheckSkewed(threshold,skewWarning,skewError,numnodes,total,max);
                 if (e)
@@ -1403,14 +1403,14 @@ public:
 #endif
 #ifdef USE_SAMPLE_PARTITIONING
                     if (usesampling) {
-                        ActPrintLog(activity, "Partioning using sampling failed, trying iterative partitioning"); 
+                        ActPrintLog(*activity, "Partioning using sampling failed, trying iterative partitioning");
                         usesampling = false;
                         continue;
                     }
 #endif
                     throw e.getClear();
                 }
-                ActPrintLog(activity, "Starting Merge of %"RCPF"d records",total);
+                ActPrintLog(*activity, "Starting Merge of %"RCPF"d records",total);
                 for (i=0;i<numnodes;i++) {
                     CSortNode &slave = slaves.item(i);
                     char url[100];
@@ -1419,13 +1419,13 @@ public:
                         slave.MultiMergeBetween(numnodes*numnodes,splitMap,splitMapUpper,numnodes,endpoints);
                     else
                         slave.MultiMerge(numnodes*numnodes,splitMap,numnodes,endpoints);
-    //              ActPrintLog(activity, "Merge %d started: %d rows on %s",i,tot[i],url);
+    //              ActPrintLog(*activity, "Merge %d started: %d rows on %s",i,tot[i],url);
                 }
             }
             else {
                 CSortNode &slave = slaves.item(0);
                 slave.SingleMerge();
-                ActPrintLog(activity, "Merge started");
+                ActPrintLog(*activity, "Merge started");
             }
             sorted = true;
             break;

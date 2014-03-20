@@ -41,7 +41,7 @@ void registerCreateFunc(CreateFunc func)
 
 class CThorGraphResult : public CInterface, implements IThorResult, implements IRowWriter
 {
-    CActivityBase &activity;
+    ILWActivity &activity;
     rowcount_t rowStreamCount;
     IOutputMetaData *meta;
     Owned<IRowWriterMultiReader> rowBuffer;
@@ -81,7 +81,7 @@ class CThorGraphResult : public CInterface, implements IThorResult, implements I
 public:
     IMPLEMENT_IINTERFACE;
 
-    CThorGraphResult(CActivityBase &_activity, IRowInterfaces *_rowIf, bool _distributed, unsigned spillPriority) : activity(_activity), rowIf(_rowIf), distributed(_distributed)
+    CThorGraphResult(ILWActivity &_activity, IRowInterfaces *_rowIf, bool _distributed, unsigned spillPriority) : activity(_activity), rowIf(_rowIf), distributed(_distributed)
     {
         init();
         if (SPILL_PRIORITY_DISABLE == spillPriority)
@@ -117,7 +117,7 @@ public:
         return rowBuffer->getReader();
     }
     virtual IRowInterfaces *queryRowInterfaces() { return rowIf; }
-    virtual CActivityBase *queryActivity() { return &activity; }
+    virtual ILWActivity *queryActivity() { return &activity; }
     virtual bool isDistributed() const { return distributed; }
     virtual void serialize(MemoryBuffer &mb)
     {
@@ -191,7 +191,7 @@ public:
 
 /////
 
-IThorResult *CThorGraphResults::createResult(CActivityBase &activity, unsigned id, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority)
+IThorResult *CThorGraphResults::createResult(ILWActivity &activity, unsigned id, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority)
 {
     Owned<IThorResult> result = ::createResult(activity, rowIf, distributed, spillPriority);
     setResult(id, result);
@@ -200,7 +200,7 @@ IThorResult *CThorGraphResults::createResult(CActivityBase &activity, unsigned i
 
 /////
 
-IThorResult *createResult(CActivityBase &activity, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority)
+IThorResult *createResult(ILWActivity &activity, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority)
 {
     return new CThorGraphResult(activity, rowIf, distributed, spillPriority);
 }
@@ -238,7 +238,7 @@ public:
     {
         if (!loopAgainRowIf)
             loopAgainRowIf.setown(createRowInterfaces(loopAgainMeta, activityId, activity.queryCodeContext()));
-        activity.queryGraph().createResult(activity, pos, results, loopAgainRowIf, !activity.queryGraph().isLocalChild(), SPILL_PRIORITY_DISABLE);
+        results->createResult(activity, pos, loopAgainRowIf, !activity.queryGraph().isLocalChild(), SPILL_PRIORITY_DISABLE);
     }
     virtual void prepareLoopResults(CActivityBase &activity, IThorGraphResults *results)
     {
@@ -258,7 +258,7 @@ public:
     }
     virtual void execute(CActivityBase &activity, unsigned counter, IThorGraphResults *graphLoopResults, size32_t parentExtractSz, const byte *parentExtract)
     {
-        Owned<IThorGraphResults> results = graph->createThorGraphResults(1);
+        Owned<IThorGraphResults> results = activity.queryJob().createThorGraphResults(1);
         if (counter)
         {
             prepareCounterResult(activity, results, counter, 0);
@@ -273,7 +273,7 @@ public:
             IThorException *te = QUERYINTERFACE(e, IThorException);
             if (!te)
             {
-                Owned<IThorException> e2 = MakeActivityException(&activity, e, "Exception running child graphs");
+                Owned<IThorException> e2 = MakeActivityException(activity, e, "Exception running child graphs");
                 e->Release();
                 te = e2.getClear();
             }
@@ -282,7 +282,7 @@ public:
             try { graph->abort(te); }
             catch (IException *abortE)
             {
-                Owned<IThorException> e2 = MakeActivityException(&activity, abortE, "Exception whilst aborting graph");
+                Owned<IThorException> e2 = MakeActivityException(activity, abortE, "Exception whilst aborting graph");
                 abortE->Release();
                 EXCLOG(e2, NULL);
             }
@@ -375,6 +375,8 @@ CGraphElementBase::CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml) 
     isEof = false;
     log = true;
     sentActInitData.setown(createBitSet());
+    // NB: maxCores, currently only used to control # cores used by sorts
+    maxCores = queryXGMML().getPropInt("hint[@name=\"max_cores\"]/@value", queryJob().queryMaxDefaultActivityCores());
 }
 
 CGraphElementBase::~CGraphElementBase()
@@ -423,6 +425,13 @@ IThorGraphIterator *CGraphElementBase::getAssociatedChildGraphs() const
     return new CGraphArrayIterator(associatedChildGraphs);
 }
 
+IThorGraphResults *CGraphElementBase::queryGraphResults() const
+{
+    if (resultsGraph)
+        return resultsGraph;
+    return queryJob().queryGlobalResults();
+}
+
 IThorGraphDependencyIterator *CGraphElementBase::getDependsIterator() const
 {
     return new ArrayIIteratorOf<const CGraphDependencyArray, CGraphDependency, IThorGraphDependencyIterator>(dependsOn);
@@ -440,7 +449,7 @@ void CGraphElementBase::ActPrintLog(const char *format, ...)
 {
     va_list args;
     va_start(args, format);
-    ::ActPrintLogArgs(this, thorlog_null, MCdebugProgress, format, args);
+    ::ActPrintLogArgs(*this, thorlog_null, MCdebugProgress, format, args);
     va_end(args);
 }
 
@@ -448,7 +457,7 @@ void CGraphElementBase::ActPrintLog(IException *e, const char *format, ...)
 {
     va_list args;
     va_start(args, format);
-    ::ActPrintLogArgs(this, e, thorlog_all, MCexception(e), format, args);
+    ::ActPrintLogArgs(*this, e, thorlog_all, MCexception(e), format, args);
     va_end(args);
 }
 
@@ -725,7 +734,7 @@ bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *par
         }
         else
         {
-            e = MakeActivityException(this, _e);
+            e = MakeActivityException(*this, _e);
             _e->Release();
         }
         throw e;
@@ -862,6 +871,72 @@ void CGraphElementBase::createActivity(size32_t parentExtractSz, const byte *par
 ICodeContext *CGraphElementBase::queryCodeContext()
 {
     return queryOwner().queryCodeContext();
+}
+
+IEngineRowAllocator *CGraphElementBase::queryRowAllocator()
+{
+    if (CABallocatorlock.lock()) {
+        if (!rowAllocator)
+            rowAllocator.setown(queryJob().getRowAllocator(queryRowMetaData(),queryActivityId()));
+        CABallocatorlock.unlock();
+    }
+    return rowAllocator;
+}
+
+IOutputRowSerializer *CGraphElementBase::queryRowSerializer()
+{
+    if (CABserializerlock.lock()) {
+        if (!rowSerializer)
+            rowSerializer.setown(queryRowMetaData()->createDiskSerializer(queryCodeContext(),queryActivityId()));
+        CABserializerlock.unlock();
+    }
+    return rowSerializer;
+}
+
+IOutputRowDeserializer *CGraphElementBase::queryRowDeserializer()
+{
+    if (CABdeserializerlock.lock()) {
+        if (!rowDeserializer)
+            rowDeserializer.setown(queryRowMetaData()->createDiskDeserializer(queryCodeContext(),queryActivityId()));
+        CABdeserializerlock.unlock();
+    }
+    return rowDeserializer;
+}
+
+graph_id CGraphElementBase::queryGraphId() const
+{
+    return queryOwner().queryGraphId();
+}
+
+bool CGraphElementBase::isChild() const
+{
+    return NULL != queryOwner().queryOwner();
+}
+
+bool CGraphElementBase::inGlobalGraph()
+{
+    return queryOwner().isGlobal();
+}
+
+bool CGraphElementBase::getOptBool(const char *prop, bool defVal) const
+{
+    bool def = queryJob().getOptBool(prop, defVal);
+    VStringBuffer path("hint[@name=\"%s\"]/@value", prop);
+    return queryXGMML().getPropBool(path.str(), def);
+}
+
+int CGraphElementBase::getOptInt(const char *prop, int defVal) const
+{
+    int def = queryJob().getOptInt(prop, defVal);
+    VStringBuffer path("hint[@name=\"%s\"]/@value", prop);
+    return queryXGMML().getPropInt(path.toLowerCase().str(), def);
+}
+
+__int64 CGraphElementBase::getOptInt64(const char *prop, __int64 defVal) const
+{
+    __int64 def = queryJob().getOptInt64(prop, defVal);
+    VStringBuffer path("hint[@name=\"%s\"]/@value", prop);
+    return queryXGMML().getPropInt64(path.str(), def);
 }
 
 /////
@@ -1260,7 +1335,7 @@ void CGraphBase::executeSubGraph(size32_t parentExtractSz, const byte *parentExt
             throw;
         }
         if (localResults)
-            localResults->clear();
+            localResults->clearResults();
         doExecute(parentExtractSz, parentExtract, false);
     }
     catch (IException *e)
@@ -1462,7 +1537,7 @@ void CGraphBase::end()
         }
         catch (IException *e)
         {
-            Owned<IException> e2 = MakeActivityException(element.queryActivity(), e, "Error calling kill()");
+            Owned<IException> e2 = MakeActivityException(element, e, "Error calling kill()");
             GraphPrintLog(e2);
             e->Release();
         }
@@ -1774,7 +1849,7 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
     unsigned numResults = xgmml->getPropInt("att[@name=\"_numResults\"]/@value", 0);
     if (numResults)
     {
-        localResults.setown(createThorGraphResults(numResults));
+        localResults.setown(job.createThorGraphResults(numResults));
         resultsGraph = this;
         // JCSMORE - it might more sense if this temp handler was owned by parent act., which may finish(get stopped) earlier than the owning graph
         tmpHandler.setown(queryJob().createTempHandler(false));
@@ -1939,7 +2014,7 @@ StringBuffer &getGlobals(CGraphBase &graph, StringBuffer &str)
 void CGraphBase::executeChild(size32_t parentExtractSz, const byte *parentExtract)
 {
     assertex(localResults);
-    localResults->clear();
+    localResults->clearResults();
     if (isGlobal()) // any slave
     {
         StringBuffer str("Global acts = ");
@@ -1959,17 +2034,17 @@ IThorResult *CGraphBase::getGraphLoopResult(unsigned id, bool distributed)
     return graphLoopResults->getResult(id, distributed);
 }
 
-IThorResult *CGraphBase::createResult(CActivityBase &activity, unsigned id, IThorGraphResults *results, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority)
-{
-    return results->createResult(activity, id, rowIf, distributed, spillPriority);
-}
-
-IThorResult *CGraphBase::createResult(CActivityBase &activity, unsigned id, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority)
+IThorResult *CGraphBase::createResult(ILWActivity &activity, unsigned id, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority)
 {
     return localResults->createResult(activity, id, rowIf, distributed, spillPriority);
 }
 
-IThorResult *CGraphBase::createGraphLoopResult(CActivityBase &activity, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority)
+IThorResult *CGraphBase::createResult(ILWActivity &activity, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority)
+{
+    return localResults->createResult(activity, rowIf, distributed, spillPriority);
+}
+
+IThorResult *CGraphBase::createGraphLoopResult(ILWActivity &activity, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority)
 {
     return graphLoopResults->createResult(activity, rowIf, distributed, spillPriority);
 }
@@ -2061,12 +2136,6 @@ bool CGraphBase::isLocalOnly() const // checks all dependencies, if something ne
         localOnly = (int)::isLocalOnly(*this);
     return 1==localOnly;
 }
-
-IThorGraphResults *CGraphBase::createThorGraphResults(unsigned num)
-{
-    return new CThorGraphResults(num);
-}
-
 
 ////
 
@@ -2544,6 +2613,7 @@ void CJobBase::init()
     bool usePackedAllocator = 0 != getWorkUnitValueInt("THOR_PACKEDALLOCATOR", globals->getPropBool("@THOR_PACKEDALLOCATOR", false));
     unsigned memorySpillAt = (unsigned)getWorkUnitValueInt("memorySpillAt", globals->getPropInt("@memorySpillAt", 80));
     thorAllocator.setown(createThorAllocator(((memsize_t)globalMemorySize)*0x100000, memorySpillAt, *logctx, crcChecking, usePackedAllocator));
+    globalResults.setown(createThorGraphResults(0));
 
     unsigned defaultMemMB = globalMemorySize*3/4;
     unsigned largeMemSize = getOptUInt("@largeMemSize", defaultMemMB);
@@ -2887,8 +2957,6 @@ CActivityBase::CActivityBase(CGraphElementBase *_container) : container(*_contai
     baseHelper.set(container.queryHelper());
     parentExtractSz = 0;
     parentExtract = NULL;
-    // NB: maxCores, currently only used to control # cores used by sorts
-    maxCores = container.queryXGMML().getPropInt("hint[@name=\"max_cores\"]/@value", container.queryJob().queryMaxDefaultActivityCores());
 }
 
 CActivityBase::~CActivityBase()
@@ -2910,7 +2978,7 @@ void CActivityBase::ActPrintLog(const char *format, ...)
 {
     va_list args;
     va_start(args, format);
-    ::ActPrintLogArgs(&queryContainer(), thorlog_null, MCdebugProgress, format, args);
+    ::ActPrintLogArgs(*this, thorlog_null, MCdebugProgress, format, args);
     va_end(args);
 }
 
@@ -2918,7 +2986,7 @@ void CActivityBase::ActPrintLog(IException *e, const char *format, ...)
 {
     va_list args;
     va_start(args, format);
-    ::ActPrintLogArgs(&queryContainer(), e, thorlog_all, MCexception(e), format, args);
+    ::ActPrintLogArgs(*this, e, thorlog_all, MCexception(e), format, args);
     va_end(args);
 }
 
@@ -2938,7 +3006,7 @@ bool CActivityBase::fireException(IException *e)
     }
     else
     {
-        te = MakeActivityException(this, e);
+        te = MakeActivityException(*this, e);
         te->setAudience(e->errorAudience());
         _te.setown(te);
     }
@@ -2955,7 +3023,7 @@ void CActivityBase::processAndThrowOwnedException(IException * _e)
     }
     else
     {
-        e = MakeActivityException(this, _e);
+        e = MakeActivityException(*this, _e);
         _e->Release();
     }
     if (!e->queryNotified())
@@ -2964,37 +3032,6 @@ void CActivityBase::processAndThrowOwnedException(IException * _e)
         e->setNotified();
     }
     throw e;
-}
-
-
-IEngineRowAllocator * CActivityBase::queryRowAllocator()
-{
-    if (CABallocatorlock.lock()) {
-        if (!rowAllocator)
-            rowAllocator.setown(queryJob().getRowAllocator(queryRowMetaData(),queryActivityId()));
-        CABallocatorlock.unlock();
-    }
-    return rowAllocator;
-}
-    
-IOutputRowSerializer * CActivityBase::queryRowSerializer()
-{
-    if (CABserializerlock.lock()) {
-        if (!rowSerializer)
-            rowSerializer.setown(queryRowMetaData()->createDiskSerializer(queryCodeContext(),queryActivityId()));
-        CABserializerlock.unlock();
-    }
-    return rowSerializer;
-}
-
-IOutputRowDeserializer * CActivityBase::queryRowDeserializer()
-{
-    if (CABdeserializerlock.lock()) {
-        if (!rowDeserializer)
-            rowDeserializer.setown(queryRowMetaData()->createDiskDeserializer(queryCodeContext(),queryActivityId()));
-        CABdeserializerlock.unlock();
-    }
-    return rowDeserializer;
 }
 
 IRowInterfaces *CActivityBase::getRowInterfaces()
@@ -3026,21 +3063,15 @@ void CActivityBase::cancelReceiveMsg(const rank_t rank, const mptag_t mpTag)
 
 bool CActivityBase::getOptBool(const char *prop, bool defVal) const
 {
-    bool def = queryJob().getOptBool(prop, defVal);
-    VStringBuffer path("hint[@name=\"%s\"]/@value", prop);
-    return container.queryXGMML().getPropBool(path.str(), def);
+    return container.getOptBool(prop, defVal);
 }
 
 int CActivityBase::getOptInt(const char *prop, int defVal) const
 {
-    int def = queryJob().getOptInt(prop, defVal);
-    VStringBuffer path("hint[@name=\"%s\"]/@value", prop);
-    return container.queryXGMML().getPropInt(path.toLowerCase().str(), def);
+    return container.getOptInt(prop, defVal);
 }
 
 __int64 CActivityBase::getOptInt64(const char *prop, __int64 defVal) const
 {
-    __int64 def = queryJob().getOptInt64(prop, defVal);
-    VStringBuffer path("hint[@name=\"%s\"]/@value", prop);
-    return container.queryXGMML().getPropInt64(path.str(), def);
+    return container.getOptInt64(prop, defVal);
 }

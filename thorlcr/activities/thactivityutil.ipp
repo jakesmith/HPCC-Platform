@@ -201,7 +201,7 @@ IThorDataLink *createDataLinkSmartBuffer(CActivityBase *activity,IThorDataLink *
 
 bool isSmartBufferSpillNeeded(CActivityBase *act);
 
-StringBuffer &locateFilePartPath(CActivityBase *activity, const char *logicalFilename, IPartDescriptor &partDesc, StringBuffer &filePath);
+StringBuffer &locateFilePartPath(CActivityBase &activity, const char *logicalFilename, IPartDescriptor &partDesc, StringBuffer &filePath);
 void doReplicate(CActivityBase *activity, IPartDescriptor &partDesc, ICopyFileProgress *iProgress=NULL);
 void cancelReplicates(CActivityBase *activity, IPartDescriptor &partDesc);
 

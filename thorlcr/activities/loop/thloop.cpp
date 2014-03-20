@@ -219,10 +219,10 @@ public:
                 IThorBoundLoopGraph *boundGraph = queryContainer().queryLoopGraph();
                 unsigned condLoopCounter = (flags & IHThorLoopArg::LFcounter) ? loopCounter : 0;
                 unsigned loopAgain = (flags & IHThorLoopArg::LFnewloopagain) ? helper->loopAgainResult() : 0;
-                ownedResults.setown(queryGraph().createThorGraphResults(3)); // will not be cleared until next sync
+                ownedResults.setown(queryJob().createThorGraphResults(3)); // will not be cleared until next sync
                 // ensures remote results are available, via owning activity (i.e. this loop act)
                 // so that when the master/slave result parts are fetched, it will retreive from the act, not the (already cleaed) graph localresults
-                ownedResults->setOwner(container.queryId());
+                ownedResults->setResultsOwner(container.queryId());
 
                 boundGraph->prepareLoopResults(*this, ownedResults);
                 if (condLoopCounter)
@@ -269,7 +269,7 @@ public:
         if (!global)
             return;
         IHThorGraphLoopArg *helper = (IHThorGraphLoopArg *) queryHelper();
-        Owned<IThorGraphResults> results = queryGraph().createThorGraphResults(1);
+        Owned<IThorGraphResults> results = container.queryJob().createThorGraphResults(1);
         if (helper->getFlags() & IHThorGraphLoopArg::GLFcounter)
             queryContainer().queryLoopGraph()->prepareCounterResult(*this, results, 1, 0);
         loopGraph->setResults(results);
@@ -286,7 +286,7 @@ public:
             return;
         unsigned maxIterations = helper->numIterations();
         if ((int)maxIterations < 0) maxIterations = 0;
-        Owned<IThorGraphResults> loopResults = queryGraph().createThorGraphResults(maxIterations);
+        Owned<IThorGraphResults> loopResults = container.queryJob().createThorGraphResults(maxIterations);
         IThorResult *result = loopResults->createResult(*this, 0, this, true);
 
         helper->createParentExtract(extractBuilder);
@@ -326,8 +326,6 @@ public:
     virtual void createResult() = 0;
     virtual void process()
     {
-        assertex(container.queryResultsGraph());
-        Owned<CGraphBase> graph = queryJob().getGraph(container.queryResultsGraph()->queryGraphId());
         IHThorLocalResultWriteArg *helper = (IHThorLocalResultWriteArg *)queryHelper();
         inputRowIf.setown(createRowInterfaces(container.queryInput(0)->queryHelper()->queryOutputMeta(),queryActivityId(),queryCodeContext()));
         createResult();
@@ -343,8 +341,7 @@ public:
     virtual void createResult()
     {
         IHThorLocalResultWriteArg *helper = (IHThorLocalResultWriteArg *)queryHelper();
-        Owned<CGraphBase> graph = queryJob().getGraph(container.queryResultsGraph()->queryGraphId());
-        graph->createResult(*this, helper->querySequence(), this, true); // NB graph owns result
+        container.queryGraphResults()->createResult(*this, helper->querySequence(), this, true); // NB graph owns result
     }
 };
 
@@ -361,9 +358,7 @@ public:
     }
     virtual void createResult()
     {
-        IHThorGraphLoopResultWriteArg *helper = (IHThorGraphLoopResultWriteArg *)queryHelper();
-        Owned<CGraphBase> graph = queryJob().getGraph(container.queryResultsGraph()->queryGraphId());
-        graph->createGraphLoopResult(*this, inputRowIf, true); // NB graph owns result
+        container.queryGraphResults()->createGraphLoopResult(*this, inputRowIf, true); // NB graph owns result
     }
 };
 
@@ -382,8 +377,7 @@ public:
     virtual void createResult()
     {
         IHThorDictionaryResultWriteArg *helper = (IHThorDictionaryResultWriteArg *)queryHelper();
-        Owned<CGraphBase> graph = queryJob().getGraph(container.queryResultsGraph()->queryGraphId());
-        graph->createResult(*this, helper->querySequence(), this, true); // NB graph owns result
+        container.queryGraphResults()->createResult(*this, helper->querySequence(), this, true); // NB graph owns result
     }
 };
 

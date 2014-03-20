@@ -594,7 +594,7 @@ static void _doReplicate(CActivityBase *activity, IPartDescriptor &partDesc, ICo
             catch (IException *)
             {
                 try { tmpIFile->remove(); }
-                catch (IException *e) { ActPrintLog(&activity->queryContainer(), e); e->Release(); }
+                catch (IException *e) { ActPrintLog(*activity, e); e->Release(); }
                 throw;
             }
         }
@@ -625,8 +625,8 @@ void cancelReplicates(CActivityBase *activity, IPartDescriptor &partDesc)
             }
             catch (IException *e)
             {
-                Owned<IThorException> re = MakeActivityException(activity, e, "Error cancelling backup '%s'", dstName.str());
-                ActPrintLog(&activity->queryContainer(), e);
+                Owned<IThorException> re = MakeActivityException(*activity, e, "Error cancelling backup '%s'", dstName.str());
+                ActPrintLog(*activity, e);
                 e->Release();
             }
         }
@@ -799,7 +799,7 @@ IFileIO *createMultipleWrite(CActivityBase *activity, IPartDescriptor &partDesc,
     return new CWriteHandler(*activity, partDesc, file, fileio, iProgress, direct, renameToPrimary, aborted);
 }
 
-StringBuffer &locateFilePartPath(CActivityBase *activity, const char *logicalFilename, IPartDescriptor &partDesc, StringBuffer &filePath)
+StringBuffer &locateFilePartPath(CActivityBase &activity, const char *logicalFilename, IPartDescriptor &partDesc, StringBuffer &filePath)
 {
     unsigned location;
     OwnedIFile ifile;
@@ -809,7 +809,7 @@ StringBuffer &locateFilePartPath(CActivityBase *activity, const char *logicalFil
     {
         StringBuffer locations;
         IException *e = MakeActivityException(activity, TE_FileNotFound, "No physical file part for logical file %s, found at given locations: %s (Error = %d)", logicalFilename, getFilePartLocations(partDesc, locations).str(), GetLastError());
-        ActPrintLog(&activity->queryContainer(), e);
+        ActPrintLog(*activity), e);
         throw e;
     }
     return filePath;
