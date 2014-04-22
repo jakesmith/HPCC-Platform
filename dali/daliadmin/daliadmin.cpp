@@ -93,6 +93,8 @@ void usage(const char *exe)
   printf("  checksuperfile <superfilename> [fix=true|false] -- check superfile links consistent and optionally fix\n");
   printf("  checksubfile <subfilename>     -- check subfile links to parent consistent\n");
   printf("  listexpires <logicalnamemask>  -- lists logical files with expiry value\n");
+  printf("  exportclusterfiles <cluster-group> <destfile> [deletefiles=<true|false>] -- export meta data for logical files that belong to <cluster-group> to <destfile>\n");
+  printf("  mergetodali <xpath> <meta-xml-file> -- merge xml file into Dali at location <xpath>\n");
   printf("  listrelationships <primary> <secondary>\n");
   printf("  dfsperm <logicalname>           -- returns LDAP permission for file\n");
   printf("  dfscompratio <logicalname>      -- returns compression ratio of file\n");
@@ -1644,6 +1646,106 @@ static void listmatches(const char *path, const char *match, const char *pval)
     }
 }
 
+class CStringTuple : public CInterfaceOf<IInterface>
+{
+public:
+    CStringTuple(const char *_e1, const char *_e2) : e1(_e1), e2(_e2) { }
+    StringAttr e1, e2;
+};
+static void exportClusterGroupFiles(const char *group, const char *dstFile, bool deleteFiles, IUserDescriptor *user)
+{
+    Owned<IRemoteConnection> conn = querySDS().connect("/Files", myProcessSession(), RTM_LOCK_READ, daliConnectTimeoutMs);
+    assertex(conn);
+    StringArray files;
+    IArrayOf<CStringTuple> superMap;
+    VStringBuffer xpath("//File[@group=\"%s\"]", group);
+    PROGLOG("Fetching files.. this may take some time.");
+    Owned<IPropertyTreeIterator> fileIter = conn->getElements(xpath.str(), iptiter_remotegetbranch);
+//    if (deleteFiles)
+    {
+        ForEach(*fileIter)
+        {
+            IPropertyTree &file = fileIter->query();
+            const char *lfn = file.queryProp("OrigName");
+            files.append(lfn);
+            PROGLOG("File to delete: %s", lfn);
+            const char *superOwner = file.queryProp("SuperOwner");
+            if (superOwner)
+                superMap.append(* new CStringTuple(lfn, superOwner));
+        }
+    }
+#if 0
+    VStringBuffer xpath2("//SuperFile[@group=\"%s\"]", group);
+    PROGLOG("Fetching super files.. this may take some time.");
+    Owned<IPropertyTreeIterator> superIter = conn->getElements(xpath2.str(), iptiter_remotegetbranch);
+//    if (deleteFiles)
+    {
+        ForEach(*superIter)
+        {
+            IPropertyTree &file = superIter->query();
+            const char *slfn = file.queryProp("OrigName");
+            superFiles.append(slfn);
+            PROGLOG("SuperFile to delete: %s", slfn);
+        }
+    }
+#endif
+    conn->close(); // NB: no more fetches will occur for connection root after this point
+
+    OwnedIFile outFile = createIFile(dstFile);
+    OwnedIFileIO fileIO = outFile->open(IFOcreate);
+    Owned<IFileIOStream> fileIoStream = createBufferedIOStream(fileIO);
+    toXML(conn->queryRoot(), *fileIoStream);
+    PROGLOG("Complete - exported %s files to file: %s", group, dstFile);
+    if (deleteFiles)
+    {
+        PROGLOG("Deleting files.");
+        ForEachItemIn(f, files)
+        {
+            CDfsLogicalFileName lfn;
+            const char *lfnName = files.item(f);
+            lfn.set(lfnName);
+            StringBuffer xpath;
+            lfn.makeFullnameQuery(xpath, DXB_File, true);
+            PROGLOG("Deleting File: %s (at path %s)", lfnName, xpath.str());
+            Owned<IRemoteConnection > conn = querySDS().connect(xpath.str(), myProcessSession(), RTM_LOCK_WRITE|RTM_DELETE_ON_DISCONNECT, daliConnectTimeoutMs);
+            conn.clear();
+        }
+        ForEachItemIn(sm, superMap)
+        {
+            CStringTuple &tuple = superMap.item(sm);
+            CDfsLogicalFileName lfn;
+            lfn.set(tuple.e2);
+            StringBuffer xpath;
+            lfn.makeFullnameQuery(xpath, DXB_SuperFile, true);
+            PROGLOG("Removing File %s from SuperFile %s (at path %s)", tuple.e1, tuple.e2);
+            Owned<IRemoteConnection > conn = querySDS().connect(xpath.str(), myProcessSession(), RTM_LOCK_WRITE, daliConnectTimeoutMs);
+        }
+        ForEachItemIn(sf, superFiles)
+        {
+            const char *lfnName = superFiles.item(sf);
+            conn.clear();
+        }
+    }
+}
+
+static void mergeXMLToDali(const char *path, const char *xml, IUserDescriptor *user)
+{
+    Owned<IRemoteConnection> conn = querySDS().connect(path, myProcessSession(), RTM_LOCK_WRITE, daliConnectTimeoutMs);
+    assertex(conn);
+    IPropertyTree *files = conn->queryRoot();
+
+    StringBuffer backupFile;
+    Owned<IFileIO> fileIo = createUniqueFile(NULL,"metaxml", "bak", backupFile);
+    Owned<IFileIOStream> fStream = createBufferedIOStream(fileIo);
+    PROGLOG("Backing up %s to : %s.", path, backupFile.str());
+    toXML(files, *fStream);
+    PROGLOG("Backup complete, loading source meta file: %s.", xml);
+    Owned<IPropertyTree> sourceMeta = createPTreeFromXMLFile(xml);
+    PROGLOG("Merging source XML to Dali.");
+    mergePTree(conn->queryRoot(), sourceMeta);
+    PROGLOG("Merge complete.");
+}
+
 //=============================================================================
 
 
@@ -2797,7 +2899,16 @@ int main(int argc, char* argv[])
                     }
                     else if (stricmp(cmd,"listexpires")==0) {
                         CHECKPARAMS(0,1);
-                        listexpires((np>1)?params.item(1):"*",userDesc);
+                        listexpires((np>=1)?params.item(1):"*",userDesc);
+                    }
+                    else if (stricmp(cmd,"exportclusterfiles")==0) {
+                        CHECKPARAMS(2,2);
+                        bool deleteFiles = props->getPropBool("deletefiles");
+                        exportClusterGroupFiles(params.item(1), params.item(2), deleteFiles, userDesc);
+                    }
+                    else if (stricmp(cmd,"mergetodali")==0) {
+                        CHECKPARAMS(2,2);
+                        mergeXMLToDali(params.item(1), params.item(2), userDesc);
                     }
                     else if (stricmp(cmd,"listrelationships")==0) {
                         CHECKPARAMS(2,2);

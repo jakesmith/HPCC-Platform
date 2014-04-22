@@ -361,6 +361,7 @@ void CRemoteConnection::close(bool deleteRoot)
     CHECK_ORPHANED("close");
     if (connected)
         manager.commit(*this, &deleteRoot);
+    lazyFetch=false;
     connected=false;
 }
 
