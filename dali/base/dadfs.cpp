@@ -3071,8 +3071,8 @@ protected:
                     throw MakeStringException(-1,"detach: %s", reason.str());
             }
             // detach this IDistributeFile
-            /* JCS - this is really overcomplicates it and leaves a windows for mishap.
-             * should lock for exclusive write, then delete without reverting to read lock and _then_ removing root from Dali.
+
+            /* JCSMORE - In 'removeFile=true' case, this should really delete before release exclusive lock.
              */
             writeLock.clear();
             root.setown(closeConnection(removeFile));
@@ -4748,7 +4748,7 @@ protected:
 
     void clearSuperOwners(unsigned timeoutMs)
     {
-        /* JCS - Why on earth is this doing this way?
+        /* JCSMORE - Why on earth is this doing this way?
          * We are in a super file, we already have [read] locks to sub files (in 'subfiles' array)
          * This should iterate through those and call unlinkSubFile I think.
          */
@@ -5365,8 +5365,8 @@ public:
 
         // Remove from SDS
 
-        /* this looks very kludgy...
-         * We have readlock, this dode is doing
+        /* JCSMORE - this looks very kludgy...
+         * We have readlock, this code is doing
          * 1) change to write lock (not using lockProperties or DistributedFilePropertyLock to do so) [using CFileChangeWriteLock]
          *    CFileChangeWriteLock doesn't preserve lock mode quite right.. (see 'newMode')
          * 2) manually deleting SuperOwner from subfiles (in clearSuperOwners)
