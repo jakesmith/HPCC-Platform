@@ -52,7 +52,7 @@ public:
             progressLabels.append("diskRejected");
         }
         ForEachItemIn(l, progressLabels)
-            progressInfoArr.append(*new ProgressInfo);
+            progressInfoArr.append(*new CProgressInfo(*this));
         localKey = false;
         numTags = 0;
         tags[0] = tags[1] = tags[2] = tags[3] = TAG_NULL;
@@ -283,7 +283,7 @@ public:
         assertex(0 == idx);
         ForEachItemIn(p, progressInfoArr)
         {
-            ProgressInfo &progress = progressInfoArr.item(p);
+            CProgressInfo &progress = progressInfoArr.item(p);
             progress.processInfo();
             StringBuffer attr("@");
             attr.append(progressLabels.item(p));

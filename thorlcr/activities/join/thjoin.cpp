@@ -39,7 +39,7 @@ class JoinActivityMaster : public CMasterActivity
     unsigned selfJoinWarnLevel, lastMsgTime;
     mptag_t mpTagRPC, barrierMpTag;
     Owned<IBarrier> barrier;
-    Owned<ProgressInfo> lhsProgress, rhsProgress;
+    Owned<CProgressInfo> lhsProgress, rhsProgress;
 
     bool nosortPrimary()
     {
@@ -82,8 +82,8 @@ public:
     JoinActivityMaster(CMasterGraphElement * info, bool local) : CMasterActivity(info)
     {
         ActPrintLog("JoinActivityMaster");
-        lhsProgress.setown(new ProgressInfo);
-        rhsProgress.setown(new ProgressInfo);
+        lhsProgress.setown(new CProgressInfo(*this));
+        rhsProgress.setown(new CProgressInfo(*this));
         helper = NULL;
         islocal = local;
         imaster = NULL;

@@ -500,11 +500,11 @@ void CMasterActivity::getXGMML(IWUGraphProgress *progress, IPropertyTree *node)
     timingInfo.getXGMML(node);
 }
 
-void CMasterActivity::getXGMML(unsigned idx, IPropertyTree *edge)
+void CMasterActivity::getXGMML(unsigned idx, IStats &stats)
 {
     CriticalBlock b(progressCrit);
     if (progressInfo.isItem(idx))
-        progressInfo.item(idx).getXGMML(edge);
+        progressInfo.item(idx).setStats(stats);
 }
 
 void CMasterActivity::done()
@@ -2766,30 +2766,21 @@ IThorResult *CMasterGraph::createGraphLoopResult(CActivityBase &activity, IRowIn
 
 ///////////////////////////////////////////////////
 
-CThorStats::CThorStats(const char *_prefix)
+CThorStats::CThorStats(CMasterActivity *_activity, const char *_prefix) : activity(_activity)
 {
     unsigned c = queryClusterWidth();
     while (c--) counts.append(0);
+    VStringBuffer labelPrefix("graph%d:activity%d", activity->queryGraph().queryGraphId(), activity->queryContainer().queryId());
     if (_prefix)
-    {
-        prefix.set(_prefix);
-        StringBuffer tmp;
-        labelMin.set(tmp.append(_prefix).append("Min"));
-        labelMax.set(tmp.clear().append(_prefix).append("Max"));
-        labelMinSkew.set(tmp.clear().append(_prefix).append("MinSkew"));
-        labelMaxSkew.set(tmp.clear().append(_prefix).append("MaxSkew"));
-        labelMinEndpoint.set(tmp.clear().append(_prefix).append("MinEndpoint"));
-        labelMaxEndpoint.set(tmp.clear().append(_prefix).append("MaxEndpoint"));
-    }
-    else
-    {
-        labelMin.set("min");
-        labelMax.set("max");
-        labelMinSkew.set("minskew");
-        labelMaxSkew.set("maxskew");
-        labelMinEndpoint.set("minEndpoint");
-        labelMaxEndpoint.set("maxEndpoint");
-    }
+    	labelPrefix.appendf(":%s", _prefix);
+    prefix.set(labelPrefix.str());
+	StringBuffer tmp;
+	labelMin.set(tmp.append(_prefix).append("Min"));
+	labelMax.set(tmp.clear().append(_prefix).append("Max"));
+	labelMinSkew.set(tmp.clear().append(_prefix).append("MinSkew"));
+	labelMaxSkew.set(tmp.clear().append(_prefix).append("MaxSkew"));
+	labelMinEndpoint.set(tmp.clear().append(_prefix).append("MinEndpoint"));
+	labelMaxEndpoint.set(tmp.clear().append(_prefix).append("MaxEndpoint"));
 }
 
 void CThorStats::set(unsigned node, unsigned __int64 count)
@@ -2852,9 +2843,11 @@ void CThorStats::processInfo()
     }
 }
 
-void CThorStats::getXGMML(IPropertyTree *node, bool suppressMinMaxWhenEqual)
+void CThorStats::setStats(IStats *starts, bool suppressMinMaxWhenEqual)
 {
     processInfo();
+    StringBuffer tmp;
+    tmp.append("thorslave%d",activity->queryJob()->querySlave())
     if (suppressMinMaxWhenEqual && (hi == lo))
     {
         removeAttribute(node, labelMin);
@@ -2930,9 +2923,11 @@ void ProgressInfo::processInfo() // reimplement as counts have special flags (i.
     }
 }
 
-void ProgressInfo::getXGMML(IPropertyTree *node)
+void ProgressInfo::setStats(IStats *stats)
 {
-    CThorStats::getXGMML(node, true);
+    CThorStats::setStats(stats);
+    StringBuffer tmp(prefix);
+    stats->setStatistics(tmp, );
     addAttribute(node, "slaves", counts.ordinality());
     addAttribute(node, "count", tot);
     addAttribute(node, "started", startcount);

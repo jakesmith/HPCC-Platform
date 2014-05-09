@@ -35,7 +35,7 @@ protected:
     bool nofilter;
     ProgressInfoArray progressInfoArr;
     StringArray progressLabels;
-    Owned<ProgressInfo> inputProgress;
+    Owned<CProgressInfo> inputProgress;
 
     rowcount_t aggregateToLimit()
     {
@@ -189,8 +189,8 @@ public:
         progressLabels.append("seeks");
         progressLabels.append("scans");
         ForEachItemIn(l, progressLabels)
-            progressInfoArr.append(*new ProgressInfo);
-        inputProgress.setown(new ProgressInfo);
+            progressInfoArr.append(*new CProgressInfo(*this));
+        inputProgress.setown(new CProgressInfo(*this));
         reInit = 0 != (indexBaseHelper->getFlags() & (TIRvarfilename|TIRdynamicfilename));
     }
     virtual void init()
@@ -276,7 +276,7 @@ public:
         edge->setPropInt64(label.str(), inputProgress->queryTotal());
         ForEachItemIn(p, progressInfoArr)
         {
-            ProgressInfo &progress = progressInfoArr.item(p);
+            CProgressInfo &progress = progressInfoArr.item(p);
             progress.processInfo();
             StringBuffer attr("@");
             attr.append(progressLabels.item(p));

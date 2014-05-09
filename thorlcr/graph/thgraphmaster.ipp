@@ -186,6 +186,7 @@ public:
 class graphmaster_decl CThorStats : public CInterface, implements IInterface
 {
 protected:
+    CMasterActivity &activity;
     unsigned __int64 max, min, tot, avg;
     unsigned hi, lo, minNode, maxNode;
     UInt64Array counts;
@@ -195,7 +196,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE;
 
-    CThorStats(const char *prefix=NULL);
+    CThorStats(CMasterActivity &activity, const char *prefix=NULL);
     void reset();
     virtual void processInfo();
     static void removeAttribute(IPropertyTree *node, const char *name);
@@ -212,20 +213,21 @@ public:
     unsigned queryMinNode() { return minNode; }
 
     void set(unsigned node, unsigned __int64 count);
-    void getXGMML(IPropertyTree *node, bool suppressMinMaxWhenEqual);
+    void setStats(IStats *stats, bool suppressMinMaxWhenEqual);
 };
 
 class graphmaster_decl CTimingInfo : public CThorStats
 {
 public:
-    CTimingInfo();
+    CTimingInfo(CMasterActivity &activity);
     void getXGMML(IPropertyTree *node) { CThorStats::getXGMML(node, false); }
 };
 
-class graphmaster_decl ProgressInfo : public CThorStats
+class graphmaster_decl CProgressInfo : public CThorStats
 {
     unsigned startcount, stopcount;
 public:
+    CProgressInfo(CMasterActivity &activity);
     virtual void processInfo();
     void getXGMML(IPropertyTree *node);
 };

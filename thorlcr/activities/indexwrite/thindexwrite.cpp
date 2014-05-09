@@ -35,7 +35,7 @@ class IndexWriteActivityMaster : public CMasterActivity
     StringArray clusters;
     mptag_t mpTag2;
     bool refactor;
-    Owned<ProgressInfo> replicateProgress;
+    Owned<CProgressInfo> replicateProgress;
     bool publishReplicatedDone;
     CDfsLogicalFileName dlfn;
     IHThorIndexWriteArg *helper;
@@ -44,7 +44,7 @@ public:
     IndexWriteActivityMaster(CMasterGraphElement *info) : CMasterActivity(info)
     {
         helper = (IHThorIndexWriteArg *)queryHelper();
-        replicateProgress.setown(new ProgressInfo);
+        replicateProgress.setown(new CProgressInfo(*this));
         publishReplicatedDone = !globals->getPropBool("@replicateAsync", true);
         recordsProcessed = 0;
         refactor = singlePartKey = isLocal = false;

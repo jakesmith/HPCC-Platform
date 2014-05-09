@@ -39,7 +39,7 @@ private:
     CIArrayOf<CGraphBase> activeGraphs;
     UnsignedArray graphStarts;
     
-    void doReportGraph(IWUGraphProgress *progress, CGraphBase *graph, bool finished)
+    void doReportGraph(IStats *stats, CGraphBase *graph, bool finished)
     {
         Owned<IThorActivityIterator> iter;
         if (graph->queryOwner() && !graph->isGlobal())
@@ -68,15 +68,15 @@ private:
             }
         }
     }
-    void reportGraph(IWUGraphProgress *progress, CGraphBase *graph, bool finished)
+    void reportGraph(IStats *stats, CGraphBase *graph, bool finished)
     {
         try
         {
             if (graph->isCreated())
-                doReportGraph(progress, graph, finished);
+                doReportGraph(stats, graph, finished);
             Owned<IThorGraphIterator> graphIter = graph->getChildGraphs();
             ForEach (*graphIter)
-                reportGraph(progress, &graphIter->query(), finished);
+                reportGraph(stats, &graphIter->query(), finished);
         }
         catch (IException *e)
         {
@@ -129,13 +129,15 @@ private:
             {
                 IConstWorkUnit &currentWU = activeGraphs.item(0).queryJob().queryWorkUnit();
                 Owned<IConstWUGraphProgress> graphProgress = ((CJobMaster &)activeGraphs.item(0).queryJob()).getGraphProgress();
-                Owned<IWUGraphProgress> progress = graphProgress->update();
+
+                Owned<IStats> stats = currentWU.updateStats();
+
                 ForEachItemIn (g, activeGraphs)
                 {
                     CGraphBase &graph = activeGraphs.item(g);
-                    reportGraph(progress, &graph, finished);
+                    reportGraph(stats, &graph, finished);
                 }
-                progress.clear(); // clear progress(lock) now, before attempting to get lock on wu, potentially delaying progress unlock.
+				stats.clear();
                 graphProgress.clear();
                 Owned<IWorkUnit> wu = &currentWU.lock();
                 ForEachItemIn (g2, activeGraphs)

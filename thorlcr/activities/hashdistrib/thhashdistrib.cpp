@@ -80,13 +80,13 @@ public:
 
 class HashJoinDistributeActivityMaster : public HashDistributeActivityMaster
 {
-    Owned<ProgressInfo> lhsProgress, rhsProgress;
+    Owned<CProgressInfo> lhsProgress, rhsProgress;
 
 public:
     HashJoinDistributeActivityMaster(DistributeMode mode, CMasterGraphElement *info) : HashDistributeActivityMaster(mode, info)
     {
-        lhsProgress.setown(new ProgressInfo);
-        rhsProgress.setown(new ProgressInfo);
+        lhsProgress.setown(new CProgressInfo(*this));
+        rhsProgress.setown(new CProgressInfo(*this));
     }
     virtual void deserializeStats(unsigned node, MemoryBuffer &mb)
     {

@@ -32,7 +32,7 @@
 CDiskReadMasterBase::CDiskReadMasterBase(CMasterGraphElement *info) : CMasterActivity(info)
 {
     hash = NULL;
-    inputProgress.setown(new ProgressInfo);
+    inputProgress.setown(new CProgressInfo(*this));
 }
 
 void CDiskReadMasterBase::init()
@@ -168,7 +168,7 @@ void CWriteMasterBase::publish()
 CWriteMasterBase::CWriteMasterBase(CMasterGraphElement *info) : CMasterActivity(info)
 {
     publishReplicatedDone = !globals->getPropBool("@replicateAsync", true);
-    replicateProgress.setown(new ProgressInfo);
+    replicateProgress.setown(new CProgressInfo(*this));
     diskHelperBase = (IHThorDiskWriteArg *)queryHelper();
     targetOffset = 0;
 }
