@@ -1885,6 +1885,8 @@ void TestSubLocks()
     PrintLog("SubLocks test done");
 }
 
+Owned<IGroup> daliGroup;
+
 void TestSDS1()
 {
     StringBuffer xml;
@@ -1892,6 +1894,44 @@ void TestSDS1()
     IRemoteConnection *conn;
     IPropertyTree *root;
 
+#if 1
+    {
+        try
+        {
+            Owned<IRemoteConnection> conn = querySDS().connect("/", myProcessSession(), RTM_LOCK_WRITE, 2000*MDELAY);
+            PROGLOG("press a key to save state and disconnect from Dali: closedownClientProcess"); getchar();
+
+            CSDSDetachedState daliState;
+            querySDS().saveState(daliState.clear());
+            ::closedownClientProcess(); // dali client closedown
+
+            PROGLOG("press a key to re-establish Dali connection: initClientProcess"); getchar();
+
+            initClientProcess(daliGroup, DCR_Other);
+            querySDS().restoreState(daliState);
+
+            PROGLOG("press a key to interact with connection"); getchar();
+
+            conn->queryRoot()->setProp("hello", "blah");
+            conn->commit();
+
+            conn.clear();
+
+            PROGLOG("press a key to clearup daliState"); getchar();
+
+            daliState.clear();
+
+            closedownClientProcess();
+            initClientProcess(daliGroup, DCR_Other);
+
+        }
+        catch (IException *e)
+        {
+            EXCLOG(e, "exception");
+        }
+        return;
+    }
+#endif
 #ifdef TSUB
     Owned<TestSubscription> ts = new TestSubscription();
     SubscriptionId id = querySDS().subscribe("/subtest", *ts, false, true);
@@ -3018,7 +3058,8 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        IGroup *group = createIGroup(epa); 
+        IGroup *group = createIGroup(epa);
+        daliGroup.set(group);
 
         if (TEST("SESSION"))
             initClientProcess(group,DCR_Other, testParams.ordinality() ? 0 : 7777);
