@@ -84,10 +84,10 @@ public:
 
     void beforeDispose()
     {
-        if (connected)
+        if (manager)
         {
             bool deleteRoot = false;
-            manager.commit(*this, &deleteRoot);
+            manager->commit(*this, &deleteRoot);
         }
         root.clear();
     }
@@ -98,9 +98,8 @@ public:
     inline bool queryStateChanges() const { return stateChanges; }
     inline bool queryLazyFetch() const { return lazyFetch; }
     inline bool setLazyFetch(bool fetch) { bool ret = lazyFetch; lazyFetch = fetch; return ret; }
-    inline ISDSConnectionManager &queryManager() { return manager; }
-    inline bool queryConnected() { return connected; }
-    inline void setConnected(bool _connected) { connected = _connected; }
+    inline ISDSConnectionManager &queryManager() { return *manager; }
+    inline bool queryConnected() { return NULL != manager; }
     inline bool queryServerIter() const { return serverIter; }
     inline bool queryServerIterAvailable() const { return serverIterAvailable; }
     inline bool queryServerGetIdsAvailable() const { return serverGetIdsAvailable; }
@@ -110,6 +109,9 @@ public:
     void clearCommitChanges();
     IPropertyTreeIterator *doGetElements(CClientRemoteTree *tree, const char *xpath, IPTIteratorCodes flags);
     void _rollbackChildren(IPropertyTree *parent, bool force);
+    bool reconnect(ISDSConnectionManager &manager);
+    void detach() { manager = NULL; connectionId = 0; }
+    void attach(ISDSConnectionManager &_manager, ConnectionId _connectionId) { manager = &_manager; connectionId = _connectionId; }
 
 // IRemoteConnection
     virtual IPropertyTree *getRoot() { return CConnectionBase::getRoot(); }
@@ -129,11 +131,10 @@ public:
 
 private:
     CriticalSection lockCrit;
-    unsigned lockCount;
     unsigned hash;
     bool lazyFetch;
     bool stateChanges;      // =false when client applying server received changes
-    bool connected, serverIterAvailable, serverIter, useAppendOpt, serverGetIdsAvailable;
+    bool serverIterAvailable, serverIter, useAppendOpt, serverGetIdsAvailable;
 
 friend class CConnectionLock;
 friend class CSetServerIterBlock;
@@ -386,6 +387,7 @@ public:
     virtual IPropertyTree *getXPaths(__int64 serverId, const char *xpath, bool getServerIds=false);
     virtual IPropertyTreeIterator *getXPathsSortLimit(const char *baseXPath, const char *matchXPath, const char *sortby, bool caseinsensitive, bool ascending, unsigned from, unsigned limit);
     virtual void getExternalValueFromServerId(__int64 serverId, MemoryBuffer &mb);
+    virtual void reconnect(CRemoteConnection &connection);
 
 // ISDSManager
     virtual IRemoteConnections *connect(IMultipleConnector *mConnect, SessionId id, unsigned timeout);
@@ -402,6 +404,10 @@ public:
     virtual void setConfigOpt(const char *opt, const char *value);
     virtual unsigned queryCount(const char *xpath);
     virtual bool updateEnvironment(IPropertyTree *newEnv, bool forceGroupUpdate, StringBuffer &response);
+    virtual void detachConnections(RemoteConnectionArray &detachedConnections);
+    virtual void attachConnections(RemoteConnectionArray &detachedConnections);
+    virtual void saveState(CSDSDetachedState &state);
+    virtual void restoreState(CSDSDetachedState &state);
 
 private:
     void noteDisconnected(CRemoteConnection &connection);

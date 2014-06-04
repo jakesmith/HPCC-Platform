@@ -87,6 +87,8 @@ interface IRemoteConnections : extends IInterface
     virtual unsigned queryConnections() = 0;
 };
 
+typedef IArrayOf<IRemoteConnection> RemoteConnectionArray;
+class CSDSDetachedState;
 interface ISDSManager
 {
     virtual ~ISDSManager() { }
@@ -104,7 +106,21 @@ interface ISDSManager
     virtual void setConfigOpt(const char *opt, const char *value) = 0;
     virtual unsigned queryCount(const char *xpath) = 0;
     virtual bool updateEnvironment(IPropertyTree *newEnv, bool forceGroupUpdate, StringBuffer &response) = 0;
+    virtual void detachConnections(RemoteConnectionArray &detachedConnections) = 0;
+    virtual void attachConnections(RemoteConnectionArray &detachedConnections) = 0;
+    virtual void saveState(CSDSDetachedState &state) = 0;
+    virtual void restoreState(CSDSDetachedState &state) = 0;
 };
+
+class CSDSDetachedState : public CSimpleInterface
+{
+    RemoteConnectionArray connections;
+public:
+    virtual void save(ISDSManager &manager);
+    virtual void restore(ISDSManager &manager);
+    virtual CSDSDetachedState &clear();
+};
+
 
 extern da_decl const char *queryNotifyHandlerName(IPropertyTree *tree);
 extern da_decl bool setNotifyHandlerName(const char *handlerName, IPropertyTree *tree);

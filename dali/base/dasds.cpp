@@ -1922,6 +1922,7 @@ public:
     virtual IPropertyTreeIterator *getXPathsSortLimit(const char *baseXPath, const char *matchXPath, const char *sortby, bool caseinsensitive, bool ascending, unsigned from, unsigned limit);
     virtual void getExternalValueFromServerId(__int64 serverId, MemoryBuffer &mb);
     virtual bool unlock(__int64 connectionId, bool closeConn, StringBuffer &connectionInfo);
+    virtual void reconnect(CRemoteConnection &connection);
 
 // ISDSManagerServer
     virtual IRemoteConnections *connect(IMultipleConnector *mConnect, SessionId id, unsigned timeout);
@@ -1961,6 +1962,10 @@ public:
     virtual void setConfigOpt(const char *opt, const char *value);
     virtual unsigned queryCount(const char *xpath);
     virtual bool updateEnvironment(IPropertyTree *newEnv, bool forceGroupUpdate, StringBuffer &response);
+    virtual void detachConnections(RemoteConnectionArray &detachedConnectiions) { throwUnexpected(); }
+    virtual void attachConnections(RemoteConnectionArray &detachedConnectiions) { throwUnexpected(); }
+    virtual void saveState(CSDSDetachedState &state) { throwUnexpected(); }
+    virtual void restoreState(CSDSDetachedState &state) { throwUnexpected(); }
 
 // ISubscriptionManager impl.
     virtual void add(ISubscription *subs,SubscriptionId id);
@@ -2182,10 +2187,10 @@ void CServerConnection::aborted(SessionId id)
 {
     LOG(MCdebugInfo(100), unknownJob, "CServerConnection: connection aborted (%"I64F"x) sessId=%"I64F"x",connectionId, id);
 #if 0 // JCSMORE - think this is ok, but concerned about deadlock, change later.
-    Owned<CLCLockBlock> lockBlock = new CLCWriteLockBlock(((CCovenSDSManager &)manager).dataRWLock, readWriteTimeout, __FILE__, __LINE__);
+    Owned<CLCLockBlock> lockBlock = new CLCWriteLockBlock(((CCovenSDSManager *)manager)->dataRWLock, readWriteTimeout, __FILE__, __LINE__);
     SDSManager->disconnect(connectionId, false);
 #else
-    Owned<CLCLockBlock> lockBlock = new CLCReadLockBlock(((CCovenSDSManager &)manager).dataRWLock, readWriteTimeout, __FILE__, __LINE__);
+    Owned<CLCLockBlock> lockBlock = new CLCReadLockBlock(((CCovenSDSManager *)manager)->dataRWLock, readWriteTimeout, __FILE__, __LINE__);
     SDSManager->disconnect(connectionId, false, &lockBlock);
 #endif
 }
@@ -6716,15 +6721,15 @@ void CCovenSDSManager::commit(CRemoteConnection &connection, bool *disconnectDel
     {
         if (disconnectDeleteRoot)
         {
-            connection.setConnected(false);
             disconnect(connectionId, *disconnectDeleteRoot);
+            connection.detach();
         }
         throw;
     }
     if (disconnectDeleteRoot)
     {
-        connection.setConnected(false);
         disconnect(connectionId, *disconnectDeleteRoot);
+        connection.detach();
     }
 }
 
@@ -6933,6 +6938,11 @@ void CCovenSDSManager::getExternalValueFromServerId(__int64 serverId, MemoryBuff
         else
             WARNLOG("External file reference missing (node name='%s', id=%"I64F"d)", idTree->queryName(), serverId);
     }
+}
+
+void CCovenSDSManager::reconnect(CRemoteConnection &connection)
+{
+    return; // nothing to do inside server
 }
 
 IPropertyTreeIterator *CCovenSDSManager::getElementsRaw(const char *xpath,INode *remotedali, unsigned timeout)
