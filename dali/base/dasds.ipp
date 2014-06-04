@@ -90,6 +90,7 @@ interface ISDSConnectionManager
     virtual IPropertyTree *getXPaths(__int64 serverId, const char *xpath, bool getServerIds=false) = 0;
     virtual IPropertyTreeIterator *getXPathsSortLimit(const char *baseXPath, const char *matchXPath, const char *sortby, bool caseinsensitive, bool ascending, unsigned from, unsigned limit) = 0;
     virtual void getExternalValueFromServerId(__int64 serverId, MemoryBuffer &mb) = 0;
+    virtual void reconnect(CRemoteConnection &connection) = 0;
 };
 
 class ChangeInfo;
@@ -506,7 +507,7 @@ class CConnectionBase : public CInterface
 {
 public:
     CConnectionBase(ISDSConnectionManager &_manager, ConnectionId _connectionId, const char *_xpath, SessionId _sessionId, unsigned _mode, unsigned _timeout)
-        : manager(_manager), connectionId(_connectionId), xpath(_xpath), sessionId(_sessionId), mode(_mode), timeout(_timeout)
+        : manager(&_manager), connectionId(_connectionId), xpath(_xpath), sessionId(_sessionId), mode(_mode), timeout(_timeout)
     {
     }
 
@@ -526,7 +527,7 @@ public:
     }
 
 protected:
-    ISDSConnectionManager &manager;
+    ISDSConnectionManager *manager;
 
     Owned<CRemoteTreeBase> root;
     ConnectionId connectionId;
@@ -556,6 +557,7 @@ public:
     virtual IPropertyTree *getXPaths(__int64 serverId, const char *xpath, bool getServerIds=false) = 0;
     virtual IPropertyTreeIterator *getXPathsSortLimit(const char *baseXPath, const char *matchXPath, const char *sortby, bool caseinsensitive, bool ascending, unsigned from, unsigned limit) = 0;
     virtual void getExternalValueFromServerId(__int64 serverId, MemoryBuffer &mb) = 0;
+    virtual void reconnect(CRemoteConnection &connection) = 0;
 
 protected:
     CConnectionHashTable connections;

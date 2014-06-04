@@ -147,6 +147,7 @@ private:
     InterruptableSemaphore disconnectSem;
     IArrayOf<IDaliPackageWatcher> watchers;
     CSDSServerStatus *serverStatus;
+    CSDSDetachedState daliState;
 
     class CRoxieDaliConnectWatcher : public Thread
     {
@@ -711,6 +712,7 @@ public:
                     // Initialize client process
                     if (!initClientProcess(serverGroup, DCR_RoxyMaster, 0, NULL, NULL, timeout))
                         throw MakeStringException(ROXIE_DALI_ERROR, "Could not initialize dali client");
+                    querySDS().restoreState(daliState);
                     setPasswordsFromSDS();
                     serverStatus = new CSDSServerStatus("RoxieServer");
                     serverStatus->queryProperties()->setProp("@cluster", roxieName.str());
@@ -749,6 +751,7 @@ public:
                 closeDllServer();
                 closeEnvironment();
                 clientShutdownWorkUnit();
+                querySDS().saveState(daliState.clear());
                 ::closedownClientProcess(); // dali client closedown
                 isConnected = false;
                 disconnectSem.signal();

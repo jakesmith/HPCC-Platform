@@ -48,7 +48,7 @@ static ISDSManager *SDSManager=NULL;
 static CriticalSection SDScrit;
 
 #define CHECK_CONNECTED(XSTR)                                                                                        \
-    if (!connected)                                                                                                   \
+    if (NULL == manager)                                                                                                   \
     {                                                                                                               \
         LOG(MCerror, unknownJob, XSTR": Closed connection (xpath=%s, sessionId=%"I64F"d)", xpath.get(), sessionId);       \
         return;                                                                                                     \
@@ -167,12 +167,10 @@ CRemoteConnection::CRemoteConnection(ISDSConnectionManager &manager, ConnectionI
     INIT_NAMEDCOUNT;
     lazyFetch = true;
     stateChanges = true;
-    connected = true;
     serverIterAvailable = querySDS().queryProperties().getPropBool("Client/@serverIterAvailable");
     serverIter =  querySDS().queryProperties().getPropBool("Client/@serverIter");
     useAppendOpt = querySDS().queryProperties().getPropBool("Client/@useAppendOpt");
     serverGetIdsAvailable = querySDS().queryProperties().getPropBool("Client/@serverGetIdsAvailable");
-    lockCount = 0;
 }
 
 void CRemoteConnection::clearCommitChanges()
@@ -195,7 +193,7 @@ void CRemoteConnection::getDetails(MemoryBuffer &mb)
 void CRemoteConnection::changeMode(unsigned mode, unsigned timeout, bool suppressReloads)
 {
     CHECK_CONNECTED("changeMode");
-    manager.changeMode(*this, mode, timeout, suppressReloads);
+    manager->changeMode(*this, mode, timeout, suppressReloads);
 }
 
 void CRemoteConnection::rollback()
@@ -294,7 +292,7 @@ void CRemoteConnection::reload(const char *_xpath)
     {
         clearChanges(*root);
         __int64 serverId = root->queryServerId();
-        CRemoteTreeBase *newTree = manager.get(*this, serverId);
+        CRemoteTreeBase *newTree = manager->get(*this, serverId);
 
         if (NULL == newTree) throw MakeSDSException(SDSExcpt_Reload);
         root.setown(newTree);
@@ -329,7 +327,7 @@ void CRemoteConnection::reload(const char *_xpath)
             CClientRemoteTree &parent = (CClientRemoteTree &)parents.item(e);
             if (child.queryServerId())
             {
-                IPropertyTree *newChild = manager.get(*this, child.queryServerId());
+                IPropertyTree *newChild = manager->get(*this, child.queryServerId());
                 if (newChild)
                     parent.addPropTree(child.queryName(), newChild);
             }
@@ -341,15 +339,15 @@ void CRemoteConnection::commit()
 {
     CConnectionLock b(*this);
     CHECK_CONNECTED("commit");
-    manager.commit(*this, NULL);
+    manager->commit(*this, NULL);
 }
 
 void CRemoteConnection::close(bool deleteRoot)
 {
     CConnectionLock b(*this);
     CHECK_CONNECTED("close");
-    manager.commit(*this, &deleteRoot);
-    connected=false;
+    manager->commit(*this, &deleteRoot);
+    connectionId=0;
 }
 
 SubscriptionId CRemoteConnection::subscribe(ISDSConnectionSubscription &notify)
@@ -534,6 +532,22 @@ IPropertyTreeIterator *CRemoteConnection::getElements(const char *xpath, IPTIter
         throw MakeSDSException(SDSExcpt_VersionMismatch, "Server-side getElements not supported by server versions prior to "MIN_GETXPATHS_CONNECT_SVER);
     flags |= iptiter_remote;
     return root->getElements(xpath, flags);
+}
+
+bool CRemoteConnection::reconnect(ISDSConnectionManager &_manager)
+{
+    try
+    {
+        _manager.reconnect(*this);
+        return true;
+    }
+    catch (IException *e)
+    {
+        VStringBuffer msg("Failed to re-establish connection (xpath=%s, mode=%d)", xpath.get(), mode);
+        EXCLOG(e, msg.str());
+        e->Release();
+    }
+    return false;
 }
 
 /////////////////
@@ -1124,7 +1138,7 @@ CClientSDSManager::~CClientSDSManager()
     ForEach(iter)
     {
         CRemoteConnection &conn = (CRemoteConnection &) iter.query();
-        conn.setConnected(false);
+        conn.detach();
     }
     ::Release(properties);
 }
@@ -1407,8 +1421,8 @@ IPropertyTreeIterator *CClientSDSManager::getElements(CRemoteConnection &connect
 
 void CClientSDSManager::noteDisconnected(CRemoteConnection &connection)
 {
-    connection.setConnected(false);
     connections.removeExact(&connection);
+    connection.detach();
 }
 
 void CClientSDSManager::commit(CRemoteConnection &connection, bool *disconnectDeleteRoot)
@@ -1634,6 +1648,53 @@ IRemoteConnection *CClientSDSManager::connect(const char *xpath, SessionId id, u
     }
 
     return conn;
+}
+
+void CClientSDSManager::reconnect(CRemoteConnection &connection)
+{
+    const char *xpath = connection.queryXPath();
+    unsigned mode = connection.queryMode();
+    unsigned timeout = connection.queryTimeout();
+    connection.detach();
+
+    CMessageBuffer mb;
+    mb.append((int)DAMP_SDSCMD_CONNECT | lazyExtFlag);
+    mb.append(myProcessSession()).append(mode).append(timeout);
+    mb.append(xpath);
+
+    if (!sendRequest(mb, true))
+        throw MakeSDSException(SDSExcpt_FailedToCommunicateWithServer, ", connecting to %s", xpath);
+
+    SdsReply replyMsg;
+    mb.read((int &)replyMsg);
+
+    switch (replyMsg)
+    {
+        case DAMP_SDSREPLY_OK:
+        {
+            ConnectionId connId;
+            mb.read(connId);
+
+            CClientRemoteTree *tree;
+            { CDisableFetchChangeBlock block(connection);
+                tree = new CClientRemoteTree(connection);
+                tree->deserializeRT(mb);
+            }
+            connection.attach(*this, connId);
+            connection.setRoot(tree);
+            break;
+        }
+        case DAMP_SDSREPLY_EMPTY:
+        {
+            VStringBuffer msg("SDS reconnect to %s failed [missing] ", xpath);
+            throwMbException(msg.str(), mb);
+            break;
+        }
+        case DAMP_SDSREPLY_ERROR:
+            throwMbException("SDS Reply Error ", mb);
+        default:
+            assertex(false);
+    }
 }
 
 SubscriptionId CClientSDSManager::subscribe(const char *xpath, ISDSSubscription &notify, bool sub, bool sendValue)
@@ -2016,8 +2077,61 @@ bool CClientSDSManager::updateEnvironment(IPropertyTree *newEnv, bool forceGroup
     return result;
 }
 
+void CClientSDSManager::detachConnections(RemoteConnectionArray &detachedConnections)
+{
+    CriticalBlock block(connections.crit);
+    SuperHashIteratorOf<CConnectionBase> iter(connections.queryBaseTable());
+    ForEach(iter)
+    {
+        CRemoteConnection &conn = (CRemoteConnection &) iter.query();
+        conn.detach();
+        detachedConnections.append(*LINK(&conn));
+    }
+    connections.kill();
+}
+
+void CClientSDSManager::attachConnections(RemoteConnectionArray &detachedConnections)
+{
+    CriticalBlock block(connections.crit);
+    ForEachItemIn(c, detachedConnections)
+    {
+        IRemoteConnection *_conn = &detachedConnections.item(c);
+        CRemoteConnection *conn = QUERYINTERFACE(_conn, CRemoteConnection); dbgassertex(conn); // Maybe I should add reconnect to IRemoteConnection
+        if (conn->reconnect(*this))
+            connections.add(* LINK(conn));
+    }
+    detachedConnections.kill();
+}
+
+void CClientSDSManager::saveState(CSDSDetachedState &state)
+{
+    state.save(*this);
+}
+
+void CClientSDSManager::restoreState(CSDSDetachedState &state)
+{
+    state.restore(*this);
+}
+
 //////////////
 
+void CSDSDetachedState::save(ISDSManager &manager)
+{
+    manager.detachConnections(connections);
+}
+
+void CSDSDetachedState::restore(ISDSManager &manager)
+{
+    manager.attachConnections(connections);
+}
+
+CSDSDetachedState &CSDSDetachedState::clear()
+{
+    connections.kill();
+    return *this;
+}
+
+//////////////
 ISDSManager &querySDS()
 {
     CriticalBlock block(SDScrit);
