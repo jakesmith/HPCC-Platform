@@ -1434,6 +1434,11 @@ public:
     {
         return buf.append(curname);
     }
+    virtual StringBuffer &getFullPath(StringBuffer &buf)
+    {
+        buf.append(dir);
+        return addPathSepChar(buf).append(curname);
+    }
     bool isDir() 
     { 
         return curisdir; 

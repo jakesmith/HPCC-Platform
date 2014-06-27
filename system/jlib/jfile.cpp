@@ -1724,6 +1724,16 @@ IFileIO * CFile::openShared(IFOmode mode,IFSHmode share,IFEflags extraFlags)
     return new CFileIO(handle,mode,share,extraFlags);
 }
 
+IDirectoryIterator * createOsDirectoryIterator(const char * path, const char * mask, bool sub, bool includedir);
+extern jlib_decl IDirectoryIterator *createNullDirectoryIterator();
+
+IDirectoryIterator *CFile::directoryFiles(const char *mask,bool sub,bool includedirs)
+{
+    if ((mask&&!*mask)||    // only NULL is wild
+        (isDirectory()!=foundYes))
+        return createNullDirectoryIterator();
+    return createOsDirectoryIterator(filename, mask, sub, includedirs);
+}
 
 
 //---------------------------------------------------------------------------
@@ -3252,6 +3262,11 @@ public:
         return buf;
     }
 
+    StringBuffer &getFullPath(StringBuffer &buf)
+    {
+        return buf;
+    }
+
     __int64 getFileSize()
     {
         return -1;
@@ -3296,12 +3311,21 @@ public:
 
     virtual bool first()=0;
     virtual bool next()=0;
-    virtual bool isValid()  { return cur != NULL; }
-    virtual IFile & query() { return *cur; }
-    virtual StringBuffer &getName(StringBuffer &buf)=0;
+    virtual bool isValid() { return NULL != iFile; }
+    virtual IFile & query() { return *iFile; }
+    virtual StringBuffer &getName(StringBuffer &buf)
+    {
+        return buf.append(curDir).append(curName);
+    }
+    virtual StringBuffer &getFullPath(StringBuffer &buf)
+    {
+        return buf.append(path).append(curDir).append(curName);
+    }
     virtual bool isDir() {  return curisdir; }
-protected:  
-    Owned<IFile>    cur;
+protected:
+    Owned<IFile>    iFile;
+    StringAttr      curDir;
+    StringAttr      curName;
     bool            curisdir;
     StringAttr      path;
     StringAttr      mask;
@@ -3327,10 +3351,11 @@ class CWindowsDirectoryIterator : public CDirectoryIterator
         curisdir = (info.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)!=0;
         if (!match&&!curisdir)
             return false;
-        StringBuffer f(path);
+        StringBuffer dir;
         if (subidx) 
-            f.append(subpaths.item(subidx-1).text).append('\\');
-        f.append(info.cFileName);
+            dir.append(subpaths.item(subidx-1).text).append('\\');
+        StringBuffer f(path);
+        f.append(dir).append(info.cFileName);
         if (curisdir) {
             if (sub) {
                 const char *s = f.str()+path.length();
@@ -3346,8 +3371,10 @@ class CWindowsDirectoryIterator : public CDirectoryIterator
         }
         if (!match)
             return false;
-        cur.setown(createIFile(f.str()));
-        return true;
+        curName.set(info.cFileName);
+        curDir.set(dir.str());
+        iFile.setown(createIFile(f.str()));
+        return (NULL != iFile);
     }
 
     bool open()
@@ -3368,7 +3395,9 @@ class CWindowsDirectoryIterator : public CDirectoryIterator
 
     void close()
     {
-        cur.clear();
+        curDir.clear();
+        curName.clear();
+        iFile.clear();
         if (handle != INVALID_HANDLE_VALUE) {
             FindClose(handle);
             handle = INVALID_HANDLE_VALUE;
@@ -3418,14 +3447,6 @@ public:
         return false;
     }
 
-    StringBuffer &getName(StringBuffer &buf)
-    {
-        if (subidx)
-            buf.append(subpaths.item(subidx-1).text).append('\\');
-        return buf.append(info.cFileName);
-    }
-
-
     __int64 getFileSize()
     {
         if (curisdir)
@@ -3447,24 +3468,9 @@ public:
 };
 
 
-IDirectoryIterator * createDirectoryIterator(const char * path, const char * mask)
+IDirectoryIterator * createOsDirectoryIterator(const char * path, const char * mask, bool sub, bool includedir);
 {
-    if (mask&&!*mask)   // only NULL is wild
-        return new CNullDirectoryIterator;
-    if (!path || !*path) // cur directory so no point in checking for remote etc.
-        return new CWindowsDirectoryIterator(path, mask,false,true);
-    OwnedIFile iFile = createIFile(path);
-    if (!iFile||(iFile->isDirectory()!=foundYes))
-        return new CNullDirectoryIterator;
-    return iFile->directoryFiles(mask, false, true);
-}
-
-IDirectoryIterator *CFile::directoryFiles(const char *mask,bool sub,bool includedirs)
-{
-    if ((mask&&!*mask)||    // only NULL is wild
-        (isDirectory()!=foundYes))
-        return new CNullDirectoryIterator;
-    return new CWindowsDirectoryIterator(filename, mask,sub,includedirs);
+    return new CWindowsDirectoryIterator(path, mask, sub, includedir);
 }
 
 bool CFile::getInfo(bool &isdir,offset_t &size,CDateTime &modtime)
@@ -3490,19 +3496,16 @@ bool CFile::getInfo(bool &isdir,offset_t &size,CDateTime &modtime)
 
 class CLinuxDirectoryIterator : public CDirectoryIterator
 {
-    StringAttr      tail;
     DIR *           handle;
     struct stat     st;
     bool            gotst;
 
     bool loadst()
     {
-        if (!gotst&&cur)
-            gotst = (stat(cur->queryFilename(), &st) == 0);
+        if (!gotst&&iFile)
+            gotst = (stat(iFile->queryFilename(), &st) == 0);
         return gotst;
     }
-    
-    
 public:
     CLinuxDirectoryIterator(const char * _path, const char * _mask, bool _sub,bool _includedir)
         : CDirectoryIterator(_path,_mask,_sub,_includedir)
@@ -3523,7 +3526,7 @@ public:
             StringBuffer location(path);
             if (subidx)
                 location.append(subpaths.item(subidx-1).text);
-            // not sure if should remove trailing '/'  
+            // not sure if should remove trailing '/'
             handle = ::opendir(location.str());
             // better error handling here?
             if (handle)
@@ -3535,7 +3538,9 @@ public:
 
     void close()
     {
-        cur.clear();
+        curDir.clear();
+        curName.clear();
+        iFile.clear();
         if (handle) {
             closedir(handle);
             handle = NULL;
@@ -3546,7 +3551,7 @@ public:
     {
         subpaths.kill();
         subidx = 0;
-        if (open()) 
+        if (open())
             return next();
         return false;
     }
@@ -3562,7 +3567,7 @@ public:
                 // need better checking here?
                 if (!entry)
                     break;
-                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) 
+                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
                     continue;
 
                 bool match = (!mask.length() || WildMatch(entry->d_name, mask, false));
@@ -3570,10 +3575,11 @@ public:
                 bool islnk = (entry->d_type==DT_LNK);
                 bool isunknown = (entry->d_type==DT_UNKNOWN); // to work around xfs bug
                 if (match||curisdir||islnk||isunknown) {
+                    StringBuffer dir;
+                    if (subidx)
+                        dir.append(subpaths.item(subidx-1).text).append('/');
                     StringBuffer f(path);
-                    if (subidx) 
-                        f.append(subpaths.item(subidx-1).text).append('/');
-                    f.append(entry->d_name);
+                    f.append(dir).append(entry->d_name);
                     if (islnk||isunknown) {
                         struct stat info;
                         if (stat(f.str(), &info) == 0)  // will follow link
@@ -3595,9 +3601,11 @@ public:
                             match = false;
                     }
                     if (match) {
-                        tail.set(entry->d_name);
-                        cur.setown(createIFile(f.str()));
-                        return true;
+                        curName.set(entry->d_name);
+                        curDir.set(dir.str());
+                        iFile.setown(createIFile(f.str()));
+                        if (iFile) // some chance, it could have been deleted after getting from directory
+                            return true;
                     }
                 }
             }
@@ -3606,13 +3614,6 @@ public:
                 break;
         }
         return false;
-    }
-
-    StringBuffer &getName(StringBuffer &buf)
-    {
-        if (subidx)
-            buf.append(subpaths.item(subidx-1).text).append('/');
-        return buf.append(tail);
     }
 
     __int64 getFileSize()
@@ -3635,26 +3636,10 @@ public:
 
 };
 
-IDirectoryIterator * createDirectoryIterator(const char * path, const char * mask)
+IDirectoryIterator * createOsDirectoryIterator(const char * path, const char * mask, bool sub, bool includedir)
 {
-    if (mask&&!*mask)   // only NULL is wild
-        return new CNullDirectoryIterator;
-    if (!path || !*path) // no point in checking for remote etc.
-        return new CLinuxDirectoryIterator(path, mask,false,true);
-    OwnedIFile iFile = createIFile(path);
-    if (!iFile||(iFile->isDirectory()!=foundYes))
-        return new CNullDirectoryIterator;
-    return iFile->directoryFiles(mask, false, true);
+    return new CLinuxDirectoryIterator(path, mask, sub, includedir);
 }
-
-IDirectoryIterator *CFile::directoryFiles(const char *mask,bool sub,bool includedirs)
-{
-    if ((mask&&!*mask)||    // only NULL is wild
-        (isDirectory()!=foundYes))
-        return new CNullDirectoryIterator;
-    return new CLinuxDirectoryIterator(filename, mask,sub,includedirs);
-}
-
 
 bool CFile::getInfo(bool &isdir,offset_t &size,CDateTime &modtime)
 {
@@ -3675,10 +3660,23 @@ bool CFile::getInfo(bool &isdir,offset_t &size,CDateTime &modtime)
 #endif
 
 
+IDirectoryIterator * createDirectoryIterator(const char * path, const char * mask)
+{
+    if (mask&&!*mask)   // only NULL is wild
+        return new CNullDirectoryIterator;
+    if (!path || !*path) // no point in checking for remote etc.
+        return createOsDirectoryIterator(path, mask, false, true);
+    OwnedIFile iFile = createIFile(path);
+    if (!iFile||(iFile->isDirectory()!=foundYes))
+        return new CNullDirectoryIterator;
+    return iFile->directoryFiles(mask, false, true);
+}
+
+
 class CDirEntry: extends CInterface
 {
 public:
-    StringAttr name;
+    StringAttr name, fullPath;
     Owned<IFile> file;
     __int64 size;
     CDateTime modified;
@@ -3689,6 +3687,7 @@ public:
     {
         StringBuffer n;
         name.set(iter->getName(n).str());
+        fullPath.set(iter->getFullPath(n.clear()).str());
         size = iter->getFileSize();
         iter->getModifiedTime(modified);
         file.set(&iter->query());
@@ -3717,15 +3716,11 @@ public:
             return (size<e->size)?-1:1;
         return modified.compare(e->modified,false);
     }
-
 };
 
 
 class CDirectoryDifferenceIterator : public CIArrayOf<CDirEntry>, extends CInterface, implements IDirectoryDifferenceIterator
 {
-
-    
-    
     static int compare(CInterface **_a, CInterface **_b)
     {
         CDirEntry *a = *(CDirEntry **)_a;
@@ -3795,7 +3790,7 @@ public:
                     i++;
                     ni++;
                 }
-            }                   
+            }
         }
     }
     virtual bool first()
@@ -3818,11 +3813,11 @@ public:
         }
         return false;
     }
-    virtual bool isValid()  
+    virtual bool isValid()
     {
         return (idx<ordinality());
     }
-    virtual IFile & query() 
+    virtual IFile & query()
     {
         if (isValid())
             return *item(idx).file;
@@ -3834,7 +3829,13 @@ public:
             buf.append(item(idx).name);
         return buf;
     }
-    virtual bool isDir() 
+    virtual StringBuffer &getFullPath(StringBuffer &buf)
+    {
+        if (isValid())
+            buf.append(item(idx).fullPath);
+        return buf;
+    }
+    virtual bool isDir()
     {
         if (isValid())
             return item(idx).isdir;
@@ -3859,7 +3860,7 @@ public:
         mask = (byte)_mask;
     }
 
-    virtual unsigned getFlags() 
+    virtual unsigned getFlags()
     {
         if (isValid())
             return item(idx).flags;
@@ -3878,6 +3879,121 @@ public:
     }
 };
 
+
+class CSortedDirEntry : public CInterface
+{
+    bool dir;
+    StringAttr fullName;
+    Owned<IFile> iFile;
+public:
+    CSortedDirEntry(bool _dir, const char *_fullName) : dir(_dir), fullName(_fullName)
+    {
+    }
+    IFile *queryIFile()
+    {
+        if (!iFile)
+            iFile.setown(createIFile(fullName));
+        return iFile;
+    }
+    const char *queryFullName() const { return fullName; }
+    StringBuffer &getFullName(StringBuffer &out) const
+    {
+        return out.append(fullName);
+    }
+    bool isDir() const { return dir; }
+};
+
+class CSortedDirectoryIterator : public CInterface, implements IDirectoryIterator
+{
+    Linked<IDirectoryIterator> baseIter;
+    CIArrayOf<CSortedDirEntry> entries;
+    unsigned idx;
+    CSortedDirEntry *curEntry;
+    Owned<IFile> curIFile;
+
+    static int compare(CInterface **_a, CInterface **_b)
+    {
+        CSortedDirEntry *a = *(CSortedDirEntry **)_a;
+        CSortedDirEntry *b = *(CSortedDirEntry **)_b;
+        return strcmp(b->queryFullName(), a->queryFullName());
+    }
+    void init()
+    {
+        ForEach(*baseIter)
+        {
+            StringBuffer path;
+            entries.append(* new CSortedDirEntry(baseIter->isDir(), baseIter->getFullPath(path).str()));
+        }
+        entries.sort(compare);
+        idx = 0;
+        curEntry = NULL;
+    }
+public:
+    IMPLEMENT_IINTERFACE;
+
+    CSortedDirectoryIterator(IDirectoryIterator *_baseIter) : baseIter(_baseIter)
+    {
+        init();
+    }
+    CSortedDirectoryIterator(const char *path, const char *mask)
+    {
+        baseIter.setown(createDirectoryIterator(path, mask));
+        init();
+    }
+    bool first()
+    {
+        return next();
+    }
+    bool next()
+    {
+        while (idx < entries.ordinality())
+        {
+            curEntry = &entries.item(idx++);
+            if (curEntry->queryIFile())
+                return true;
+        }
+        curEntry = NULL;
+        return false;
+    }
+    StringBuffer &getName(StringBuffer &buf)
+    {
+        assertex(curEntry);
+        StringBuffer path;
+        curEntry->getFullName(path);
+        return buf.append(pathTail(path));
+    }
+    StringBuffer &getFullPath(StringBuffer &buf)
+    {
+        assertex(curEntry);
+        return curEntry->getFullName(buf);
+    }
+    __int64 getFileSize()
+    {
+        assertex(curEntry);
+        if (curEntry->isDir())
+            return -1;
+        return curEntry->queryIFile()->size();
+    }
+    bool getModifiedTime(CDateTime &ret)
+    {
+        assertex(curEntry);
+        return curEntry->queryIFile()->getTime(NULL, &ret, NULL);
+    }
+    virtual bool isValid() { return NULL != curEntry; }
+    virtual IFile &query() { return *curEntry->queryIFile(); }
+    virtual bool isDir() { return curEntry->isDir(); }
+};
+
+
+IDirectoryIterator * createSortedDirectoryIterator(const char * path, const char * mask)
+{
+    return new CSortedDirectoryIterator(path, mask);
+}
+
+IDirectoryIterator * createSortedDirectoryIterator(IDirectoryIterator *base)
+{
+    return new CSortedDirectoryIterator(base);
+}
 
 
 IDirectoryDifferenceIterator *CFile::monitorDirectory(IDirectoryIterator *_prev,            // in

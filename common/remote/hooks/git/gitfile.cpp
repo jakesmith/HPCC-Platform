@@ -298,6 +298,10 @@ public:
         assertex(curFile);
         return buf.append(curFile->queryFilename());
     }
+    virtual StringBuffer &getFullPath(StringBuffer &buf)
+    {
+        return getName(buf);
+    }
     virtual bool isDir()
     {
         assertex(curFile);

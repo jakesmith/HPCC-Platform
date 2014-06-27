@@ -46,10 +46,10 @@ class CDateTime;
 interface IDirectoryIterator : extends IIteratorOf<IFile> 
 {
     virtual StringBuffer &getName(StringBuffer &buf)=0;
+    virtual StringBuffer &getFullPath(StringBuffer &buf)=0;
     virtual bool isDir()=0;
     virtual __int64 getFileSize()=0;
     virtual bool getModifiedTime(CDateTime &ret)=0;
-
 };
 
 #define PGCFLUSH_BLKSIZE      0x400000
@@ -265,6 +265,8 @@ extern jlib_decl IFile * createIFile(MemoryBuffer & buffer);
 extern jlib_decl IFileIO * createIFileIO(HANDLE handle,IFOmode=IFOreadwrite,IFEflags extraFlags=IFEnone);
 extern jlib_decl IDirectoryIterator * createDirectoryIterator(const char * path = NULL, const char * wildcard = NULL);
 extern jlib_decl IDirectoryIterator * createNullDirectoryIterator();
+extern jlib_decl IDirectoryIterator * createSortedDirectoryIterator(const char * path, const char * mask);
+extern jlib_decl IDirectoryIterator * createSortedDirectoryIterator(IDirectoryIterator *base);
 extern jlib_decl IFileIO * createIORange(IFileIO * file, offset_t header, offset_t length);     // restricts input/output to a section of a file.
 
 extern jlib_decl IFileIOStream * createIOStream(IFileIO * file);        // links argument
