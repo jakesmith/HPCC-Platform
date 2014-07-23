@@ -439,6 +439,8 @@ public:
 
     void cloneSubFile(IPropertyTree *ftree,const char *destfilename, INode *srcdali, const char *srcCluster)   // name already has prefix added
     {
+        DBGLOG("cloneSubFile, destfilename = %s", destfilename);
+
         Owned<IFileDescriptor> srcfdesc = deserializeFileDescriptorTree(ftree, NULL, 0);
         const char * kind = srcfdesc->queryProperties().queryProp("@kind");
         bool iskey = kind&&(strcmp(kind,"key")==0);
@@ -454,6 +456,8 @@ public:
         if (!dstlfn.setValidate(destfilename,true))
             throw MakeStringException(-1,"Logical name %s invalid",destfilename);
 
+        DBGLOG("cloneSubFile, dstlfn = %s", dstlfn.get());
+
         ClusterPartDiskMapSpec spec = spec1;
         if (iskey&&repeattlk)
             spec.setRepeatedCopies(CPDMSRP_lastRepeated,false);
@@ -466,6 +470,7 @@ public:
         StringBuffer dir;
         StringBuffer dstdir;
         makePhysicalPartName(dstlfn.get(),0,0,dstdir,false,os,spec.defaultBaseDir.get());
+        DBGLOG("cloneSubFile, calling dstfdesc->setDefaultDir with dstdir = %s", dstdir.str());
         dstfdesc->setDefaultDir(dstdir.str());
         dstfdesc->addCluster(cluster1,grp1,spec);
         if (iskey&&!cluster2.isEmpty())
@@ -693,6 +698,7 @@ public:
         }
         CDfsLogicalFileName dlfn;
         dlfn.set(destfilename);
+ DBGLOG("cloneFile - destfilename=%s, dlfn.get()=%s", destfilename, dlfn.get());
         if (strcmp(ftree->queryName(),queryDfsXmlBranchName(DXB_File))!=0) {
             StringBuffer s;
             throw MakeStringException(-1,"Source file %s in Dali %s is not a simple file",filename,srcdali?srcdali->endpoint().getUrlStr(s).str():"(local)");
