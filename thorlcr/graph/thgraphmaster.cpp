@@ -484,9 +484,11 @@ void CMasterActivity::reset()
 void CMasterActivity::deserializeStats(unsigned node, MemoryBuffer &mb)
 {
     CriticalBlock b(progressCrit); // don't think needed
-    unsigned __int64 localTimeNs;
+    unsigned __int64 localTimeNs, localStartTimeNs;
     mb.read(localTimeNs);
+    mb.read(localStartTimeNs);
     timingInfo.set(node, localTimeNs/1000000); // to milliseconds
+    startTimingInfo.set(node, localStartTimeNs/1000000); // to milliseconds
     rowcount_t count;
     ForEachItemIn(p, progressInfo)
     {

@@ -44,7 +44,7 @@ class graphslave_decl CSlaveActivity : public CActivityBase
 
 protected:
     PointerIArrayOf<IThorDataLink> inputs, outputs;
-    unsigned __int64 totalCycles;
+    unsigned __int64 totalCycles, startCycles;
     MemoryBuffer startCtx;
 
 public:
@@ -69,8 +69,11 @@ public:
     void stopInput(IRowStream *itdl, const char *extra=NULL);
 
     unsigned __int64 &getTotalCyclesRef() { return totalCycles; }
+    unsigned __int64 &getStartCyclesRef() { return startCycles; }
     unsigned __int64 queryLocalCycles() const;
+    unsigned __int64 queryLocalStartCycles() const;
     virtual unsigned __int64 queryTotalCycles() const; // some acts. may calculate accumulated total from inputs (e.g. splitter)
+    virtual unsigned __int64 queryStartCycles() const; // some acts. may calculate accumulated total from inputs (e.g. splitter)
     virtual void serializeStats(MemoryBuffer &mb);
 };
 

@@ -287,15 +287,57 @@ unsigned __int64 CSlaveActivity::queryLocalCycles() const
     return _totalCycles-inputCycles;
 }
 
+unsigned __int64 CSlaveActivity::queryLocalStartCycles() const
+{
+    unsigned __int64 inputCycles = 0;
+    if (1 == inputs.ordinality())
+    {
+        IThorDataLink *input = inputs.item(0);
+        inputCycles += input->queryStartCycles();
+    }
+    else
+    {
+        switch (container.getKind())
+        {
+            case TAKchildif:
+            case TAKchildcase:
+                if (inputs.ordinality() && (((unsigned)-1) != container.whichBranch))
+                {
+                    IThorDataLink *input = inputs.item(container.whichBranch);
+                    if (input)
+                        inputCycles += input->queryStartCycles();
+                }
+                break;
+            default:
+                ForEachItemIn(i, inputs)
+                {
+                    IThorDataLink *input = inputs.item(i);
+                    inputCycles += input->queryStartCycles();
+                }
+                break;
+        }
+    }
+    unsigned __int64 _totalCycles = queryStartCycles();
+    if (_totalCycles < inputCycles) // not sure how/if possible, but guard against
+        return 0;
+    return _totalCycles-inputCycles;
+}
+
 unsigned __int64 CSlaveActivity::queryTotalCycles() const
 {
     return totalCycles;
+}
+
+unsigned __int64 CSlaveActivity::queryStartCycles() const
+{
+    return startCycles;
 }
 
 void CSlaveActivity::serializeStats(MemoryBuffer &mb)
 {
     CriticalBlock b(crit);
     mb.append((unsigned __int64)cycle_to_nanosec(queryLocalCycles()));
+    mb.append((unsigned __int64)cycle_to_nanosec(queryLocalStartCycles()));
     ForEachItemIn(i, outputs)
         outputs.item(i)->dataLinkSerialize(mb);
 }

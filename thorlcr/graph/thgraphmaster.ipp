@@ -241,7 +241,7 @@ class graphmaster_decl CMasterActivity : public CActivityBase, implements IThrea
 
 protected:
     ProgressInfoArray progressInfo;
-    CTimingInfo timingInfo;
+    CTimingInfo timingInfo, startTimingInfo;
     IBitSet *notedWarnings;
 
     void addReadFile(IDistributedFile *file, bool temp=false);
