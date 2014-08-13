@@ -86,7 +86,9 @@ interface IThorDataLink : extends IRowStream
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
     virtual CActivityBase *queryFromActivity() = 0; // activity that has this as an output
     virtual void dataLinkSerialize(MemoryBuffer &mb)=0;
-    virtual unsigned __int64 queryTotalCycles() const=0;
+    virtual unsigned __int64 queryNextRowCycles() const=0;
+    virtual unsigned __int64 queryStartCycles() const=0;
+    virtual unsigned __int64 queryStopCycles() const=0;
 };
 #ifdef _MSC_VER
 #pragma warning (pop)

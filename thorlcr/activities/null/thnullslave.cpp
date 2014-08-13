@@ -58,18 +58,19 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dataLinkStart();
     }
 
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
 
     const void * nextRow() 
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         return NULL;
     }
 
@@ -104,18 +105,19 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         startInput(inputs.item(0));
         dataLinkStart();
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(inputs.item(0));
         dataLinkStop();
     }
     const void * nextRow() 
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         return inputs.item(0)->nextRow();
     }
     virtual bool isGrouped()

@@ -44,20 +44,21 @@ public:
 // IThorDataLink methods
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input.setown(createDataLinkSmartBuffer(this,inputs.item(0),PULL_SMART_BUFFER_SIZE,true,false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage()));
         startInput(input);
         dataLinkStart();
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         dataLinkStop();
     }
 
     const void * nextRow()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow row = input->nextRow();
         if (!row)
             return NULL;

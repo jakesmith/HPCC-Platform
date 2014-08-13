@@ -83,7 +83,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         IHThorEnthArg *helper = static_cast <IHThorEnthArg *> (queryHelper());
         counter = 0;
         denominator = validRC(helper->getProportionDenominator());
@@ -113,6 +113,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         input.clear();
         dataLinkStop();
@@ -147,7 +148,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (localCountReq)
         {
             localCountReq = false;
@@ -239,7 +240,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (first)
         {
             first = false;
@@ -261,6 +262,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         // Need to ensure sequence continues, in nextRow has never been called.
         if (first)
         {

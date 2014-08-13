@@ -50,6 +50,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         dataLinkStop();
     }
@@ -67,12 +68,12 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CCatchSlaveActivityBase::start();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!eos)
         {
             try
@@ -110,7 +111,7 @@ public:
         {
             try
             {
-                ActivityTimer t(totalCycles, timeActivities, NULL);
+                ActivityTimer t(nextRowCycles, timeActivities, NULL);
                 OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
                 if (ret && wasCompleteMatch)
                     dataLinkIncrement();
@@ -216,14 +217,14 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CCatchSlaveActivityBase::start();
         running = gathered = false;
         grouped = input->isGrouped();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eos)
             return NULL;
         if (!gathered)
@@ -265,10 +266,6 @@ public:
             return NULL;
         dataLinkIncrement();
         return row.getClear();
-    }
-    virtual void stop()
-    {
-        CCatchSlaveActivityBase::stop();
     }
     virtual void abort()
     {

@@ -282,7 +282,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ForEachItemIn(i, inputs) {
             IThorDataLink * input = inputs.item(i);
             try {
@@ -343,6 +343,7 @@ public:
 
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (out)
             out->stop();
         dataLinkStop();
@@ -383,8 +384,7 @@ public:
         } while (len<chunksize);
         return len;
     }
-
-    const void * nextRow() 
+    CATCH_NEXTROW()
     {
         if (!abortSoon) {
             if (out) {
@@ -397,7 +397,6 @@ public:
         }
         return NULL;
     }
-
     virtual bool isGrouped() { return false; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
@@ -435,7 +434,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ForEachItemIn(i, inputs) {
             IThorDataLink * input = inputs.item(i);
             try { 
@@ -460,6 +459,7 @@ public:
 
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         out->stop();
         dataLinkStop();
     }
@@ -472,7 +472,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!abortSoon) {
             OwnedConstThorRow row = out->nextRow();
             if (row) {
@@ -548,12 +548,14 @@ public:
     }
     void start()
     {
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CThorNarySlaveActivity::start();
         merger.initInputs(expandedInputs.length(), expandedInputs.getArray());
         dataLinkStart();
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         merger.done();
         CThorNarySlaveActivity::stop();
         dataLinkStop();
@@ -565,7 +567,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow ret = merger.nextRow();
         if (ret)
         {
@@ -581,7 +583,7 @@ public:
     }
     const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow ret = merger.nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
         if (ret)
         {

@@ -368,7 +368,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow row = out->nextRow();
         if (row)
         {
@@ -388,7 +388,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDiskReadSlaveActivityBase::start();
         if (headerLines)
         {
@@ -411,6 +411,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         sendRemainingHeaderLines();
         out.clear();
         dataLinkStop();

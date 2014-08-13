@@ -90,13 +90,14 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input.set(inputs.item(0));
         startInput(input);
         dataLinkStart();
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         if (!executeDependencies(abortSoon ? WhenFailureId : WhenSuccessId))
             abortSoon = true;
@@ -105,7 +106,7 @@ public:
     virtual bool isGrouped() { return input->isGrouped(); }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow row(input->nextRow());
         if (!row)
             return NULL;

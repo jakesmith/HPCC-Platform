@@ -332,7 +332,8 @@ void CSlaveMessageHandler::main()
 
 //////////////////////
 
-CMasterActivity::CMasterActivity(CGraphElementBase *_container) : CActivityBase(_container), threaded("CMasterActivity", this)
+CMasterActivity::CMasterActivity(CGraphElementBase *_container)
+    : CActivityBase(_container), threaded("CMasterActivity", this), rowTimingInfo("rowTime"), startTimingInfo("startTime"), stopTimingInfo("stopTime")
 {
     notedWarnings = createBitSet();
     mpTag = TAG_NULL;
@@ -484,9 +485,24 @@ void CMasterActivity::reset()
 void CMasterActivity::deserializeStats(unsigned node, MemoryBuffer &mb)
 {
     CriticalBlock b(progressCrit); // don't think needed
-    unsigned __int64 localTimeNs;
-    mb.read(localTimeNs);
-    timingInfo.set(node, localTimeNs/1000000); // to milliseconds
+    byte timings;
+    mb.read(timings); // bitset indicating which timings sent, 0x01=nextRow, 0x02=start, 0x04=stop
+    unsigned __int64 timeNs;
+    if (0x01 & timings)
+    {
+        mb.read(timeNs);
+        rowTimingInfo.set(node, timeNs/1000000); // to milliseconds
+    }
+    if (0x02 & timings)
+    {
+        mb.read(timeNs);
+        startTimingInfo.set(node, timeNs/1000000); // to milliseconds
+    }
+    if (0x04 & timings)
+    {
+        mb.read(timeNs);
+        stopTimingInfo.set(node, timeNs/1000000); // to milliseconds
+    }
     rowcount_t count;
     ForEachItemIn(p, progressInfo)
     {
@@ -497,7 +513,9 @@ void CMasterActivity::deserializeStats(unsigned node, MemoryBuffer &mb)
 
 void CMasterActivity::getXGMML(IWUGraphProgress *progress, IPropertyTree *node)
 {
-    timingInfo.getXGMML(node);
+    rowTimingInfo.getXGMML(node);
+    startTimingInfo.getXGMML(node);
+    stopTimingInfo.getXGMML(node);
 }
 
 void CMasterActivity::getXGMML(unsigned idx, IPropertyTree *edge)
@@ -2880,7 +2898,7 @@ void CThorStats::getXGMML(IPropertyTree *node, bool suppressMinMaxWhenEqual)
 
 ///////////////////////////////////////////////////
 
-CTimingInfo::CTimingInfo() : CThorStats("time")
+CTimingInfo::CTimingInfo(const char *prefix) : CThorStats(prefix)
 {
     StringBuffer tmp;
     labelMin.set(tmp.append(labelMin).append("Ms"));

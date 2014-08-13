@@ -66,16 +66,21 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ActPrintLog("COUNTPROJECT: Is Local");
         input.set(inputs.item(0));
         anyThisGroup = false;
         startInput(input);
         BaseCountProjectActivity::start();
     }
+    virtual void stop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        BaseCountProjectActivity::stop();
+    }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         while (!abortSoon)
         {
             OwnedConstThorRow row(input->nextRow());
@@ -167,7 +172,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ActPrintLog( "COUNTPROJECT: Is Global");
         first = true;
         prevRecCount = 0;
@@ -181,6 +186,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         BaseCountProjectActivity::stop();
         if (first) // nextRow, therefore getPrevCount()/sendCount() never called
         {
@@ -197,7 +203,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (first) 
         {
             first = false;

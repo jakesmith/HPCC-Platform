@@ -39,6 +39,20 @@ protected:
             CSlaveActivity::stopInput(input);
         }
     }
+    void doStop()
+    {
+        stopInput(getDataLinkCount());
+        dataLinkStop();
+    }
+    void doStart()
+    {
+        resultSent = container.queryLocal(); // i.e. local, so don't send result to master
+        eos = stopped = anyThisGroup = eogNext = false;
+        input = inputs.item(0);
+        startInput(input);
+        rowLimit = (rowcount_t)helper->getRowLimit();
+        dataLinkStart();
+    }
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
@@ -58,16 +72,6 @@ public:
         if (!container.queryLocal())
             mpTag = container.queryJob().deserializeMPTag(data);
     }
-    void start()
-    {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
-        resultSent = container.queryLocal(); // i.e. local, so don't send result to master
-        eos = stopped = anyThisGroup = eogNext = false;
-        input = inputs.item(0);
-        startInput(input);
-        rowLimit = (rowcount_t)helper->getRowLimit();
-        dataLinkStart();
-    }
     void sendResult(rowcount_t r)
     {
         if (resultSent) return;
@@ -75,11 +79,6 @@ public:
         CMessageBuffer mb;
         mb.append(r);
         container.queryJob().queryJobComm().send(mb, 0, mpTag);
-    }
-    void stop()
-    {
-        stopInput(getDataLinkCount());
-        dataLinkStop();
     }
     bool isGrouped() { return inputs.item(0)->isGrouped(); }
     void getMetaInfo(ThorDataLinkMetaInfo &info)
@@ -100,7 +99,7 @@ public:
     
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eos)
             return NULL;
         while (!abortSoon && !eogNext)
@@ -135,6 +134,16 @@ public:
         eogNext = false;
         return NULL;
     }
+    virtual void start()
+    {
+        ActivityTimer s(startCycles, timeActivities, NULL);
+        doStart();
+    }
+    virtual void stop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        doStop();
+    }
     const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         try { return nextRowGENoCatch(seek, numFields, wasCompleteMatch, stepExtra); }
@@ -142,7 +151,7 @@ public:
     }
     const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
         if (ret)
         {
@@ -237,8 +246,15 @@ public:
         rowTransform = _rowTransform;
         helperex = NULL;
     }
+    void start()
+    {
+        ActivityTimer s(startCycles, timeActivities, NULL);
+        doStart();
+        buf.setown(createOverflowableBuffer(*this, this, true));
+    }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(0);
         dataLinkStop();
     }
@@ -254,14 +270,9 @@ public:
         if (rowTransform)
             helperex = static_cast<IHThorLimitTransformExtra *>(queryHelper()->selectInterface(TAIlimittransformextra_1));
     }
-    void start()
-    {
-        CLimitSlaveActivityBase::start();
-        buf.setown(createOverflowableBuffer(*this, this, true));
-    }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eof) 
             return NULL;
         if (!limitChecked)

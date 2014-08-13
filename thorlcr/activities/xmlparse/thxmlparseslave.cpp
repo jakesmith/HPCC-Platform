@@ -66,7 +66,7 @@ public:
 // IThorDataLink methods
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         anyThisGroup = false;
         eogNext = false;
         input = inputs.item(0);
@@ -75,12 +75,13 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(inputs.item(0));
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (abortSoon)
             return NULL;
         if (eogNext)

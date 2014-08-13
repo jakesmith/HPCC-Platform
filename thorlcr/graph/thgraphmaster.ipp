@@ -218,7 +218,7 @@ public:
 class graphmaster_decl CTimingInfo : public CThorStats
 {
 public:
-    CTimingInfo();
+    CTimingInfo(const char *prefix);
     void getXGMML(IPropertyTree *node) { CThorStats::getXGMML(node, false); }
 };
 
@@ -241,7 +241,7 @@ class graphmaster_decl CMasterActivity : public CActivityBase, implements IThrea
 
 protected:
     ProgressInfoArray progressInfo;
-    CTimingInfo timingInfo;
+    CTimingInfo rowTimingInfo, startTimingInfo, stopTimingInfo;
     IBitSet *notedWarnings;
 
     void addReadFile(IDistributedFile *file, bool temp=false);

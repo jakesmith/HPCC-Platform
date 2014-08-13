@@ -160,7 +160,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
         dataLinkStart();
@@ -185,6 +185,7 @@ public:
 
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (input)
         {
             stopInput(input);
@@ -206,7 +207,7 @@ public:
     
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if(joinhelper) {
             OwnedConstThorRow row = joinhelper->nextRow();
             if (row) {

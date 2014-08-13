@@ -43,19 +43,20 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
         dataLinkStart();
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         loop {
             OwnedConstThorRow row = input->nextRow();
             if (!row && !anyThisGroup)
@@ -254,7 +255,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
 
@@ -266,6 +267,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (parallel)
             prefetcher.stop();
         stopInput(input);
@@ -273,7 +275,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eof)
             return NULL;
         loop

@@ -115,7 +115,8 @@ public:
 CSlaveActivity::CSlaveActivity(CGraphElementBase *_container) : CActivityBase(_container)
 {
     data = NULL;
-    totalCycles = 0;
+    nextRowCycles = startCycles = stopCycles = 0;
+    lastNextRowCycles = lastStartCycles = lastStopCycles;
 }
 
 CSlaveActivity::~CSlaveActivity()
@@ -251,13 +252,13 @@ MemoryBuffer &CSlaveActivity::getInitializationData(unsigned slave, MemoryBuffer
     return mb.append(queryInitializationData(slave));
 }
 
-unsigned __int64 CSlaveActivity::queryLocalCycles() const
+unsigned __int64 CSlaveActivity::queryLocalNextRowCycles() const
 {
     unsigned __int64 inputCycles = 0;
     if (1 == inputs.ordinality())
     {
         IThorDataLink *input = inputs.item(0);
-        inputCycles += input->queryTotalCycles();
+        inputCycles += input->queryNextRowCycles();
     }
     else
     {
@@ -269,33 +270,139 @@ unsigned __int64 CSlaveActivity::queryLocalCycles() const
                 {
                     IThorDataLink *input = inputs.item(container.whichBranch);
                     if (input)
-                        inputCycles += input->queryTotalCycles();
+                        inputCycles += input->queryNextRowCycles();
                 }
                 break;
             default:
                 ForEachItemIn(i, inputs)
                 {
                     IThorDataLink *input = inputs.item(i);
-                    inputCycles += input->queryTotalCycles();
+                    inputCycles += input->queryNextRowCycles();
                 }
                 break;
         }
     }
-    unsigned __int64 _totalCycles = queryTotalCycles();
-    if (_totalCycles < inputCycles) // not sure how/if possible, but guard against
+    unsigned __int64 _nextRowCycles = queryNextRowCycles();
+    if (_nextRowCycles < inputCycles) // not sure how/if possible, but guard against
         return 0;
-    return _totalCycles-inputCycles;
+    return _nextRowCycles-inputCycles;
 }
 
-unsigned __int64 CSlaveActivity::queryTotalCycles() const
+unsigned __int64 CSlaveActivity::queryLocalStartCycles() const
 {
-    return totalCycles;
+    unsigned __int64 inputCycles = 0;
+    if (1 == inputs.ordinality())
+    {
+        IThorDataLink *input = inputs.item(0);
+        inputCycles += input->queryStartCycles();
+    }
+    else
+    {
+        switch (container.getKind())
+        {
+            case TAKchildif:
+            case TAKchildcase:
+                if (inputs.ordinality() && (((unsigned)-1) != container.whichBranch))
+                {
+                    IThorDataLink *input = inputs.item(container.whichBranch);
+                    if (input)
+                        inputCycles += input->queryStartCycles();
+                }
+                break;
+            default:
+                ForEachItemIn(i, inputs)
+                {
+                    IThorDataLink *input = inputs.item(i);
+                    inputCycles += input->queryStartCycles();
+                }
+                break;
+        }
+    }
+    unsigned __int64 _startCycles = queryStartCycles();
+    if (_startCycles < inputCycles) // not sure how/if possible, but guard against
+        return 0;
+    return _startCycles-inputCycles;
+}
+
+unsigned __int64 CSlaveActivity::queryLocalStopCycles() const
+{
+    unsigned __int64 inputCycles = 0;
+    if (1 == inputs.ordinality())
+    {
+        IThorDataLink *input = inputs.item(0);
+        inputCycles += input->queryStopCycles();
+    }
+    else
+    {
+        switch (container.getKind())
+        {
+            case TAKchildif:
+            case TAKchildcase:
+                if (inputs.ordinality() && (((unsigned)-1) != container.whichBranch))
+                {
+                    IThorDataLink *input = inputs.item(container.whichBranch);
+                    if (input)
+                        inputCycles += input->queryStopCycles();
+                }
+                break;
+            default:
+                ForEachItemIn(i, inputs)
+                {
+                    IThorDataLink *input = inputs.item(i);
+                    inputCycles += input->queryStopCycles();
+                }
+                break;
+        }
+    }
+    unsigned __int64 _stopCycles = queryStopCycles();
+    if (_stopCycles < inputCycles) // not sure how/if possible, but guard against
+        return 0;
+    return _stopCycles-inputCycles;
+}
+
+unsigned __int64 CSlaveActivity::queryNextRowCycles() const
+{
+    return nextRowCycles;
+}
+
+unsigned __int64 CSlaveActivity::queryStartCycles() const
+{
+    return startCycles;
+}
+
+unsigned __int64 CSlaveActivity::queryStopCycles() const
+{
+    return stopCycles;
 }
 
 void CSlaveActivity::serializeStats(MemoryBuffer &mb)
 {
     CriticalBlock b(crit);
-    mb.append((unsigned __int64)cycle_to_nanosec(queryLocalCycles()));
+    byte timings = 0;
+    unsigned __int64 nextRowCycles = (unsigned __int64)cycle_to_nanosec(queryLocalNextRowCycles());
+    unsigned __int64 startCycles = (unsigned __int64)cycle_to_nanosec(queryLocalStartCycles());
+    unsigned __int64 stopCycles = (unsigned __int64)cycle_to_nanosec(queryLocalStopCycles());
+    unsigned pos = mb.length();
+    mb.append(timings); // place holder
+    if (nextRowCycles != lastNextRowCycles)
+    {
+        timings |= 0x1;
+        mb.append((unsigned __int64)cycle_to_nanosec(nextRowCycles));
+        lastNextRowCycles = nextRowCycles;
+    }
+    if (startCycles != lastStartCycles)
+    {
+        timings |= 0x2;
+        mb.append((unsigned __int64)cycle_to_nanosec(startCycles)); // really only needed once at start or if CQ
+        lastStartCycles = startCycles;
+    }
+    if (stopCycles != lastStopCycles)
+    {
+        timings |= 0x4;
+        mb.append((unsigned __int64)cycle_to_nanosec(stopCycles)); // really only needed once at stop or if CQ
+        lastStopCycles = stopCycles;
+    }
+    mb.writeDirect(pos, sizeof(timings), &timings);
     ForEachItemIn(i, outputs)
         outputs.item(i)->dataLinkSerialize(mb);
 }

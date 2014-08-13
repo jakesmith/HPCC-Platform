@@ -228,7 +228,7 @@ public:
 
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         rightpartition = (container.getKind()==TAKjoin)&&((helper->getJoinFlags()&JFpartitionright)!=0);
 
         Linked<IRowInterfaces> primaryRowIf, secondaryRowIf;
@@ -338,6 +338,7 @@ public:
     }
     void stop() 
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopLeftInput();
         stopRightInput();
         lhsProgressCount = joinhelper->getLhsProgress();
@@ -376,7 +377,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if(joinhelper) 
         {
             OwnedConstThorRow row = joinhelper->nextRow();
@@ -579,6 +580,7 @@ public:
     }
     void start()
     {
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CThorNarySlaveActivity::start();
 
         ForEachItemIn(i1, expandedInputs)
@@ -592,12 +594,14 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         processor.afterProcessing();
         CThorNarySlaveActivity::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow ret = processor.nextInGroup();
         if (ret)
         {
@@ -613,7 +617,7 @@ public:
     }
     const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         bool matched = true;
         OwnedConstThorRow next = processor.nextGE(seek, numFields, matched, stepExtra);
         if (next)

@@ -83,7 +83,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
 
         lookaheadN = RCMAX;
         startN = 0; // set by initN()
@@ -124,6 +124,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         dataLinkStop();
     }
@@ -135,7 +136,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow ret;
         Owned<IException> exception;
         if (first) // only return 1!

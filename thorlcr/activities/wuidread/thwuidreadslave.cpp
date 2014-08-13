@@ -53,7 +53,7 @@ public:
     } 
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dataLinkStart();
 
         eogPending = false;
@@ -71,11 +71,15 @@ public:
             masterReplyMsg.swapWith(reqMsg);
         }
     }
-    void stop() { dataLinkStop(); }
+    void stop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        dataLinkStop();
+    }
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (abortSoon || rowSource.eos())
             return NULL;
 

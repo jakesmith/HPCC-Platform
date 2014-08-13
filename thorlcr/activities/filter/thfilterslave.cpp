@@ -77,14 +77,19 @@ public:
     }
     void start()
     {   
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         matched = 0;
         abortSoon = !helper->canMatchAny();
         CFilterSlaveActivityBase::start();
     }
+    void stop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        CFilterSlaveActivityBase::stop();
+    }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         while(!abortSoon)
         {
             OwnedConstThorRow row = input->nextRow();
@@ -116,7 +121,7 @@ public:
     }
     const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         while (!abortSoon)
         {
             OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
@@ -186,14 +191,14 @@ public:
     }
     void start()
     {   
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         abortSoon = !helper->canMatchAny();
         recordCount = 0;
         CFilterSlaveActivityBase::start();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         while (!abortSoon)
         {
             OwnedConstThorRow row = input->nextRow();
@@ -257,13 +262,13 @@ public:
     }
     void start()
     {   
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         abortSoon = !helper->canMatchAny();
         CFilterSlaveActivityBase::start();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         while (!abortSoon)
         {
             if (groupStream)
@@ -302,7 +307,7 @@ public:
     }
     const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (abortSoon)
             return NULL;
 
@@ -369,9 +374,9 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         groupStream.clear();
-        stopInput(input);
-        dataLinkStop();
+        CFilterSlaveActivityBase::stop();
     }
 // steppable
     virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)

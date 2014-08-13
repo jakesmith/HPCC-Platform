@@ -56,7 +56,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input.set(inputs.item(0));
         startInput(input);
         stopped = false;
@@ -64,6 +64,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (!stopped)
         {
             abortSoon = true;
@@ -102,7 +103,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!abortSoon)
         {
             if (firstget)
@@ -153,7 +154,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!abortSoon)
         {
             loop
@@ -241,7 +242,7 @@ public:
     void start()
     {
         CFirstNSlaveBase::start(); // adds to totalTime (common to local and global firstn)
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         totallimit = (rowcount_t)helper->getLimit();
         limit = maxres = RCUNBOUND;
         skipCount = 0;
@@ -324,7 +325,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!abortSoon) {
             if (firstget)
             {

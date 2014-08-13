@@ -68,13 +68,14 @@ public:
     } 
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
         dataLinkStart();
     }
     void stop()
     { 
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         dataLinkStop();
     }
@@ -92,7 +93,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         while (!abortSoon) {
             if (rowIter->isValid()) {
                 anyThisGroup = true;

@@ -211,13 +211,14 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDiskReadSlaveActivityBase::start();
         out = createSequentialPartHandler(partHandler, partDescs, false);
         dataLinkStart();
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (out)
         {
             out->Release();
@@ -228,7 +229,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow row = out->nextRow();
         if (!row)
             return NULL;

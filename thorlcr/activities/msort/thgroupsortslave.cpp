@@ -56,7 +56,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dataLinkStart();
         input = inputs.item(0);
         unsigned spillPriority = container.queryGrouped() ? SPILL_PRIORITY_GROUPSORT : SPILL_PRIORITY_LARGESORT;
@@ -72,6 +72,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         out.clear();
         stopInput(input);
         dataLinkStop();
@@ -79,7 +80,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (abortSoon || eoi)
             return NULL;
         OwnedConstThorRow row = out->nextRow();
@@ -136,7 +137,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dataLinkStart();
         input = inputs.item(0);
         startInput(input);
@@ -146,12 +147,13 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow ret = input->nextRow();
         if (ret && prev && icompare->docompare(prev, ret) > 0)
         {
@@ -170,7 +172,7 @@ public:
     }
     const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
         if (ret && prev && stepCompare->docompare(prev, ret, numFields) > 0)
         {

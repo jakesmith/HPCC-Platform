@@ -68,7 +68,7 @@ public:
     LocalChooseSetsActivity(CGraphElementBase *container) : BaseChooseSetsActivity(container) { }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         BaseChooseSetsActivity::start();
         ActPrintLog("CHOOSESETS: Is Local");
         input.set(inputs.item(0));
@@ -77,6 +77,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
@@ -85,7 +86,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         loop
         {
             OwnedConstThorRow row = input->ungroupedNextRow();
@@ -159,7 +160,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ActPrintLog("CHOOSESETS: Is Global");
         BaseChooseSetsActivity::start();
         first = true;
@@ -170,6 +171,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
@@ -188,7 +190,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (first) 
         {
             first = false;
@@ -249,7 +251,9 @@ public:
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info);
     virtual CActivityBase *queryFromActivity();
     virtual void dataLinkSerialize(MemoryBuffer &mb);
-    unsigned __int64 queryTotalCycles() const;
+    unsigned __int64 queryNextRowCycles() const;
+    unsigned __int64 queryStartCycles() const;
+    unsigned __int64 queryStopCycles() const;
 
     ChooseSetsPlusActivity & activity;
     IEngineRowAllocator *queryRowAllocator();
@@ -301,7 +305,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ActPrintLog("CHOOSESETS: Is Global");
         if (counts)
         {
@@ -324,6 +328,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
@@ -423,7 +428,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (first) 
         {
             first = false;
@@ -502,7 +507,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (first) 
         {
             first = false;
@@ -558,7 +563,9 @@ bool InputCounter::isGrouped()                              { return activity.in
 void InputCounter::getMetaInfo(ThorDataLinkMetaInfo &info)  { activity.inputs.item(0)->getMetaInfo(info); }
 CActivityBase *InputCounter::queryFromActivity()            { return activity.inputs.item(0)->queryFromActivity(); }
 void InputCounter::dataLinkSerialize(MemoryBuffer &mb)      { activity.inputs.item(0)->dataLinkSerialize(mb); }
-unsigned __int64 InputCounter::queryTotalCycles() const     { return activity.inputs.item(0)->queryTotalCycles(); }
+unsigned __int64 InputCounter::queryNextRowCycles() const     { return activity.inputs.item(0)->queryNextRowCycles(); }
+unsigned __int64 InputCounter::queryStartCycles() const     { return activity.inputs.item(0)->queryStartCycles(); }
+unsigned __int64 InputCounter::queryStopCycles() const      { return activity.inputs.item(0)->queryStopCycles(); }
 
 
 //---------------------------------------------------------------------------

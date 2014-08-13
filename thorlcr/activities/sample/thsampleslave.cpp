@@ -42,7 +42,7 @@ public:
 
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
         eogNext = false;
@@ -56,6 +56,7 @@ public:
 
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
         stopInput(input);
     }
@@ -63,7 +64,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         while(!abortSoon)
         {
             OwnedConstThorRow row = input->nextRow();

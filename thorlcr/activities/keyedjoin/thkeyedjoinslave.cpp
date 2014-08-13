@@ -2031,7 +2031,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         assertex(inputs.ordinality() == 1);
 
         eos = false;
@@ -2050,6 +2050,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (fetchHandler)
             fetchHandler->stop(true);
         if (!eos)
@@ -2120,7 +2121,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!abortSoon && !eos)
         {
             loop

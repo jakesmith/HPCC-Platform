@@ -193,7 +193,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
         inputStopped = false;
@@ -217,6 +217,7 @@ public:
     virtual bool isGrouped() { return grouped; }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (out)
             out->stop();
         doStopInput();
@@ -224,7 +225,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (abortSoon || eos)
             return NULL;
         if (NULL == out)

@@ -34,8 +34,6 @@
 #include "thgraph.hpp"
 #include "jdebug.hpp"
 
-class CSlaveActivity;
-
 class CSlaveGraphElement;
 class graphslave_decl CSlaveActivity : public CActivityBase
 {
@@ -44,7 +42,8 @@ class graphslave_decl CSlaveActivity : public CActivityBase
 
 protected:
     PointerIArrayOf<IThorDataLink> inputs, outputs;
-    unsigned __int64 totalCycles;
+    unsigned __int64 nextRowCycles, startCycles, stopCycles;
+    unsigned __int64 lastNextRowCycles, lastStartCycles, lastStopCycles;
     MemoryBuffer startCtx;
 
 public:
@@ -68,9 +67,15 @@ public:
     void startInput(IThorDataLink *itdl, const char *extra=NULL);
     void stopInput(IRowStream *itdl, const char *extra=NULL);
 
-    unsigned __int64 &getTotalCyclesRef() { return totalCycles; }
-    unsigned __int64 queryLocalCycles() const;
-    virtual unsigned __int64 queryTotalCycles() const; // some acts. may calculate accumulated total from inputs (e.g. splitter)
+    unsigned __int64 &getTotalCyclesRef() { return nextRowCycles; }
+    unsigned __int64 &getStartCyclesRef() { return startCycles; }
+    unsigned __int64 &getStopCyclesRef() { return stopCycles; }
+    unsigned __int64 queryLocalNextRowCycles() const;
+    unsigned __int64 queryLocalStartCycles() const;
+    unsigned __int64 queryLocalStopCycles() const;
+    virtual unsigned __int64 queryNextRowCycles() const; // some acts. may calculate accumulated total from inputs (e.g. splitter)
+    virtual unsigned __int64 queryStartCycles() const; // some acts. may calculate accumulated total from inputs (e.g. splitter)
+    virtual unsigned __int64 queryStopCycles() const; // some acts. may calculate accumulated total from inputs (e.g. splitter)
     virtual void serializeStats(MemoryBuffer &mb);
 };
 

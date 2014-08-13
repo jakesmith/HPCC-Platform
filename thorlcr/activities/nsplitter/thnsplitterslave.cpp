@@ -28,14 +28,16 @@ class NSplitterSlaveActivity;
 class CSplitterOutputBase : public CSimpleInterface, implements IRowStream
 {
 protected:
-    unsigned __int64 totalCycles;
+    unsigned __int64 nextRowCycles, startCycles, stopCycles;
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-    CSplitterOutputBase() { totalCycles = 0; }
+    CSplitterOutputBase() { nextRowCycles = startCycles = stopCycles = 0; }
 
     virtual void start() = 0;
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
-    virtual unsigned __int64 queryTotalCycles() const { return totalCycles; }
+    virtual unsigned __int64 queryNextRowCycles() const { return nextRowCycles; }
+    virtual unsigned __int64 queryStartCycles() const { return startCycles; }
+    virtual unsigned __int64 queryStopCycles() const { return stopCycles; }
 };
 
 class CSplitterOutput : public CSplitterOutputBase
@@ -160,14 +162,18 @@ class NSplitterSlaveActivity : public CSlaveActivity
         CInputWrapper(NSplitterSlaveActivity &_activity, IThorDataLink *_input) : activity(_activity), input(_input) { }
         virtual const void *nextRow()
         {
-            ActivityTimer t(totalCycles, activity.queryTimeActivities(), NULL);
+            ActivityTimer t(nextRowCycles, activity.queryTimeActivities(), NULL);
             return input->nextRow();
         }
-        virtual void stop() { input->stop(); }
         virtual void start()
         {
-            ActivityTimer s(totalCycles, activity.queryTimeActivities(), NULL);
+            ActivityTimer s(startCycles, activity.queryTimeActivities(), NULL);
             input->start();
+        }
+        virtual void stop()
+        {
+            ActivityTimer sp(stopCycles, activity.queryTimeActivities(), NULL);
+            input->stop();
         }
         virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
         {
@@ -222,12 +228,26 @@ class NSplitterSlaveActivity : public CSlaveActivity
                 activity->inputs.item(0)->getMetaInfo(info);
             info.canStall = !activity->spill;
         }
-        virtual unsigned __int64 queryTotalCycles() const
+        virtual unsigned __int64 queryNextRowCycles() const
         {
             SpinBlock b(processActiveLock);
             if (!input)
                 return 0;
-            return input->queryTotalCycles();
+            return input->queryNextRowCycles();
+        }
+        virtual unsigned __int64 queryStartCycles() const
+        {
+            SpinBlock b(processActiveLock);
+            if (!input)
+                return 0;
+            return input->queryStartCycles();
+        }
+        virtual unsigned __int64 queryStopCycles() const
+        {
+            SpinBlock b(processActiveLock);
+            if (!input)
+                return 0;
+            return input->queryStopCycles();
         }
     };
 public:
@@ -312,7 +332,7 @@ public:
     }
     inline void more(rowcount_t &max)
     {
-        ActivityTimer t(totalCycles, queryTimeActivities(), NULL);
+        ActivityTimer t(nextRowCycles, queryTimeActivities(), NULL);
         writer.more(max);
     }
     void prepareInput(unsigned output)
@@ -407,21 +427,41 @@ public:
             input = NULL;
         }
     }
-    void abort()
+    virtual void abort()
     {
         CSlaveActivity::abort();
         if (smartBuf)
             smartBuf->cancel();
     }
-    unsigned __int64 queryTotalCycles() const
+    virtual unsigned __int64 queryNextRowCycles() const
     {
-        unsigned __int64 _totalCycles = totalCycles; // more() time
+        unsigned __int64 _nextRowCycles = nextRowCycles; // more() time
         ForEachItemIn(o, outputs)
         {
             CDelayedInput *delayedInput = (CDelayedInput *)outputs.item(o);
-            _totalCycles += delayedInput->queryTotalCycles();
+            _nextRowCycles += delayedInput->queryNextRowCycles();
         }
-        return _totalCycles;
+        return _nextRowCycles;
+    }
+    virtual unsigned __int64 queryStartCycles() const
+    {
+        unsigned __int64 _startCycles = startCycles; // more() time
+        ForEachItemIn(o, outputs)
+        {
+            CDelayedInput *delayedInput = (CDelayedInput *)outputs.item(o);
+            _startCycles += delayedInput->queryStartCycles();
+        }
+        return _startCycles;
+    }
+    virtual unsigned __int64 queryStopCycles() const
+    {
+        unsigned __int64 _stopCycles = stopCycles; // more() time
+        ForEachItemIn(o, outputs)
+        {
+            CDelayedInput *delayedInput = (CDelayedInput *)outputs.item(o);
+            _stopCycles += delayedInput->queryStopCycles();
+        }
+        return _stopCycles;
     }
 
 friend class CInputWrapper;
@@ -441,7 +481,7 @@ CSplitterOutput::CSplitterOutput(NSplitterSlaveActivity &_activity, unsigned _ou
 // IThorDataLink
 void CSplitterOutput::start()
 {
-    ActivityTimer s(totalCycles, activity.queryTimeActivities(), NULL);
+    ActivityTimer s(startCycles, activity.queryTimeActivities(), NULL);
     rec = max = 0;
     activity.prepareInput(output);
     if (activity.startException)
@@ -459,7 +499,7 @@ const void *CSplitterOutput::nextRow()
 {
     if (rec == max)
         activity.more(max);
-    ActivityTimer t(totalCycles, activity.queryTimeActivities(), NULL);
+    ActivityTimer t(nextRowCycles, activity.queryTimeActivities(), NULL);
     const void *row = activity.nextRow(output); // pass ptr to max if need more
     ++rec;
     return row;

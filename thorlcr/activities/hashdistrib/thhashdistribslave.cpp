@@ -1729,6 +1729,49 @@ protected:
     IHash *ihash;
     ICompare *mergecmp;     // if non-null is merge distribute
     bool eofin;
+
+    void doStop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        ActPrintLog("HASHDISTRIB: stopping");
+        if (out)
+        {
+            out->stop();
+            out.clear();
+        }
+        if (distributor)
+        {
+            distributor->disconnect(true);
+            distributor->join();
+        }
+        stopInput();
+        instrm.clear();
+        dataLinkStop();
+    }
+    void doStart(bool passthrough)
+    {
+        // bit messy
+        eofin = false;
+        if (!instrm.get()) // derived class may override
+        {
+            input = inputs.item(0);
+            startInput(input);
+            inputstopped = false;
+            instrm.set(input);
+            if (passthrough)
+                out.set(instrm);
+        }
+        else if (passthrough)
+        {
+            out.set(instrm);
+        }
+        if (!passthrough)
+        {
+            Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
+            out.setown(distributor->connect(myRowIf, instrm, ihash, mergecmp));
+        }
+        dataLinkStart();
+    }
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -1772,51 +1815,15 @@ public:
             inputstopped = true;
         }
     }
-    void start(bool passthrough)
-    {
-        // bit messy
-        eofin = false;
-        if (!instrm.get()) // derived class may override
-        {
-            input = inputs.item(0);
-            startInput(input);
-            inputstopped = false;
-            instrm.set(input);
-            if (passthrough)
-                out.set(instrm);
-        }
-        else if (passthrough)
-        {
-            out.set(instrm);
-        }
-        if (!passthrough)
-        {
-            Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
-            out.setown(distributor->connect(myRowIf, instrm, ihash, mergecmp));
-        }
-        dataLinkStart();
-    }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
-        start(false);
+        ActivityTimer s(startCycles, timeActivities, NULL);
+        doStart(false);
     }
     void stop()
     {
-        ActPrintLog("HASHDISTRIB: stopping");
-        if (out)
-        {
-            out->stop();
-            out.clear();
-        }
-        if (distributor)
-        {
-            distributor->disconnect(true);
-            distributor->join();
-        }
-        stopInput();
-        instrm.clear();
-        dataLinkStop();
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        doStop();
     }
     void kill()
     {
@@ -1831,7 +1838,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL); // careful not to call again in derivatives
+        ActivityTimer t(nextRowCycles, timeActivities, NULL); // careful not to call again in derivatives
         if (abortSoon||eofin) {
             eofin = true;
             return NULL;
@@ -2119,17 +2126,19 @@ public:
 
     void start()
     {
+        ActivityTimer s(startCycles, timeActivities, NULL);
         bool passthrough;
         {
-            ActivityTimer s(totalCycles, timeActivities, NULL);
+            ActivityTimer s(startCycles, timeActivities, NULL);
             instrm.setown(partitioner->calc(this,inputs.item(0),passthrough));  // may return NULL
         }
-        HashDistributeSlaveBase::start(passthrough);
+        HashDistributeSlaveBase::doStart(passthrough);
     }
 
     void stop()
     {
-        HashDistributeSlaveBase::stop();
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        HashDistributeSlaveBase::doStop();
         if (instrm) {
             instrm.clear();
             // should remove here rather than later?
@@ -2586,7 +2595,11 @@ protected:
         }
         numHashTables = _numHashTables;
     }
-
+    void doStop()
+    {
+        stopInput();
+        dataLinkStop();
+    }
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -2654,7 +2667,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         inputstopped = false;
         eos = lastEog = false;
         startInput(inputs.item(0));
@@ -2694,7 +2707,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eos)
             return NULL;
         // bucket handlers, stream out non-duplicates (1st entry in HT)
@@ -3207,9 +3220,9 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         ActPrintLog("stopping");
-        stopInput();
-        dataLinkStop();
+        doStop();
     }
     void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
@@ -3257,14 +3270,15 @@ public:
     }
     void start()
     {
+        ActivityTimer s(startCycles, timeActivities, NULL);
         HashDedupSlaveActivityBase::start();
-        ActivityTimer s(totalCycles, timeActivities, NULL);
         Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
         instrm.setown(distributor->connect(myRowIf, input, iHash, iCompare));
         input = instrm.get();
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         ActPrintLog("stopping");
         if (instrm)
         {
@@ -3273,8 +3287,7 @@ public:
         }
         distributor->disconnect(true);
         distributor->join();
-        stopInput();
-        dataLinkStop();
+        HashDedupSlaveActivityBase::doStop();
     }
     void abort()
     {
@@ -3341,7 +3354,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         inputLstopped = true;
         inputRstopped = true;
         leftdone = false;
@@ -3424,6 +3437,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         ActPrintLog("HASHJOIN: stopping");
         stopInputL();
         stopInputR();
@@ -3452,7 +3466,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!eof) {
             OwnedConstThorRow row = joinhelper->nextRow();
             if (row) {
@@ -3662,7 +3676,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
         localAggTable.setown(new CThorRowAggregator(*this, *helper, *helper));
@@ -3680,6 +3694,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         ActPrintLog("HASHAGGREGATE: stopping");
         stopInput(input);
         dataLinkStop();
@@ -3692,7 +3707,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eos) return NULL;
         Owned<AggregateRowBuilder> next = localAggTable->nextResult();
         if (next)
@@ -3751,20 +3766,21 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         input->start();
         dataLinkStart();
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (input)
             input->stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         OwnedConstThorRow row = input->ungroupedNextRow();
         if (!row)
             return NULL;

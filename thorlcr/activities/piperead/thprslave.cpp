@@ -194,7 +194,7 @@ public:
     }
     CATCH_NEXTROW()
     {   
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eof || abortSoon)
             return NULL;
         try
@@ -249,7 +249,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eof = false;
         OwnedRoxieString pipeProgram(helper->getPipeProgram());
         openPipe(pipeProgram, "PIPEREAD");
@@ -257,6 +257,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         readTrailing();
         verifyPipe();
         dataLinkStop();
@@ -366,7 +367,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eof = anyThisGroup = inputExhausted = false;
         firstRead = true;
 
@@ -387,7 +388,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eof || abortSoon)
             return NULL;
         loop
@@ -453,6 +454,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         abortSoon = true;
         readTrailing();
         if (recreate)

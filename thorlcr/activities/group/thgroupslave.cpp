@@ -68,7 +68,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ActPrintLog(rolloverEnabled ? "GROUP: is global" : "GROUP: is local");
         eogNext = prevEog = eof = false;
         if (rolloverEnabled)
@@ -120,6 +120,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (nextNodeStream)
             nextNodeStream->stop();
         stopInput(input);
@@ -132,7 +133,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eogNext || eof)
         {
             eogNext = false;

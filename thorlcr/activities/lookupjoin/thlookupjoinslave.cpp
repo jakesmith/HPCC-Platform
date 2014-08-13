@@ -1294,7 +1294,9 @@ protected:
     using PARENT::broadcaster;
     using PARENT::inputs;
     using PARENT::queryHelper;
-    using PARENT::totalCycles;
+    using PARENT::nextRowCycles;
+    using PARENT::startCycles;
+    using PARENT::stopCycles;
     using PARENT::timeActivities;
     using PARENT::fireException;
     using PARENT::lookupNextRow;
@@ -1783,7 +1785,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         PARENT::start();
 
         if (!isSmart())
@@ -1804,7 +1806,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!gotRHS)
             getRHS(false);
         OwnedConstThorRow row;
@@ -1827,6 +1829,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (!gotRHS && needGlobal)
             getRHS(true); // If global, need to handle RHS until all are slaves stop
 
@@ -2257,12 +2260,12 @@ public:
 // IThorSlaveActivity overloaded methods
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         PARENT::start();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!gotRHS)
             getRHS(false);
         OwnedConstThorRow row = lookupNextRow();
@@ -2273,6 +2276,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (!gotRHS && needGlobal)
             getRHS(true); // If global, need to handle RHS until all are slaves stop
         PARENT::stop();

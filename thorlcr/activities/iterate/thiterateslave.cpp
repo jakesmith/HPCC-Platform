@@ -75,7 +75,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         count = 0;
         eof = nextPut = false;
         inrowif.set(::queryRowInterfaces(inputs.item(0)));
@@ -96,6 +96,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (global)
             putNext(NULL);
         stopInput(input);
@@ -128,7 +129,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         loop {
             if (eof || abortSoon)
                 break;
@@ -214,7 +215,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         loop {
             if (eof || abortSoon)
                 break;
@@ -299,18 +300,19 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eof = !container.queryLocalOrGrouped() && !firstNode();
         count = 0;
         dataLinkStart();
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!eof) {
             if (count==0)
                 eof = !helper->first();
@@ -357,17 +359,18 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dataLinkStart();
         dohere = container.queryLocalOrGrouped() || firstNode();
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (dohere) {
             OwnedConstThorRow row;
             row.set(helper->next()); // needs linking allegedly
@@ -418,6 +421,7 @@ public:
     }
     virtual void start()
     {
+        ActivityTimer s(startCycles, timeActivities, NULL);
         isLocal = container.queryOwnerId() && container.queryOwner().isLocalOnly();
         eof = isLocal ? false : !firstNode();
         if (!eof)
@@ -426,6 +430,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (rows)
         {
             rows->stop();
@@ -435,7 +440,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eof || abortSoon)
             return NULL;
         assertex(rows);

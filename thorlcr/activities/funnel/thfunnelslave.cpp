@@ -353,6 +353,7 @@ public:
                 }
                 virtual void stop()
                 {
+                    ActivityTimer f(activity.getStopCyclesRef(), activity.queryTimeActivities(), NULL);
                     out->stop();
                     out.clear();
                     dataLinkStop();
@@ -375,7 +376,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eogNext = false;
         stopped = 0;
         if (grouped)
@@ -405,6 +406,7 @@ public:
 
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         current = NULL;
         unsigned i = stopped;
         for (;i<inputs.ordinality(); i++)
@@ -461,7 +463,7 @@ public:
 
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (current)
         {
             if (grouped)
@@ -549,7 +551,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eogNext = false;
         ForEachItemIn(i, inputs)
         {
@@ -565,13 +567,14 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         for (unsigned i=0;i<inputs.ordinality(); i++)
             stopInput(inputs.item(i));
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         loop {
             bool eog = false;
             bool err = false;
@@ -652,7 +655,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         curinput = 0;
         eogNext = false;
         ForEachItemIn(i, inputs)
@@ -669,13 +672,14 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         for (unsigned i=0;i<inputs.ordinality(); i++)
             stopInput(inputs.item(i));
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         unsigned n = inputs.ordinality();
         loop {
             if (curinput==n) {
@@ -771,7 +775,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         curinput = 0;
         anyThisGroup = anyThisInput = eogNext = false;
         ForEachItemIn(i, inputs)
@@ -789,13 +793,14 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         for (unsigned i=0;i<inputs.ordinality(); i++)
             stopInput(inputs.item(i));
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eoi) 
             return NULL; 
         if (eogNext) { 
@@ -852,7 +857,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
 
         startInput(inputs.item(0));
 
@@ -891,6 +896,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(inputs.item(0));
         if (selectedInput)
             selectedInput->stop();
@@ -898,7 +904,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!selectedInput)
             return NULL;
         OwnedConstThorRow ret = selectedInput->nextRow();
@@ -924,7 +930,7 @@ public:
     }
     const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!selectedInput)
             return NULL;
         return selectedInput->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
@@ -973,7 +979,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         bool selectionIsAll;
         size32_t selectionLen;
         rtlDataAttr selection;
@@ -1008,6 +1014,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         // NB: Whatever pulls this IThorNWayInput, starts and stops the selectedInputs
         dataLinkStop();
     }

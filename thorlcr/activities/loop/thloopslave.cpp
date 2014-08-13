@@ -258,7 +258,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dostart();
         eof = false;
         helper->createParentExtract(extractBuilder);
@@ -291,12 +291,13 @@ public:
     }
     void doStop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         loopPending.clear();
         CLoopSlaveActivityBase::doStop();
     }
     const void *getNextRow()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!abortSoon && !eof)
         {
             unsigned emptyIterations = 0;
@@ -452,7 +453,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dostart();
         executed = false;
         maxIterations = helper->numIterations();
@@ -464,6 +465,7 @@ public:
     }
     CATCH_NEXTROW()
     {
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!executed)
         {
             executed = true;
@@ -498,6 +500,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         finalResultStream.clear();
         loopResults.clear();
         CLoopSlaveActivityBase::doStop();
@@ -538,7 +541,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         curRow = 0;
         abortSoon = false;
         assertex(container.queryResultsGraph());
@@ -552,6 +555,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         abortSoon = true;
         resultStream.clear();
         dataLinkStop();
@@ -563,7 +567,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!abortSoon)
         {
             OwnedConstThorRow row = resultStream->nextRow();
@@ -619,7 +623,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         lastNull = eoi = false;
         abortSoon = false;
         assertex(container.queryResultsGraph());
@@ -631,7 +635,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!abortSoon && !eoi)
             return NULL;
         OwnedConstThorRow row = inputs.item(0)->nextRow();
@@ -654,6 +658,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(inputs.item(0));
         abortSoon = true;
         dataLinkStop();
@@ -821,7 +826,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         selectedInput = container.whichBranch>=inputs.ordinality() ? NULL : inputs.item(container.whichBranch);
         if (selectedInput)
             startInput(selectedInput);
@@ -829,6 +834,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (selectedInput)
             stopInput(selectedInput);
         abortSoon = true;
@@ -836,7 +842,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (abortSoon)
             return NULL;
         if (!selectedInput)
@@ -887,7 +893,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         started = false;
         eos = false;
         ok = false;
@@ -895,6 +901,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -962,16 +969,18 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eos = false;
         dataLinkStart();
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eos)
             return NULL;
         eos = true;
@@ -1016,7 +1025,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         gathered = eos = false;
         aggregated.clear();
         aggregated.setown(new CThorRowAggregator(*this, *helper, *helper));
@@ -1025,10 +1034,12 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eos)
             return NULL;
         if (!gathered)
@@ -1090,7 +1101,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ok = false;
         numProcessedLastGroup = getDataLinkCount(); // is this right?
         lastInput.clear();
@@ -1100,11 +1111,13 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(inputs.item(0));
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         IThorDataLink *input = inputs.item(0);
         loop
         {
@@ -1179,7 +1192,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         abortSoon = false;
         unsigned sequence = helper->querySequence();
         if ((int)sequence >= 0)
@@ -1199,7 +1212,7 @@ public:
     virtual bool isGrouped() { return false; }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!abortSoon)
         {
             OwnedConstThorRow row = resultStream->nextRow();
@@ -1213,6 +1226,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         abortSoon = true;
         resultStream.clear();
         dataLinkStop();

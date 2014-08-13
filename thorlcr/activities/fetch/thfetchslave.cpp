@@ -358,7 +358,7 @@ public:
 // IThorDataLink impl.
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         class CKeyFieldExtractBase : public CSimpleInterface, implements IRowStream
         {
         protected:
@@ -461,6 +461,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         fetchStreamOut->stop();
         dataLinkStop();
     }
@@ -471,7 +472,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (abortSoon)
             return NULL;
 

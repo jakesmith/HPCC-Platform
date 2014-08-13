@@ -281,6 +281,18 @@ protected:
     bool keepLeft;
     unsigned numToKeep;
 
+    void doStart()
+    {
+        ActivityTimer s(startCycles, timeActivities, NULL);
+        CDedupRollupBaseActivity::start();
+        dataLinkStart();
+    }
+    void doStop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        CDedupRollupBaseActivity::stop();
+        dataLinkStop();
+    }
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -296,17 +308,6 @@ public:
         keepLeft = ddhelper->keepLeft();
         numToKeep = ddhelper->numToKeep();
         assertex(keepLeft || numToKeep == 1);
-    }
-    virtual void start()
-    {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
-        CDedupRollupBaseActivity::start();
-        dataLinkStart();
-    }
-    virtual void stop()
-    {
-        CDedupRollupBaseActivity::stop();
-        dataLinkStop();
     }
     virtual bool isGrouped() { return groupOp; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
@@ -340,9 +341,19 @@ public:
         }
         return false;
     }
+    virtual void start()
+    {
+        ActivityTimer s(startCycles, timeActivities, NULL);
+        doStart();
+    }
+    virtual void stop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        doStop();
+    }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eos)
             return NULL;
         checkFirstRow();
@@ -416,8 +427,8 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
-        CDedupBaseSlaveActivity::start();
+        ActivityTimer s(startCycles, timeActivities, NULL);
+        doStop();
 
         lastEog = false;
         assertex(!global);      // dedup(),local,all only supported
@@ -425,9 +436,14 @@ public:
         dedupHelper->init(input, ddhelper, keepLeft, &abortSoon, groupOp?NULL:this);
         dedupHelper->calcNextDedupAll(groupOp);
     }
+    virtual void stop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        doStop();
+    }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eos)
             return NULL;
 
@@ -486,12 +502,13 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDedupRollupBaseActivity::start();
         dataLinkStart();
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (global && !eos) // if stopped early, ensure next informed
         {
             kept.clear();
@@ -503,7 +520,7 @@ public:
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (eos) return NULL;
         checkFirstRow();
         if (eog())
@@ -577,7 +594,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         eoi = false;
         startInput(input);
@@ -585,12 +602,13 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
-        ActivityTimer t(totalCycles, timeActivities, NULL);
+        ActivityTimer t(nextRowCycles, timeActivities, NULL);
         if (!eoi)
         {
             CThorExpandingRowArray rows(*this, queryRowInterfaces(input));

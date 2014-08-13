@@ -155,7 +155,9 @@ public:
         mb.append(count);
     }
 
-    unsigned __int64 queryTotalCycles() const { return ((CSlaveActivity *)owner)->queryTotalCycles(); }
+    unsigned __int64 queryNextRowCycles() const { return ((CSlaveActivity *)owner)->queryNextRowCycles(); }
+    unsigned __int64 queryStartCycles() const { return ((CSlaveActivity *)owner)->queryStartCycles(); }
+    unsigned __int64 queryStopCycles() const { return ((CSlaveActivity *)owner)->queryStopCycles(); }
 
     inline rowcount_t getDataLinkGlobalCount()
     {
