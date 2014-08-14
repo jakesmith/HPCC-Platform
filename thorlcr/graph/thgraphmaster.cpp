@@ -332,7 +332,8 @@ void CSlaveMessageHandler::main()
 
 //////////////////////
 
-CMasterActivity::CMasterActivity(CGraphElementBase *_container) : CActivityBase(_container), threaded("CMasterActivity", this)
+CMasterActivity::CMasterActivity(CGraphElementBase *_container)
+    : CActivityBase(_container), threaded("CMasterActivity", this), timingInfo("time"), startTimingInfo("startTime"), stopTimingInfo("stopTime")
 {
     notedWarnings = createBitSet();
     mpTag = TAG_NULL;
@@ -484,11 +485,13 @@ void CMasterActivity::reset()
 void CMasterActivity::deserializeStats(unsigned node, MemoryBuffer &mb)
 {
     CriticalBlock b(progressCrit); // don't think needed
-    unsigned __int64 localTimeNs, localStartTimeNs;
+    unsigned __int64 localTimeNs, localStartTimeNs, localStopTimeNs;
     mb.read(localTimeNs);
     mb.read(localStartTimeNs);
+    mb.read(localStopTimeNs);
     timingInfo.set(node, localTimeNs/1000000); // to milliseconds
     startTimingInfo.set(node, localStartTimeNs/1000000); // to milliseconds
+    stopTimingInfo.set(node, localStopTimeNs/1000000); // to milliseconds
     rowcount_t count;
     ForEachItemIn(p, progressInfo)
     {
@@ -500,6 +503,8 @@ void CMasterActivity::deserializeStats(unsigned node, MemoryBuffer &mb)
 void CMasterActivity::getXGMML(IWUGraphProgress *progress, IPropertyTree *node)
 {
     timingInfo.getXGMML(node);
+    startTimingInfo.getXGMML(node);
+    stopTimingInfo.getXGMML(node);
 }
 
 void CMasterActivity::getXGMML(unsigned idx, IPropertyTree *edge)
@@ -2882,7 +2887,7 @@ void CThorStats::getXGMML(IPropertyTree *node, bool suppressMinMaxWhenEqual)
 
 ///////////////////////////////////////////////////
 
-CTimingInfo::CTimingInfo() : CThorStats("time")
+CTimingInfo::CTimingInfo(const char *prefix) : CThorStats(prefix)
 {
     StringBuffer tmp;
     labelMin.set(tmp.append(labelMin).append("Ms"));

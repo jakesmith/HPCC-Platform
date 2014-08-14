@@ -116,6 +116,8 @@ CSlaveActivity::CSlaveActivity(CGraphElementBase *_container) : CActivityBase(_c
 {
     data = NULL;
     totalCycles = 0;
+    startCycles = 0;
+    stopCycles = 0;
 }
 
 CSlaveActivity::~CSlaveActivity()
@@ -323,6 +325,42 @@ unsigned __int64 CSlaveActivity::queryLocalStartCycles() const
     return _totalCycles-inputCycles;
 }
 
+unsigned __int64 CSlaveActivity::queryLocalStopCycles() const
+{
+    unsigned __int64 inputCycles = 0;
+    if (1 == inputs.ordinality())
+    {
+        IThorDataLink *input = inputs.item(0);
+        inputCycles += input->queryStopCycles();
+    }
+    else
+    {
+        switch (container.getKind())
+        {
+            case TAKchildif:
+            case TAKchildcase:
+                if (inputs.ordinality() && (((unsigned)-1) != container.whichBranch))
+                {
+                    IThorDataLink *input = inputs.item(container.whichBranch);
+                    if (input)
+                        inputCycles += input->queryStopCycles();
+                }
+                break;
+            default:
+                ForEachItemIn(i, inputs)
+                {
+                    IThorDataLink *input = inputs.item(i);
+                    inputCycles += input->queryStopCycles();
+                }
+                break;
+        }
+    }
+    unsigned __int64 _totalCycles = queryStopCycles();
+    if (_totalCycles < inputCycles) // not sure how/if possible, but guard against
+        return 0;
+    return _totalCycles-inputCycles;
+}
+
 unsigned __int64 CSlaveActivity::queryTotalCycles() const
 {
     return totalCycles;
@@ -333,11 +371,17 @@ unsigned __int64 CSlaveActivity::queryStartCycles() const
     return startCycles;
 }
 
+unsigned __int64 CSlaveActivity::queryStopCycles() const
+{
+    return stopCycles;
+}
+
 void CSlaveActivity::serializeStats(MemoryBuffer &mb)
 {
     CriticalBlock b(crit);
     mb.append((unsigned __int64)cycle_to_nanosec(queryLocalCycles()));
     mb.append((unsigned __int64)cycle_to_nanosec(queryLocalStartCycles()));
+    mb.append((unsigned __int64)cycle_to_nanosec(queryLocalStopCycles()));
     ForEachItemIn(i, outputs)
         outputs.item(i)->dataLinkSerialize(mb);
 }

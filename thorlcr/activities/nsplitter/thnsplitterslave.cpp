@@ -28,14 +28,16 @@ class NSplitterSlaveActivity;
 class CSplitterOutputBase : public CSimpleInterface, implements IRowStream
 {
 protected:
-    unsigned __int64 totalCycles;
+    unsigned __int64 totalCycles, startCycles, stopCycles;
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-    CSplitterOutputBase() { totalCycles = 0; }
+    CSplitterOutputBase() { totalCycles = startCycles = stopCycles = 0; }
 
     virtual void start() = 0;
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
     virtual unsigned __int64 queryTotalCycles() const { return totalCycles; }
+    virtual unsigned __int64 queryStartCycles() const { return startCycles; }
+    virtual unsigned __int64 queryStopCycles() const { return stopCycles; }
 };
 
 class CSplitterOutput : public CSplitterOutputBase
@@ -163,11 +165,15 @@ class NSplitterSlaveActivity : public CSlaveActivity
             ActivityTimer t(totalCycles, activity.queryTimeActivities(), NULL);
             return input->nextRow();
         }
-        virtual void stop() { input->stop(); }
         virtual void start()
         {
-            ActivityTimer s(totalCycles, activity.queryTimeActivities(), NULL);
+            ActivityTimer s(startCycles, activity.queryTimeActivities(), NULL);
             input->start();
+        }
+        virtual void stop()
+        {
+            ActivityTimer sp(stopCycles, activity.queryTimeActivities(), NULL);
+            input->stop();
         }
         virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
         {
@@ -228,6 +234,20 @@ class NSplitterSlaveActivity : public CSlaveActivity
             if (!input)
                 return 0;
             return input->queryTotalCycles();
+        }
+        virtual unsigned __int64 queryStartCycles() const
+        {
+            SpinBlock b(processActiveLock);
+            if (!input)
+                return 0;
+            return input->queryStartCycles();
+        }
+        virtual unsigned __int64 queryStopCycles() const
+        {
+            SpinBlock b(processActiveLock);
+            if (!input)
+                return 0;
+            return input->queryStopCycles();
         }
     };
 public:
@@ -422,6 +442,16 @@ public:
             _totalCycles += delayedInput->queryTotalCycles();
         }
         return _totalCycles;
+    }
+    unsigned __int64 queryStartCycles() const
+    {
+        unsigned __int64 _startCycles = startCycles; // more() time
+        ForEachItemIn(o, outputs)
+        {
+            CDelayedInput *delayedInput = (CDelayedInput *)outputs.item(o);
+            _startCycles += delayedInput->queryTotalCycles();
+        }
+        return _startCycles;
     }
 
 friend class CInputWrapper;

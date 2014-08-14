@@ -303,6 +303,8 @@ public:
         // no serialization information (yet)
     }
     unsigned __int64 queryTotalCycles() const { return in->queryTotalCycles(); }
+    unsigned __int64 queryStartCycles() const { return in->queryStartCycles(); }
+    unsigned __int64 queryStopCycles() const { return in->queryStopCycles(); }
 };
 #ifdef _MSC_VER
 #pragma warning(pop)
