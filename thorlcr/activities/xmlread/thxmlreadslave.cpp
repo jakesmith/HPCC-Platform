@@ -211,7 +211,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDiskReadSlaveActivityBase::start();
         out = createSequentialPartHandler(partHandler, partDescs, false);
         dataLinkStart();

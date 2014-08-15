@@ -68,7 +68,7 @@ public:
     LocalChooseSetsActivity(CGraphElementBase *container) : BaseChooseSetsActivity(container) { }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         BaseChooseSetsActivity::start();
         ActPrintLog("CHOOSESETS: Is Local");
         input.set(inputs.item(0));
@@ -159,7 +159,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ActPrintLog("CHOOSESETS: Is Global");
         BaseChooseSetsActivity::start();
         first = true;
@@ -303,7 +303,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ActPrintLog("CHOOSESETS: Is Global");
         if (counts)
         {

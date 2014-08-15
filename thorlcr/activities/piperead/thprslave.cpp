@@ -249,7 +249,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eof = false;
         OwnedRoxieString pipeProgram(helper->getPipeProgram());
         openPipe(pipeProgram, "PIPEREAD");
@@ -366,7 +366,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eof = anyThisGroup = inputExhausted = false;
         firstRead = true;
 

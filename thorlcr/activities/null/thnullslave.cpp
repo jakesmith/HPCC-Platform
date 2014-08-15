@@ -58,7 +58,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dataLinkStart();
     }
 
@@ -104,7 +104,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         startInput(inputs.item(0));
         dataLinkStart();
     }

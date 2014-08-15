@@ -66,7 +66,7 @@ public:
 // IThorDataLink methods
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         anyThisGroup = false;
         eogNext = false;
         input = inputs.item(0);

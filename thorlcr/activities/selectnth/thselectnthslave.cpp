@@ -83,7 +83,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
 
         lookaheadN = RCMAX;
         startN = 0; // set by initN()

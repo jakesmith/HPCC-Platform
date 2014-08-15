@@ -1295,6 +1295,8 @@ protected:
     using PARENT::inputs;
     using PARENT::queryHelper;
     using PARENT::totalCycles;
+    using PARENT::startCycles;
+    using PARENT::stopCycles;
     using PARENT::timeActivities;
     using PARENT::fireException;
     using PARENT::lookupNextRow;
@@ -1783,7 +1785,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         PARENT::start();
 
         if (!isSmart())
@@ -2257,7 +2259,7 @@ public:
 // IThorSlaveActivity overloaded methods
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         PARENT::start();
     }
     CATCH_NEXTROW()

@@ -52,7 +52,7 @@ public:
     }
     void start()
     { 
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         numThisRow = 0;
         curRow = 0;
         anyThisGroup = false;
@@ -137,7 +137,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
         anyThisGroup = false;
@@ -235,7 +235,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
         anyThisGroup = false;

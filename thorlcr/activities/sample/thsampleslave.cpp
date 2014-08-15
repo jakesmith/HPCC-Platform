@@ -42,7 +42,7 @@ public:
 
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
         eogNext = false;

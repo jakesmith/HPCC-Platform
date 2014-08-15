@@ -1798,7 +1798,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         start(false);
     }
     void stop()
@@ -2121,7 +2121,7 @@ public:
     {
         bool passthrough;
         {
-            ActivityTimer s(totalCycles, timeActivities, NULL);
+            ActivityTimer s(startCycles, timeActivities, NULL);
             instrm.setown(partitioner->calc(this,inputs.item(0),passthrough));  // may return NULL
         }
         HashDistributeSlaveBase::start(passthrough);
@@ -2654,7 +2654,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         inputstopped = false;
         eos = lastEog = false;
         startInput(inputs.item(0));
@@ -3258,7 +3258,7 @@ public:
     void start()
     {
         HashDedupSlaveActivityBase::start();
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
         instrm.setown(distributor->connect(myRowIf, input, iHash, iCompare));
         input = instrm.get();
@@ -3341,7 +3341,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         inputLstopped = true;
         inputRstopped = true;
         leftdone = false;
@@ -3662,7 +3662,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         startInput(input);
         localAggTable.setown(new CThorRowAggregator(*this, *helper, *helper));
@@ -3751,7 +3751,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         input->start();
         dataLinkStart();

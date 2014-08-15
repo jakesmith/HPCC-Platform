@@ -49,7 +49,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         anyThisGroup = false;
         eogNext = false;    
         count = 0;
@@ -144,7 +144,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         RtlDynamicRowBuilder r(rightAllocator);
         size32_t sz = helper->createInitialRight(r);  
         firstright.setown(r.finalizeRowClear(sz));

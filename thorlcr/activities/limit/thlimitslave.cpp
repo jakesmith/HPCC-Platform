@@ -60,7 +60,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         resultSent = container.queryLocal(); // i.e. local, so don't send result to master
         eos = stopped = anyThisGroup = eogNext = false;
         input = inputs.item(0);

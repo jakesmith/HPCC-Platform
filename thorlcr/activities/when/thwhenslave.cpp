@@ -90,7 +90,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input.set(inputs.item(0));
         startInput(input);
         dataLinkStart();

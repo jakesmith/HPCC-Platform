@@ -56,7 +56,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input.set(inputs.item(0));
         startInput(input);
         stopped = false;
@@ -241,7 +241,7 @@ public:
     void start()
     {
         CFirstNSlaveBase::start(); // adds to totalTime (common to local and global firstn)
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         totallimit = (rowcount_t)helper->getLimit();
         limit = maxres = RCUNBOUND;
         skipCount = 0;

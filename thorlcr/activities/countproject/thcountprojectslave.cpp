@@ -66,7 +66,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ActPrintLog("COUNTPROJECT: Is Local");
         input.set(inputs.item(0));
         anyThisGroup = false;
@@ -167,7 +167,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ActPrintLog( "COUNTPROJECT: Is Global");
         first = true;
         prevRecCount = 0;

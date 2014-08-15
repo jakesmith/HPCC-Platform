@@ -67,7 +67,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CCatchSlaveActivityBase::start();
     }
     CATCH_NEXTROW()
@@ -216,7 +216,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CCatchSlaveActivityBase::start();
         running = gathered = false;
         grouped = input->isGrouped();

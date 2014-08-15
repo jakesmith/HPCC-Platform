@@ -68,7 +68,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ActPrintLog(rolloverEnabled ? "GROUP: is global" : "GROUP: is local");
         eogNext = prevEog = eof = false;
         if (rolloverEnabled)

@@ -471,7 +471,7 @@ CSplitterOutput::CSplitterOutput(NSplitterSlaveActivity &_activity, unsigned _ou
 // IThorDataLink
 void CSplitterOutput::start()
 {
-    ActivityTimer s(totalCycles, activity.queryTimeActivities(), NULL);
+    ActivityTimer s(startCycles, activity.queryTimeActivities(), NULL);
     rec = max = 0;
     activity.prepareInput(output);
     if (activity.startException)

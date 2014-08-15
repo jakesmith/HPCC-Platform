@@ -155,7 +155,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         uncompressedBytesWritten = 0;
         if (!container.queryJob().queryUseCheckpoints())
             container.queryTempHandler()->registerFile(fileName.str(), container.queryOwner().queryGraphId(), usageCount, true);

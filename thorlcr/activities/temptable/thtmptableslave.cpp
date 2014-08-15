@@ -55,7 +55,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dataLinkStart();
         __uint64 numRows = helper->numRows();
         // local when generated from a child query (the range is per node, don't split)

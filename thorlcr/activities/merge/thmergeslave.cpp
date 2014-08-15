@@ -282,7 +282,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ForEachItemIn(i, inputs) {
             IThorDataLink * input = inputs.item(i);
             try {
@@ -435,7 +435,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ForEachItemIn(i, inputs) {
             IThorDataLink * input = inputs.item(i);
             try { 

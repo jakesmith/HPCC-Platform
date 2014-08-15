@@ -388,7 +388,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDiskReadSlaveActivityBase::start();
         if (headerLines)
         {

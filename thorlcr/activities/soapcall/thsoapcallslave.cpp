@@ -66,7 +66,7 @@ public:
     // IThorDataLink methods
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eof = false;
         dataLinkStart();
         if (wscHelper)
@@ -144,7 +144,7 @@ public:
     // IThorDataLink methods
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eof = false;
         input = inputs.item(0);
         startInput(input);

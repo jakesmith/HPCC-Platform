@@ -258,7 +258,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dostart();
         eof = false;
         helper->createParentExtract(extractBuilder);
@@ -452,7 +452,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dostart();
         executed = false;
         maxIterations = helper->numIterations();
@@ -538,7 +538,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         curRow = 0;
         abortSoon = false;
         assertex(container.queryResultsGraph());
@@ -619,7 +619,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         lastNull = eoi = false;
         abortSoon = false;
         assertex(container.queryResultsGraph());
@@ -821,7 +821,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         selectedInput = container.whichBranch>=inputs.ordinality() ? NULL : inputs.item(container.whichBranch);
         if (selectedInput)
             startInput(selectedInput);
@@ -887,7 +887,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         started = false;
         eos = false;
         ok = false;
@@ -962,7 +962,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eos = false;
         dataLinkStart();
     }
@@ -1016,7 +1016,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         gathered = eos = false;
         aggregated.clear();
         aggregated.setown(new CThorRowAggregator(*this, *helper, *helper));
@@ -1090,7 +1090,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         ok = false;
         numProcessedLastGroup = getDataLinkCount(); // is this right?
         lastInput.clear();
@@ -1179,7 +1179,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         abortSoon = false;
         unsigned sequence = helper->querySequence();
         if ((int)sequence >= 0)

@@ -449,7 +449,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDiskReadSlaveActivityRecord::start();
         out = createSequentialPartHandler(partHandler, partDescs, grouped); // **
         dataLinkStart();
@@ -605,7 +605,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDiskReadSlaveActivityRecord::start();
         out = createSequentialPartHandler(partHandler, partDescs, false);
         dataLinkStart();
@@ -729,7 +729,7 @@ public:
     virtual bool isGrouped() { return false; }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDiskReadSlaveActivityRecord::start();
         eoi = hadElement = false;
         dataLinkStart();
@@ -847,7 +847,7 @@ public:
     virtual bool isGrouped() { return false; }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDiskReadSlaveActivityRecord::start();
         eoi = false;
         if (!helper->canMatchAny())
@@ -962,7 +962,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDiskReadSlaveActivityRecord::start();
         gathered = eoi = false;
         localAggTable.setown(new CThorRowAggregator(*this, *helper, *helper));

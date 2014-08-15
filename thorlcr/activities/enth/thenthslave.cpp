@@ -83,7 +83,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         IHThorEnthArg *helper = static_cast <IHThorEnthArg *> (queryHelper());
         counter = 0;
         denominator = validRC(helper->getProportionDenominator());

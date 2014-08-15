@@ -627,7 +627,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         first = true;
         eoi = false;
         keyedLimit = helperKeyedLimit;
@@ -798,7 +798,7 @@ public:
     virtual bool isGrouped() { return false; }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         localAggTable.setown(new CThorRowAggregator(*this, *helper, *helper));
         localAggTable->start(queryRowAllocator());
         gathered = eoi = false;
@@ -900,7 +900,7 @@ public:
     virtual bool isGrouped() { return false; }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eoi = false;
         if (!helper->canMatchAny())
         {
@@ -1065,7 +1065,7 @@ public:
     virtual bool isGrouped() { return false; }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         keyedLimit = (rowcount_t)helper->getKeyedLimit();
         rowLimit = (rowcount_t)helper->getRowLimit();
         if (helper->getFlags() & TIRlimitskips)
@@ -1251,7 +1251,7 @@ public:
     virtual bool isGrouped() { return false; }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eoi = hadElement = false;
         partn = 0;
         dataLinkStart();

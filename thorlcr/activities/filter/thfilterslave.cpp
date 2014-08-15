@@ -77,7 +77,7 @@ public:
     }
     void start()
     {   
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         matched = 0;
         abortSoon = !helper->canMatchAny();
         CFilterSlaveActivityBase::start();
@@ -186,7 +186,7 @@ public:
     }
     void start()
     {   
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         abortSoon = !helper->canMatchAny();
         recordCount = 0;
         CFilterSlaveActivityBase::start();
@@ -257,7 +257,7 @@ public:
     }
     void start()
     {   
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         abortSoon = !helper->canMatchAny();
         CFilterSlaveActivityBase::start();
     }

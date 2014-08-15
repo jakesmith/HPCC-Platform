@@ -375,7 +375,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eogNext = false;
         stopped = 0;
         if (grouped)
@@ -549,7 +549,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eogNext = false;
         ForEachItemIn(i, inputs)
         {
@@ -652,7 +652,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         curinput = 0;
         eogNext = false;
         ForEachItemIn(i, inputs)
@@ -771,7 +771,7 @@ public:
 // IThorDataLink
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         curinput = 0;
         anyThisGroup = anyThisInput = eogNext = false;
         ForEachItemIn(i, inputs)
@@ -852,7 +852,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
 
         startInput(inputs.item(0));
 
@@ -973,7 +973,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         bool selectionIsAll;
         size32_t selectionLen;
         rtlDataAttr selection;

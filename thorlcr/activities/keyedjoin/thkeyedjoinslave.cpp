@@ -2031,7 +2031,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         assertex(inputs.ordinality() == 1);
 
         eos = false;

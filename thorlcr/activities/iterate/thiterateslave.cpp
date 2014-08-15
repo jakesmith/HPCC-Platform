@@ -75,7 +75,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         count = 0;
         eof = nextPut = false;
         inrowif.set(::queryRowInterfaces(inputs.item(0)));
@@ -299,7 +299,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         eof = !container.queryLocalOrGrouped() && !firstNode();
         count = 0;
         dataLinkStart();
@@ -357,7 +357,7 @@ public:
     }
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         dataLinkStart();
         dohere = container.queryLocalOrGrouped() || firstNode();
     }

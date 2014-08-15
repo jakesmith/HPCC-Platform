@@ -228,7 +228,7 @@ public:
 
     void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         rightpartition = (container.getKind()==TAKjoin)&&((helper->getJoinFlags()&JFpartitionright)!=0);
 
         Linked<IRowInterfaces> primaryRowIf, secondaryRowIf;

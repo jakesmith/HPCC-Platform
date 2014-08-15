@@ -299,7 +299,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDedupRollupBaseActivity::start();
         dataLinkStart();
     }
@@ -416,7 +416,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDedupBaseSlaveActivity::start();
 
         lastEog = false;
@@ -486,7 +486,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         CDedupRollupBaseActivity::start();
         dataLinkStart();
     }
@@ -577,7 +577,7 @@ public:
     }
     virtual void start()
     {
-        ActivityTimer s(totalCycles, timeActivities, NULL);
+        ActivityTimer s(startCycles, timeActivities, NULL);
         input = inputs.item(0);
         eoi = false;
         startInput(input);
