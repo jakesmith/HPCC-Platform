@@ -73,6 +73,11 @@ public:
         startInput(input);
         BaseCountProjectActivity::start();
     }
+    virtual void stop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        BaseCountProjectActivity::stop();
+    }
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities, NULL);
@@ -181,6 +186,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         BaseCountProjectActivity::stop();
         if (first) // nextRow, therefore getPrevCount()/sendCount() never called
         {

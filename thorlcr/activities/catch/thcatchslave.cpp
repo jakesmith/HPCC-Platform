@@ -50,6 +50,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         dataLinkStop();
     }
@@ -265,10 +266,6 @@ public:
             return NULL;
         dataLinkIncrement();
         return row.getClear();
-    }
-    virtual void stop()
-    {
-        CCatchSlaveActivityBase::stop();
     }
     virtual void abort()
     {

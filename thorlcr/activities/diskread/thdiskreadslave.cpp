@@ -459,6 +459,7 @@ public:
 // IRowStream
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (out)
         {
             out->stop();
@@ -615,6 +616,7 @@ public:
 // IRowStream
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (out)
         {
             out->Release();
@@ -738,6 +740,7 @@ public:
 // IRowStream
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -861,6 +864,7 @@ public:
 // IRowStream
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -979,6 +983,7 @@ public:
 // IRowStream
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         partHandler.clear();
         dataLinkStop();
     }

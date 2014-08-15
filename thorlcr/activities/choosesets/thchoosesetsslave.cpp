@@ -77,6 +77,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
@@ -170,6 +171,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
@@ -326,6 +328,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif

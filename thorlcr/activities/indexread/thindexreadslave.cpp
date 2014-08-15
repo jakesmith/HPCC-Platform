@@ -661,6 +661,7 @@ public:
 // IRowStream
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (RCMAX != keyedLimit)
         {
             keyedLimitCount = sendGetCount(keyedProcessed);
@@ -807,6 +808,7 @@ public:
 // IRowStream
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -913,6 +915,7 @@ public:
 // IRowStream
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -1098,6 +1101,7 @@ public:
 // IRowStream
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (RCMAX != keyedLimit)
         {
             keyedLimitCount = sendGetCount(keyedProcessed);
@@ -1260,6 +1264,7 @@ public:
 // IRowStream
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         dataLinkStop();
     }
 

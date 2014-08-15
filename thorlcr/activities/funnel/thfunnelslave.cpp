@@ -353,6 +353,7 @@ public:
                 }
                 virtual void stop()
                 {
+                    ActivityTimer f(activity.getStopCyclesRef(), activity.queryTimeActivities(), NULL);
                     out->stop();
                     out.clear();
                     dataLinkStop();
@@ -405,6 +406,7 @@ public:
 
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         current = NULL;
         unsigned i = stopped;
         for (;i<inputs.ordinality(); i++)
@@ -565,6 +567,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         for (unsigned i=0;i<inputs.ordinality(); i++)
             stopInput(inputs.item(i));
         dataLinkStop();
@@ -669,6 +672,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         for (unsigned i=0;i<inputs.ordinality(); i++)
             stopInput(inputs.item(i));
         dataLinkStop();
@@ -789,6 +793,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         for (unsigned i=0;i<inputs.ordinality(); i++)
             stopInput(inputs.item(i));
         dataLinkStop();
@@ -891,6 +896,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(inputs.item(0));
         if (selectedInput)
             selectedInput->stop();
@@ -1008,6 +1014,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         // NB: Whatever pulls this IThorNWayInput, starts and stops the selectedInputs
         dataLinkStop();
     }

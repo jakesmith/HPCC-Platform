@@ -64,6 +64,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (!stopped)
         {
             abortSoon = true;

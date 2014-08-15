@@ -411,6 +411,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         sendRemainingHeaderLines();
         out.clear();
         dataLinkStop();

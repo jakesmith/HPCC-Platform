@@ -461,6 +461,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         fetchStreamOut->stop();
         dataLinkStop();
     }

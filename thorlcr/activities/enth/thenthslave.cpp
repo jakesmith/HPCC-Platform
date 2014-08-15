@@ -113,6 +113,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         stopInput(input);
         input.clear();
         dataLinkStop();
@@ -261,6 +262,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         // Need to ensure sequence continues, in nextRow has never been called.
         if (first)
         {

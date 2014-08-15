@@ -120,6 +120,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (nextNodeStream)
             nextNodeStream->stop();
         stopInput(input);

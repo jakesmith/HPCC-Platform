@@ -161,6 +161,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         doStopInput();
         dataLinkStop();
     }
@@ -274,6 +275,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (inputStopped) 
             return;
         readRest();

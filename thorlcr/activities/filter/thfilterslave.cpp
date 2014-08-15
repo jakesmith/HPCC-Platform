@@ -82,6 +82,11 @@ public:
         abortSoon = !helper->canMatchAny();
         CFilterSlaveActivityBase::start();
     }
+    void stop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        CFilterSlaveActivityBase::stop();
+    }
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities, NULL);
@@ -369,9 +374,9 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         groupStream.clear();
-        stopInput(input);
-        dataLinkStop();
+        CFilterSlaveActivityBase::stop();
     }
 // steppable
     virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)

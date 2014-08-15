@@ -1729,6 +1729,49 @@ protected:
     IHash *ihash;
     ICompare *mergecmp;     // if non-null is merge distribute
     bool eofin;
+
+    void doStop()
+    {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        ActPrintLog("HASHDISTRIB: stopping");
+        if (out)
+        {
+            out->stop();
+            out.clear();
+        }
+        if (distributor)
+        {
+            distributor->disconnect(true);
+            distributor->join();
+        }
+        stopInput();
+        instrm.clear();
+        dataLinkStop();
+    }
+    void doStart(bool passthrough)
+    {
+        // bit messy
+        eofin = false;
+        if (!instrm.get()) // derived class may override
+        {
+            input = inputs.item(0);
+            startInput(input);
+            inputstopped = false;
+            instrm.set(input);
+            if (passthrough)
+                out.set(instrm);
+        }
+        else if (passthrough)
+        {
+            out.set(instrm);
+        }
+        if (!passthrough)
+        {
+            Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
+            out.setown(distributor->connect(myRowIf, instrm, ihash, mergecmp));
+        }
+        dataLinkStart();
+    }
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -1772,51 +1815,15 @@ public:
             inputstopped = true;
         }
     }
-    void start(bool passthrough)
-    {
-        // bit messy
-        eofin = false;
-        if (!instrm.get()) // derived class may override
-        {
-            input = inputs.item(0);
-            startInput(input);
-            inputstopped = false;
-            instrm.set(input);
-            if (passthrough)
-                out.set(instrm);
-        }
-        else if (passthrough)
-        {
-            out.set(instrm);
-        }
-        if (!passthrough)
-        {
-            Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
-            out.setown(distributor->connect(myRowIf, instrm, ihash, mergecmp));
-        }
-        dataLinkStart();
-    }
     void start()
     {
         ActivityTimer s(startCycles, timeActivities, NULL);
-        start(false);
+        doStart(false);
     }
     void stop()
     {
-        ActPrintLog("HASHDISTRIB: stopping");
-        if (out)
-        {
-            out->stop();
-            out.clear();
-        }
-        if (distributor)
-        {
-            distributor->disconnect(true);
-            distributor->join();
-        }
-        stopInput();
-        instrm.clear();
-        dataLinkStop();
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        doStop();
     }
     void kill()
     {
@@ -2119,17 +2126,19 @@ public:
 
     void start()
     {
+        ActivityTimer s(startCycles, timeActivities, NULL);
         bool passthrough;
         {
             ActivityTimer s(startCycles, timeActivities, NULL);
             instrm.setown(partitioner->calc(this,inputs.item(0),passthrough));  // may return NULL
         }
-        HashDistributeSlaveBase::start(passthrough);
+        HashDistributeSlaveBase::doStart(passthrough);
     }
 
     void stop()
     {
-        HashDistributeSlaveBase::stop();
+        ActivityTimer f(stopCycles, timeActivities, NULL);
+        HashDistributeSlaveBase::doStop();
         if (instrm) {
             instrm.clear();
             // should remove here rather than later?
@@ -2586,7 +2595,11 @@ protected:
         }
         numHashTables = _numHashTables;
     }
-
+    void doStop()
+    {
+        stopInput();
+        dataLinkStop();
+    }
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -3207,9 +3220,9 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         ActPrintLog("stopping");
-        stopInput();
-        dataLinkStop();
+        doStop();
     }
     void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
@@ -3257,14 +3270,15 @@ public:
     }
     void start()
     {
-        HashDedupSlaveActivityBase::start();
         ActivityTimer s(startCycles, timeActivities, NULL);
+        HashDedupSlaveActivityBase::start();
         Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
         instrm.setown(distributor->connect(myRowIf, input, iHash, iCompare));
         input = instrm.get();
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         ActPrintLog("stopping");
         if (instrm)
         {
@@ -3273,8 +3287,7 @@ public:
         }
         distributor->disconnect(true);
         distributor->join();
-        stopInput();
-        dataLinkStop();
+        HashDedupSlaveActivityBase::doStop();
     }
     void abort()
     {
@@ -3424,6 +3437,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         ActPrintLog("HASHJOIN: stopping");
         stopInputL();
         stopInputR();
@@ -3680,6 +3694,7 @@ public:
     }
     void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         ActPrintLog("HASHAGGREGATE: stopping");
         stopInput(input);
         dataLinkStop();
@@ -3758,6 +3773,7 @@ public:
     }
     virtual void stop()
     {
+        ActivityTimer f(stopCycles, timeActivities, NULL);
         if (input)
             input->stop();
         dataLinkStop();
