@@ -306,5 +306,18 @@ interface jlib_thrown_decl ICorruptDllException: extends IException
 {
 };
 
+
+template <class C>
+class jlib_decl CNullIteratorOf : public CSimpleInterface, implements IIteratorOf<C>
+{
+public:
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
+
+    virtual bool first() { return false; }
+    virtual bool next() { return false; }
+    virtual bool isValid() { return false; }
+    virtual C & query() { return *((C *)NULL); }
+};
+
 #endif
 

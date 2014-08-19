@@ -676,6 +676,7 @@ class CLocalResultWriteActivityBase : public ProcessSlaveActivity
 {
 protected:
     IThorDataLink *input;
+    Linked<IThorResult> result;
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -683,14 +684,17 @@ public:
     {
         input = NULL;
     }
+    virtual void init(MemoryBuffer &in, MemoryBuffer &out)
+    {
+        ProcessSlaveActivity::init(in, out);
+        result.set(createResult());
+    }
     virtual IThorResult *createResult() = 0;
     virtual void process()
     {
         input = inputs.item(0);
         startInput(input);
         processed = THORDATALINK_STARTED;
-
-        IThorResult *result = createResult();
 
         Owned<IRowWriter> resultWriter = result->getWriter();
         loop
@@ -706,7 +710,7 @@ public:
             resultWriter->putRow(nextrec.getClear());
         }
     }
-    void endProcess()
+    virtual void endProcess()
     {
         if (processed & THORDATALINK_STARTED)
         {

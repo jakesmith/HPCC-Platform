@@ -3637,7 +3637,6 @@ class CHashAggregateSlave : public CSlaveActivity, public CThorDataLink, impleme
 
     bool doNextGroup()
     {
-        localAggTable->start(queryRowAllocator());
         while (!abortSoon)
         {
             OwnedConstThorRow row = input->nextRow();
@@ -3673,6 +3672,8 @@ public:
             mptag = container.queryJob().deserializeMPTag(data);
             ActPrintLog("HASHAGGREGATE: init tags %d",(int)mptag);
         }
+        localAggTable.setown(new CThorRowAggregator(*this, *helper, *helper));
+        localAggTable->start(queryRowAllocator());
     }
     void start()
     {
@@ -3680,6 +3681,7 @@ public:
         input = inputs.item(0);
         startInput(input);
         localAggTable.setown(new CThorRowAggregator(*this, *helper, *helper));
+        localAggTable->start(queryRowAllocator());
         doNextGroup(); // or local set if !grouped
         if (!container.queryGrouped())
             ActPrintLog("Table before distribution contains %d entries", localAggTable->elementCount());

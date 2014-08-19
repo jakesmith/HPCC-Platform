@@ -77,6 +77,10 @@ class CThorGraphResult : public CInterface, implements IThorResult, implements I
         {
             return rows.createRowStream(0, (rowidx_t)-1, false);
         }
+        virtual void reset()
+        {
+            rows.kill();
+        }
     };
 public:
     IMPLEMENT_IINTERFACE;
@@ -186,6 +190,12 @@ public:
         assertex(rowStreamCount==1); // catch, just in case
         Owned<IRowStream> stream = getRowStream();
         return stream->nextRow();
+    }
+    virtual void reset()
+    {
+        rowBuffer->reset();
+        stopped = readers = false;
+        rowStreamCount = 0;
     }
 };
 
@@ -423,8 +433,11 @@ IThorGraphIterator *CGraphElementBase::getAssociatedChildGraphs() const
     return new CGraphArrayIterator(associatedChildGraphs);
 }
 
+CNullIteratorOf<CGraphDependency> nullDependencyIterator;
 IThorGraphDependencyIterator *CGraphElementBase::getDependsIterator() const
 {
+    if (0 == dependsOn.ordinality())
+        return LINK(&nullDependencyIterator);
     return new ArrayIIteratorOf<const CGraphDependencyArray, CGraphDependency, IThorGraphDependencyIterator>(dependsOn);
 }
 
@@ -1915,7 +1928,7 @@ StringBuffer &getGlobals(CGraphBase &graph, StringBuffer &str)
 void CGraphBase::executeChild(size32_t parentExtractSz, const byte *parentExtract)
 {
     assertex(localResults);
-    localResults->clear();
+    localResults->reset();
     if (isGlobal()) // any slave
     {
         StringBuffer str("Global acts = ");

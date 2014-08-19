@@ -648,6 +648,12 @@ public:
         flush();
         return collector->getStream(shared);
     }
+    virtual void reset()
+    {
+        if (collector)
+            collector->reset();
+        eoi = false;
+    }
 // IRowWriter
     virtual void putRow(const void *row)
     {

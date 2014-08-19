@@ -116,7 +116,7 @@ CSlaveActivity::CSlaveActivity(CGraphElementBase *_container) : CActivityBase(_c
 {
     data = NULL;
     nextRowCycles = startCycles = stopCycles = 0;
-    lastNextRowCycles = lastStartCycles = lastStopCycles;
+    lastNextRowCycles = lastStartCycles = lastStopCycles = 0;
 }
 
 CSlaveActivity::~CSlaveActivity()

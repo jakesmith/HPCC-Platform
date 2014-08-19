@@ -63,7 +63,6 @@ void RowAggregator::reset()
     SuperHashTable::releaseAll();
     eof = false;
     cursor = NULL;
-    rowAllocator.clear();
     totalSize = overhead = 0;
 }
 

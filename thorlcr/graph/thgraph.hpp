@@ -121,6 +121,7 @@ interface IThorResult : extends IInterface
     virtual void serialize(MemoryBuffer &mb) = 0;
     virtual void getLinkedResult(unsigned & count, byte * * & ret) = 0;
     virtual const void * getLinkedRowResult() = 0;
+    virtual void reset() = 0;
 };
 
 class CActivityBase;
@@ -136,6 +137,7 @@ interface IThorGraphResults : extends IEclGraphResults
     virtual unsigned count() = 0;
     virtual void setOwner(activity_id id) = 0;
     virtual activity_id queryOwnerId() const = 0;
+    virtual void reset() = 0;
 };
 
 class CGraphBase;
@@ -1041,6 +1043,7 @@ protected:
         virtual void getLinkedResult(unsigned & count, byte * * & ret) { throw MakeStringException(0, "Graph Result %d accessed before it is created", id); }
         virtual void getDictionaryResult(unsigned & count, byte * * & ret) { throw MakeStringException(0, "Graph Result %d accessed before it is created", id); }
         virtual const void * getLinkedRowResult() { throw MakeStringException(0, "Graph Result %d accessed before it is created", id); }
+        virtual void reset() { }
     };
     IArrayOf<IThorResult> results;
     CriticalSection cs;
@@ -1106,6 +1109,11 @@ public:
 
     virtual void setOwner(activity_id _ownerId) { ownerId = _ownerId; }
     virtual activity_id queryOwnerId() const { return ownerId; }
+    virtual void reset()
+    {
+        ForEachItemIn(r, results)
+            results.item(r).reset();
+    }
 };
 
 extern graph_decl IThorResult *createResult(CActivityBase &activity, IRowInterfaces *rowIf, bool distributed, unsigned spillPriority=SPILL_PRIORITY_RESULT);

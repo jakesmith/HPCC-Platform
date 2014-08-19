@@ -2060,6 +2060,11 @@ public:
         ensure();
         return result->getLinkedRowResult();
     }
+    virtual void reset()
+    {
+        ForEachItemIn(r, results)
+            results.item(r)->kill();
+    }
 };
 
 ///////////////////
