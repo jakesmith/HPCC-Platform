@@ -2543,161 +2543,221 @@ const CassandraXmlMapping graphProgressMappings [] =
     { NULL, NULL, stringColumnMapper}
 };
 
+void getFieldNames(const CassandraXmlMapping *mappings, StringBuffer &names, StringBuffer &bindings)
+{
+    while (mappings->columnName)
+    {
+        names.appendf(",%s", mappings->columnName);
+        bindings.appendf(",?");
+        mappings++;
+    }
+}
 
+const CassResult *fetchDataForWu(const char *wuid, CassSession *session, const CassandraXmlMapping *mappings, const char *tableName)
+{
+    StringBuffer names;
+    StringBuffer bindings;
+    getFieldNames(mappings, names, bindings);
+    VStringBuffer selectQuery("select %s from HPCC.%s where wuid='%s';", names.str()+1, tableName, wuid);
+    CassandraStatement statement(cass_statement_new(cass_string_init(selectQuery.str()), 0));
+    CassandraFuture future(cass_session_execute(session, statement));
+    future.wait("execute");
+    return cass_future_get_result(future);
+}
 
+void executeSimpleCommand(CassSession *session, const char *command)
+{
+    CassandraStatement statement(cass_statement_new(cass_string_init(command), 0));
+    CassandraFuture future(cass_session_execute(session, statement));
+    future.wait("execute");
+}
 
-extern void cassandraToXML(const CassandraXmlMapping *mappings, const char *tableName, IPTree *inXML)
+const char *graphProgressSchema = "CREATE TABLE IF NOT EXISTS HPCC.graphprogress ("
+  " wuid text,"
+  " graphid text,"
+  " subgraphid bigint,"
+  " progress blob,"
+  " state int,"
+  " PRIMARY KEY ((wuid), graphid, subgraphid));";
+
+const char *workunitsSchema = "CREATE TABLE IF NOT EXISTS HPCC.workunits ("
+  " wuid text,"
+  " associations map<text, text>,"
+  " attributes map<text, text>,"
+  " clustername text,"
+  " debug map<text, text>,"
+  " graphs map<text, text>,"
+  " jobname text, "
+  " plugins list<text>,"
+  " priorityclass int,"
+  " protected boolean,"
+  " query text,"
+  " resultschemas list<text>,"
+  " scope text,"
+  " state text,"
+  " statistics list<text>,"
+  " submitid text,"
+  " workflow map<text, text>,"
+  " PRIMARY KEY ((wuid)));";
+
+extern void graphProgressXMLtoCassandra(CassSession *session, IPTree *inXML)
+{
+    StringBuffer names;
+    StringBuffer bindings;
+    getFieldNames(graphProgressMappings, names, bindings);
+    VStringBuffer insertQuery("INSERT into HPCC.graphProgress (%s) values (%s);", names.str()+1, bindings.str()+1);
+    CassandraBatch batch(cass_batch_new(CASS_BATCH_TYPE_UNLOGGED));
+    CassandraFuture futurePrep(cass_session_prepare(session, cass_string_init(insertQuery)));
+    futurePrep.wait("prepare statement");
+    CassandraPrepared prepared(cass_future_get_prepared(futurePrep));
+
+    Owned<IPTreeIterator> graphs = inXML->getElements("./graph*");
+    ForEach(*graphs)
+    {
+        IPTree &graph = graphs->query();
+        Owned<IPTreeIterator> subgraphs = graph.getElements("./node");
+        ForEach(*subgraphs)
+        {
+            IPTree &subgraph = subgraphs->query();
+            CassandraStatement update(cass_prepared_bind(prepared));
+            graphProgressMappings[0].mapper.fromXML(update, 0, inXML, graphProgressMappings[0].xpath);
+            graphProgressMappings[1].mapper.fromXML(update, 1, &graph, graphProgressMappings[1].xpath);
+            unsigned colidx = 2;
+            while (graphProgressMappings[colidx].columnName)
+            {
+                graphProgressMappings[colidx].mapper.fromXML(update, colidx, &subgraph, graphProgressMappings[colidx].xpath);
+                colidx++;
+            }
+            check(cass_batch_add_statement(batch, update));
+        }
+        // And one more with subgraphid = 0 for the graph status
+        CassandraStatement update(cass_statement_new(cass_string_init(insertQuery.str()), bindings.length()/2));
+        graphProgressMappings[0].mapper.fromXML(update, 0, inXML, graphProgressMappings[0].xpath);
+        graphProgressMappings[1].mapper.fromXML(update, 1, &graph, graphProgressMappings[1].xpath);
+        check(cass_statement_bind_int64(update, 3, 0)); // subgraphId can't be null, as it's in the key
+        unsigned colidx = 4;  // we skip progress and subgraphid
+        while (graphProgressMappings[colidx].columnName)
+        {
+            graphProgressMappings[colidx].mapper.fromXML(update, colidx, &graph, graphProgressMappings[colidx].xpath);
+            colidx++;
+        }
+        check(cass_batch_add_statement(batch, update));
+    }
+    if (inXML->hasProp("Running"))
+    {
+        IPTree *running = inXML->queryPropTree("Running");
+        CassandraStatement update(cass_statement_new(cass_string_init(insertQuery.str()), bindings.length()/2));
+        graphProgressMappings[0].mapper.fromXML(update, 0, inXML, graphProgressMappings[0].xpath);
+        graphProgressMappings[1].mapper.fromXML(update, 1, running, graphProgressMappings[1].xpath);
+        graphProgressMappings[2].mapper.fromXML(update, 2, running, graphProgressMappings[2].xpath);
+        check(cass_statement_bind_int64(update, 3, 0)); // subgraphId can't be null, as it's in the key
+        check(cass_batch_add_statement(batch, update));
+    }
+    CassandraFuture futureBatch(cass_session_execute_batch(session, batch));
+    futureBatch.wait("execute");
+}
+
+extern void cassandraToGraphProgressXML(CassSession *session, const char *wuid)
+{
+    CassandraResult result(fetchDataForWu(wuid, session, graphProgressMappings, "graphprogress"));
+    Owned<IPTree> progress = createPTree("Workunit"); // gets renamed to the name of the wuid
+    CassandraIterator rows(cass_iterator_from_result(result));
+    while (cass_iterator_next(rows))
+    {
+        CassandraIterator cols(cass_iterator_from_row(cass_iterator_get_row(rows)));
+        unsigned colidx = 0;
+        IPTree *ptree = progress;
+        while (cass_iterator_next(cols))
+        {
+            assertex(graphProgressMappings[colidx].columnName);
+            const CassValue *value = cass_iterator_get_column(cols);
+            // NOTE - this relies on the fact that progress is NULL when subgraphId=0, so that the status and id fields
+            // get set on the graph instead of on the child node in those cases.
+            if (value && !cass_value_is_null(value))
+                ptree = graphProgressMappings[colidx].mapper.toXML(ptree, graphProgressMappings[colidx].xpath, value);
+            colidx++;
+        }
+    }
+    StringBuffer out;
+    toXML(progress, out, 0, XML_SortTags|XML_Format);
+    printf("%s", out.str());
+}
+
+extern void workunitXMLtoCassandra(CassSession *session, IPTree *inXML)
+{
+    StringBuffer names;
+    StringBuffer bindings;
+    getFieldNames(workUnitMappings, names, bindings);
+    VStringBuffer insertQuery("INSERT into HPCC.workunits (%s) values (%s);", names.str()+1, bindings.str()+1);
+    CassandraStatement update(cass_statement_new(cass_string_init(insertQuery.str()), bindings.length()/2));
+    unsigned colidx = 0;
+    while (workUnitMappings[colidx].columnName)
+    {
+        workUnitMappings[colidx].mapper.fromXML(update, colidx, inXML, workUnitMappings[colidx].xpath);
+        colidx++;
+    }
+    CassandraFuture future(cass_session_execute(session, update));
+    future.wait("insert");
+}
+
+extern void cassandraToWorkunitXML(CassSession *session, const char *wuid)
+{
+    CassandraResult result(fetchDataForWu(wuid, session, workUnitMappings, "workunits"));
+    CassandraIterator rows(cass_iterator_from_result(result));
+    while (cass_iterator_next(rows)) // should just be one
+    {
+        CassandraIterator cols(cass_iterator_from_row(cass_iterator_get_row(rows)));
+        Owned<IPTree> wu = createPTree("Workunit"); // gets renamed
+        wu->setPropTree("Query", createPTree("Query"));
+        wu->setProp("Query/@fetchEntire", "1");
+        unsigned colidx = 0;
+        while (cass_iterator_next(cols))
+        {
+            assertex(workUnitMappings[colidx].columnName);
+            const CassValue *value = cass_iterator_get_column(cols);
+            if (value && !cass_value_is_null(value))
+                workUnitMappings[colidx].mapper.toXML(wu, workUnitMappings[colidx].xpath, value);
+            colidx++;
+        }
+        StringBuffer out;
+        toXML(wu, out, 0, XML_SortTags|XML_Format);
+        printf("%s", out.str());
+    }
+}
+
+extern void cassandraTestWorkunitXML()
 {
     CassandraCluster cluster(cass_cluster_new());
     cass_cluster_set_contact_points(cluster, "127.0.0.1");
     CassandraFuture future(cass_cluster_connect_keyspace(cluster, "hpcc"));
     future.wait("connect");
     CassandraSession session(cass_future_get_session(future));
-    StringBuffer allCassandraNames;
-    StringBuffer bindingsList;
-    const CassandraXmlMapping *mapping = mappings;
-    while (mapping->columnName)
-    {
-        allCassandraNames.appendf(",%s", mapping->columnName);
-        bindingsList.appendf(",?");
-        mapping++;
-    }
-    VStringBuffer selectQuery("select %s from HPCC.%s ;", allCassandraNames.str()+1, tableName);
-    CassandraStatement statement(cass_statement_new(cass_string_init(selectQuery.str()), 0));
-    CassandraFuture future2(cass_session_execute(session, statement));
-    future2.wait("execute");
-    CassandraResult result(cass_future_get_result(future2));
-    // Now fetch the rows
-    if (strcmp(tableName, "workunits")==0)
-    {
-        CassandraIterator rows(cass_iterator_from_result(result));
-        while (cass_iterator_next(rows)) // should just be one
-        {
-            CassandraIterator cols(cass_iterator_from_row(cass_iterator_get_row(rows)));
-            Owned<IPTree> wu = createPTree("Workunit"); // gets renamed
-            wu->setPropTree("Query", createPTree("Query"));
-            wu->setProp("Query/@fetchEntire", "1");
-            unsigned colidx = 0;
-            while (cass_iterator_next(cols))
-            {
-                assertex(mappings[colidx].columnName);
-                const CassValue *value = cass_iterator_get_column(cols);
-                if (value && !cass_value_is_null(value))
-                    mappings[colidx].mapper.toXML(wu, mappings[colidx].xpath, value);
-                colidx++;
-            }
-            StringBuffer out;
-            toXML(wu, out, 0, XML_SortTags|XML_Format);
-            printf("%s", out.str());
-        }
 
-        // and the other way...
-
-        VStringBuffer insertQuery("INSERT into HPCC.%s (%s) values (%s);", tableName, allCassandraNames.str()+1, bindingsList.str()+1);
-        CassandraStatement update(cass_statement_new(cass_string_init(insertQuery.str()), bindingsList.length()/2));
-        unsigned colidx = 0;
-        while (mappings[colidx].columnName)
-        {
-            mappings[colidx].mapper.fromXML(update, colidx, inXML, mappings[colidx].xpath);
-            colidx++;
-        }
-        CassandraFuture future3(cass_session_execute(session, update));
-        future2.wait("insert");
-    }
-    else
-    {
-        Owned<IPTree> progress = createPTree("Workunit"); // gets renamed to the name of the wuid
-        CassandraIterator rows(cass_iterator_from_result(result));
-        while (cass_iterator_next(rows))
-        {
-            CassandraIterator cols(cass_iterator_from_row(cass_iterator_get_row(rows)));
-            unsigned colidx = 0;
-            IPTree *ptree = progress;
-            while (cass_iterator_next(cols))
-            {
-                assertex(mappings[colidx].columnName);
-                const CassValue *value = cass_iterator_get_column(cols);
-                // NOTE - this relies on the fact that progress is NULL when subgraphId=0, so that the status and id fields
-                // get set on the graph instead of on the child node in those cases.
-                if (value && !cass_value_is_null(value))
-                    ptree = mappings[colidx].mapper.toXML(ptree, mappings[colidx].xpath, value);
-                colidx++;
-            }
-        }
-        StringBuffer out;
-        toXML(progress, out, 0, XML_SortTags|XML_Format);
-        printf("%s", out.str());
-        // and the other way...
-
-        VStringBuffer insertQuery("INSERT into HPCC.%s (%s) values (%s);", tableName, allCassandraNames.str()+1, bindingsList.str()+1);
-        CassandraBatch batch(cass_batch_new(CASS_BATCH_TYPE_UNLOGGED));
-        CassandraFuture futurePrep(cass_session_prepare(session, cass_string_init(insertQuery)));
-        futurePrep.wait("prepare statement");
-        CassandraPrepared prepared(cass_future_get_prepared(futurePrep));
-
-        Owned<IPTreeIterator> graphs = inXML->getElements("./graph*");
-        ForEach(*graphs)
-        {
-            IPTree &graph = graphs->query();
-            Owned<IPTreeIterator> subgraphs = graph.getElements("./node");
-            ForEach(*subgraphs)
-            {
-                IPTree &subgraph = subgraphs->query();
-                CassandraStatement update(cass_prepared_bind(prepared));
-                mappings[0].mapper.fromXML(update, 0, inXML, mappings[0].xpath);
-                mappings[1].mapper.fromXML(update, 1, &graph, mappings[1].xpath);
-                unsigned colidx = 2;
-                while (mappings[colidx].columnName)
-                {
-                    mappings[colidx].mapper.fromXML(update, colidx, &subgraph, mappings[colidx].xpath);
-                    colidx++;
-                }
-                check(cass_batch_add_statement(batch, update));
-            }
-            // And one more with subgraphid = 0 for the graph status
-            CassandraStatement update(cass_statement_new(cass_string_init(insertQuery.str()), bindingsList.length()/2));
-            mappings[0].mapper.fromXML(update, 0, inXML, mappings[0].xpath);
-            mappings[1].mapper.fromXML(update, 1, &graph, mappings[1].xpath);
-            check(cass_statement_bind_int64(update, 3, 0)); // subgraphId can't be null, as it's in the key
-            unsigned colidx = 4;  // we skip progress and subgraphid
-            while (mappings[colidx].columnName)
-            {
-                mappings[colidx].mapper.fromXML(update, colidx, &graph, mappings[colidx].xpath);
-                colidx++;
-            }
-            check(cass_batch_add_statement(batch, update));
-        }
-        if (inXML->hasProp("Running"))
-        {
-            IPTree *running = inXML->queryPropTree("Running");
-            CassandraStatement update(cass_statement_new(cass_string_init(insertQuery.str()), bindingsList.length()/2));
-            mappings[0].mapper.fromXML(update, 0, inXML, mappings[0].xpath);
-            mappings[1].mapper.fromXML(update, 1, running, mappings[1].xpath);
-            mappings[2].mapper.fromXML(update, 2, running, mappings[2].xpath);
-            check(cass_statement_bind_int64(update, 3, 0)); // subgraphId can't be null, as it's in the key
-            check(cass_batch_add_statement(batch, update));
-        }
-        CassandraFuture futureBatch(cass_session_execute_batch(session, batch));
-        futureBatch.wait("execute");
-        return;
-    }
-
-}
-
-extern void cassandraToWorkunitXML()
-{
+    executeSimpleCommand(session, workunitsSchema);
     Owned<IPTree> inXML = createPTreeFromXMLFile("/data/rchapman/hpcc/e.xml");
-    cassandraToXML(workUnitMappings, "workunits", inXML);
+    workunitXMLtoCassandra(session, inXML);
+    const char *wuid = inXML->queryName();
+    cassandraToWorkunitXML(session, wuid);
 }
-extern void cassandraToGraphProgressXML()
+
+extern void cassandraTestGraphProgressXML()
 {
+    CassandraCluster cluster(cass_cluster_new());
+    cass_cluster_set_contact_points(cluster, "127.0.0.1");
+    CassandraFuture future(cass_cluster_connect_keyspace(cluster, "hpcc"));
+    future.wait("connect");
+    CassandraSession session(cass_future_get_session(future));
+
+    executeSimpleCommand(session, graphProgressSchema);
     Owned<IPTree> inXML = createPTreeFromXMLFile("/data/rchapman/hpcc/testing/regress/ecl/a.xml");
-    cassandraToXML(graphProgressMappings, "graphprogress", inXML);
+    graphProgressXMLtoCassandra(session, inXML);
+    const char *wuid = inXML->queryName();
+    cassandraToGraphProgressXML(session, wuid);
 }
 
 extern void cassandraTest()
 {
-    //cassandraToWorkunitXML();
-    cassandraToGraphProgressXML();
+    cassandraTestWorkunitXML();
+    cassandraTestGraphProgressXML();
 }
 } // namespace
