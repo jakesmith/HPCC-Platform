@@ -10732,9 +10732,6 @@ IWUResult * HqlCppTranslator::createDatasetResultSchema(IHqlExpression * sequenc
     buildMetaInfo(meta);
     result->setResultRecordSizeEntry(meta.metaFactoryName);
 
-    if (targetRoxie() && (sequence >= 0) && !isFile)
-        result->setResultFormat(ResultFormatXml);
-
     if (createTransformer)
     {
         OwnedHqlExpr noVirtualRecord = removeVirtualAttributes(serialRecord);

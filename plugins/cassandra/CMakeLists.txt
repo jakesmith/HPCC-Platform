@@ -61,6 +61,7 @@ if (USE_CASSANDRA)
          ./../../rtl/include
          ./../../rtl/nbcd
          ./../../common/deftype
+         ./../../common/workunit
          ./../../system/jlib
 
          ./cpp-driver/include
