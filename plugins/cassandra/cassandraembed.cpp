@@ -2117,7 +2117,7 @@ extern void cassandraToGenericXML()
 struct CassandraColumnMapper
 {
     virtual IPTree *toXML(IPTree *row, const char *name, const CassValue *value) = 0;
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name) = 0;
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal = 0) = 0;
 };
 
 class StringColumnMapper : implements CassandraColumnMapper
@@ -2129,10 +2129,10 @@ public:
         unsigned chars;
         getUTF8Result(NULL, value, chars, str.refstr());
         StringAttr s(str.getstr(), rtlUtf8Size(chars, str.getstr()));
-        row->addProp(name, s);
+        row->setProp(name, s);
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         const char *value = row->queryProp(name);
         if (value)
@@ -2151,7 +2151,7 @@ public:
         row->setPropBin(name, chars, str.getbytes());
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         MemoryBuffer value;
         row->getPropBin(name, value);
@@ -2161,6 +2161,20 @@ public:
         }
     }
 } blobColumnMapper;
+
+class TimeStampColumnMapper : implements CassandraColumnMapper
+{
+public:
+    virtual IPTree *toXML(IPTree *row, const char *name, const CassValue *value)
+    {
+        // never fetched (that may change?)
+        return row;
+    }
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
+    {
+        // never bound
+    }
+} timestampColumnMapper;
 
 class RootNameColumnMapper : implements CassandraColumnMapper
 {
@@ -2174,7 +2188,7 @@ public:
         row->renameProp("/", s);
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         const char *value = row->queryName();
         if (value)
@@ -2200,7 +2214,7 @@ public:
             return row->queryPropTree(s);
         }
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         const char *value = row->queryName();
         if (value)
@@ -2220,7 +2234,7 @@ public:
         row->addPropTree(child->queryName(), child);
         return child;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         // MORE - may need to read, and probably should write, compressed.
         StringBuffer value;
@@ -2240,7 +2254,7 @@ public:
         row->addPropBool(name, getBooleanResult(NULL, value));
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         if (row->hasProp(name))
         {
@@ -2258,7 +2272,7 @@ public:
         row->addPropInt(name, getSignedResult(NULL, value));
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         if (row->hasProp(name))
         {
@@ -2268,6 +2282,16 @@ public:
     }
 } intColumnMapper;
 
+class DefaultedIntColumnMapper : public IntColumnMapper
+{
+public:
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int defaultValue)
+    {
+        int value = row->getPropInt(name, defaultValue);
+        check(cass_statement_bind_int32(statement, idx, value));
+    }
+} defaultedIntColumnMapper;
+
 class BigIntColumnMapper : implements CassandraColumnMapper
 {
 public:
@@ -2276,7 +2300,7 @@ public:
         row->addPropInt64(name, getSignedResult(NULL, value));
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         if (row->hasProp(name))
         {
@@ -2296,7 +2320,7 @@ public:
             row->addPropInt64(name, id);
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         int value = row->getPropInt(name);
         check(cass_statement_bind_int64(statement, idx, value));
@@ -2321,7 +2345,7 @@ public:
         row->addPropTree(name, map.getClear());
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         Owned<IPTree> child = row->getPropTree(name);
         unsigned numItems = child->numChildren();
@@ -2362,7 +2386,7 @@ public:
         }
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         Owned<IAttributeIterator> attrs = row->getAttributes();
         unsigned numItems = attrs->count();
@@ -2412,7 +2436,7 @@ public:
         row->addPropTree(name, map.getClear());
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         Owned<IPTree> child = row->getPropTree(name);
         unsigned numItems = child->numChildren();
@@ -2481,7 +2505,7 @@ public:
         row->addPropTree(name, map.getClear());
         return row;
     }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
+    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name, int userVal)
     {
         Owned<IPTree> child = row->getPropTree(name);
         unsigned numItems = child->numChildren();
@@ -2504,53 +2528,6 @@ private:
     const char *nameAttr;
 } pluginListColumnMapper("Plugin", "@dllname");
 
-class ResultListColumnMapper : implements CassandraColumnMapper
-{
-public:
-    ResultListColumnMapper(const char *_elemName)
-    : elemName(_elemName)
-    {
-    }
-    virtual IPTree *toXML(IPTree *row, const char *name, const CassValue *value)
-    {
-        Owned<IPTree> map = createPTree(name);
-        CassandraIterator elems(cass_iterator_from_collection(value));
-        while (cass_iterator_next(elems))
-        {
-            rtlDataAttr str;
-            unsigned chars;
-            getStringResult(NULL, cass_iterator_get_value(elems), chars, str.refstr());
-            Owned<IPTree> child = createPTreeFromXMLString(chars, str.getstr());
-            map->addPropTree(elemName, child.getClear());
-        }
-        row->addPropTree(name, map.getClear());
-        return row;
-    }
-    virtual void fromXML(CassStatement *statement, unsigned idx, IPTree *row, const char *name)
-    {
-        Owned<IPTree> child = row->getPropTree(name);
-        unsigned numItems = child->numChildren();
-        if (numItems)
-        {
-            CassandraCollection collection(cass_collection_new(CASS_COLLECTION_TYPE_LIST, numItems));
-            Owned<IPTreeIterator> items = child->getElements("*");
-            ForEach(*items)
-            {
-                IPTree &item = items->query();
-                // MORE - may need to read, and probably should write, compressed?
-                StringBuffer value;
-                ::toXML(&item, value);
-                if (value.length())
-                    check(cass_collection_append_string(collection, cass_string_init(value)));
-            }
-            check(cass_statement_bind_collection(statement, idx, collection));
-        }
-    }
-private:
-    const char *elemName;
-} statisticListColumnMapper("Statistic");
-
-
 struct CassandraXmlMapping
 {
     const char *columnName;
@@ -2559,7 +2536,24 @@ struct CassandraXmlMapping
     CassandraColumnMapper &mapper;
 };
 
-const CassandraXmlMapping workUnitMappings [] =
+const CassandraXmlMapping wuExceptionsMappings [] =
+{
+    {"wuid", "text", NULL, rootNameColumnMapper},
+    {"attributes", "map<text, text>", "", attributeMapColumnMapper},
+    {"value", "text", ".", stringColumnMapper},
+    {"ts", "timeuuid", NULL, timestampColumnMapper}, // must be last since we don't bind it, so it would throw out the colidx values of following fields
+    { NULL, "wuExceptions", "((wuid), ts)", stringColumnMapper}
+};
+
+const CassandraXmlMapping wuStatisticsMappings [] =
+{
+    {"wuid", "text", NULL, rootNameColumnMapper},
+    {"name", "text", "@name", stringColumnMapper},
+    {"attributes", "map<text, text>", "@name", attributeMapColumnMapper},
+    { NULL, "wuStatistics", "((wuid), name)", stringColumnMapper}
+};
+
+const CassandraXmlMapping workunitsMappings [] =
 {
     {"wuid", "text", NULL, rootNameColumnMapper},
     {"clustername", "text", "@clusterName", stringColumnMapper},
@@ -2576,7 +2570,6 @@ const CassandraXmlMapping workUnitMappings [] =
     {"plugins", "list<text>", "Plugins", pluginListColumnMapper},
     {"query", "text", "Query/Text", stringColumnMapper},
     {"associations", "map<text, text>", "Query/Associated", associationsMapColumnMapper},
-    {"statistics", "list<text>", "Statistics", statisticListColumnMapper},
     {"workflow", "map<text, text>", "Workflow", workflowMapColumnMapper},
     { NULL, "workunits", "((wuid))", stringColumnMapper}
 };
@@ -2594,25 +2587,35 @@ const CassandraXmlMapping graphProgressMappings [] =
 const CassandraXmlMapping wuResultsMappings [] =
 {
     {"wuid", "text", NULL, rootNameColumnMapper},
-    {"sequence", "int", "@sequence", intColumnMapper},  // Note - special sequences indicate Variable or Temporary...
+    {"sequence", "int", "@sequence", defaultedIntColumnMapper},  // Note - special sequences indicate Variable or Temporary...
     {"name", "text", "@name", stringColumnMapper},
     {"format", "text", "@format", stringColumnMapper},  // xml, xmlset, csv, or null to mean raw. Could probably switch to int if we wanted
     {"status", "text", "@status", stringColumnMapper},
     {"rowcount", "int", "rowCount", bigintColumnMapper},// This is the number of rows in result (which may be stored in a file rather than in value)
     {"totalrowcount", "bigint", "totalRowCount", bigintColumnMapper},// This is the number of rows in value
     {"schemaRaw", "blob", "SchemaRaw", blobColumnMapper},
+    {"logicalName", "text", "logicalName", stringColumnMapper},  // either this or value will be present once result status is "calculated"
     {"value", "blob", "Value", blobColumnMapper},
     { NULL, "wuResults", "((wuid), sequence, name)", stringColumnMapper}
 };
 
-void getFieldNames(const CassandraXmlMapping *mappings, StringBuffer &names, StringBuffer &bindings)
+int getFieldNames(const CassandraXmlMapping *mappings, StringBuffer &names, StringBuffer &bindings, StringBuffer &tableName)
 {
+    int numFields = 0;
     while (mappings->columnName)
     {
         names.appendf(",%s", mappings->columnName);
-        bindings.appendf(",?");
+        if (strcmp(mappings->columnType, "timeuuid")==0)
+            bindings.appendf(",now()");
+        else
+        {
+            bindings.appendf(",?");
+            numFields++;
+        }
         mappings++;
     }
+    tableName.append(mappings->columnType);
+    return numFields;
 }
 
 StringBuffer & describeTable(const CassandraXmlMapping *mappings, StringBuffer &out)
@@ -2626,12 +2629,13 @@ StringBuffer & describeTable(const CassandraXmlMapping *mappings, StringBuffer &
     return out.appendf("CREATE TABLE IF NOT EXISTS HPCC.%s (%s PRIMARY KEY %s);", mappings->columnType, fields.str(), mappings->xpath);
 }
 
-const CassResult *fetchDataForWu(const char *wuid, CassSession *session, const CassandraXmlMapping *mappings, const char *tableName)
+const CassResult *fetchDataForWu(const char *wuid, CassSession *session, const CassandraXmlMapping *mappings)
 {
     StringBuffer names;
     StringBuffer bindings;
-    getFieldNames(mappings+1, names, bindings);  // Don't return the wuid
-    VStringBuffer selectQuery("select %s from HPCC.%s where wuid='%s';", names.str()+1, tableName, wuid);
+    StringBuffer tableName;
+    getFieldNames(mappings+1, names, bindings, tableName);  // mappings+1 means we don't return the wuid column
+    VStringBuffer selectQuery("select %s from HPCC.%s where wuid='%s';", names.str()+1, tableName.str(), wuid);
     CassandraStatement statement(cass_statement_new(cass_string_init(selectQuery.str()), 0));
     CassandraFuture future(cass_session_execute(session, statement));
     future.wait("execute");
@@ -2645,15 +2649,42 @@ void executeSimpleCommand(CassSession *session, const char *command)
     future.wait("execute");
 }
 
-extern void wuResultsXMLtoCassandra(CassSession *session, IPTree *inXML, const char *xpath, int defaultSequence)
+void ensureTable(CassSession *session, const CassandraXmlMapping *mappings)
+{
+    StringBuffer schema;
+    executeSimpleCommand(session, describeTable(mappings, schema));
+}
+
+extern void simpleXMLtoCassandra(CassSession *session, CassBatch *batch, const CassandraXmlMapping *mappings, const char *wuid, IPTree *inXML)
+{
+    StringBuffer names;
+    StringBuffer bindings;
+    StringBuffer tableName;
+    int numBound = getFieldNames(mappings, names, bindings, tableName);
+    VStringBuffer insertQuery("INSERT into HPCC.%s (%s) values (%s);", tableName.str(), names.str()+1, bindings.str()+1);
+    CassandraFuture futurePrep(cass_session_prepare(session, cass_string_init(insertQuery)));
+    futurePrep.wait("prepare statement");
+    CassandraPrepared prepared(cass_future_get_prepared(futurePrep));
+    CassandraStatement update(cass_prepared_bind(prepared));
+    check(cass_statement_bind_string(update, 0, cass_string_init(wuid)));
+    unsigned colidx = 1;
+    while (mappings[colidx].columnName)
+    {
+        mappings[colidx].mapper.fromXML(update, colidx, inXML, mappings[colidx].xpath);
+        colidx++;
+    }
+    check(cass_batch_add_statement(batch, update));
+}
+
+extern void childXMLtoCassandra(CassSession *session, CassBatch *batch, const CassandraXmlMapping *mappings, IPTree *inXML, const char *xpath, int defaultValue)
 {
     if (inXML->hasProp(xpath))
     {
         StringBuffer names;
         StringBuffer bindings;
-        getFieldNames(wuResultsMappings, names, bindings);
-        VStringBuffer insertQuery("INSERT into HPCC.wuResults (%s) values (%s);", names.str()+1, bindings.str()+1);
-        CassandraBatch batch(cass_batch_new(CASS_BATCH_TYPE_UNLOGGED));
+        StringBuffer tableName;
+        int numBound = getFieldNames(mappings, names, bindings, tableName);
+        VStringBuffer insertQuery("INSERT into HPCC.%s (%s) values (%s);", tableName.str(), names.str()+1, bindings.str()+1);
         CassandraFuture futurePrep(cass_session_prepare(session, cass_string_init(insertQuery)));
         futurePrep.wait("prepare statement");
         CassandraPrepared prepared(cass_future_get_prepared(futurePrep));
@@ -2663,25 +2694,49 @@ extern void wuResultsXMLtoCassandra(CassSession *session, IPTree *inXML, const c
         {
             IPTree &result = results->query();
             CassandraStatement update(cass_prepared_bind(prepared));
-            wuResultsMappings[0].mapper.fromXML(update, 0, inXML, wuResultsMappings[0].xpath);
-            int useSequence = result.getPropInt("@sequence", defaultSequence);
-            check(cass_statement_bind_int32(update, 1, useSequence));
-            unsigned colidx = 2;
-            while (wuResultsMappings[colidx].columnName)
+            mappings[0].mapper.fromXML(update, 0, inXML, mappings[0].xpath);
+            unsigned colidx = 1;
+            while (mappings[colidx].columnName)
             {
-                wuResultsMappings[colidx].mapper.fromXML(update, colidx, &result, wuResultsMappings[colidx].xpath);
+                mappings[colidx].mapper.fromXML(update, colidx, &result, mappings[colidx].xpath, defaultValue);
                 colidx++;
             }
             check(cass_batch_add_statement(batch, update));
         }
-        CassandraFuture futureBatch(cass_session_execute_batch(session, batch));
-        futureBatch.wait("execute");
     }
+}
+
+extern void cassandraToChildXML(CassSession *session, const CassandraXmlMapping *mappings, const char *wuid, IPTree *wuTree, const char *parentName, const char *childName)
+{
+    CassandraResult result(fetchDataForWu(wuid, session, mappings));
+    Owned<IPTree> parent = createPTree(parentName);
+    CassandraIterator rows(cass_iterator_from_result(result));
+    while (cass_iterator_next(rows))
+    {
+        CassandraIterator cols(cass_iterator_from_row(cass_iterator_get_row(rows)));
+        Owned<IPTree> child = createPTree(childName);
+        unsigned colidx = 1;
+        while (cass_iterator_next(cols))
+        {
+            assertex(mappings[colidx].columnName);
+            const CassValue *value = cass_iterator_get_column(cols);
+            if (value && !cass_value_is_null(value))
+                mappings[colidx].mapper.toXML(child, mappings[colidx].xpath, value);
+            colidx++;
+        }
+        parent->addPropTree(childName, child.getClear());
+    }
+    wuTree->addPropTree(parentName, parent.getClear());
+}
+
+extern void wuResultsXMLtoCassandra(CassSession *session, CassBatch *batch, IPTree *inXML, const char *xpath, int defaultSequence)
+{
+    childXMLtoCassandra(session, batch, wuResultsMappings, inXML, xpath, defaultSequence);
 }
 
 extern void cassandraToWuResultsXML(CassSession *session, const char *wuid, IPTree *wuTree)
 {
-    CassandraResult result(fetchDataForWu(wuid, session, wuResultsMappings, "wuResults"));
+    CassandraResult result(fetchDataForWu(wuid, session, wuResultsMappings));
     Owned<IPTree> results;
     Owned<IPTree> variables;
     Owned<IPTree> temporaries;
@@ -2741,8 +2796,9 @@ extern void graphProgressXMLtoCassandra(CassSession *session, IPTree *inXML)
 {
     StringBuffer names;
     StringBuffer bindings;
-    getFieldNames(graphProgressMappings, names, bindings);
-    VStringBuffer insertQuery("INSERT into HPCC.graphProgress (%s) values (%s);", names.str()+1, bindings.str()+1);
+    StringBuffer tableName;
+    int numBound = getFieldNames(graphProgressMappings, names, bindings, tableName);
+    VStringBuffer insertQuery("INSERT into HPCC.%s (%s) values (%s);", tableName.str(), names.str()+1, bindings.str()+1);
     CassandraBatch batch(cass_batch_new(CASS_BATCH_TYPE_UNLOGGED));
     CassandraFuture futurePrep(cass_session_prepare(session, cass_string_init(insertQuery)));
     futurePrep.wait("prepare statement");
@@ -2796,7 +2852,7 @@ extern void graphProgressXMLtoCassandra(CassSession *session, IPTree *inXML)
 
 extern void cassandraToGraphProgressXML(CassSession *session, const char *wuid)
 {
-    CassandraResult result(fetchDataForWu(wuid, session, graphProgressMappings, "graphprogress"));
+    CassandraResult result(fetchDataForWu(wuid, session, graphProgressMappings));
     Owned<IPTree> progress = createPTree(wuid);
     CassandraIterator rows(cass_iterator_from_result(result));
     while (cass_iterator_next(rows))
@@ -2822,24 +2878,21 @@ extern void cassandraToGraphProgressXML(CassSession *session, const char *wuid)
 
 extern void workunitXMLtoCassandra(CassSession *session, IPTree *inXML)
 {
-    StringBuffer names;
-    StringBuffer bindings;
-    getFieldNames(workUnitMappings, names, bindings);
-    VStringBuffer insertQuery("INSERT into HPCC.workunits (%s) values (%s);", names.str()+1, bindings.str()+1);
-    CassandraStatement update(cass_statement_new(cass_string_init(insertQuery.str()), bindings.length()/2));
-    unsigned colidx = 0;
-    while (workUnitMappings[colidx].columnName)
-    {
-        workUnitMappings[colidx].mapper.fromXML(update, colidx, inXML, workUnitMappings[colidx].xpath);
-        colidx++;
-    }
-    CassandraFuture future(cass_session_execute(session, update));
-    future.wait("insert");
+    const char *wuid = inXML->queryName();
+    CassandraBatch batch(cass_batch_new(CASS_BATCH_TYPE_UNLOGGED));
+    simpleXMLtoCassandra(session, batch, workunitsMappings, wuid, inXML);
+    wuResultsXMLtoCassandra(session, batch, inXML, "Results/Result", 0);
+    wuResultsXMLtoCassandra(session, batch, inXML, "Variables/Variable", ResultSequenceStored);
+    wuResultsXMLtoCassandra(session, batch, inXML, "Temporaries/Variable", ResultSequenceInternal); // NOTE - lookups may also request ResultSequenceOnce
+    childXMLtoCassandra(session, batch, wuExceptionsMappings, inXML, "Exceptions/Exception", 0);
+    childXMLtoCassandra(session, batch, wuStatisticsMappings, inXML, "Statistics/Statistic", 0);
+    CassandraFuture futureBatch(cass_session_execute_batch(session, batch));
+    futureBatch.wait("execute");
 }
 
 extern void cassandraToWorkunitXML(CassSession *session, const char *wuid, IPTree *wuXML)
 {
-    CassandraResult result(fetchDataForWu(wuid, session, workUnitMappings, "workunits"));
+    CassandraResult result(fetchDataForWu(wuid, session, workunitsMappings));
     CassandraIterator rows(cass_iterator_from_result(result));
     if (cass_iterator_next(rows)) // should just be one
     {
@@ -2849,10 +2902,10 @@ extern void cassandraToWorkunitXML(CassSession *session, const char *wuid, IPTre
         unsigned colidx = 1;  // wuid is not returned
         while (cass_iterator_next(cols))
         {
-            assertex(workUnitMappings[colidx].columnName);
+            assertex(workunitsMappings[colidx].columnName);
             const CassValue *value = cass_iterator_get_column(cols);
             if (value && !cass_value_is_null(value))
-                workUnitMappings[colidx].mapper.toXML(wuXML, workUnitMappings[colidx].xpath, value);
+                workunitsMappings[colidx].mapper.toXML(wuXML, workunitsMappings[colidx].xpath, value);
             colidx++;
         }
     }
@@ -2866,14 +2919,12 @@ extern void cassandraTestWorkunitXML()
     future.wait("connect");
     CassandraSession session(cass_future_get_session(future));
 
-    StringBuffer workunitsSchema, wuResultsSchema;
-    executeSimpleCommand(session, describeTable(workUnitMappings, workunitsSchema));
-    executeSimpleCommand(session, describeTable(wuResultsMappings, wuResultsSchema));
+    ensureTable(session, workunitsMappings);
+    ensureTable(session, wuResultsMappings);
+    ensureTable(session, wuExceptionsMappings);
+    ensureTable(session, wuStatisticsMappings);
     Owned<IPTree> inXML = createPTreeFromXMLFile("/data/rchapman/hpcc/e.xml");
     workunitXMLtoCassandra(session, inXML);
-    wuResultsXMLtoCassandra(session, inXML, "Results/Result", 0);
-    wuResultsXMLtoCassandra(session, inXML, "Variables/Variable", ResultSequenceStored);
-    wuResultsXMLtoCassandra(session, inXML, "Temporaries/Variable", ResultSequenceInternal); // NOTE - lookups may also request ResultSequenceOnce
 
     // Now the other way
 
@@ -2881,6 +2932,8 @@ extern void cassandraTestWorkunitXML()
     Owned<IPTree> wuXML = createPTree(wuid);
     cassandraToWorkunitXML(session, wuid, wuXML);
     cassandraToWuResultsXML(session, wuid, wuXML);
+    cassandraToChildXML(session, wuExceptionsMappings, wuid, wuXML, "Exceptions", "Exception");
+    cassandraToChildXML(session, wuStatisticsMappings, wuid, wuXML, "Statistics", "Statistic");
     StringBuffer out;
     toXML(wuXML, out, 0, XML_SortTags|XML_Format);
     printf("%s", out.str());
@@ -2894,8 +2947,7 @@ extern void cassandraTestGraphProgressXML()
     future.wait("connect");
     CassandraSession session(cass_future_get_session(future));
 
-    StringBuffer graphProgressSchema;
-    executeSimpleCommand(session, describeTable(graphProgressMappings, graphProgressSchema));
+    ensureTable(session, graphProgressMappings);
     Owned<IPTree> inXML = createPTreeFromXMLFile("/data/rchapman/hpcc/testing/regress/ecl/a.xml");
     graphProgressXMLtoCassandra(session, inXML);
     const char *wuid = inXML->queryName();
