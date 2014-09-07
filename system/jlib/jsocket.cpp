@@ -109,7 +109,12 @@
 #ifdef _TRACE
 #define THROWJSOCKEXCEPTION(exc) \
   { StringBuffer msg; \
-    msg.appendf("Target: %s, Raised in: %s, line %d",tracename ,__FILE__, __LINE__); \
+    msg.appendf("Target: %s (port=%d), Raised in: %s, line %d", tracename, (unsigned)hostport, __FILE__, __LINE__); \
+    IJSOCK_Exception *e = new SocketException(exc,msg.str());\
+    throw e; }
+#define THROWJSOCKEXCEPTIONEX(exc, tracename, hostport) \
+  { StringBuffer msg; \
+    msg.appendf("Target: %s (port=%d), Raised in: %s, line %d", tracename, (unsigned)hostport, __FILE__, __LINE__); \
     IJSOCK_Exception *e = new SocketException(exc,msg.str());\
     throw e; }
 #define THROWJSOCKEXCEPTION2(exc) \
@@ -5896,8 +5901,7 @@ class CSocketConnectWait: public CInterface, implements ISocketConnectWait
     {
         STATS.failedconnects++;
         STATS.failedconnecttime+=usTick()-startt;
-        const char* tracename = sock->tracename;
-        THROWJSOCKEXCEPTION(JSOCKERR_connection_failed);
+        THROWJSOCKEXCEPTIONEX(JSOCKERR_connection_failed, sock->tracename, sock->hostport);
     }
 
 public:
@@ -5987,8 +5991,7 @@ public:
         if (connectimedout) {
             STATS.failedconnects++;
             STATS.failedconnecttime+=usTick()-startt;
-            const char* tracename = sock->tracename;
-            THROWJSOCKEXCEPTION(JSOCKERR_connection_failed);
+            THROWJSOCKEXCEPTIONEX(JSOCKERR_connection_failed, sock->tracename, sock->hostport);
         }
         return NULL;
 

@@ -2931,6 +2931,51 @@ int main(int argc, char* argv[])
         return 0;
 #endif
         
+#if 1
+#define CONNECT_READ_TIMEOUT    (3*60*1000) // 3 min
+#define CONFIRM_TIMEOUT         (CONNECT_READ_TIMEOUT/2)
+
+        if (argc < 2 || (0==stricmp(argv[1], "server")))
+        {
+            //server
+
+            PROGLOG("Creating accept socket");
+            Owned<ISocket> listensock = ISocket::create(8123, 16);  // better not to have *too* many waiting
+
+            PROGLOG("Accepting on accept socket");
+            Owned<ISocket> sock = listensock->accept(true);
+
+            PROGLOG("Sleeping - intentionally starving connected socket, don't send data!");
+            PROGLOG("press a key");
+            getchar();
+            PROGLOG("existing");
+            return 0;
+        }
+        else
+        {
+            // client
+
+            Owned<ISocket> sock = ISocket::connect(8123);
+
+            char buf[10];
+            memset(buf, 0, 10);
+            size32_t sz;
+
+            PROGLOG("calling reatms timeout=%d", CONFIRM_TIMEOUT);
+            try
+            {
+                sock->readtms(buf, 10, 10, sz, CONFIRM_TIMEOUT);
+            }
+            catch (IException *e)
+            {
+                EXCLOG(e, NULL);
+                e->Release();
+                return 0;
+            }
+            PROGLOG("Read 10 bytes");
+        }
+        return 0;
+#endif
 
 // Non dali tests
 #if defined(TEST_THREADS)
