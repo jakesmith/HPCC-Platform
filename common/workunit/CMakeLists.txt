@@ -56,6 +56,7 @@ include_directories (
          ./../../common/thorhelper 
          ./../../rtl/eclrtl 
          ./../../rtl/nbcd
+         ../../plugins/cassandra
     )
 
 HPCC_ADD_LIBRARY( workunit SHARED ${SRCS} )
@@ -71,6 +72,7 @@ target_link_libraries ( workunit
          eclrtl 
          deftype
          environment
+         cassandraembed
     )
 
 

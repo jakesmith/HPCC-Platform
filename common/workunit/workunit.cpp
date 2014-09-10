@@ -532,13 +532,12 @@ template <>  struct CachedTags<CLocalWUAppValue, IConstWUAppValue>
 };
 
 
-class CLocalWorkUnit : public CInterface, implements IConstWorkUnit , implements ISDSSubscription, implements IExtendedWUInterface
+class CWorkUnitBase : public CInterface, implements IConstWorkUnit , implements ISDSSubscription, implements IExtendedWUInterface
 {
     friend StringBuffer &exportWorkUnitToXML(const IConstWorkUnit *wu, StringBuffer &str, bool decodeGraphs, bool includeProgress);
     friend void exportWorkUnitToXMLFile(const IConstWorkUnit *wu, const char * filename, unsigned extraXmlFlags, bool decodeGraphs, bool includeProgress);
 
     // NOTE - order is important - we need to construct connection before p and (especially) destruct after p
-    Owned<IRemoteConnection> connection;
     Owned<IPropertyTree> p;
     bool dirty;
     bool connectAtRoot;
@@ -581,10 +580,10 @@ class CLocalWorkUnit : public CInterface, implements IConstWorkUnit , implements
 public:
     IMPLEMENT_IINTERFACE;
 
-    CLocalWorkUnit(IRemoteConnection *_conn, ISecManager *secmgr, ISecUser *secuser);
-    CLocalWorkUnit(IRemoteConnection *_conn, IPropertyTree* root, ISecManager *secmgr, ISecUser *secuser);
-    ~CLocalWorkUnit();
-    CLocalWorkUnit(const char *dummyWuid, ISecManager *secmgr, ISecUser *secuser);
+    CWorkUnitBase(ISecManager *secmgr, ISecUser *secuser);
+    CWorkUnitBase(IPropertyTree* root, ISecManager *secmgr, ISecUser *secuser);
+    ~CWorkUnitBase();
+(const char *dummyWuid, ISecManager *secmgr, ISecUser *secuser);
     IPropertyTree *getUnpackedTree(bool includeProgress) const;
 
     ISecManager *querySecMgr(){return secMgr.get();}
@@ -844,11 +843,11 @@ private:
 
     class CWorkUnitAbortWatcher : public CInterface, implements ISDSSubscription
     {
-        CLocalWorkUnit *parent; // not linked - it links me
+        CWorkUnitBase *parent; // not linked - it links me
         SubscriptionId abort;
     public:
         IMPLEMENT_IINTERFACE;
-        CWorkUnitAbortWatcher(CLocalWorkUnit *_parent, const char *wuid) : parent(_parent)
+        CWorkUnitAbortWatcher(CWorkUnitBase *_parent, const char *wuid) : parent(_parent)
         {
             StringBuffer wuRoot;
             wuRoot.append("/WorkUnitAborts/").append(wuid);
@@ -886,16 +885,31 @@ private:
             }
         }
     }
+};
 
+class CDaliWorkUnit : public CWorkUnitBase
+{
+    Owned<IRemoteConnection> conn;
+public:
+    CWorkUnitBase(IRemoteConnection *_conn, ISecManager *secmgr, ISecUser *secuser)
+        : CWorkUnitBase(secmgr, secuser), conn(_conn)
+    {
+
+    }
+    CWorkUnitBase(IRemoteConnection *_conn, IPropertyTree* root, ISecManager *secmgr, ISecUser *secuser);
+        : CWorkUnitBase(secmgr, secuser), conn(_conn)
+    {
+
+    }
 };
 
 class CLockedWorkUnit : public CInterface, implements ILocalWorkUnit, implements IExtendedWUInterface
 {
 public:
-    Owned<CLocalWorkUnit> c;
+    Owned<CWorkUnitBase> c;
 
     IMPLEMENT_IINTERFACE;
-    CLockedWorkUnit(CLocalWorkUnit *_c) : c(_c) {}
+    CLockedWorkUnit(CWorkUnitBase *_c) : c(_c) {}
     ~CLockedWorkUnit()
     {
         if (workUnitTraceLevel > 1)
@@ -1531,7 +1545,7 @@ public:
 
 class CLocalWUResult : public CInterface, implements IWUResult
 {
-    friend class CLocalWorkUnit;
+    friend class CWorkUnitBase;
 
     mutable CriticalSection crit;
     Owned<IPropertyTree> p;
@@ -1638,7 +1652,7 @@ public:
 
 class CLocalWUGraph : public CInterface, implements IWUGraph
 {
-    const CLocalWorkUnit &owner;
+    const CWorkUnitBase &owner;
     Owned<IPropertyTree> p;
     mutable Owned<IPropertyTree> graph; // cached copy of graph xgmml
     mutable Linked<IConstWUGraphProgress> progress;
@@ -1649,7 +1663,7 @@ class CLocalWUGraph : public CInterface, implements IWUGraph
 
 public:
     IMPLEMENT_IINTERFACE;
-    CLocalWUGraph(const CLocalWorkUnit &owner, IPropertyTree *p);
+    CLocalWUGraph(const CWorkUnitBase &owner, IPropertyTree *p);
 
     virtual IStringVal & getXGMML(IStringVal & ret, bool mergeProgress) const;
     virtual IStringVal & getName(IStringVal & ret) const;
@@ -1774,7 +1788,7 @@ class CConstWUArrayIterator : public CInterface, implements IConstWorkUnitIterat
 
     void setCurrent()
     {
-        cur.setown(new CLocalWorkUnit(LINK(conn), LINK(&trees.item(curTreeNum)), secmgr, secuser));
+        cur.setown(new CWorkUnitBase(LINK(conn), LINK(&trees.item(curTreeNum)), secmgr, secuser));
     }
 public:
     IMPLEMENT_IINTERFACE;
@@ -2000,7 +2014,7 @@ public:
         getXPath(wuRoot, name);
         IRemoteConnection* conn = sdsManager->connect(wuRoot.str(), session, RTM_LOCK_WRITE|RTM_CREATE_QUERY, SDS_LOCK_TIMEOUT);
         conn->queryRoot()->setProp("@xmlns:xsi", "http://www.w3.org/1999/XMLSchema-instance");
-        Owned<CLocalWorkUnit> cw = new CLocalWorkUnit(conn, (ISecManager *)NULL, NULL);
+        Owned<CWorkUnitBase> cw = new CWorkUnitBase(conn, (ISecManager *)NULL, NULL);
         return &cw->lockRemote(false);
     }
 
@@ -2015,7 +2029,7 @@ public:
             conn = sdsManager->connect(wuRoot.str(), session, RTM_LOCK_WRITE|RTM_CREATE, SDS_LOCK_TIMEOUT);
         conn->queryRoot()->setProp("@xmlns:xsi", "http://www.w3.org/1999/XMLSchema-instance");
         conn->queryRoot()->setPropInt("@wuidVersion", WUID_VERSION);
-        Owned<CLocalWorkUnit> cw = new CLocalWorkUnit(conn, (ISecManager*)NULL, NULL);
+        Owned<CWorkUnitBase> cw = new CWorkUnitBase(conn, (ISecManager*)NULL, NULL);
         IWorkUnit* ret = &cw->lockRemote(false);
         ret->setDebugValue("CREATED_BY", app, true);
         ret->setDebugValue("CREATED_FOR", user, true);
@@ -2059,7 +2073,7 @@ public:
                 PrintLog("deleteWorkUnit %s not found", wuid);
             return false;
         }
-        Owned<CLocalWorkUnit> cw = new CLocalWorkUnit(conn, secmgr, secuser); // takes ownership of conn
+        Owned<CWorkUnitBase> cw = new CWorkUnitBase(conn, secmgr, secuser); // takes ownership of conn
         if (secmgr && !checkWuSecAccess(*cw.get(), *secmgr, secuser, SecAccess_Full, "delete", true, true)) {
             if (raiseexceptions) {
                 // perhaps raise exception here?
@@ -2144,7 +2158,7 @@ public:
         IRemoteConnection* conn = sdsManager->connect(wuRoot.str(), session, lock ? RTM_LOCK_READ|RTM_LOCK_SUB : 0, SDS_LOCK_TIMEOUT);
         if (conn)
         {
-            CLocalWorkUnit *wu = new CLocalWorkUnit(conn, secmgr, secuser);
+            CWorkUnitBase *wu = new CWorkUnitBase(conn, secmgr, secuser);
             if (secmgr && wu)
             {
                 if (!checkWuSecAccess(*wu, *secmgr, secuser, SecAccess_Read, "opening", true, true))
@@ -2175,7 +2189,7 @@ public:
         IRemoteConnection* conn = sdsManager->connect(wuRoot.str(), session, RTM_LOCK_WRITE|RTM_LOCK_SUB, SDS_LOCK_TIMEOUT);
         if (conn)
         {
-            Owned<CLocalWorkUnit> cw = new CLocalWorkUnit(conn, secmgr, secuser);
+            Owned<CWorkUnitBase> cw = new CWorkUnitBase(conn, secmgr, secuser);
             if (secmgr && cw)
             {
                 if (!checkWuSecAccess(*cw.get(), *secmgr, secuser, SecAccess_Write, "updating", true, true))
@@ -2626,7 +2640,7 @@ private:
 
         void setCurrent()
         {
-            cur.setown(new CLocalWorkUnit(LINK(conn), LINK(&ptreeIter->query()), secmgr, secuser));
+            cur.setown(new CWorkUnitBase(LINK(conn), LINK(&ptreeIter->query()), secmgr, secuser));
         }
         bool getNext() // scan for a workunit with permissions
         {
@@ -2910,7 +2924,7 @@ public:
 };
 //==========================================================================================
 
-CLocalWorkUnit::CLocalWorkUnit(IRemoteConnection *_conn, ISecManager *secmgr, ISecUser *secuser) : connection(_conn)
+CWorkUnitBase::CWorkUnitBase(IRemoteConnection *_conn, ISecManager *secmgr, ISecUser *secuser) : connection(_conn)
 {
     connectAtRoot = true;
     init();
@@ -2919,7 +2933,7 @@ CLocalWorkUnit::CLocalWorkUnit(IRemoteConnection *_conn, ISecManager *secmgr, IS
     secUser.set(secuser);
 }
 
-CLocalWorkUnit::CLocalWorkUnit(IRemoteConnection *_conn, IPropertyTree* root, ISecManager *secmgr, ISecUser *secuser) : connection(_conn)
+CWorkUnitBase::CWorkUnitBase(IRemoteConnection *_conn, IPropertyTree* root, ISecManager *secmgr, ISecUser *secuser) : connection(_conn)
 {
     connectAtRoot = false;
     init();
@@ -2928,7 +2942,7 @@ CLocalWorkUnit::CLocalWorkUnit(IRemoteConnection *_conn, IPropertyTree* root, IS
     secUser.set(secuser);
 }
 
-void CLocalWorkUnit::init()
+void CWorkUnitBase::init()
 {
     p.clear();
     cachedGraphs.clear();
@@ -2960,8 +2974,7 @@ void CLocalWorkUnit::init()
     abortState = false;
 }
 
-// Dummy workunit support
-CLocalWorkUnit::CLocalWorkUnit(const char *_wuid, ISecManager *secmgr, ISecUser *secuser)
+CWorkUnitBase::CWorkUnitBase(const char *_wuid, ISecManager *secmgr, ISecUser *secuser)
 {
     connectAtRoot = true;
     init();
@@ -2971,7 +2984,7 @@ CLocalWorkUnit::CLocalWorkUnit(const char *_wuid, ISecManager *secmgr, ISecUser 
     secUser.set(secuser);
 }
 
-CLocalWorkUnit::~CLocalWorkUnit() 
+CWorkUnitBase::~CWorkUnitBase()
 {
     if (workUnitTraceLevel > 1)
     {
@@ -3003,10 +3016,10 @@ CLocalWorkUnit::~CLocalWorkUnit()
         p.clear();
         connection.clear();
     }
-    catch (IException *E) { LOG(MCexception(E, MSGCLS_warning), E, "Exception during ~CLocalWorkUnit"); E->Release(); }
+    catch (IException *E) { LOG(MCexception(E, MSGCLS_warning), E, "Exception during ~CWorkUnitBase"); E->Release(); }
 }
 
-void CLocalWorkUnit::cleanupAndDelete(bool deldll, bool deleteOwned, const StringArray *deleteExclusions)
+void CWorkUnitBase::cleanupAndDelete(bool deldll, bool deleteOwned, const StringArray *deleteExclusions)
 {
     TIME_SECTION("WUDELETE cleanupAndDelete total");
     // Delete any related things in SDS etc that might otherwise be forgotten
@@ -3096,14 +3109,14 @@ void CLocalWorkUnit::cleanupAndDelete(bool deldll, bool deleteOwned, const Strin
     connection.clear();
 }
 
-void CLocalWorkUnit::setTimeScheduled(const IJlibDateTime &val)
+void CWorkUnitBase::setTimeScheduled(const IJlibDateTime &val)
 {
     SCMStringBuffer strval;
     val.getGmtString(strval);
     p->setProp("@timescheduled",strval.str());
 }
 
-IJlibDateTime & CLocalWorkUnit::getTimeScheduled(IJlibDateTime &val) const
+IJlibDateTime & CWorkUnitBase::getTimeScheduled(IJlibDateTime &val) const
 {
     StringBuffer str;
     p->getProp("@timescheduled",str);
@@ -3128,7 +3141,7 @@ bool modifyAndWriteWorkUnitXML(char const * wuid, StringBuffer & buf, StringBuff
     return (fileio->write(0,buf.length(),buf.str()) == buf.length());
 }
 
-bool CLocalWorkUnit::archiveWorkUnit(const char *base,bool del,bool ignoredllerrors,bool deleteOwned)
+bool CWorkUnitBase::archiveWorkUnit(const char *base,bool del,bool ignoredllerrors,bool deleteOwned)
 {
     CriticalBlock block(crit);
     StringBuffer path(base);
@@ -3283,7 +3296,7 @@ bool CLocalWorkUnit::archiveWorkUnit(const char *base,bool del,bool ignoredllerr
     return true;
 }
 
-void CLocalWorkUnit::packWorkUnit(bool pack)
+void CWorkUnitBase::packWorkUnit(bool pack)
 {
     // only packs Graph info currently
     CriticalBlock block(crit);
@@ -3442,7 +3455,7 @@ bool restoreWorkUnit(const char *base,const char *wuid)
     return true;
 }
 
-void CLocalWorkUnit::loadXML(const char *xml)
+void CWorkUnitBase::loadXML(const char *xml)
 {
     CriticalBlock block(crit);
     init();
@@ -3450,14 +3463,14 @@ void CLocalWorkUnit::loadXML(const char *xml)
     p.setown(createPTreeFromXMLString(xml));
 }
 
-void CLocalWorkUnit::serialize(MemoryBuffer &tgt)
+void CWorkUnitBase::serialize(MemoryBuffer &tgt)
 {
     CriticalBlock block(crit);
     StringBuffer x;
     tgt.append(exportWorkUnitToXML(this, x, false, false).str());
 }
 
-void CLocalWorkUnit::deserialize(MemoryBuffer &src)
+void CWorkUnitBase::deserialize(MemoryBuffer &src)
 {
     CriticalBlock block(crit);
     StringAttr value;
@@ -3465,23 +3478,23 @@ void CLocalWorkUnit::deserialize(MemoryBuffer &src)
     loadXML(value);
 }
 
-void CLocalWorkUnit::notify(SubscriptionId id, const char *xpath, SDSNotifyFlags flags, unsigned valueLen, const void *valueData)
+void CWorkUnitBase::notify(SubscriptionId id, const char *xpath, SDSNotifyFlags flags, unsigned valueLen, const void *valueData)
 {
     dirty = true;
 }
 
-void CLocalWorkUnit::abort()
+void CWorkUnitBase::abort()
 {
     abortDirty = true;
 }
 
-void CLocalWorkUnit::requestAbort()
+void CWorkUnitBase::requestAbort()
 {
     CriticalBlock block(crit);
     abortWorkUnit(p->queryName());
 }
 
-void CLocalWorkUnit::subscribe(WUSubscribeOptions options)
+void CWorkUnitBase::subscribe(WUSubscribeOptions options)
 {
     CriticalBlock block(crit);
     bool subscribeAbort = false;
@@ -3523,13 +3536,13 @@ void CLocalWorkUnit::subscribe(WUSubscribeOptions options)
     }
 }
 
-void CLocalWorkUnit::forceReload()
+void CWorkUnitBase::forceReload()
 {
     dirty = true;
     reload();
 }
 
-bool CLocalWorkUnit::reload()
+bool CWorkUnitBase::reload()
 {
     CriticalBlock block(crit);
     if (dirty)
@@ -3553,7 +3566,7 @@ bool CLocalWorkUnit::reload()
     return false;
 }
 
-void CLocalWorkUnit::unsubscribe()
+void CWorkUnitBase::unsubscribe()
 {
     CriticalBlock block(crit);
     if (abortWatcher)
@@ -3568,7 +3581,7 @@ void CLocalWorkUnit::unsubscribe()
     }
 }
 
-void CLocalWorkUnit::unlockRemote(bool commit)
+void CWorkUnitBase::unlockRemote(bool commit)
 {
     CriticalBlock block(crit);
     locked.unlock();
@@ -3597,7 +3610,7 @@ void CLocalWorkUnit::unlockRemote(bool commit)
     }
 }
 
-IWorkUnit &CLocalWorkUnit::lockRemote(bool commit)
+IWorkUnit &CWorkUnitBase::lockRemote(bool commit)
 {
     if (secMgr)
         checkWuSecAccess(*this, *secMgr.get(), secUser.get(), SecAccess_Write, "write lock", true, true);
@@ -3630,7 +3643,7 @@ IWorkUnit &CLocalWorkUnit::lockRemote(bool commit)
     return *new CLockedWorkUnit(LINK(this));
 }
 
-void CLocalWorkUnit::commit()
+void CWorkUnitBase::commit()
 {
     CriticalBlock block(crit);
     assertex(connectAtRoot);
@@ -3638,93 +3651,93 @@ void CLocalWorkUnit::commit()
         connection->commit();
 }
 
-IWorkUnit& CLocalWorkUnit::lock()
+IWorkUnit& CWorkUnitBase::lock()
 {
     return lockRemote(true);
 }
 
-IStringVal& CLocalWorkUnit::getWuid(IStringVal &str) const
+IStringVal& CWorkUnitBase::getWuid(IStringVal &str) const
 {
     CriticalBlock block(crit);
     str.set(p->queryName());
     return str;
 }
 
-unsigned CLocalWorkUnit::getDebugAgentListenerPort() const
+unsigned CWorkUnitBase::getDebugAgentListenerPort() const
 {
     CriticalBlock block(crit);
     return p->getPropInt("@DebugListenerPort", 0);
 }
 
-void CLocalWorkUnit::setDebugAgentListenerPort(unsigned port)
+void CWorkUnitBase::setDebugAgentListenerPort(unsigned port)
 {
     CriticalBlock block(crit);
     p->setPropInt("@DebugListenerPort", port);
 }
 
-IStringVal& CLocalWorkUnit::getDebugAgentListenerIP(IStringVal &ip) const
+IStringVal& CWorkUnitBase::getDebugAgentListenerIP(IStringVal &ip) const
 {
     CriticalBlock block(crit);
     ip.set(p->queryProp("@DebugListenerIP"));
     return ip;
 }
 
-void CLocalWorkUnit::setDebugAgentListenerIP(const char * ip)
+void CWorkUnitBase::setDebugAgentListenerIP(const char * ip)
 {
     CriticalBlock block(crit);
     p->setProp("@DebugListenerIP", ip);
 }
 
-IStringVal& CLocalWorkUnit::getSecurityToken(IStringVal &str) const
+IStringVal& CWorkUnitBase::getSecurityToken(IStringVal &str) const
 {
     CriticalBlock block(crit);
     str.set(p->queryProp("@token"));
     return str;
 }
 
-void CLocalWorkUnit::setSecurityToken(const char *value)
+void CWorkUnitBase::setSecurityToken(const char *value)
 {
     CriticalBlock block(crit);
     p->setProp("@token", value);
 }
 
-bool CLocalWorkUnit::getRunningGraph(IStringVal &graphName, WUGraphIDType &subId) const
+bool CWorkUnitBase::getRunningGraph(IStringVal &graphName, WUGraphIDType &subId) const
 {
     return CConstGraphProgress::getRunningGraph(p->queryName(), graphName, subId);
 }
 
-void CLocalWorkUnit::setJobName(const char *value)
+void CWorkUnitBase::setJobName(const char *value)
 {
     CriticalBlock block(crit);
     p->setProp("@jobName", value);
 }
 
-IStringVal& CLocalWorkUnit::getJobName(IStringVal &str) const
+IStringVal& CWorkUnitBase::getJobName(IStringVal &str) const
 {
     CriticalBlock block(crit);
     str.set(p->queryProp("@jobName"));
     return str;
 }
 
-void CLocalWorkUnit::setClusterName(const char *value)
+void CWorkUnitBase::setClusterName(const char *value)
 {
     CriticalBlock block(crit);
     p->setProp("@clusterName", value);
 }
 
-IStringVal& CLocalWorkUnit::getClusterName(IStringVal &str) const
+IStringVal& CWorkUnitBase::getClusterName(IStringVal &str) const
 {
     CriticalBlock block(crit);
     str.set(p->queryProp("@clusterName"));
     return str;
 }
 
-void CLocalWorkUnit::setAllowedClusters(const char *value)
+void CWorkUnitBase::setAllowedClusters(const char *value)
 {
     setDebugValue("allowedclusters",value, true);
 }
 
-IStringVal& CLocalWorkUnit::getAllowedClusters(IStringVal &str) const
+IStringVal& CWorkUnitBase::getAllowedClusters(IStringVal &str) const
 {
     CriticalBlock block(crit);
     getDebugValue("allowedclusters",str);
@@ -3734,19 +3747,19 @@ IStringVal& CLocalWorkUnit::getAllowedClusters(IStringVal &str) const
     return str;
 }
 
-void CLocalWorkUnit::setAllowAutoQueueSwitch(bool val)
+void CWorkUnitBase::setAllowAutoQueueSwitch(bool val)
 { 
     setDebugValueInt("allowautoqueueswitch",val?1:0,true);
 }
     
-bool CLocalWorkUnit::getAllowAutoQueueSwitch() const
+bool CWorkUnitBase::getAllowAutoQueueSwitch() const
 { 
     CriticalBlock block(crit);
     return getDebugValueBool("allowautoqueueswitch",false);
 }
 
 
-void CLocalWorkUnit::setLibraryInformation(const char * name, unsigned interfaceHash, unsigned definitionHash)
+void CWorkUnitBase::setLibraryInformation(const char * name, unsigned interfaceHash, unsigned definitionHash)
 {
     StringBuffer suffix;
 
@@ -3757,7 +3770,7 @@ void CLocalWorkUnit::setLibraryInformation(const char * name, unsigned interface
     setApplicationValue("LibraryModule", "platform", appendLibrarySuffix(suffix).str(), true);
 }
 
-void CLocalWorkUnit::remoteCheckAccess(IUserDescriptor *user, bool writeaccess) const
+void CWorkUnitBase::remoteCheckAccess(IUserDescriptor *user, bool writeaccess) const
 {
     unsigned auditflags = DALI_LDAP_AUDIT_REPORT|DALI_LDAP_READ_WANTED;
     if (writeaccess)
@@ -3788,26 +3801,26 @@ void CLocalWorkUnit::remoteCheckAccess(IUserDescriptor *user, bool writeaccess) 
 }
 
 
-void CLocalWorkUnit::setUser(const char * value) 
+void CWorkUnitBase::setUser(const char * value)
 { 
     CriticalBlock block(crit);
     p->setProp("@submitID", value); 
 }
 
-IStringVal& CLocalWorkUnit::getUser(IStringVal &str) const 
+IStringVal& CWorkUnitBase::getUser(IStringVal &str) const
 {
     CriticalBlock block(crit);
     str.set(p->queryProp("@submitID"));
     return str;
 }
 
-void CLocalWorkUnit::setWuScope(const char * value) 
+void CWorkUnitBase::setWuScope(const char * value)
 { 
     CriticalBlock block(crit);
     p->setProp("@scope", value); 
 }
 
-IStringVal& CLocalWorkUnit::getWuScope(IStringVal &str) const 
+IStringVal& CWorkUnitBase::getWuScope(IStringVal &str) const
 {
     CriticalBlock block(crit);
     str.set(p->queryProp("@scope"));
@@ -3822,13 +3835,13 @@ mapEnums priorityClasses[] = {
    { PriorityClassSize, NULL },
 };
 
-void CLocalWorkUnit::setPriority(WUPriorityClass cls) 
+void CWorkUnitBase::setPriority(WUPriorityClass cls)
 {
     CriticalBlock block(crit);
     setEnum(p, "@priorityClass", cls, priorityClasses);
 }
 
-WUPriorityClass CLocalWorkUnit::getPriority() const 
+WUPriorityClass CWorkUnitBase::getPriority() const
 {
     CriticalBlock block(crit);
     return (WUPriorityClass) getEnum(p, "@priorityClass", priorityClasses);
@@ -3873,7 +3886,7 @@ IConstWorkUnitIterator * CSecureWorkUnitFactory::getWorkUnitsByState(WUState sta
     return factory->getWorkUnitsByXPath(path.str(), secMgr.get(), secUser.get());
 }
 
-void CLocalWorkUnit::setState(WUState value) 
+void CWorkUnitBase::setState(WUState value)
 {
     CriticalBlock block(crit);
     if (value==WUStateAborted || value==WUStatePaused || value==WUStateCompleted || value==WUStateFailed || value==WUStateSubmitted || value==WUStateWait)
@@ -3911,19 +3924,19 @@ void CLocalWorkUnit::setState(WUState value)
     p->removeProp("@stateEx");
 }
 
-void CLocalWorkUnit::setStateEx(const char * text)
+void CWorkUnitBase::setStateEx(const char * text)
 {
     CriticalBlock block(crit);
     p->setProp("@stateEx", text);
 }
 
-void CLocalWorkUnit::setAgentSession(__int64 sessionId)
+void CWorkUnitBase::setAgentSession(__int64 sessionId)
 {
     CriticalBlock block(crit);
     p->setPropInt64("@agentSession", sessionId);
 }
 
-bool CLocalWorkUnit::aborting() const 
+bool CWorkUnitBase::aborting() const
 {
     CriticalBlock block(crit);
     if (abortDirty)
@@ -3943,19 +3956,19 @@ bool CLocalWorkUnit::aborting() const
     return abortState;
 }
 
-bool CLocalWorkUnit::getIsQueryService() const 
+bool CWorkUnitBase::getIsQueryService() const
 {
     CriticalBlock block(crit);
     return p->getPropBool("@isQueryService", false);
 }
 
-void CLocalWorkUnit::setIsQueryService(bool value) 
+void CWorkUnitBase::setIsQueryService(bool value)
 {
     CriticalBlock block(crit);
     p->setPropBool("@isQueryService", value);
 }
 
-void CLocalWorkUnit::checkAgentRunning(WUState & state) 
+void CWorkUnitBase::checkAgentRunning(WUState & state)
 {
     if (queryDaliServerVersion().compare("2.1")<0)
         return;
@@ -4008,7 +4021,7 @@ void CLocalWorkUnit::checkAgentRunning(WUState & state)
     }
 }
 
-WUState CLocalWorkUnit::getState() const 
+WUState CWorkUnitBase::getState() const
 {
     CriticalBlock block(crit);
     WUState state = (WUState) getEnum(p, "@state", states);
@@ -4027,30 +4040,30 @@ WUState CLocalWorkUnit::getState() const
             state = WUStateAborted;
         break;
     }
-    const_cast<CLocalWorkUnit *>(this)->checkAgentRunning(state); //need const_cast as will change state if agent has died
+    const_cast<CWorkUnitBase *>(this)->checkAgentRunning(state); //need const_cast as will change state if agent has died
     return state;
 }
 
-IStringVal& CLocalWorkUnit::getStateEx(IStringVal & str) const 
+IStringVal& CWorkUnitBase::getStateEx(IStringVal & str) const
 {
     CriticalBlock block(crit);
     str.set(p->queryProp("@stateEx"));
     return str;
 }
 
-__int64 CLocalWorkUnit::getAgentSession() const
+__int64 CWorkUnitBase::getAgentSession() const
 {
     CriticalBlock block(crit);
     return p->getPropInt64("@agentSession", -1);
 }
 
-unsigned CLocalWorkUnit::getAgentPID() const
+unsigned CWorkUnitBase::getAgentPID() const
 {
     CriticalBlock block(crit);
     return p->getPropInt("@agentPID", -1);
 }
 
-IStringVal& CLocalWorkUnit::getStateDesc(IStringVal &str) const 
+IStringVal& CWorkUnitBase::getStateDesc(IStringVal &str) const
 {
     // MORE - not sure about this - may prefer a separate interface
     CriticalBlock block(crit);
@@ -4077,26 +4090,26 @@ mapEnums actions[] = {
    { WUActionSize, NULL },
 };
 
-void CLocalWorkUnit::setAction(WUAction value) 
+void CWorkUnitBase::setAction(WUAction value)
 {
     CriticalBlock block(crit);
     setEnum(p, "Action", value, actions);
 }
 
-WUAction CLocalWorkUnit::getAction() const 
+WUAction CWorkUnitBase::getAction() const
 {
     CriticalBlock block(crit);
     return (WUAction) getEnum(p, "Action", actions);
 }
 
-IStringVal& CLocalWorkUnit::getActionEx(IStringVal & str) const
+IStringVal& CWorkUnitBase::getActionEx(IStringVal & str) const
 {
     CriticalBlock block(crit);
     str.set(p->queryProp("Action"));
     return str;
 }
 
-IStringVal& CLocalWorkUnit::getApplicationValue(const char *app, const char *propname, IStringVal &str) const
+IStringVal& CWorkUnitBase::getApplicationValue(const char *app, const char *propname, IStringVal &str) const
 {
     CriticalBlock block(crit);
     StringBuffer prop("Application/");
@@ -4105,7 +4118,7 @@ IStringVal& CLocalWorkUnit::getApplicationValue(const char *app, const char *pro
     return str;
 }
 
-int CLocalWorkUnit::getApplicationValueInt(const char *app, const char *propname, int defVal) const
+int CWorkUnitBase::getApplicationValueInt(const char *app, const char *propname, int defVal) const
 {
     CriticalBlock block(crit);
     StringBuffer prop("Application/");
@@ -4113,7 +4126,7 @@ int CLocalWorkUnit::getApplicationValueInt(const char *app, const char *propname
     return p->getPropInt(prop.str(), defVal); 
 }
 
-IConstWUAppValueIterator& CLocalWorkUnit::getApplicationValues() const
+IConstWUAppValueIterator& CWorkUnitBase::getApplicationValues() const
 {
     CriticalBlock block(crit);
     appvalues.load(p,"Application/*");
@@ -4121,7 +4134,7 @@ IConstWUAppValueIterator& CLocalWorkUnit::getApplicationValues() const
 }
 
 
-void CLocalWorkUnit::setApplicationValue(const char *app, const char *propname, const char *value, bool overwrite)
+void CWorkUnitBase::setApplicationValue(const char *app, const char *propname, const char *value, bool overwrite)
 {
     CriticalBlock block(crit);
     StringBuffer prop("Application/");
@@ -4136,7 +4149,7 @@ void CLocalWorkUnit::setApplicationValue(const char *app, const char *propname, 
     }
 }
 
-void CLocalWorkUnit::setApplicationValueInt(const char *app, const char *propname, int value, bool overwrite)
+void CWorkUnitBase::setApplicationValueInt(const char *app, const char *propname, int value, bool overwrite)
 {
     CriticalBlock block(crit);
     StringBuffer prop("Application/");
@@ -4151,13 +4164,13 @@ void CLocalWorkUnit::setApplicationValueInt(const char *app, const char *propnam
     }
 }
 
-void CLocalWorkUnit::setPriorityLevel(int level) 
+void CWorkUnitBase::setPriorityLevel(int level)
 {
     CriticalBlock block(crit);
     p->setPropInt("PriorityFlag",  level);
 }
 
-int CLocalWorkUnit::getPriorityLevel() const 
+int CWorkUnitBase::getPriorityLevel() const
 {
     CriticalBlock block(crit);
     return p->getPropInt("PriorityFlag"); 
@@ -4179,19 +4192,19 @@ int calcPriorityValue(const IPropertyTree * p)
 }
 
 
-int CLocalWorkUnit::getPriorityValue() const 
+int CWorkUnitBase::getPriorityValue() const
 {
     CriticalBlock block(crit);
     return calcPriorityValue(p);
 }
 
-void CLocalWorkUnit::setRescheduleFlag(bool value) 
+void CWorkUnitBase::setRescheduleFlag(bool value)
 {
     CriticalBlock block(crit);
     p->setPropInt("RescheduleFlag", (int) value); 
 }
 
-bool CLocalWorkUnit::getRescheduleFlag() const 
+bool CWorkUnitBase::getRescheduleFlag() const
 {
     CriticalBlock block(crit);
     return p->getPropInt("RescheduleFlag") != 0; 
@@ -4784,7 +4797,7 @@ unsigned getEnvironmentHThorClusterNames(StringArray &eclAgentNames, StringArray
 }
 
 
-IStringVal& CLocalWorkUnit::getScope(IStringVal &str) const 
+IStringVal& CWorkUnitBase::getScope(IStringVal &str) const
 {
     CriticalBlock block(crit);
     if (p->hasProp("Debug/ForceScope"))
@@ -4804,7 +4817,7 @@ IStringVal& CLocalWorkUnit::getScope(IStringVal &str) const
 }
 
 //Queries
-void CLocalWorkUnit::setCodeVersion(unsigned codeVersion, const char * buildVersion, const char * eclVersion) 
+void CWorkUnitBase::setCodeVersion(unsigned codeVersion, const char * buildVersion, const char * eclVersion)
 {
     CriticalBlock block(crit);
     p->setPropInt("@codeVersion", codeVersion);
@@ -4812,44 +4825,44 @@ void CLocalWorkUnit::setCodeVersion(unsigned codeVersion, const char * buildVers
     p->setProp("@eclVersion", eclVersion);
 }
 
-unsigned CLocalWorkUnit::getCodeVersion() const 
+unsigned CWorkUnitBase::getCodeVersion() const
 {
     CriticalBlock block(crit);
     return p->getPropInt("@codeVersion");
 }
 
-unsigned CLocalWorkUnit::getWuidVersion() const 
+unsigned CWorkUnitBase::getWuidVersion() const
 {
     CriticalBlock block(crit);
     return p->getPropInt("@wuidVersion");
 }
 
-void CLocalWorkUnit::getBuildVersion(IStringVal & buildVersion, IStringVal & eclVersion) const 
+void CWorkUnitBase::getBuildVersion(IStringVal & buildVersion, IStringVal & eclVersion) const
 {
     CriticalBlock block(crit);
     buildVersion.set(p->queryProp("@buildVersion"));
     eclVersion.set(p->queryProp("@eclVersion"));
 }
 
-void CLocalWorkUnit::setCloneable(bool value) 
+void CWorkUnitBase::setCloneable(bool value)
 {
     CriticalBlock block(crit);
     p->setPropInt("@cloneable", value);
 }
 
-void CLocalWorkUnit::setIsClone(bool value) 
+void CWorkUnitBase::setIsClone(bool value)
 {
     CriticalBlock block(crit);
     p->setPropInt("@isClone", value);
 }
 
-bool CLocalWorkUnit::getCloneable() const 
+bool CWorkUnitBase::getCloneable() const
 {
     CriticalBlock block(crit);
     return p->getPropBool("@cloneable", false);
 }
 
-IUserDescriptor *CLocalWorkUnit::queryUserDescriptor() const
+IUserDescriptor *CWorkUnitBase::queryUserDescriptor() const
 {
     CriticalBlock block(crit);
     if (!userDesc)
@@ -4865,13 +4878,13 @@ IUserDescriptor *CLocalWorkUnit::queryUserDescriptor() const
     return userDesc;
 }
 
-bool CLocalWorkUnit::isProtected() const
+bool CWorkUnitBase::isProtected() const
 {
     CriticalBlock block(crit);
     return p->getPropBool("@protected", false);
 }
 
-bool CLocalWorkUnit::isPausing() const
+bool CWorkUnitBase::isPausing() const
 {
     CriticalBlock block(crit);
     if (WUActionPause == getAction())
@@ -4886,32 +4899,32 @@ bool CLocalWorkUnit::isPausing() const
     return false;
 }
 
-void CLocalWorkUnit::protect(bool protectMode)
+void CWorkUnitBase::protect(bool protectMode)
 {
     CriticalBlock block(crit);
     p->setPropBool("@protected", protectMode);
 }
 
-void CLocalWorkUnit::setResultLimit(unsigned value)
+void CWorkUnitBase::setResultLimit(unsigned value)
 {
     CriticalBlock block(crit);
     p->setPropInt("resultLimit", value);
 }
 
-unsigned CLocalWorkUnit::getResultLimit() const
+unsigned CWorkUnitBase::getResultLimit() const
 {
     CriticalBlock block(crit);
     return p->getPropInt("resultLimit");
 }
 
-IStringVal & CLocalWorkUnit::getSnapshot(IStringVal & str) const
+IStringVal & CWorkUnitBase::getSnapshot(IStringVal & str) const
 {
     CriticalBlock block(crit);
     str.set(p->queryProp("SNAPSHOT")); 
     return str;
 }
 
-void CLocalWorkUnit::setSnapshot(const char * val)
+void CWorkUnitBase::setSnapshot(const char * val)
 {
     CriticalBlock block(crit);
     p->setProp("SNAPSHOT", val);
@@ -4924,7 +4937,7 @@ static int comparePropTrees(IInterface **ll, IInterface **rr)
     return stricmp(l->queryName(), r->queryName());
 };
 
-unsigned CLocalWorkUnit::calculateHash(unsigned crc)
+unsigned CWorkUnitBase::calculateHash(unsigned crc)
 {
     // Any other values in the WU that could affect generated code should be crc'ed here
     IPropertyTree *tree = p->queryBranch("Debug");
@@ -4974,9 +4987,9 @@ static void copyTree(IPropertyTree * to, const IPropertyTree * from, const char 
         to->setPropTree(xpath, match);
 }
 
-void CLocalWorkUnit::copyWorkUnit(IConstWorkUnit *cached, bool all)
+void CWorkUnitBase::copyWorkUnit(IConstWorkUnit *cached, bool all)
 {
-    CLocalWorkUnit *from = QUERYINTERFACE(cached, CLocalWorkUnit);
+    CWorkUnitBase *from = QUERYINTERFACE(cached, CWorkUnitBase);
     if (!from)
     {
         CLockedWorkUnit *fl = QUERYINTERFACE(cached, CLockedWorkUnit);
@@ -5107,7 +5120,7 @@ void CLocalWorkUnit::copyWorkUnit(IConstWorkUnit *cached, bool all)
     // resetResults(); // probably should be resetting the results as well... rather than waiting for the rerun to overwrite them
 }
 
-bool CLocalWorkUnit::hasDebugValue(const char *propname) const
+bool CWorkUnitBase::hasDebugValue(const char *propname) const
 {
     StringBuffer lower;
     lower.append(propname).toLowerCase();
@@ -5116,7 +5129,7 @@ bool CLocalWorkUnit::hasDebugValue(const char *propname) const
     return p->hasProp(prop.append(lower));
 }
 
-IStringVal& CLocalWorkUnit::getDebugValue(const char *propname, IStringVal &str) const
+IStringVal& CWorkUnitBase::getDebugValue(const char *propname, IStringVal &str) const
 {
     StringBuffer lower;
     lower.append(propname).toLowerCase();
@@ -5126,12 +5139,12 @@ IStringVal& CLocalWorkUnit::getDebugValue(const char *propname, IStringVal &str)
     return str;
 }
 
-IStringIterator& CLocalWorkUnit::getDebugValues() const
+IStringIterator& CWorkUnitBase::getDebugValues() const
 {
     return getDebugValues(NULL);
 }
 
-IStringIterator& CLocalWorkUnit::getDebugValues(const char *prop) const
+IStringIterator& CWorkUnitBase::getDebugValues(const char *prop) const
 {
     CriticalBlock block(crit);
     StringBuffer path("Debug/");
@@ -5146,7 +5159,7 @@ IStringIterator& CLocalWorkUnit::getDebugValues(const char *prop) const
     return *new CStringPTreeTagIterator(p->getElements(path.str()));
 }
 
-int CLocalWorkUnit::getDebugValueInt(const char *propname, int defVal) const
+int CWorkUnitBase::getDebugValueInt(const char *propname, int defVal) const
 {
     StringBuffer lower;
     lower.append(propname).toLowerCase();
@@ -5156,7 +5169,7 @@ int CLocalWorkUnit::getDebugValueInt(const char *propname, int defVal) const
     return p->getPropInt(prop.str(), defVal); 
 }
 
-__int64 CLocalWorkUnit::getDebugValueInt64(const char *propname, __int64 defVal) const
+__int64 CWorkUnitBase::getDebugValueInt64(const char *propname, __int64 defVal) const
 {
     StringBuffer lower;
     lower.append(propname).toLowerCase();
@@ -5166,7 +5179,7 @@ __int64 CLocalWorkUnit::getDebugValueInt64(const char *propname, __int64 defVal)
     return p->getPropInt64(prop.str(), defVal); 
 }
 
-bool CLocalWorkUnit::getDebugValueBool(const char * propname, bool defVal) const
+bool CWorkUnitBase::getDebugValueBool(const char * propname, bool defVal) const
 {
     StringBuffer lower;
     lower.append(propname).toLowerCase();
@@ -5176,7 +5189,7 @@ bool CLocalWorkUnit::getDebugValueBool(const char * propname, bool defVal) const
     return p->getPropBool(prop.str(), defVal); 
 }
 
-IStringIterator *CLocalWorkUnit::getLogs(const char *type, const char *instance) const
+IStringIterator *CWorkUnitBase::getLogs(const char *type, const char *instance) const
 {
     VStringBuffer xpath("Process/%s/", type);
     if (instance)
@@ -5198,7 +5211,7 @@ IStringIterator *CLocalWorkUnit::getLogs(const char *type, const char *instance)
         return new CStringPTreeAttrIterator(p->getElements(xpath.str()), "@log");
 }
 
-IPropertyTreeIterator* CLocalWorkUnit::getProcesses(const char *type, const char *instance) const
+IPropertyTreeIterator* CWorkUnitBase::getProcesses(const char *type, const char *instance) const
 {
     VStringBuffer xpath("Process/%s/", type);
     if (instance)
@@ -5209,14 +5222,14 @@ IPropertyTreeIterator* CLocalWorkUnit::getProcesses(const char *type, const char
     return p->getElements(xpath.str());
 }
 
-IStringIterator *CLocalWorkUnit::getProcesses(const char *type) const
+IStringIterator *CWorkUnitBase::getProcesses(const char *type) const
 {
     VStringBuffer xpath("Process/%s/*", type);
     CriticalBlock block(crit);
     return new CStringPTreeTagIterator(p->getElements(xpath.str()));
 }
 
-void CLocalWorkUnit::addProcess(const char *type, const char *instance, unsigned pid, const char *log)
+void CWorkUnitBase::addProcess(const char *type, const char *instance, unsigned pid, const char *log)
 {
     VStringBuffer processType("Process/%s", type);
     VStringBuffer xpath("%s/%s", processType.str(), instance);
@@ -5232,7 +5245,7 @@ void CLocalWorkUnit::addProcess(const char *type, const char *instance, unsigned
     }
 }
 
-void CLocalWorkUnit::setDebugValue(const char *propname, const char *value, bool overwrite)
+void CWorkUnitBase::setDebugValue(const char *propname, const char *value, bool overwrite)
 {
     StringBuffer lower;
     lower.append(propname).toLowerCase();
@@ -5247,7 +5260,7 @@ void CLocalWorkUnit::setDebugValue(const char *propname, const char *value, bool
     }
 }
 
-void CLocalWorkUnit::setDebugValueInt(const char *propname, int value, bool overwrite)
+void CWorkUnitBase::setDebugValueInt(const char *propname, int value, bool overwrite)
 {
     StringBuffer lower;
     lower.append(propname).toLowerCase();
@@ -5262,7 +5275,7 @@ void CLocalWorkUnit::setDebugValueInt(const char *propname, int value, bool over
     }
 }
 
-void CLocalWorkUnit::setTracingValue(const char *propname, const char *value)
+void CWorkUnitBase::setTracingValue(const char *propname, const char *value)
 {
     CriticalBlock block(crit);
     // MORE - not sure this line should be needed....
@@ -5271,14 +5284,14 @@ void CLocalWorkUnit::setTracingValue(const char *propname, const char *value)
     p->setProp(prop.append(propname).str(), value); 
 }
 
-void CLocalWorkUnit::setTracingValueInt(const char *propname, int value)
+void CWorkUnitBase::setTracingValueInt(const char *propname, int value)
 {
     CriticalBlock block(crit);
     StringBuffer prop("Tracing/");
     p->setPropInt(prop.append(propname).str(), value); 
 }
 
-IConstWUQuery* CLocalWorkUnit::getQuery() const
+IConstWUQuery* CWorkUnitBase::getQuery() const
 {
     // For this to be legally called, we must have the read-able interface. So we are already locked for (at least) read.
     CriticalBlock block(crit);
@@ -5291,7 +5304,7 @@ IConstWUQuery* CLocalWorkUnit::getQuery() const
     return query.getLink();
 }
 
-IWUQuery* CLocalWorkUnit::updateQuery()
+IWUQuery* CWorkUnitBase::updateQuery()
 {
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
     CriticalBlock block(crit);
@@ -5306,7 +5319,7 @@ IWUQuery* CLocalWorkUnit::updateQuery()
     return query.getLink();
 }
 
-void CLocalWorkUnit::loadPlugins() const
+void CWorkUnitBase::loadPlugins() const
 {
     CriticalBlock block(crit);
     if (!pluginsCached)
@@ -5323,14 +5336,14 @@ void CLocalWorkUnit::loadPlugins() const
     }
 }
 
-IConstWUPluginIterator& CLocalWorkUnit::getPlugins() const
+IConstWUPluginIterator& CWorkUnitBase::getPlugins() const
 {
     CriticalBlock block(crit);
     loadPlugins();
     return *new CArrayIteratorOf<IConstWUPlugin,IConstWUPluginIterator> (plugins, 0, (IConstWorkUnit *) this);
 }
 
-void CLocalWorkUnit::loadLibraries() const
+void CWorkUnitBase::loadLibraries() const
 {
     CriticalBlock block(crit);
     if (!librariesCached)
@@ -5347,14 +5360,14 @@ void CLocalWorkUnit::loadLibraries() const
     }
 }
 
-IConstWULibraryIterator& CLocalWorkUnit::getLibraries() const
+IConstWULibraryIterator& CWorkUnitBase::getLibraries() const
 {
     CriticalBlock block(crit);
     loadLibraries();
     return *new CArrayIteratorOf<IConstWULibrary,IConstWULibraryIterator> (libraries, 0, (IConstWorkUnit *) this);
 }
 
-IConstWULibrary * CLocalWorkUnit::getLibraryByName(const char * search) const
+IConstWULibrary * CWorkUnitBase::getLibraryByName(const char * search) const
 {
     CriticalBlock block(crit);
     loadLibraries();
@@ -5369,7 +5382,7 @@ IConstWULibrary * CLocalWorkUnit::getLibraryByName(const char * search) const
     return NULL;
 }
 
-unsigned CLocalWorkUnit::getTimerDuration(const char *name) const
+unsigned CWorkUnitBase::getTimerDuration(const char *name) const
 {
     Owned<IConstWUStatistic> stat = getStatisticByDescription(name);
     if (stat)
@@ -5388,7 +5401,7 @@ unsigned CLocalWorkUnit::getTimerDuration(const char *name) const
     return p->getPropInt(pname.str(), 0);
 }
 
-IStringVal & CLocalWorkUnit::getTimerDescription(const char * name, IStringVal & str) const
+IStringVal & CWorkUnitBase::getTimerDescription(const char * name, IStringVal & str) const
 {
     Owned<IConstWUStatistic> stat = getStatisticByDescription(name);
     if (stat)
@@ -5406,7 +5419,7 @@ IStringVal & CLocalWorkUnit::getTimerDescription(const char * name, IStringVal &
     return str;
 }
 
-unsigned CLocalWorkUnit::getTimerCount(const char *name) const
+unsigned CWorkUnitBase::getTimerCount(const char *name) const
 {
     Owned<IConstWUStatistic> stat = getStatisticByDescription(name);
     if (stat)
@@ -5422,7 +5435,7 @@ unsigned CLocalWorkUnit::getTimerCount(const char *name) const
     return p->getPropInt(pname.str(), 0);
 }
 
-IStringIterator& CLocalWorkUnit::getTimers() const
+IStringIterator& CWorkUnitBase::getTimers() const
 {
     CriticalBlock block(crit);
 
@@ -5433,7 +5446,7 @@ IStringIterator& CLocalWorkUnit::getTimers() const
     return *new CStringPTreeAttrIterator(p->getElements("Timings/Timing"), "@name");
 }
 
-IConstWUTimerIterator& CLocalWorkUnit::getTimerIterator() const
+IConstWUTimerIterator& CWorkUnitBase::getTimerIterator() const
 {
     CriticalBlock block(crit);
     loadTimers();
@@ -5460,7 +5473,7 @@ public:
     virtual void setDuration(unsigned d) { duration = d; };
 };
 
-void CLocalWorkUnit::loadTimers() const
+void CWorkUnitBase::loadTimers() const
 {
     CriticalBlock block(crit);
     if (timersCached)
@@ -5533,7 +5546,7 @@ bool parseGraphTimerLabel(const char *label, StringAttr &graphName, unsigned & g
     return true;
 }
 
-void CLocalWorkUnit::setTimerInfo(const char *name, unsigned ms, unsigned count, unsigned __int64 max)
+void CWorkUnitBase::setTimerInfo(const char *name, unsigned ms, unsigned count, unsigned __int64 max)
 {
     CriticalBlock block(crit);
     IPropertyTree *timings = p->queryPropTree("Timings");
@@ -5554,7 +5567,7 @@ void CLocalWorkUnit::setTimerInfo(const char *name, unsigned ms, unsigned count,
         timing->setPropInt64("@max", max);
 }
 
-void CLocalWorkUnit::setTimeStamp(const char *application, const char *instance, const char *event, bool add)
+void CWorkUnitBase::setTimeStamp(const char *application, const char *instance, const char *event, bool add)
 {
     CriticalBlock block(crit);
     char timeStamp[64];
@@ -5605,7 +5618,7 @@ mapEnums queryStatMeasure[] =
     { SMEASURE_MAX, NULL},
 };
 
-void CLocalWorkUnit::setStatistic(const char * creator, const char * wuScope, const char * stat, const char * description, StatisticMeasure kind, unsigned __int64 value, unsigned __int64 count, unsigned __int64 maxValue, bool merge)
+void CWorkUnitBase::setStatistic(const char * creator, const char * wuScope, const char * stat, const char * description, StatisticMeasure kind, unsigned __int64 value, unsigned __int64 count, unsigned __int64 maxValue, bool merge)
 {
     if (!wuScope) wuScope = "workunit";
 
@@ -5681,17 +5694,17 @@ void CLocalWorkUnit::setStatistic(const char * creator, const char * wuScope, co
     }
 }
 
-void CLocalWorkUnit::setTimeStamp(const char *application, const char *instance, const char *event)
+void CWorkUnitBase::setTimeStamp(const char *application, const char *instance, const char *event)
 {
     setTimeStamp(application,instance,event,false);
 }
 
-void CLocalWorkUnit::addTimeStamp(const char *application, const char *instance, const char *event)
+void CWorkUnitBase::addTimeStamp(const char *application, const char *instance, const char *event)
 {
     setTimeStamp(application,instance,event,true);
 }
 
-IStringVal &CLocalWorkUnit::getTimeStamp(const char *name, const char *application, IStringVal &str) const
+IStringVal &CWorkUnitBase::getTimeStamp(const char *name, const char *application, IStringVal &str) const
 {
     CriticalBlock block(crit);
 
@@ -5709,21 +5722,21 @@ IStringVal &CLocalWorkUnit::getTimeStamp(const char *name, const char *applicati
     return str;
 }
 
-IConstWUTimeStampIterator& CLocalWorkUnit::getTimeStamps() const
+IConstWUTimeStampIterator& CWorkUnitBase::getTimeStamps() const
 {
     CriticalBlock block(crit);
     timestamps.load(p,"TimeStamps/*");
     return *new CArrayIteratorOf<IConstWUTimeStamp,IConstWUTimeStampIterator> (timestamps, 0, (IConstWorkUnit *) this);
 }
 
-IConstWUStatisticIterator& CLocalWorkUnit::getStatistics() const
+IConstWUStatisticIterator& CWorkUnitBase::getStatistics() const
 {
     CriticalBlock block(crit);
     statistics.load(p,"Statistics/*");
     return *new CArrayIteratorOf<IConstWUStatistic,IConstWUStatisticIterator> (statistics, 0, (IConstWorkUnit *) this);
 }
 
-IConstWUStatistic * CLocalWorkUnit::getStatisticByDescription(const char * desc) const
+IConstWUStatistic * CWorkUnitBase::getStatisticByDescription(const char * desc) const
 {
     StringBuffer xpath;
     xpath.appendf("Statistics/Statistic[@desc=\"%s\"]", desc);
@@ -5734,7 +5747,7 @@ IConstWUStatistic * CLocalWorkUnit::getStatisticByDescription(const char * desc)
     return new CLocalWUStatistic(LINK(match));
 }
 
-IConstWUStatistic * CLocalWorkUnit::getStatistic(const char * name) const
+IConstWUStatistic * CWorkUnitBase::getStatistic(const char * name) const
 {
     StringBuffer xpath;
     xpath.appendf("Statistics/Statistic[@name=\"%s\"]", name);
@@ -5745,7 +5758,7 @@ IConstWUStatistic * CLocalWorkUnit::getStatistic(const char * name) const
     return new CLocalWUStatistic(LINK(match));
 }
 
-bool CLocalWorkUnit::getWuDate(unsigned & year, unsigned & month, unsigned& day)
+bool CWorkUnitBase::getWuDate(unsigned & year, unsigned & month, unsigned& day)
 {
     CriticalBlock block(crit);
     SCMStringBuffer wuidstr;
@@ -5758,7 +5771,7 @@ bool CLocalWorkUnit::getWuDate(unsigned & year, unsigned & month, unsigned& day)
     return false;
 }
 
-IWUPlugin* CLocalWorkUnit::updatePluginByName(const char *qname)
+IWUPlugin* CWorkUnitBase::updatePluginByName(const char *qname)
 {
     CriticalBlock block(crit);
     IConstWUPlugin *existing = getPluginByName(qname);
@@ -5776,7 +5789,7 @@ IWUPlugin* CLocalWorkUnit::updatePluginByName(const char *qname)
     return q;
 }
 
-IConstWUPlugin* CLocalWorkUnit::getPluginByName(const char *qname) const
+IConstWUPlugin* CWorkUnitBase::getPluginByName(const char *qname) const
 {
     CriticalBlock block(crit);
     loadPlugins();
@@ -5794,7 +5807,7 @@ IConstWUPlugin* CLocalWorkUnit::getPluginByName(const char *qname) const
     return NULL;
 }
 
-IWULibrary* CLocalWorkUnit::updateLibraryByName(const char *qname)
+IWULibrary* CWorkUnitBase::updateLibraryByName(const char *qname)
 {
     CriticalBlock block(crit);
     IConstWULibrary *existing = getLibraryByName(qname);
@@ -5812,7 +5825,7 @@ IWULibrary* CLocalWorkUnit::updateLibraryByName(const char *qname)
     return q;
 }
 
-void CLocalWorkUnit::loadExceptions() const
+void CWorkUnitBase::loadExceptions() const
 {
     CriticalBlock block(crit);
     if (!exceptionsCached)
@@ -5832,21 +5845,21 @@ void CLocalWorkUnit::loadExceptions() const
     }
 }
 
-IConstWUExceptionIterator& CLocalWorkUnit::getExceptions() const
+IConstWUExceptionIterator& CWorkUnitBase::getExceptions() const
 {
     CriticalBlock block(crit);
     loadExceptions();
     return *new CArrayIteratorOf<IConstWUException,IConstWUExceptionIterator> (exceptions, 0, (IConstWorkUnit *) this);
 }
 
-unsigned CLocalWorkUnit::getExceptionCount() const
+unsigned CWorkUnitBase::getExceptionCount() const
 {
     CriticalBlock block(crit);
     loadExceptions();
     return exceptions.length();
 }
 
-void CLocalWorkUnit::clearExceptions()
+void CWorkUnitBase::clearExceptions()
 {
     CriticalBlock block(crit);
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
@@ -5856,7 +5869,7 @@ void CLocalWorkUnit::clearExceptions()
 }
 
 
-IWUException* CLocalWorkUnit::createException()
+IWUException* CWorkUnitBase::createException()
 {
     CriticalBlock block(crit);
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
@@ -5877,7 +5890,7 @@ IWUException* CLocalWorkUnit::createException()
 }
 
 
-IConstWUWebServicesInfo* CLocalWorkUnit::getWebServicesInfo() const
+IConstWUWebServicesInfo* CWorkUnitBase::getWebServicesInfo() const
 {
     // For this to be legally called, we must have the read-able interface. So we are already locked for (at least) read.
     CriticalBlock block(crit);
@@ -5892,7 +5905,7 @@ IConstWUWebServicesInfo* CLocalWorkUnit::getWebServicesInfo() const
     return webServicesInfo.getLink();
 }
 
-IWUWebServicesInfo* CLocalWorkUnit::updateWebServicesInfo(bool create)
+IWUWebServicesInfo* CWorkUnitBase::updateWebServicesInfo(bool create)
 {
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
     CriticalBlock block(crit);
@@ -5913,7 +5926,7 @@ IWUWebServicesInfo* CLocalWorkUnit::updateWebServicesInfo(bool create)
     return webServicesInfo.getLink();
 }
 
-IConstWURoxieQueryInfo* CLocalWorkUnit::getRoxieQueryInfo() const
+IConstWURoxieQueryInfo* CWorkUnitBase::getRoxieQueryInfo() const
 {
     // For this to be legally called, we must have the read-able interface. So we are already locked for (at least) read.
     CriticalBlock block(crit);
@@ -5928,7 +5941,7 @@ IConstWURoxieQueryInfo* CLocalWorkUnit::getRoxieQueryInfo() const
     return roxieQueryInfo.getLink();
 }
 
-IWURoxieQueryInfo* CLocalWorkUnit::updateRoxieQueryInfo(const char *wuid, const char *roxieClusterName)
+IWURoxieQueryInfo* CWorkUnitBase::updateRoxieQueryInfo(const char *wuid, const char *roxieClusterName)
 {
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
     CriticalBlock block(crit);
@@ -5957,7 +5970,7 @@ static int compareResults(IInterface **ll, IInterface **rr)
     return l->getResultSequence() - r->getResultSequence();
 }
 
-void CLocalWorkUnit::loadResults() const
+void CWorkUnitBase::loadResults() const
 {
     CriticalBlock block(crit);
     if (!resultsCached)
@@ -5975,7 +5988,7 @@ void CLocalWorkUnit::loadResults() const
     }
 }
 
-void CLocalWorkUnit::loadVariables() const
+void CWorkUnitBase::loadVariables() const
 {
     CriticalBlock block(crit);
     if (!variablesCached)
@@ -5992,7 +6005,7 @@ void CLocalWorkUnit::loadVariables() const
     }
 }
 
-void CLocalWorkUnit::loadTemporaries() const
+void CWorkUnitBase::loadTemporaries() const
 {
     CriticalBlock block(crit);
     if (!temporariesCached)
@@ -6009,7 +6022,7 @@ void CLocalWorkUnit::loadTemporaries() const
     }
 }
 
-void CLocalWorkUnit::deleteTemporaries()
+void CWorkUnitBase::deleteTemporaries()
 {
     CriticalBlock block(crit);
     if (temporariesCached)
@@ -6020,7 +6033,7 @@ void CLocalWorkUnit::deleteTemporaries()
     p->removeProp("Temporaries");
 }
 
-IWUResult* CLocalWorkUnit::createResult()
+IWUResult* CWorkUnitBase::createResult()
 {
     CriticalBlock block(crit);
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
@@ -6037,7 +6050,7 @@ IWUResult* CLocalWorkUnit::createResult()
     return q;
 }
 
-IWUResult* CLocalWorkUnit::updateResultByName(const char *qname)
+IWUResult* CWorkUnitBase::updateResultByName(const char *qname)
 {
     CriticalBlock block(crit);
     IConstWUResult *existing = getResultByName(qname);
@@ -6048,7 +6061,7 @@ IWUResult* CLocalWorkUnit::updateResultByName(const char *qname)
     return q;
 }
 
-IWUResult* CLocalWorkUnit::updateResultBySequence(unsigned seq)
+IWUResult* CWorkUnitBase::updateResultBySequence(unsigned seq)
 {
     CriticalBlock block(crit);
     IConstWUResult *existing = getResultBySequence(seq);
@@ -6059,14 +6072,14 @@ IWUResult* CLocalWorkUnit::updateResultBySequence(unsigned seq)
     return q;
 }
 
-IConstWUResultIterator& CLocalWorkUnit::getResults() const
+IConstWUResultIterator& CWorkUnitBase::getResults() const
 {
     CriticalBlock block(crit);
     loadResults();
     return *new CArrayIteratorOf<IConstWUResult,IConstWUResultIterator> (results, 0, (IConstWorkUnit *) this);
 }
 
-IConstWUResult* CLocalWorkUnit::getResultByName(const char *qname) const
+IConstWUResult* CWorkUnitBase::getResultByName(const char *qname) const
 {
     CriticalBlock block(crit);
     loadResults();
@@ -6084,7 +6097,7 @@ IConstWUResult* CLocalWorkUnit::getResultByName(const char *qname) const
     return NULL;
 }
 
-IConstWUResult* CLocalWorkUnit::getResultBySequence(unsigned seq) const
+IConstWUResult* CWorkUnitBase::getResultBySequence(unsigned seq) const
 {
     CriticalBlock block(crit);
     loadResults();
@@ -6100,14 +6113,14 @@ IConstWUResult* CLocalWorkUnit::getResultBySequence(unsigned seq) const
     return NULL;
 }
 
-IConstWUResultIterator& CLocalWorkUnit::getVariables() const
+IConstWUResultIterator& CWorkUnitBase::getVariables() const
 {
     CriticalBlock block(crit);
     loadVariables();
     return *new CArrayIteratorOf<IConstWUResult,IConstWUResultIterator> (variables, 0, (IConstWorkUnit *) this);
 }
 
-IConstWUResult* CLocalWorkUnit::getGlobalByName(const char *qname) const
+IConstWUResult* CWorkUnitBase::getGlobalByName(const char *qname) const
 {
     CriticalBlock block(crit);
     if (strcmp(p->queryName(), GLOBAL_WORKUNIT)==0)
@@ -6117,7 +6130,7 @@ IConstWUResult* CLocalWorkUnit::getGlobalByName(const char *qname) const
     return global->getVariableByName(qname);
 }
 
-IWUResult* CLocalWorkUnit::updateGlobalByName(const char *qname)
+IWUResult* CWorkUnitBase::updateGlobalByName(const char *qname)
 {
     CriticalBlock block(crit);
     if (strcmp(p->queryName(), GLOBAL_WORKUNIT)==0)
@@ -6127,7 +6140,7 @@ IWUResult* CLocalWorkUnit::updateGlobalByName(const char *qname)
     return global->updateVariableByName(qname);
 }
 
-IConstWUResult* CLocalWorkUnit::getVariableByName(const char *qname) const
+IConstWUResult* CWorkUnitBase::getVariableByName(const char *qname) const
 {
     CriticalBlock block(crit);
     loadVariables();
@@ -6145,7 +6158,7 @@ IConstWUResult* CLocalWorkUnit::getVariableByName(const char *qname) const
     return NULL;
 }
 
-IConstWUResult* CLocalWorkUnit::getTemporaryByName(const char *qname) const
+IConstWUResult* CWorkUnitBase::getTemporaryByName(const char *qname) const
 {
     CriticalBlock block(crit);
     loadTemporaries();
@@ -6163,14 +6176,14 @@ IConstWUResult* CLocalWorkUnit::getTemporaryByName(const char *qname) const
     return NULL;
 }
 
-IConstWUResultIterator& CLocalWorkUnit::getTemporaries() const
+IConstWUResultIterator& CWorkUnitBase::getTemporaries() const
 {
     CriticalBlock block(crit);
     loadTemporaries();
     return *new CArrayIteratorOf<IConstWUResult,IConstWUResultIterator> (temporaries, 0, (IConstWorkUnit *) this);
 }
 
-IWUResult* CLocalWorkUnit::updateTemporaryByName(const char *qname)
+IWUResult* CWorkUnitBase::updateTemporaryByName(const char *qname)
 {
     CriticalBlock block(crit);
     IConstWUResult *existing = getTemporaryByName(qname);
@@ -6188,7 +6201,7 @@ IWUResult* CLocalWorkUnit::updateTemporaryByName(const char *qname)
     return q;
 }
 
-IWUResult* CLocalWorkUnit::updateVariableByName(const char *qname)
+IWUResult* CWorkUnitBase::updateVariableByName(const char *qname)
 {
     CriticalBlock block(crit);
     IConstWUResult *existing = getVariableByName(qname);
@@ -6206,7 +6219,7 @@ IWUResult* CLocalWorkUnit::updateVariableByName(const char *qname)
     return q;
 }
 
-void CLocalWorkUnit::deleteTempFiles(const char *graph, bool deleteOwned, bool deleteJobOwned)
+void CWorkUnitBase::deleteTempFiles(const char *graph, bool deleteOwned, bool deleteJobOwned)
 {
     CriticalBlock block(crit);
     IPropertyTree *files = p->queryPropTree("Files");
@@ -6287,7 +6300,7 @@ static void _noteFileRead(IDistributedFile *file, IPropertyTree *filesRead)
     }
 }
 
-void CLocalWorkUnit::noteFileRead(IDistributedFile *file)
+void CWorkUnitBase::noteFileRead(IDistributedFile *file)
 {
     CriticalBlock block(crit);
     IPropertyTree *files = p->queryPropTree("FilesRead");
@@ -6316,7 +6329,7 @@ static void addFile(IPropertyTree *files, const char *fileName, const char *clus
     files->addPropTree("File", file);
 }
 
-void CLocalWorkUnit::addFile(const char *fileName, StringArray *clusters, unsigned usageCount, WUFileKind fileKind, const char *graphOwner)
+void CWorkUnitBase::addFile(const char *fileName, StringArray *clusters, unsigned usageCount, WUFileKind fileKind, const char *graphOwner)
 {
     CriticalBlock block(crit);
     IPropertyTree *files = p->queryPropTree("Files");
@@ -6331,7 +6344,7 @@ void CLocalWorkUnit::addFile(const char *fileName, StringArray *clusters, unsign
     }
 }
 
-void CLocalWorkUnit::releaseFile(const char *fileName)
+void CWorkUnitBase::releaseFile(const char *fileName)
 {
     StringBuffer path("File[@name=\"");
     path.append(fileName).append("\"]");
@@ -6358,12 +6371,12 @@ void CLocalWorkUnit::releaseFile(const char *fileName)
     }
 }
 
-void CLocalWorkUnit::clearGraphProgress()
+void CWorkUnitBase::clearGraphProgress()
 {
     CConstGraphProgress::deleteWuidProgress(p->queryName());
 }
 
-void CLocalWorkUnit::resetBeforeGeneration()
+void CWorkUnitBase::resetBeforeGeneration()
 {
     CriticalBlock block(crit);
     //Remove all associated files
@@ -6375,7 +6388,7 @@ void CLocalWorkUnit::resetBeforeGeneration()
     p->removeProp("Workflow");
 }
 
-unsigned CLocalWorkUnit::queryFileUsage(const char *fileName) const
+unsigned CWorkUnitBase::queryFileUsage(const char *fileName) const
 {
     StringBuffer path("Files/File[@name=\"");
     path.append(fileName).append("\"]/@usageCount");
@@ -6383,12 +6396,12 @@ unsigned CLocalWorkUnit::queryFileUsage(const char *fileName) const
     return p->getPropInt(path.str());
 }
 
-IPropertyTree *CLocalWorkUnit::getDiskUsageStats()
+IPropertyTree *CWorkUnitBase::getDiskUsageStats()
 {
     return p->getPropTree("DiskUsageStats");
 }
 
-void CLocalWorkUnit::addDiskUsageStats(__int64 _avgNodeUsage, unsigned _minNode, __int64 _minNodeUsage, unsigned _maxNode, __int64 _maxNodeUsage, __int64 _graphId)
+void CWorkUnitBase::addDiskUsageStats(__int64 _avgNodeUsage, unsigned _minNode, __int64 _minNodeUsage, unsigned _maxNode, __int64 _maxNodeUsage, __int64 _graphId)
 {
     IPropertyTree *stats = p->queryPropTree("DiskUsageStats");
     offset_t maxNodeUsage;
@@ -6418,13 +6431,13 @@ void CLocalWorkUnit::addDiskUsageStats(__int64 _avgNodeUsage, unsigned _minNode,
     }
 }
 
-IPropertyTreeIterator & CLocalWorkUnit::getFileIterator() const
+IPropertyTreeIterator & CWorkUnitBase::getFileIterator() const
 {
     CriticalBlock block(crit);
     return * p->getElements("Files/File");
 }
 
-IPropertyTreeIterator & CLocalWorkUnit::getFilesReadIterator() const
+IPropertyTreeIterator & CWorkUnitBase::getFilesReadIterator() const
 {
     CriticalBlock block(crit);
     return * p->getElements("FilesRead/File");
@@ -6433,7 +6446,7 @@ IPropertyTreeIterator & CLocalWorkUnit::getFilesReadIterator() const
 //=================================================================================================
 
 
-bool CLocalWorkUnit::switchThorQueue(const char *cluster, IQueueSwitcher *qs)
+bool CWorkUnitBase::switchThorQueue(const char *cluster, IQueueSwitcher *qs)
 {
     CriticalBlock block(crit);
     if (qs->isAuto()&&!getAllowAutoQueueSwitch())
@@ -6463,7 +6476,7 @@ bool CLocalWorkUnit::switchThorQueue(const char *cluster, IQueueSwitcher *qs)
 
 //=================================================================================================
 
-IPropertyTree *CLocalWorkUnit::getUnpackedTree(bool includeProgress) const
+IPropertyTree *CWorkUnitBase::getUnpackedTree(bool includeProgress) const
 {
     Owned<IPropertyTree> ret = createPTreeFromIPT(p);
     Owned<IConstWUGraphIterator> graphIter = &getGraphs(GraphTypeAny);
@@ -6484,7 +6497,7 @@ IPropertyTree *CLocalWorkUnit::getUnpackedTree(bool includeProgress) const
     }
     return ret.getClear();
 }
-void CLocalWorkUnit::loadGraphs() const
+void CWorkUnitBase::loadGraphs() const
 {
     CriticalBlock block(crit);
     if (!cachedGraphs.get())
@@ -6517,7 +6530,7 @@ mapEnums graphTypes[] = {
    { GraphTypeSize,  NULL },
 };
 
-CLocalWUGraph::CLocalWUGraph(const CLocalWorkUnit &_owner, IPropertyTree *props) : p(props), owner(_owner)
+CLocalWUGraph::CLocalWUGraph(const CWorkUnitBase &_owner, IPropertyTree *props) : p(props), owner(_owner)
 {
     SCMStringBuffer str;
     owner.getWuid(str);
@@ -6559,7 +6572,7 @@ IStringVal& CLocalWUGraph::getXGMML(IStringVal &str, bool mergeProgress) const
     return str;
 }
 
-unsigned CLocalWorkUnit::getGraphCount() const
+unsigned CWorkUnitBase::getGraphCount() const
 {
     CriticalBlock block(crit);
     if (p->hasProp("Graphs"))
@@ -6569,7 +6582,7 @@ unsigned CLocalWorkUnit::getGraphCount() const
     return 0;
 }
 
-unsigned CLocalWorkUnit::getSourceFileCount() const
+unsigned CWorkUnitBase::getSourceFileCount() const
 {
     CriticalBlock block(crit);
     if (p->hasProp("FilesRead"))
@@ -6580,7 +6593,7 @@ unsigned CLocalWorkUnit::getSourceFileCount() const
     
 }
 
-unsigned CLocalWorkUnit::getResultCount() const
+unsigned CWorkUnitBase::getResultCount() const
 {
     CriticalBlock block(crit);
     if (p->hasProp("Results"))
@@ -6591,7 +6604,7 @@ unsigned CLocalWorkUnit::getResultCount() const
     
 }
 
-unsigned CLocalWorkUnit::getVariableCount() const
+unsigned CWorkUnitBase::getVariableCount() const
 {
     CriticalBlock block(crit);
     if (p->hasProp("Variables"))
@@ -6602,7 +6615,7 @@ unsigned CLocalWorkUnit::getVariableCount() const
     
 }
 
-unsigned CLocalWorkUnit::getTimerCount() const
+unsigned CWorkUnitBase::getTimerCount() const
 {
     CriticalBlock block(crit);
 
@@ -6624,7 +6637,7 @@ unsigned CLocalWorkUnit::getTimerCount() const
     return 0;
 }
 
-unsigned CLocalWorkUnit::getApplicationValueCount() const
+unsigned CWorkUnitBase::getApplicationValueCount() const
 {
     CriticalBlock block(crit);
     if (p->hasProp("Application"))
@@ -6635,7 +6648,7 @@ unsigned CLocalWorkUnit::getApplicationValueCount() const
     
 }
 
-IStringVal &CLocalWorkUnit::getXmlParams(IStringVal &str) const
+IStringVal &CWorkUnitBase::getXmlParams(IStringVal &str) const
 {
     CriticalBlock block(crit);
     IPropertyTree *paramTree = p->queryPropTree("Parameters");
@@ -6648,37 +6661,37 @@ IStringVal &CLocalWorkUnit::getXmlParams(IStringVal &str) const
     return str;
 }
 
-const IPropertyTree *CLocalWorkUnit::getXmlParams() const
+const IPropertyTree *CWorkUnitBase::getXmlParams() const
 {
     CriticalBlock block(crit);
     return p->getPropTree("Parameters");
 }
 
-void CLocalWorkUnit::setXmlParams(const char *params)
+void CWorkUnitBase::setXmlParams(const char *params)
 {
     CriticalBlock block(crit);
     p->setPropTree("Parameters", createPTreeFromXMLString(params));
 }
 
-void CLocalWorkUnit::setXmlParams(IPropertyTree *tree)
+void CWorkUnitBase::setXmlParams(IPropertyTree *tree)
 {
     CriticalBlock block(crit);
     p->setPropTree("Parameters", tree);
 }
 
-unsigned __int64 CLocalWorkUnit::getHash() const
+unsigned __int64 CWorkUnitBase::getHash() const
 {
     CriticalBlock block(crit);
     return p->getPropInt64("@hash");
 }
 
-void CLocalWorkUnit::setHash(unsigned __int64 hash)
+void CWorkUnitBase::setHash(unsigned __int64 hash)
 {
     CriticalBlock block(crit);
     p->setPropInt64("@hash", hash);
 }
 
-IConstWUGraphIterator& CLocalWorkUnit::getGraphs(WUGraphType type) const
+IConstWUGraphIterator& CWorkUnitBase::getGraphs(WUGraphType type) const
 {
     CriticalBlock block(crit);
     loadGraphs();
@@ -6728,7 +6741,7 @@ IConstWUGraphIterator& CLocalWorkUnit::getGraphs(WUGraphType type) const
     return *giter;
 }
 
-IConstWUGraph* CLocalWorkUnit::getGraph(const char *qname) const
+IConstWUGraph* CWorkUnitBase::getGraph(const char *qname) const
 {
     CriticalBlock block(crit);
     loadGraphs();
@@ -6746,7 +6759,7 @@ IConstWUGraph* CLocalWorkUnit::getGraph(const char *qname) const
     return NULL;
 }
 
-IWUGraph* CLocalWorkUnit::createGraph()
+IWUGraph* CWorkUnitBase::createGraph()
 {
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
     CriticalBlock block(crit);
@@ -6763,7 +6776,7 @@ IWUGraph* CLocalWorkUnit::createGraph()
     return q;
 }
 
-IWUGraph * CLocalWorkUnit::updateGraph(const char * name)
+IWUGraph * CWorkUnitBase::updateGraph(const char * name)
 {
     CriticalBlock block(crit);
     ensureGraphsUnpacked();
@@ -6775,7 +6788,7 @@ IWUGraph * CLocalWorkUnit::updateGraph(const char * name)
     return q;
 }
 
-IConstWUGraphProgress *CLocalWorkUnit::getGraphProgress(const char *name) const
+IConstWUGraphProgress *CWorkUnitBase::getGraphProgress(const char *name) const
 {
     CriticalBlock block(crit);
     return new CConstGraphProgress(p->queryName(), name);
@@ -8507,14 +8520,14 @@ unsigned __int64 CLocalWUStatistic::getMax() const
 
 extern WORKUNIT_API ILocalWorkUnit * createLocalWorkUnit()
 {
-    Owned<CLocalWorkUnit> cw = new CLocalWorkUnit("W_LOCAL", (ISecManager*)NULL, NULL);
+    Owned<CWorkUnitBase> cw = new CWorkUnitBase("W_LOCAL", (ISecManager*)NULL, NULL);
     ILocalWorkUnit* ret = QUERYINTERFACE(&cw->lockRemote(false), ILocalWorkUnit);
     return ret;
 }
 
 extern WORKUNIT_API StringBuffer &exportWorkUnitToXML(const IConstWorkUnit *wu, StringBuffer &str, bool unpack, bool includeProgress)
 {
-    const CLocalWorkUnit *w = QUERYINTERFACE(wu, const CLocalWorkUnit);
+    const CWorkUnitBase *w = QUERYINTERFACE(wu, const CWorkUnitBase);
     if (!w)
     {
         const CLockedWorkUnit *wl = QUERYINTERFACE(wu, const CLockedWorkUnit);
@@ -8544,7 +8557,7 @@ extern WORKUNIT_API IStringVal& exportWorkUnitToXML(const IConstWorkUnit *wu, IS
 
 extern WORKUNIT_API void exportWorkUnitToXMLFile(const IConstWorkUnit *wu, const char * filename, unsigned extraXmlFlags, bool unpack, bool includeProgress)
 {
-    const CLocalWorkUnit *w = QUERYINTERFACE(wu, const CLocalWorkUnit);
+    const CWorkUnitBase *w = QUERYINTERFACE(wu, const CWorkUnitBase);
     if (!w)
     {
         const CLockedWorkUnit *wl = QUERYINTERFACE(wu, const CLockedWorkUnit);
@@ -8628,30 +8641,30 @@ extern WORKUNIT_API void abortWorkUnit(const char *wuid, ISecManager *secmgr, IS
     abortWorkUnit(wuid);
 }
 
-bool CLocalWorkUnit::hasWorkflow() const
+bool CWorkUnitBase::hasWorkflow() const
 {
     return p->hasProp("Workflow");
 }
 
-unsigned CLocalWorkUnit::queryEventScheduledCount() const
+unsigned CWorkUnitBase::queryEventScheduledCount() const
 {
     CriticalBlock block(crit);
     return p->getPropInt("Workflow/@eventScheduledCount", 0);
 }
 
-void CLocalWorkUnit::incEventScheduledCount()
+void CWorkUnitBase::incEventScheduledCount()
 {
     CriticalBlock block(crit);
     p->setPropInt("Workflow/@eventScheduledCount", p->getPropInt("Workflow/@eventScheduledCount", 0)+1);
 }
 
-IPropertyTree * CLocalWorkUnit::queryWorkflowTree() const
+IPropertyTree * CWorkUnitBase::queryWorkflowTree() const
 {
     CriticalBlock block(crit);
     return p->queryPropTree("Workflow");
 }
 
-IConstWorkflowItemIterator* CLocalWorkUnit::getWorkflowItems() const
+IConstWorkflowItemIterator* CWorkUnitBase::getWorkflowItems() const
 {
     // For this to be legally called, we must have the read-able interface. So we are already locked for (at least) read.
     CriticalBlock block(crit);
@@ -8666,7 +8679,7 @@ IConstWorkflowItemIterator* CLocalWorkUnit::getWorkflowItems() const
     return workflowIterator.getLink();
 }
 
-IWorkflowItemArray * CLocalWorkUnit::getWorkflowClone() const
+IWorkflowItemArray * CWorkUnitBase::getWorkflowClone() const
 {
     unsigned count = 0;
     Owned<IConstWorkflowItemIterator> iter = getWorkflowItems();
@@ -8678,7 +8691,7 @@ IWorkflowItemArray * CLocalWorkUnit::getWorkflowClone() const
     return array.getLink();
 }
 
-IWorkflowItem * CLocalWorkUnit::addWorkflowItem(unsigned wfid, WFType type, WFMode mode, unsigned success, unsigned failure, unsigned recovery, unsigned retriesAllowed, unsigned contingencyFor)
+IWorkflowItem * CWorkUnitBase::addWorkflowItem(unsigned wfid, WFType type, WFMode mode, unsigned success, unsigned failure, unsigned recovery, unsigned retriesAllowed, unsigned contingencyFor)
 {
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
     CriticalBlock block(crit);
@@ -8690,7 +8703,7 @@ IWorkflowItem * CLocalWorkUnit::addWorkflowItem(unsigned wfid, WFType type, WFMo
     return createWorkflowItem(s, wfid, type, mode, success, failure, recovery, retriesAllowed, contingencyFor);
 }
 
-IWorkflowItemIterator * CLocalWorkUnit::updateWorkflowItems()
+IWorkflowItemIterator * CWorkUnitBase::updateWorkflowItems()
 {
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
     CriticalBlock block(crit);
@@ -8705,7 +8718,7 @@ IWorkflowItemIterator * CLocalWorkUnit::updateWorkflowItems()
     return workflowIterator.getLink();
 }
 
-void CLocalWorkUnit::syncRuntimeWorkflow(IWorkflowItemArray * array)
+void CWorkUnitBase::syncRuntimeWorkflow(IWorkflowItemArray * array)
 {
     Owned<IWorkflowItemIterator> iter = updateWorkflowItems();
     Owned<IWorkflowItem> item;
@@ -8718,7 +8731,7 @@ void CLocalWorkUnit::syncRuntimeWorkflow(IWorkflowItemArray * array)
     workflowIteratorCached = false;
 }
 
-void CLocalWorkUnit::resetWorkflow()
+void CWorkUnitBase::resetWorkflow()
 {
     if (hasWorkflow())
     {
@@ -8734,7 +8747,7 @@ void CLocalWorkUnit::resetWorkflow()
     }
 }
 
-void CLocalWorkUnit::schedule()
+void CWorkUnitBase::schedule()
 {
     CriticalBlock block(crit);
     if(queryEventScheduledCount() == 0) return;
@@ -8789,7 +8802,7 @@ void CLocalWorkUnit::schedule()
     }
 }
 
-void CLocalWorkUnit::deschedule()
+void CWorkUnitBase::deschedule()
 {
     if(queryEventScheduledCount() == 0) return;
     if(getState() == WUStateWait)
@@ -8847,7 +8860,7 @@ private:
     Owned<IPropertyTreeIterator> iter;
 };
 
-IConstLocalFileUploadIterator * CLocalWorkUnit::getLocalFileUploads() const
+IConstLocalFileUploadIterator * CWorkUnitBase::getLocalFileUploads() const
 {
     // For this to be legally called, we must have the read-able interface. So we are already locked for (at least) read.
     CriticalBlock block(crit);
@@ -8858,7 +8871,7 @@ IConstLocalFileUploadIterator * CLocalWorkUnit::getLocalFileUploads() const
         return NULL;
 }
 
-bool CLocalWorkUnit::requiresLocalFileUpload() const
+bool CWorkUnitBase::requiresLocalFileUpload() const
 {
     SCMStringBuffer dest;
     Owned<IConstWUResult> result;
@@ -8885,7 +8898,7 @@ bool CLocalWorkUnit::requiresLocalFileUpload() const
     return false;
 }
 
-unsigned CLocalWorkUnit::addLocalFileUpload(LocalFileUploadType type, char const * source, char const * destination, char const * eventTag)
+unsigned CWorkUnitBase::addLocalFileUpload(LocalFileUploadType type, char const * source, char const * destination, char const * eventTag)
 {
     // For this to be legally called, we must have the write-able interface. So we are already locked for write.
     CriticalBlock block(crit);
@@ -9020,7 +9033,7 @@ void testRuntimeWorkflow(IRuntimeWorkflowItem * rwf, bool * okay)
 void testWorkflow()
 {
     DBGLOG("workunit.cpp : testWorkflow");
-    CLocalWorkUnit wu("W-WF-TEST", 0, 0, 0);
+    CWorkUnitBase wu("W-WF-TEST", 0, 0, 0);
     Owned<IWorkflowItem> wf;
     wf.setown(wu.addWorkflowItem(1, WFTypeNormal, 0, 0, 0, 0, 0));
     wf.setown(wu.addWorkflowItem(2, WFTypeRecovery, 0, 0, 0, 0, 0));
