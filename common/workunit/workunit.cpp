@@ -538,9 +538,7 @@ class CWorkUnitBase : public CInterface, implements IConstWorkUnit , implements 
     friend void exportWorkUnitToXMLFile(const IConstWorkUnit *wu, const char * filename, unsigned extraXmlFlags, bool decodeGraphs, bool includeProgress);
 
     // NOTE - order is important - we need to construct connection before p and (especially) destruct after p
-    Owned<IPropertyTree> p;
     bool dirty;
-    bool connectAtRoot;
     mutable bool abortDirty;
     mutable bool abortState;
     mutable CriticalSection crit;
@@ -581,9 +579,8 @@ public:
     IMPLEMENT_IINTERFACE;
 
     CWorkUnitBase(ISecManager *secmgr, ISecUser *secuser);
-    CWorkUnitBase(IPropertyTree* root, ISecManager *secmgr, ISecUser *secuser);
+    CWorkUnitBase(const char *dummyWuid, ISecManager *secmgr, ISecUser *secuser);
     ~CWorkUnitBase();
-(const char *dummyWuid, ISecManager *secmgr, ISecUser *secuser);
     IPropertyTree *getUnpackedTree(bool includeProgress) const;
 
     ISecManager *querySecMgr(){return secMgr.get();}
@@ -788,6 +785,9 @@ public:
 
 protected:
     IConstWUStatistic * getStatisticByDescription(const char * name) const;
+    Owned<IRemoteConnection> connection;
+    Owned<IPropertyTree> p;
+    bool connectAtRoot;
 
 private:
     void init();
@@ -889,17 +889,21 @@ private:
 
 class CDaliWorkUnit : public CWorkUnitBase
 {
-    Owned<IRemoteConnection> conn;
 public:
-    CWorkUnitBase(IRemoteConnection *_conn, ISecManager *secmgr, ISecUser *secuser)
-        : CWorkUnitBase(secmgr, secuser), conn(_conn)
+    CDaliWorkUnit(IRemoteConnection *_connection, ISecManager *secMgr, ISecUser *secUser) : CWorkUnitBase(secMgr, secUser)
     {
-
+        connectAtRoot = true;
+        connection.setown(_connection);
+        p.setown(connection->getRoot());
     }
-    CWorkUnitBase(IRemoteConnection *_conn, IPropertyTree* root, ISecManager *secmgr, ISecUser *secuser);
-        : CWorkUnitBase(secmgr, secuser), conn(_conn)
+    CDaliWorkUnit(IRemoteConnection *_connection, IPropertyTree *root, ISecManager *_secMgr, ISecUser *_secUser) : CWorkUnitBase(_secMgr, _secUser)
     {
-
+        connectAtRoot = false;
+        connection.setown(_connection);
+        p.setown(root);
+    }
+    CDaliWorkUnit(const char *dummyWuid, const char *parentWuid, ISecManager *_secMgr, ISecUser *_secUser) : CWorkUnitBase(_secMgr, _secUser)
+    {
     }
 };
 
@@ -1788,7 +1792,7 @@ class CConstWUArrayIterator : public CInterface, implements IConstWorkUnitIterat
 
     void setCurrent()
     {
-        cur.setown(new CWorkUnitBase(LINK(conn), LINK(&trees.item(curTreeNum)), secmgr, secuser));
+        cur.setown(new CDaliWorkUnit(LINK(conn), LINK(&trees.item(curTreeNum)), secmgr, secuser));
     }
 public:
     IMPLEMENT_IINTERFACE;
@@ -2014,7 +2018,7 @@ public:
         getXPath(wuRoot, name);
         IRemoteConnection* conn = sdsManager->connect(wuRoot.str(), session, RTM_LOCK_WRITE|RTM_CREATE_QUERY, SDS_LOCK_TIMEOUT);
         conn->queryRoot()->setProp("@xmlns:xsi", "http://www.w3.org/1999/XMLSchema-instance");
-        Owned<CWorkUnitBase> cw = new CWorkUnitBase(conn, (ISecManager *)NULL, NULL);
+        Owned<CWorkUnitBase> cw = new CDaliWorkUnit(conn, (ISecManager *)NULL, NULL);
         return &cw->lockRemote(false);
     }
 
@@ -2029,7 +2033,7 @@ public:
             conn = sdsManager->connect(wuRoot.str(), session, RTM_LOCK_WRITE|RTM_CREATE, SDS_LOCK_TIMEOUT);
         conn->queryRoot()->setProp("@xmlns:xsi", "http://www.w3.org/1999/XMLSchema-instance");
         conn->queryRoot()->setPropInt("@wuidVersion", WUID_VERSION);
-        Owned<CWorkUnitBase> cw = new CWorkUnitBase(conn, (ISecManager*)NULL, NULL);
+        Owned<CWorkUnitBase> cw = new CDaliWorkUnit(conn, (ISecManager*)NULL, NULL);
         IWorkUnit* ret = &cw->lockRemote(false);
         ret->setDebugValue("CREATED_BY", app, true);
         ret->setDebugValue("CREATED_FOR", user, true);
@@ -2073,7 +2077,7 @@ public:
                 PrintLog("deleteWorkUnit %s not found", wuid);
             return false;
         }
-        Owned<CWorkUnitBase> cw = new CWorkUnitBase(conn, secmgr, secuser); // takes ownership of conn
+        Owned<CWorkUnitBase> cw = new CDaliWorkUnit(conn, secmgr, secuser); // takes ownership of conn
         if (secmgr && !checkWuSecAccess(*cw.get(), *secmgr, secuser, SecAccess_Full, "delete", true, true)) {
             if (raiseexceptions) {
                 // perhaps raise exception here?
@@ -2158,7 +2162,7 @@ public:
         IRemoteConnection* conn = sdsManager->connect(wuRoot.str(), session, lock ? RTM_LOCK_READ|RTM_LOCK_SUB : 0, SDS_LOCK_TIMEOUT);
         if (conn)
         {
-            CWorkUnitBase *wu = new CWorkUnitBase(conn, secmgr, secuser);
+            CWorkUnitBase *wu = new CDaliWorkUnit(conn, secmgr, secuser);
             if (secmgr && wu)
             {
                 if (!checkWuSecAccess(*wu, *secmgr, secuser, SecAccess_Read, "opening", true, true))
@@ -2189,7 +2193,7 @@ public:
         IRemoteConnection* conn = sdsManager->connect(wuRoot.str(), session, RTM_LOCK_WRITE|RTM_LOCK_SUB, SDS_LOCK_TIMEOUT);
         if (conn)
         {
-            Owned<CWorkUnitBase> cw = new CWorkUnitBase(conn, secmgr, secuser);
+            Owned<CWorkUnitBase> cw = new CDaliWorkUnit(conn, secmgr, secuser);
             if (secmgr && cw)
             {
                 if (!checkWuSecAccess(*cw.get(), *secmgr, secuser, SecAccess_Write, "updating", true, true))
@@ -2640,7 +2644,7 @@ private:
 
         void setCurrent()
         {
-            cur.setown(new CWorkUnitBase(LINK(conn), LINK(&ptreeIter->query()), secmgr, secuser));
+            cur.setown(new CDaliWorkUnit(LINK(conn), LINK(&ptreeIter->query()), secmgr, secuser));
         }
         bool getNext() // scan for a workunit with permissions
         {
@@ -2924,24 +2928,6 @@ public:
 };
 //==========================================================================================
 
-CWorkUnitBase::CWorkUnitBase(IRemoteConnection *_conn, ISecManager *secmgr, ISecUser *secuser) : connection(_conn)
-{
-    connectAtRoot = true;
-    init();
-    p.setown(connection->getRoot());
-    secMgr.set(secmgr);
-    secUser.set(secuser);
-}
-
-CWorkUnitBase::CWorkUnitBase(IRemoteConnection *_conn, IPropertyTree* root, ISecManager *secmgr, ISecUser *secuser) : connection(_conn)
-{
-    connectAtRoot = false;
-    init();
-    p.setown(root);
-    secMgr.set(secmgr);
-    secUser.set(secuser);
-}
-
 void CWorkUnitBase::init()
 {
     p.clear();
@@ -2972,6 +2958,13 @@ void CWorkUnitBase::init()
     dirty = false;
     abortDirty = true;
     abortState = false;
+}
+
+CWorkUnitBase::CWorkUnitBase(ISecManager *secmgr, ISecUser *secuser)
+{
+    init();
+    secMgr.set(secmgr);
+    secUser.set(secuser);
 }
 
 CWorkUnitBase::CWorkUnitBase(const char *_wuid, ISecManager *secmgr, ISecUser *secuser)
@@ -8520,7 +8513,7 @@ unsigned __int64 CLocalWUStatistic::getMax() const
 
 extern WORKUNIT_API ILocalWorkUnit * createLocalWorkUnit()
 {
-    Owned<CWorkUnitBase> cw = new CWorkUnitBase("W_LOCAL", (ISecManager*)NULL, NULL);
+    Owned<CWorkUnitBase> cw = new CDaliWorkUnit("W_LOCAL", NULL, (ISecManager*)NULL, NULL);
     ILocalWorkUnit* ret = QUERYINTERFACE(&cw->lockRemote(false), ILocalWorkUnit);
     return ret;
 }
