@@ -2788,7 +2788,7 @@ class CConstDFUWUArrayIterator : public CInterface, implements IConstDFUWorkUnit
     unsigned idx;
 public:
     IMPLEMENT_IINTERFACE;
-    CConstDFUWUArrayIterator(IDFUWorkUnitFactory *_parent,IRemoteConnection *_conn, IArrayOf<IPropertyTree> &trees) 
+    CConstDFUWUArrayIterator(IDFUWorkUnitFactory *_parent, IArrayOf<IPropertyTree> &trees)
     {
         idx = 0;
         ForEachItemIn(i,trees) {
@@ -3021,16 +3021,16 @@ public:
                 ForEachItemIn(x, _unknownAttributes)
                     unknownAttributes.append(_unknownAttributes.item(x));
             }
-            virtual IRemoteConnection* getElements(IArrayOf<IPropertyTree> &elements)
+            virtual bool getElements(IArrayOf<IPropertyTree> &elements)
             {
                 Owned<IRemoteConnection> conn = querySDS().connect("DFU/WorkUnits", myProcessSession(), 0, SDS_LOCK_TIMEOUT);
                 if (!conn)
-                    return NULL;
+                    return false;
                 Owned<IPropertyTreeIterator> iter = conn->getElements(xPath);
                 if (!iter)
-                    return NULL;
+                    return false;
                 sortElements(iter, sortOrder.get(), nameFilterLo.get(), nameFilterHi.get(), unknownAttributes, elements);
-                return conn.getClear();
+                return true;
             }
         };
 
@@ -3082,8 +3082,8 @@ public:
         }
         IArrayOf<IPropertyTree> results;
         Owned<IElementsPager> elementsPager = new CDFUWorkUnitsPager(query.str(), so.length()?so.str():NULL, namefilterlo.get(), namefilterhi.get(), unknownAttributes);
-        Owned<IRemoteConnection> conn=getElementsPaged(elementsPager,startoffset,maxnum,NULL,queryowner,cachehint,results,total);
-        return new CConstDFUWUArrayIterator(this,conn,results);
+        getElementsPaged(elementsPager,startoffset,maxnum,NULL,queryowner,cachehint,results,total);
+        return new CConstDFUWUArrayIterator(this, results);
     }
 
     virtual unsigned numWorkUnits()

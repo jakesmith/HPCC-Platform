@@ -11988,13 +11988,13 @@ IDFAttributesIterator* CDistributedFileDirectory::getLogicalFilesSorted(
             sortOrder(_sortOrder)
         {
         }
-        virtual IRemoteConnection* getElements(IArrayOf<IPropertyTree> &elements)
+        virtual bool getElements(IArrayOf<IPropertyTree> &elements)
         {
             Owned<IPropertyTreeIterator> fi = queryDistributedFileDirectory().getDFAttributesTreeIterator(filters.get(),
                 localFilters, localFilterBuf.get(), udesc);
             StringArray unknownAttributes;
             sortElements(fi, sortOrder.get(), NULL, NULL, unknownAttributes, elements);
-            return NULL;
+            return true;
         }
     };
 

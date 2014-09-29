@@ -2264,26 +2264,24 @@ public:
             StringAttr nameFilterLo;
             StringAttr nameFilterHi;
             StringArray unknownAttributes;
+            Linked<IRemoteConnection> conn;
 
         public:
             IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-            CWorkUnitsPager(const char* _xPath, const char *_sortOrder, const char* _nameFilterLo, const char* _nameFilterHi, StringArray& _unknownAttributes)
-                : xPath(_xPath), sortOrder(_sortOrder), nameFilterLo(_nameFilterLo), nameFilterHi(_nameFilterHi)
+            CWorkUnitsPager(IRemoteConnection *_conn, const char* _xPath, const char *_sortOrder, const char* _nameFilterLo, const char* _nameFilterHi, StringArray& _unknownAttributes)
+                : xPath(_xPath), sortOrder(_sortOrder), nameFilterLo(_nameFilterLo), nameFilterHi(_nameFilterHi), conn(_conn)
             {
                 ForEachItemIn(x, _unknownAttributes)
                     unknownAttributes.append(_unknownAttributes.item(x));
             }
-            virtual IRemoteConnection* getElements(IArrayOf<IPropertyTree> &elements)
+            virtual bool getElements(IArrayOf<IPropertyTree> &elements)
             {
-                Owned<IRemoteConnection> conn = querySDS().connect("WorkUnits", myProcessSession(), 0, SDS_LOCK_TIMEOUT);
-                if (!conn)
-                    return NULL;
                 Owned<IPropertyTreeIterator> iter = conn->getElements(xPath);
                 if (!iter)
-                    return NULL;
+                    return false;
                 sortElements(iter, sortOrder.get(), nameFilterLo.get(), nameFilterHi.get(), unknownAttributes, elements);
-                return conn.getClear();
+                return true;
             }
         };
         class CScopeChecker : public CSimpleInterface, implements ISortedElementsTreeFilter
@@ -2370,8 +2368,9 @@ public:
             }
         }
         IArrayOf<IPropertyTree> results;
-        Owned<IElementsPager> elementsPager = new CWorkUnitsPager(query.str(), so.length()?so.str():NULL, namefilterlo.get(), namefilterhi.get(), unknownAttributes);
-        Owned<IRemoteConnection> conn=getElementsPaged(elementsPager,startoffset,maxnum,secmgr?sc:NULL,queryowner,cachehint,results,total);
+        Owned<IRemoteConnection> conn = querySDS().connect("WorkUnits", myProcessSession(), 0, SDS_LOCK_TIMEOUT);
+        Owned<IElementsPager> elementsPager = new CWorkUnitsPager(conn, query.str(), so.length()?so.str():NULL, namefilterlo.get(), namefilterhi.get(), unknownAttributes);
+        getElementsPaged(elementsPager,startoffset,maxnum,secmgr?sc:NULL,queryowner,cachehint,results,total);
         return new CConstWUArrayIterator(conn, results, secmgr, secuser);
     }
 
@@ -2455,14 +2454,14 @@ public:
                     queryWithSetId->setPropBool("@activated", activated);
                 }
             }
-            IRemoteConnection* populateQueryTree(IPropertyTree* queryTree)
+            bool populateQueryTree(IPropertyTree* queryTree)
             {
                 StringBuffer querySetXPath("QuerySets");
                 if (!querySet.isEmpty())
                     querySetXPath.appendf("/QuerySet[@id=\"%s\"]", querySet.get());
                 Owned<IRemoteConnection> conn = querySDS().connect(querySetXPath.str(), myProcessSession(), RTM_LOCK_READ, SDS_LOCK_TIMEOUT);
                 if (!conn)
-                    return NULL;
+                    return false;
 
                 if (querySet.isEmpty())
                 {
@@ -2472,7 +2471,7 @@ public:
                 }
                 else
                     populateQueryTree(conn->queryRoot(), queryTree);
-                return conn.getClear();
+                return true;
             }
         public:
             IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
@@ -2485,17 +2484,17 @@ public:
                 ForEachItemIn(x, _unknownAttributes)
                     unknownAttributes.append(_unknownAttributes.item(x));
             }
-            virtual IRemoteConnection* getElements(IArrayOf<IPropertyTree> &elements)
+            virtual bool getElements(IArrayOf<IPropertyTree> &elements)
             {
                 Owned<IPropertyTree> elementTree = createPTree("Queries");
-                Owned<IRemoteConnection> conn = populateQueryTree(elementTree);
-                if (!conn)
-                    return NULL;
-                Owned<IPropertyTreeIterator> iter = elementTree->getElements("*");
-                if (!iter)
-                    return NULL;
-                sortElements(iter, sortOrder.get(), NULL, NULL, unknownAttributes, elements);
-                return conn.getClear();
+                if (populateQueryTree(elementTree))
+                {
+                    Owned<IPropertyTreeIterator> iter = elementTree->getElements("*");
+                    if (!iter)
+                        return false;
+                    sortElements(iter, sortOrder.get(), NULL, NULL, unknownAttributes, elements);
+                }
+                return true;
             }
         };
         StringAttr querySet;
@@ -2549,7 +2548,7 @@ public:
         }
         IArrayOf<IPropertyTree> results;
         Owned<IElementsPager> elementsPager = new CQuerySetQueriesPager(querySet.get(), xPath.str(), so.length()?so.str():NULL, postFilters, unknownAttributes, _subset);
-        Owned<IRemoteConnection> conn=getElementsPaged(elementsPager,startoffset,maxnum,NULL,"",cachehint,results,total);
+        getElementsPaged(elementsPager,startoffset,maxnum,NULL,"",cachehint,results,total);
         return new CConstQuerySetQueryIterator(results);
     }
 

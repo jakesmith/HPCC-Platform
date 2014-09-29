@@ -1941,7 +1941,6 @@ public:
     ~CPECacheElem()
     {
     }
-    Owned<IRemoteConnection> conn;
     IArrayOf<IPropertyTree> totalres;
     Linked<ISortedElementsTreeFilter> postFilter;
     unsigned postFiltered;
@@ -1969,7 +1968,7 @@ void sortElements(IPropertyTreeIterator* elementsIter,
             filteredAdd(sortedElements,nameFilterLo,nameFilterHi,unknownAttributes, &elementsIter->query());
 };
 
-IRemoteConnection *getElementsPaged( IElementsPager *elementsPager,
+void getElementsPaged( IElementsPager *elementsPager,
                                      unsigned startoffset,
                                      unsigned pagesize,
                                      ISortedElementsTreeFilter *postfilter, // filters before adding to page
@@ -1980,10 +1979,11 @@ IRemoteConnection *getElementsPaged( IElementsPager *elementsPager,
                                      bool checkConn)
 {
     if ((pagesize==0) || !elementsPager)
-        return NULL;
+        return;
     {
         CriticalBlock block(pagedElementsCacheSect);
-        if (!pagedElementsCache) {
+        if (!pagedElementsCache)
+        {
             pagedElementsCache = new CTimedCache;
             pagedElementsCache->start();
         }
@@ -1998,17 +1998,19 @@ IRemoteConnection *getElementsPaged( IElementsPager *elementsPager,
     else
     {
         elem.setown(new CPECacheElem(owner, postfilter));
-        elem->conn.setown(elementsPager->getElements(elem->totalres));
+        elementsPager->getElements(elem->totalres);
     }
-    if (checkConn && !elem->conn)
-        return NULL;
+//    if (checkConn && !conn)
+//        return;
     unsigned n;
     if (total)
         *total = elem->totalres.ordinality();
-    if (postfilter) {
+    if (postfilter)
+    {
         unsigned numFiltered = 0;
         n = 0;
-        ForEachItemIn(i,elem->totalres) {
+        ForEachItemIn(i,elem->totalres)
+        {
             IPropertyTree &item = elem->totalres.item(i);
             bool passesFilter = false;
             if (elem->postFiltered>i) // postFiltered is high water mark of items checked
@@ -2021,7 +2023,8 @@ IRemoteConnection *getElementsPaged( IElementsPager *elementsPager,
             }
             if (passesFilter)
             {
-                if (n>=startoffset) {
+                if (n>=startoffset)
+                {
                     item.Link();
                     results.append(item);
                     if (results.ordinality()>=pagesize)
@@ -2040,24 +2043,23 @@ IRemoteConnection *getElementsPaged( IElementsPager *elementsPager,
         if (total)
             *total -= numFiltered;
     }
-    else {
+    else
+    {
         n = (elem->totalres.ordinality()>startoffset)?(elem->totalres.ordinality()-startoffset):0;
         if (n>pagesize)
             n = pagesize;
-        for (unsigned i=startoffset;i<startoffset+n;i++) {
+        for (unsigned i=startoffset;i<startoffset+n;i++)
+        {
             IPropertyTree &item = elem->totalres.item(i);
             item.Link();
             results.append(item);
         }
     }
-    IRemoteConnection *ret = NULL;
-    if (elem->conn)
-        ret = elem->conn.getLink();
-    if (hint) {
+    if (hint)
+    {
         *hint = elem->hint;
         pagedElementsCache->add(elem.getClear());
     }
-    return ret;
 }
 
 void clearPagedElementsCache()

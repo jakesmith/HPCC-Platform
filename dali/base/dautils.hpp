@@ -270,7 +270,7 @@ interface ISortedElementsTreeFilter : extends IInterface
 };
 interface IElementsPager : extends IInterface
 {
-    virtual IRemoteConnection *getElements(IArrayOf<IPropertyTree> &elements) = 0;
+    virtual bool getElements(IArrayOf<IPropertyTree> &elements) = 0;
 };
 extern da_decl void sortElements( IPropertyTreeIterator* elementsIter,
                                      const char *sortorder, 
@@ -279,7 +279,7 @@ extern da_decl void sortElements( IPropertyTreeIterator* elementsIter,
                                      StringArray& unknownAttributes, //the attribute not exist or empty
                                      IArrayOf<IPropertyTree> &sortedElements);
 
-extern da_decl IRemoteConnection *getElementsPaged(IElementsPager *elementsPager,
+extern da_decl void getElementsPaged(IElementsPager *elementsPager,
                                      unsigned startoffset, 
                                      unsigned pagesize, 
                                      ISortedElementsTreeFilter *postfilter, // if non-NULL filters before adding to page
