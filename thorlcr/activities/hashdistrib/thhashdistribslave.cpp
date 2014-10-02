@@ -653,27 +653,24 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                                 add(getBucketClear(self));
                             }
                         }
-                        else
                         {
-                            HDSendPrintLog("process exceeded inputBufferSize, none to send");
-                            {
-                                SpinBlock b(totalSzLock);
-                                // some may have been freed after lock
-                                if (totalSz < owner.inputBufferSize)
-                                    break;
-                                senderFull = true;
-                            }
-                            loop
-                            {
-                                if (timer.elapsedCycles() >= queryOneSecCycles()*10)
-                                    ActPrintLog(owner.activity, "HD sender, waiting for space");
-                                timer.reset();
+                            SpinBlock b(totalSzLock);
+                            // some may have been by now
+                            if (totalSz < owner.inputBufferSize)
+                                break;
+                            HDSendPrintLog("Waiting for room");
+                            senderFull = true;
+                        }
+                        loop
+                        {
+                            if (timer.elapsedCycles() >= queryOneSecCycles()*10)
+                                ActPrintLog(owner.activity, "HD sender, waiting for space");
+                            timer.reset();
 
-                                if (senderFullSem.wait(10000))
-                                    break;
-                                if (aborted)
-                                    break;
-                            }
+                            if (senderFullSem.wait(10000))
+                                break;
+                            if (aborted)
+                                break;
                         }
                     }
                     if (aborted)
