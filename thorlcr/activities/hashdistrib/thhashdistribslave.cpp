@@ -64,11 +64,13 @@
 #pragma warning( disable : 4355 ) // 'this' : used in base member initializer list
 #endif
 
-#ifdef _DEBUG
-#define HDSendPrintLog(M) PROGLOG(M)
-#define HDSendPrintLog2(M,P1) PROGLOG(M,P1)
-#define HDSendPrintLog3(M,P1,P2) PROGLOG(M,P1,P2)
-#define HDSendPrintLog4(M,P1,P2,P3) PROGLOG(M,P1,P2,P3)
+static unsigned hdTraceLevel = 0;
+//#ifdef _DEBUG
+#if 1
+#define HDSendPrintLog(M) if (hdTraceLevel) PROGLOG(M)
+#define HDSendPrintLog2(M,P1) if (hdTraceLevel) PROGLOG(M,P1)
+#define HDSendPrintLog3(M,P1,P2) if (hdTraceLevel) PROGLOG(M,P1,P2)
+#define HDSendPrintLog4(M,P1,P2,P3) if (hdTraceLevel) PROGLOG(M,P1,P2,P3)
 #else
 #define HDSendPrintLog(M)
 #define HDSendPrintLog2(M,P1)
@@ -544,48 +546,6 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
             }
             activeWriters[n] = writer;
         }
-        unsigned getSendCandidate(bool &doSelf)
-        {
-            unsigned i;
-            unsigned maxsz=0;
-            for (i=0;i<owner.numnodes;i++)
-            {
-                CSendBucket *bucket = queryBucket(i);
-                if (bucket)
-                {
-                    size32_t bucketSz = bucket->querySize();
-                    if (bucketSz > maxsz)
-                        maxsz = bucketSz;
-                }
-            }
-            doSelf = false;
-            if (0 == maxsz)
-                return NotFound;
-            candidates.kill();
-            for (i=0; i<owner.numnodes; i++)
-            {
-                CSendBucket *bucket = queryBucket(i);
-                if (bucket)
-                {
-                    size32_t bucketSz = bucket->querySize();
-                    if (bucketSz > maxsz/2)
-                    {
-                        if (i==self)
-                            doSelf = true;
-                        else
-                            candidates.append(i);
-                    }
-                }
-            }
-            if (0 == candidates.ordinality())
-                return NotFound;
-            unsigned h;
-            if (candidates.ordinality()==1)
-                h = candidates.item(0);
-            else
-                h = candidates.item(getRandom()%candidates.ordinality());
-            return h;
-        }
         void process(IRowStream *input)
         {
             ActPrintLog(owner.activity, "Distribute send start");
@@ -602,19 +562,92 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                             break;
 
                         HDSendPrintLog("process exceeded inputBufferSize");
-                        bool doSelf;
-                        unsigned which = getSendCandidate(doSelf);
-                        if (NotFound != which)
+
+                        // establish largest partial bucket
+                        unsigned maxSz=0;
+                        unsigned inactiveWriters;
                         {
-                            HDSendPrintLog3("process exceeded: send to %d, size=%d", which, queryBucket(which)->querySize());
-                            add(getBucketClear(which));
+                            CriticalBlock b(activeWritersLock);
+                            inactiveWriters = owner.writerPoolSize - numActiveWriters;
                         }
-                        if (doSelf)
+                        if (inactiveWriters)
                         {
-                            HDSendPrintLog2("process exceeded: doSelf, size=%d", queryBucket(self)->querySize());
-                            add(getBucketClear(self));
+                            for (unsigned i=0; i<owner.numnodes; i++)
+                            {
+                                CSendBucket *bucket = queryBucket(i);
+                                if (bucket)
+                                {
+                                    size32_t bucketSz = bucket->querySize();
+                                    if (bucketSz > maxSz)
+                                        maxSz = bucketSz;
+                                    HDSendPrintLog4("b[%d], rows=%d, size=%d", i, bucket->count(), bucketSz);
+                                }
+                            }
                         }
-                        else if (NotFound == which) // i.e. none
+                        /* Only add buckets if some inactive writers
+                         * choose larger candidate buckets to targets that are inactive
+                         * and randomize from that list which are queued to writers
+                         */
+                        if (maxSz)
+                        {
+                            // pick candidates that are at >= 50% size of largest
+                            candidates.kill();
+                            bool doSelf = false;
+                            for (unsigned i=0; i<owner.numnodes; i++)
+                            {
+                                CSendBucket *bucket = queryBucket(i);
+                                if (bucket)
+                                {
+                                    size32_t bucketSz = bucket->querySize();
+                                    if (bucketSz >= maxSz/2)
+                                    {
+                                        CriticalBlock b(activeWritersLock);
+                                        if (NULL == activeWriters[i])
+                                        {
+                                            if (i==self)
+                                                doSelf = true; // always send to self if candidate
+                                            else
+                                            {
+                                                candidates.append(i);
+                                                HDSendPrintLog4("c[%d], rows=%d, size=%d", i, bucket->count(), bucketSz);
+                                                if (candidates.ordinality() == inactiveWriters)
+                                                    break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            while (candidates.ordinality())
+                            {
+                                {
+                                    CriticalBlock b(activeWritersLock);
+                                    inactiveWriters = owner.writerPoolSize - numActiveWriters; // could also have increased
+                                }
+                                if (0 == inactiveWriters)
+                                    break;
+                                else if (1 == candidates.ordinality())
+                                {
+                                    unsigned c = candidates.item(0);
+                                    HDSendPrintLog3("process exceeded: send to %d, size=%d", c, queryBucket(c)->querySize());
+                                    add(getBucketClear(c));
+                                    break;
+                                }
+                                else
+                                {
+                                    unsigned pos = getRandom()%candidates.ordinality();
+                                    unsigned c = candidates.item(c);
+                                    HDSendPrintLog3("process exceeded: send to %d, size=%d", c, queryBucket(c)->querySize());
+                                    add(getBucketClear(c));
+                                    candidates.remove(pos);
+                                }
+                            }
+                            if (doSelf)
+                            {
+                                HDSendPrintLog2("process exceeded: doSelf, size=%d", queryBucket(self)->querySize());
+                                add(getBucketClear(self));
+                            }
+                        }
+                        else
                         {
                             HDSendPrintLog("process exceeded inputBufferSize, none to send");
                             {
@@ -819,6 +852,7 @@ public:
         pull = false;
         rowManager = activity->queryJob().queryRowManager();
 
+        hdTraceLevel = activity->getOptUInt("hdTraceLevel");
         allowSpill = activity->getOptBool(THOROPT_HDIST_SPILL, true);
         if (allowSpill)
             ActPrintLog(activity, "Using spilling buffer (will spill if overflows)");
