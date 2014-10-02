@@ -617,7 +617,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                                     }
                                 }
                             }
-                            unsigned limit = candidateLimit;
+                            unsigned limit = owner.candidateLimit;
                             while (candidates.ordinality())
                             {
                                 {
