@@ -617,6 +617,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                                     }
                                 }
                             }
+                            unsigned limit = candidateLimit;
                             while (candidates.ordinality())
                             {
                                 {
@@ -642,6 +643,12 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                                     assertex(bucket);
                                     HDSendPrintLog3("process exceeded: send to %d, size=%d", c, bucket->querySize());
                                     add(getBucketClear(c));
+                                    if (limit)
+                                    {
+                                        --limit;
+                                        if (0 == limit)
+                                            break;
+                                    }
                                     candidates.remove(pos);
                                 }
                             }
@@ -834,6 +841,7 @@ protected:
     CriticalSection putsect;
     bool pull, aborted;
     CSender sender;
+    unsigned candidateLimit;
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -862,6 +870,7 @@ public:
         writerPoolSize = activity->getOptUInt(THOROPT_HDIST_WRITE_POOL_SIZE, DEFAULT_WRITEPOOLSIZE);
         if (writerPoolSize>numnodes)
             writerPoolSize = numnodes; // no point in more
+        candidateLimit = activity->getOptUInt("hdCandidateLimit");
         ActPrintLog(activity, "Writer thread pool size : %d", writerPoolSize);
     }
 
