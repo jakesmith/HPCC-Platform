@@ -205,21 +205,18 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
             CDistributorBase &distributor;
             Owned<CSendBucket> _sendBucket;
             unsigned nextPending;
-            bool aborted;
 
         public:
             IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
             CWriteHandler(CSender &_owner) : owner(_owner), distributor(_owner.owner)
             {
-                aborted = false;
             }
             void init(void *startInfo)
             {
                 nextPending = getRandom()%distributor.numnodes;
                 _sendBucket.setown((CSendBucket *)startInfo);
                 owner.setActiveWriter(_sendBucket->queryDestination(), this);
-                aborted = false;
             }
             void main()
             {
@@ -228,7 +225,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                 size32_t writerTotalSz = 0;
                 size32_t sendSz = 0;
                 MemoryBuffer mb;
-                while (!aborted)
+                while (!owner.aborted)
                 {
                     writerTotalSz += sendBucket->querySize();
                     owner.dedup(sendBucket); // conditional
@@ -254,7 +251,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                                 continue; // NB: it will flow into else "remote" arm
                             }
                         }
-                        while (!aborted)
+                        while (!owner.aborted)
                         {
                             // JCSMORE check if worth compressing
                             CMessageBuffer msg;
@@ -283,12 +280,9 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
             }
             bool canReuse() { return true; }
             bool stop() { return true; }
-            void abort()
-            {
-                aborted = true;
-            }
-        } **activeWriters;
+        };
 
+        OwnedMalloc<unsigned> activeWriters;
         CDistributorBase &owner;
         CriticalSection activeWritersLock;
         mutable SpinLock totalSzLock;
@@ -303,6 +297,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
         unsigned numFinished, dedupSamples, dedupSuccesses, self;
         Owned<IThreadPool> writerPool;
         PointerArrayOf<CSendBucketQueue> pendingBuckets;
+        PointerArrayOf<CriticalSection> dstCrits;
         unsigned numActiveWriters;
 
         void init()
@@ -313,17 +308,19 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
             totalSz = 0;
             senderFull = false;
             senderFinished.allocateN(owner.numnodes, true);
+            activeWriters.allocateN(owner.numnodes, 0);
             numFinished = 0;
             dedupSamples = dedupSuccesses = 0;
             doDedup = owner.doDedup;
             writerPool.setown(createThreadPool("HashDist writer pool", this, this, owner.writerPoolSize, 5*60*1000));
             self = owner.activity->queryJob().queryMyRank()-1;
             for (n=0; n<owner.numnodes; n++)
+            {
                 pendingBuckets.append(new CSendBucketQueue);
+                dstCrits.append(new CriticalSection);
+            }
             numActiveWriters = 0;
             aborted = false;
-            activeWriters = new CWriteHandler *[owner.numnodes];
-            memset(activeWriters, 0, owner.numnodes * sizeof(CWriteHandler *));
             initialized = true;
         }
         void reset()
@@ -406,6 +403,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
         }
         void send(unsigned dest, CMessageBuffer &mb)
         {
+            CriticalBlock b(* dstCrits.item(dest));
             if (!senderFinished[dest])
             {
                 if (selfPush(dest))
@@ -471,10 +469,10 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
         {
             if (initialized)
             {
-                delete [] activeWriters;
                 for (unsigned n=0; n<owner.numnodes; n++)
                 {
                     CSendBucketQueue *queue = pendingBuckets.item(n);
+                    CriticalSection *dstCrit = dstCrits.item(n);
                     loop
                     {
                         CSendBucket *bucket = queue->dequeueNow();
@@ -483,6 +481,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                         ::Release(bucket);
                     }
                     delete queue;
+                    delete dstCrit;
                 }
             }
         }
@@ -499,7 +498,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                     next = 0;
                 if (c)
                 {
-                    if (NULL == activeWriters[current])
+                    if (activeWriters[current] < owner.targetWriterLimit)
                         return pendingBuckets.item(current)->dequeueNow();
                 }
                 if (next == start)
@@ -522,10 +521,9 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
             else
             {
                 CriticalBlock b(activeWritersLock);
-                CWriteHandler *writer = activeWriters[dest];
-                if (!writer && (numActiveWriters < owner.writerPoolSize))
+                if (numActiveWriters < owner.writerPoolSize)
                 {
-                    HDSendPrintLog2("CSender::add (new thread), dest=%d", dest);
+                    HDSendPrintLog3("CSender::add (new thread), dest=%d, active=%d", dest, numActiveWriters);
                     writerPool->start(bucket);
                 }
                 else // an existing writer will pick up
@@ -536,15 +534,14 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
         {
             if (writer)
             {
-                assertex(!activeWriters[n]);
+                activeWriters[n]++;
                 ++numActiveWriters;
             }
             else
             {
-                assertex(activeWriters[n]);
+                --activeWriters[n];
                 --numActiveWriters;
             }
-            activeWriters[n] = writer;
         }
         void process(IRowStream *input)
         {
@@ -602,7 +599,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                                     if (bucketSz >= maxSz/2)
                                     {
                                         CriticalBlock b(activeWritersLock);
-                                        if (NULL == activeWriters[i])
+                                        if (0 == activeWriters[i]) // only if there are no active writer threads for this target
                                         {
                                             if (i==self)
                                                 doSelf = true; // always send to self if candidate
@@ -743,16 +740,6 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                 return;
             aborted = true;
             senderFullSem.signal();
-            if (initialized)
-            {
-                CriticalBlock b(activeWritersLock);
-                for (unsigned w=0; w<owner.numnodes; w++)
-                {
-                    CWriteHandler *writer = activeWriters[w];
-                    if (writer)
-                        writer->abort();
-                }
-            }
         }
     // IThreadFactory impl.
         virtual IPooledThread *createNew()
@@ -842,6 +829,7 @@ protected:
     bool pull, aborted;
     CSender sender;
     unsigned candidateLimit;
+    unsigned targetWriterLimit;
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -868,10 +856,13 @@ public:
         if (allowSpill)
             ActPrintLog(activity, "Using spilling buffer (will spill if overflows)");
         writerPoolSize = activity->getOptUInt(THOROPT_HDIST_WRITE_POOL_SIZE, DEFAULT_WRITEPOOLSIZE);
-        if (writerPoolSize>numnodes)
-            writerPoolSize = numnodes; // no point in more
-        candidateLimit = activity->getOptUInt("hdCandidateLimit");
+        if (writerPoolSize>(numnodes*2))
+            writerPoolSize = numnodes*2; // limit to 2 per target
         ActPrintLog(activity, "Writer thread pool size : %d", writerPoolSize);
+        candidateLimit = activity->getOptUInt("hdCandidateLimit");
+        ActPrintLog(activity, "candidateLimit : %d", candidateLimit);
+        ActPrintLog(activity, "inputBufferSize : %d, bucketSendSize = %d", inputBufferSize, bucketSendSize);
+        targetWriterLimit = activity->getOptUInt("hdTargetLimit");
     }
 
     ~CDistributorBase()
