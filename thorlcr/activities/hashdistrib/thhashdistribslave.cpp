@@ -628,22 +628,28 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                                 else if (1 == candidates.ordinality())
                                 {
                                     unsigned c = candidates.item(0);
-                                    HDSendPrintLog3("process exceeded: send to %d, size=%d", c, queryBucket(c)->querySize());
+                                    CSendBucket *bucket = queryBucket(c);
+                                    assertex(bucket);
+                                    HDSendPrintLog3("process exceeded: send to %d, size=%d", c, bucket->querySize());
                                     add(getBucketClear(c));
                                     break;
                                 }
                                 else
                                 {
                                     unsigned pos = getRandom()%candidates.ordinality();
-                                    unsigned c = candidates.item(c);
-                                    HDSendPrintLog3("process exceeded: send to %d, size=%d", c, queryBucket(c)->querySize());
+                                    unsigned c = candidates.item(pos);
+                                    CSendBucket *bucket = queryBucket(c);
+                                    assertex(bucket);
+                                    HDSendPrintLog3("process exceeded: send to %d, size=%d", c, bucket->querySize());
                                     add(getBucketClear(c));
                                     candidates.remove(pos);
                                 }
                             }
                             if (doSelf)
                             {
-                                HDSendPrintLog2("process exceeded: doSelf, size=%d", queryBucket(self)->querySize());
+                                CSendBucket *bucket = queryBucket(self);
+                                assertex(bucket);
+                                HDSendPrintLog2("process exceeded: doSelf, size=%d", bucket->querySize());
                                 add(getBucketClear(self));
                             }
                         }
