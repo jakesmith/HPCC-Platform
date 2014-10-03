@@ -609,7 +609,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                                             {
                                                 candidates.append(i);
                                                 HDSendPrintLog4("c[%d], rows=%d, size=%d", i, bucket->count(), bucketSz);
-                                                if (candidates.ordinality() == (owner.writerPoolSize - numActiveWriters))
+                                                if (candidates.ordinality() >= queryInactiveWriters())
                                                     break;
                                             }
                                         }
@@ -619,11 +619,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                             unsigned limit = owner.candidateLimit;
                             while (candidates.ordinality())
                             {
-                                {
-                                    CriticalBlock b(activeWritersLock);
-                                    inactiveWriters = owner.writerPoolSize - numActiveWriters; // could also have increased
-                                }
-                                if (0 == inactiveWriters)
+                                if (0 == queryInactiveWriters())
                                     break;
                                 else if (1 == candidates.ordinality())
                                 {
@@ -669,7 +665,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                         loop
                         {
                             if (timer.elapsedCycles() >= queryOneSecCycles()*10)
-                                ActPrintLog(owner.activity, "HD sender, waiting for space");
+                                ActPrintLog(owner.activity, "HD sender, waiting for space, active writers = %d", queryInactiveWriters());
                             timer.reset();
 
                             if (senderFullSem.wait(10000))
