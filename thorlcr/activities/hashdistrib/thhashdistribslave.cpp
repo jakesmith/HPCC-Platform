@@ -505,7 +505,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                     next = 0;
                 if (c)
                 {
-                    if (activeWriters[current] < owner.targetWriterLimit)
+                    if (!owner.targetWriterLimit || (activeWriters[current] < owner.targetWriterLimit))
                         return pendingBuckets.item(current)->dequeueNow();
                 }
                 if (next == start)
@@ -528,7 +528,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
             else
             {
                 CriticalBlock b(activeWritersLock);
-                if (numActiveWriters < owner.writerPoolSize)
+                if ((numActiveWriters < owner.writerPoolSize) && (!owner.targetWriterLimit || (activeWriters[dest] < owner.targetWriterLimit)))
                 {
                     HDSendPrintLog3("CSender::add (new thread), dest=%d, active=%d", dest, numActiveWriters);
                     writerPool->start(bucket);
