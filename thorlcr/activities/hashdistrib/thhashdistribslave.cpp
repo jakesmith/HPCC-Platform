@@ -253,6 +253,8 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                         }
                         while (!owner.aborted)
                         {
+                            if (distributor.hdFakeWriteDelay)
+                                MilliSleep(distributor.hdFakeWriteDelay);
                             // JCSMORE check if worth compressing
                             CMessageBuffer msg;
                             fastLZCompressToBuffer(msg, mb.length(), mb.bufferBase());
@@ -350,6 +352,11 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                 reset();
             else
                 init();
+        }
+        unsigned queryInactiveWriters()
+        {
+            CriticalBlock b(activeWritersLock);
+            return owner.writerPoolSize - numActiveWriters;
         }
         void dedup(CSendBucket *sendBucket)
         {
@@ -562,12 +569,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
 
                         // establish largest partial bucket
                         unsigned maxSz=0;
-                        unsigned inactiveWriters;
-                        {
-                            CriticalBlock b(activeWritersLock);
-                            inactiveWriters = owner.writerPoolSize - numActiveWriters;
-                        }
-                        if (inactiveWriters)
+                        if (queryInactiveWriters())
                         {
                             for (unsigned i=0; i<owner.numnodes; i++)
                             {
@@ -607,7 +609,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                                             {
                                                 candidates.append(i);
                                                 HDSendPrintLog4("c[%d], rows=%d, size=%d", i, bucket->count(), bucketSz);
-                                                if (candidates.ordinality() == inactiveWriters)
+                                                if (candidates.ordinality() == (owner.writerPoolSize - numActiveWriters))
                                                     break;
                                             }
                                         }
@@ -659,10 +661,9 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                         }
                         {
                             SpinBlock b(totalSzLock);
-                            // some may have been by now
+                            // some may have been written by now
                             if (totalSz < owner.inputBufferSize)
                                 break;
-                            HDSendPrintLog("Waiting for room");
                             senderFull = true;
                         }
                         loop
@@ -830,6 +831,7 @@ protected:
     CSender sender;
     unsigned candidateLimit;
     unsigned targetWriterLimit;
+    unsigned hdFakeWriteDelay;
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -863,6 +865,9 @@ public:
         ActPrintLog(activity, "candidateLimit : %d", candidateLimit);
         ActPrintLog(activity, "inputBufferSize : %d, bucketSendSize = %d", inputBufferSize, bucketSendSize);
         targetWriterLimit = activity->getOptUInt("hdTargetLimit");
+        ActPrintLog(activity, "targetWriterLimit : %d", targetWriterLimit);
+        hdFakeWriteDelay = activity->getOptUInt("hdFakeWriteDelay");
+        ActPrintLog(activity, "hdFakeWriteDelay : %d", hdFakeWriteDelay);
     }
 
     ~CDistributorBase()
