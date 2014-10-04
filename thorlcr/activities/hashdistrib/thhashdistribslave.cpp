@@ -50,7 +50,7 @@
 // HashDistributeSlaveActivity
 //
 
-#define DIFFCOMPRESS
+//#define DIFFCOMPRESS
 
 #define NUMSLAVEPORTS       2
 #define DEFAULTCONNECTTIMEOUT 10000
@@ -109,7 +109,6 @@ public:
         ThorRowQueue rows;
         unsigned destination;
         CThorExpandingRowArray dedupList;
-        MemoryBuffer prevRowMb;
     public:
         IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -117,7 +116,6 @@ public:
                 dedupList(*owner.activity, owner.rowIf)
         {
             total = 0;
-            prevRowMb.clear().reserveTruncate(owner.fixedEstSize*2);
         }
         ~CSendBucket()
         {
@@ -183,28 +181,29 @@ public:
             fastLZCompressToBuffer(mb, tmpMb.length(), tmpMb.bufferBase());
             return !exceeds;
         }
-        bool serializeClearDiff(MemoryBuffer &mb, MemoryBuffer &tmpMb, size32_t limit) // returns true if sent all
+        bool serializeClearDiff(MemoryBuffer &mb, MemoryBuffer &prevRowMb, size32_t limit) // returns true if sent all
         {
-            size32_t blen;
-            tmpMb.clear();
-            CMemoryRowSerializer memSerializer(tmpMb);
+            size32_t blen = mb.length();
+            MemoryBuffer rowMb;
+            CMemoryRowSerializer memSerializer(rowMb);
             loop
             {
                 OwnedConstThorRow row = nextRow();
                 if (!row)
                     break;
+                rowMb.clear();
                 owner.serializer->serialize(memSerializer, (const byte *)row.get());
 
-                if (!mb.length())
+                if (0 == blen)
                 {
-                    mb.append(tmpMb);
-                    prevRowMb.swapWith(tmpMb);
-                    blen = prevRowMb.length();
+                    mb.append(rowMb);
+                    prevRowMb.swapWith(rowMb);
+                    blen += prevRowMb.length();
                 }
                 else
                 {
                     void *q = mb.reserve((owner.fixedEstSize+1)*2); // overestimate
-                    blen += DiffCompress(tmpMb.toByteArray(), q, prevRowMb.bufferBase(), owner.fixedEstSize);
+                    blen += DiffCompress(rowMb.toByteArray(), q, prevRowMb.bufferBase(), owner.fixedEstSize);
                     mb.setLength(blen);
                 }
                 if (mb.length()>=limit)
@@ -304,6 +303,9 @@ public:
                 size32_t writerTotalSz = 0;
                 size32_t sendSz = 0;
                 MemoryBuffer tmpMb;
+#ifdef DIFFCOMPRESS
+                tmpMb.reserveTruncate(owner.fixedEstSize*2);
+#endif
                 CMessageBuffer msg;
                 while (!owner.aborted)
                 {
