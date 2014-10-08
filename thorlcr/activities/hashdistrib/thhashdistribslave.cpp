@@ -50,7 +50,7 @@
 // HashDistributeSlaveActivity
 //
 
-//#define DIFFCOMPRESS
+#define DIFFCOMPRESS
 
 #define NUMSLAVEPORTS       2
 #define DEFAULTCONNECTTIMEOUT 10000
@@ -236,14 +236,14 @@ public:
 
             while (sz)
             {
-                void *next = out.reserve(fixedSize*2);
+                size32_t curSz = out.length();
+                void *next = out.reserve(fixedSize);
                 const void *prev = ((byte *)out.bufferBase())+prevPos;
                 size32_t l = DiffExpand(ptr, next, prev, fixedSize);
                 assertex(sz>=l);
-                out.setLength(prevPos+l);
-                prevPos = out.length();
                 sz -= l;
                 ptr += l;
+                prevPos = curSz;
             }
         }
         static void deserialize(MemoryBuffer &mb, MemoryBuffer &out, size32_t fixedSize)
@@ -304,7 +304,7 @@ public:
                 size32_t sendSz = 0;
                 MemoryBuffer tmpMb;
 #ifdef DIFFCOMPRESS
-                tmpMb.reserveTruncate(owner.fixedEstSize*2);
+                tmpMb.reserveTruncate(distributor.fixedEstSize*2);
 #endif
                 CMessageBuffer msg;
                 while (!owner.aborted)
