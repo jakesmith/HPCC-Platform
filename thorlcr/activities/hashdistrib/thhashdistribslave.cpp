@@ -50,7 +50,7 @@
 // HashDistributeSlaveActivity
 //
 
-#define DIFFCOMPRESS
+//#define DIFFCOMPRESS
 
 #define NUMSLAVEPORTS       2
 #define DEFAULTCONNECTTIMEOUT 10000
@@ -72,6 +72,7 @@ static unsigned hdTraceLevel = 0;
 #define HDSendPrintLog2(M,P1) if (hdTraceLevel) PROGLOG(M,P1)
 #define HDSendPrintLog3(M,P1,P2) if (hdTraceLevel) PROGLOG(M,P1,P2)
 #define HDSendPrintLog4(M,P1,P2,P3) if (hdTraceLevel) PROGLOG(M,P1,P2,P3)
+#define HDSendPrintLog5(M,P1,P2,P3,P4) if (hdTraceLevel) PROGLOG(M,P1,P2,P3,P4)
 #else
 #define HDSendPrintLog(M)
 #define HDSendPrintLog2(M,P1)
@@ -307,13 +308,18 @@ public:
                 tmpMb.reserveTruncate(distributor.fixedEstSize*2);
 #endif
                 CMessageBuffer msg;
+                size32_t rawSz = 0;
                 while (!owner.aborted)
                 {
                     writerTotalSz += sendBucket->querySize();
+                    rawSz += sendBucket->querySize();
                     owner.dedup(sendBucket); // conditional
 
                     if (owner.selfPush(dest))
+                    {
+                        HDSendPrintLog2("CWriteHandler, sending raw=%d to LOCAL", rawSz);
                         distributor.addLocal(sendBucket);
+                    }
                     else // remote
                     {
                         bool wholeBucket = sendBucket->serializeClear(msg.clear(), tmpMb, distributor.bucketSendSize);
@@ -338,8 +344,10 @@ public:
                             if (distributor.hdFakeWriteDelay)
                                 MilliSleep(distributor.hdFakeWriteDelay);
                             // JCSMORE check if worth compressing
+                            HDSendPrintLog5("CWriteHandler, sending (sendSz=%d, msg=%d, raw=%d) to %d", sendSz, msg.length(), rawSz, dest);
                             owner.send(dest, msg);
                             sendSz = 0;
+                            rawSz = 0;
                             if (wholeBucket)
                                 break;
                             wholeBucket = sendBucket->serializeClear(msg.clear(), tmpMb, distributor.bucketSendSize);
@@ -389,7 +397,7 @@ public:
             totalSz = 0;
             senderFull = false;
             senderFinished.allocateN(owner.numnodes, true);
-            activeWriters.allocateN(owner.numnodes, 0);
+            activeWriters.allocateN(owner.numnodes, true);
             numFinished = 0;
             dedupSamples = dedupSuccesses = 0;
             doDedup = owner.doDedup;
@@ -620,11 +628,21 @@ public:
         {
             activeWriters[n]++;
             ++numActiveWriters;
+            unsigned c=0;
+            for (unsigned i=0; i<owner.numnodes; i++)
+                c += activeWriters[i];
+            if (c != numActiveWriters)
+                throwUnexpected();
         }
         void removeActiveWriter(unsigned n)
         {
             --activeWriters[n];
             --numActiveWriters;
+            unsigned c=0;
+            for (unsigned i=0; i<owner.numnodes; i++)
+                c += activeWriters[i];
+            if (c != numActiveWriters)
+                throwUnexpected();
         }
         void process(IRowStream *input)
         {
@@ -802,6 +820,11 @@ public:
             }
             ActPrintLog(owner.activity, "HDIST: waiting for threads");
             writerPool->joinAll();
+            ForEachItemIn(i, pendingBuckets)
+            {
+                CSendBucketQueue *queue = pendingBuckets.item(i);
+                PROGLOG("pendingBuckets[%d] = %d", i, queue->ordinality());
+            }
             ActPrintLog(owner.activity, "HDIST: calling closeWrite()");
             closeWrite();
 
@@ -1075,7 +1098,9 @@ public:
                 {
                     try
                     {
+                        size32_t sz = recvMb.length();
                         CSendBucket::deserialize(recvMb, tempMb.clear(), fixedEstSize);
+                        HDSendPrintLog4("recvloop, blocksize=%d, deserializedSz=%d, from=%d", sz, tempMb.length(), n+1);
                     }
                     catch (IException *e)
                     {
@@ -1131,7 +1156,6 @@ public:
             piperd->stop();
         pipewr.clear();
         ActPrintLog(activity, "HDIST: Read loop done");
-
     }
 
     void sendloop()
