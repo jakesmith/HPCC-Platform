@@ -52,6 +52,7 @@
 #define THOROPT_HDIST_WRITE_POOL_SIZE "hdistSendPoolSize"       // Distribute send thread pool size                                              (default = 16)
 #define THOROPT_HDIST_BUCKET_SIZE     "hd_out_buffer_size"      // Distribute target bucket send size                                            (default = 1MB)
 #define THOROPT_HDIST_BUFFER_SIZE     "hd_in_buffer_size"       // Distribute send buffer size (for all targets)                                 (default = 32MB)
+#define THOROPT_HDIST_COMP            "hd_compressor"           // Distribute compressor to use                                                  (default = "FLZ")
 #define THOROPT_SPLITTER_SPILL        "splitterSpill"           // Force splitters to spill or not, default is to adhere to helper setting       (default = -1)
 #define THOROPT_LOOP_MAX_EMPTY        "loopMaxEmpty"            // Max # of iterations that LOOP can cycle through with 0 results before errors  (default = 1000)
 #define THOROPT_SMALLSORT             "smallSortThreshold"      // Use minisort approach, if estimate size of data to sort is below this setting (default = 0)
