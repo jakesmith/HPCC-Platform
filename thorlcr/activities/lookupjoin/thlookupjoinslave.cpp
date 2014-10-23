@@ -1403,16 +1403,6 @@ protected:
         ActPrintLog("handleLowMem: clearedRows = %"RIPF"d", clearedRows);
         return 0 != clearedRows;
     }
-    void setupDistributors()
-    {
-        if (!rhsDistributor)
-        {
-            rhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), rhsDistributeTag, false, NULL, "RHS"));
-            right.setown(rhsDistributor->connect(queryRowInterfaces(rightITDL), right.getClear(), rightHash, NULL));
-            lhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), lhsDistributeTag, false, NULL, "LHS"));
-            left.setown(lhsDistributor->connect(queryRowInterfaces(leftITDL), left.getClear(), leftHash, NULL));
-        }
-    }
     bool setupHT(rowidx_t size)
     {
         if (size < 10)
@@ -1578,7 +1568,7 @@ protected:
                 // If HT sized already and now spilt, too big clear and size when local size known
                 clearHT();
 
-                setupDistributors();
+                right.setown(rhsDistributor->connect(queryRowInterfaces(rightITDL), right.getClear(), rightHash, NULL));
 
                 if (stopping)
                 {
@@ -1685,6 +1675,7 @@ protected:
             }
             if (rightStream) // NB: returned stream, implies (spilt or setupHT OOM'd) AND sorted, if not, 'rhs' is filled
             {
+                left.setown(lhsDistributor->connect(queryRowInterfaces(leftITDL), left.getClear(), leftHash, NULL));
                 ActPrintLog("RHS spilt to disk. Standard Join will be used");
 
                 // NB: lhs ordering and grouping lost from here on.. (will have been caught earlier if global)
@@ -1823,6 +1814,8 @@ public:
             broadcast2MpTag = container.queryJob().deserializeMPTag(data);
             lhsDistributeTag = container.queryJob().deserializeMPTag(data);
             rhsDistributeTag = container.queryJob().deserializeMPTag(data);
+            rhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), rhsDistributeTag, false, NULL, "RHS"));
+            lhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), lhsDistributeTag, false, NULL, "LHS"));
         }
     }
     virtual void start()
