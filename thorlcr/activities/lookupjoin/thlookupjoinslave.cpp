@@ -39,7 +39,7 @@ enum join_t { JT_Undefined, JT_Inner, JT_LeftOuter, JT_RightOuter, JT_LeftOnly, 
 #define MAX_QUEUE_BLOCKS 5
 
 enum broadcast_code { bcast_none, bcast_send, bcast_sendStopping, bcast_stop };
-enum broadcast_flags { bcastflag_spilt=0x100 };
+enum broadcast_flags { bcastflag_null=0, bcastflag_spilt=0x100, bcastflag_standardjoin=0x200 };
 #define BROADCAST_CODE_MASK 0x00FF
 #define BROADCAST_FLAG_MASK 0xFF00
 class CSendItem : public CSimpleInterface
@@ -331,7 +331,7 @@ class CBroadcaster : public CSimpleInterface
                     CriticalBlock b(allDoneLock);
                     if (slaveStop(sendItem->queryOrigin()-1) || allDone)
                     {
-                        recvInterface->bCastReceive(NULL); // signal last
+                        recvInterface->bCastReceive(sendItem.getClear());
                         ActPrintLog(&activity, "recvLoop, received last slaveStop");
                         // NB: this slave has nothing more to receive.
                         // However the sender will still be re-broadcasting some packets, including these stop packets
@@ -1198,6 +1198,15 @@ public:
         broadcaster.end();
         rowProcessor.wait();
     }
+    void doBroadcastStop(mptag_t tag, broadcast_flags flag)
+    {
+        broadcaster.start(this, tag, false);
+        Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_stop);
+        if (flag)
+            sendItem->setFlag(flag);
+        broadcaster.send(sendItem); // signals stop to others
+        broadcaster.end();
+    }
     rowidx_t getGlobalRHSTotal()
     {
         rowcount_t rhsRows = 0;
@@ -1289,6 +1298,7 @@ protected:
     using PARENT::fuzzyMatch;
     using PARENT::keepLimit;
     using PARENT::doBroadcastRHS;
+    using PARENT::doBroadcastStop;
     using PARENT::getGlobalRHSTotal;
     using PARENT::getOptBool;
     using PARENT::broadcaster;
@@ -1310,7 +1320,7 @@ protected:
     unsigned abortLimit, atMost;
     bool dedup, stable;
 
-    mptag_t lhsDistributeTag, rhsDistributeTag, broadcast2MpTag;
+    mptag_t lhsDistributeTag, rhsDistributeTag, broadcast2MpTag, broadcast3MpTag;
 
     // Handling failover to a) hashed local lookupjoin b) hash distributed standard join
     bool rhsCollated;
@@ -1319,10 +1329,16 @@ protected:
     ICompare *compareLeft;
     UnsignedArray flushedRowMarkers;
 
-    atomic_t performLocalLookup;
+    atomic_t performLocalLookup, performStandardJoin;
     CriticalSection broadcastSpillingLock;
     Owned<IJoinHelper> joinHelper;
 
+    void reportRMM(const char *msg)
+    {
+        StringBuffer memStatsStr;
+        roxiemem::memstats(memStatsStr);
+        ActPrintLog("Roxiemem stats (%s): %s", msg, memStatsStr.str());
+    }
     inline bool isSmart() const
     {
         switch (container.getKind())
@@ -1336,6 +1352,8 @@ protected:
     }
     inline bool doPerformLocalLookup() const { return 0 != atomic_read(&performLocalLookup); }
     inline void setPerformLocalLookup(bool tf) { atomic_set(&performLocalLookup, (int)tf); }
+    inline bool doPerformStandardJoin() const { return 0 != atomic_read(&performStandardJoin); }
+    inline void setPerformStandardJoin(bool tf) { atomic_set(&performStandardJoin, (int)tf); }
     rowidx_t clearNonLocalRows(CThorSpillableRowArray &rows, rowidx_t startPos)
     {
         CThorArrayLockBlock block(rows);
@@ -1463,7 +1481,9 @@ protected:
         CMarker marker(*this);
         if (needGlobal)
         {
+            reportRMM("before doBroadcastRHS");
             doBroadcastRHS(stopping);
+            reportRMM("after doBroadcastRHS");
             rowidx_t rhsRows;
             {
                 CriticalBlock b(broadcastSpillingLock);
@@ -1543,13 +1563,7 @@ protected:
 
                 ActPrintLog("Broadcasting final split status");
                 broadcaster.reset();
-                // NB: using a different tag from 1st broadcast, as 2nd on other nodes can start sending before 1st on this has quit receiving
-                broadcaster.start(this, broadcast2MpTag, false);
-                Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_stop);
-                if (doPerformLocalLookup())
-                    sendItem->setFlag(bcastflag_spilt);
-                broadcaster.send(sendItem); // signals stop to others
-                broadcaster.end();
+                doBroadcastStop(broadcast2MpTag, doPerformLocalLookup() ? bcastflag_spilt : bcastflag_null);
             }
 
             /* All slaves now know whether any one spilt or not, i.e. whether to perform local hash join or not
@@ -1559,6 +1573,7 @@ protected:
             // flush spillable row arrays, and clear any non-locals if performLocalLookup and compact
             if (doPerformLocalLookup())
             {
+                reportRMM("Spilt whilst broadcasting");
                 ActPrintLog("Spilt whilst broadcasting, will attempt distribute local lookup join");
 
                 // NB: lhs ordering and grouping lost from here on..
@@ -1644,9 +1659,11 @@ protected:
                 rowLoader.setown(createThorRowLoader(*this, queryRowInterfaces(rightITDL), cmp, stable ? stableSort_lateAlloc : stableSort_none, rc_allMem, SPILL_PRIORITY_DISABLE));
             }
 
+            reportRMM("before (rhs) rowLoader->load");
             Owned<IRowStream> rightStream = rowLoader->load(right, abortSoon, false, &rhs);
             if (!rightStream)
             {
+                reportRMM("after (rhs) rowLoader->load, local RHS DID fit into memory");
                 ActPrintLog("RHS local rows fitted in memory, count: %"RIPF"d", rhs.ordinality());
                 // all fitted in memory, rows were transferred out back into 'rhs' and sorted
 
@@ -1673,8 +1690,29 @@ protected:
                 else
                     rightStream.setown(collector->getStream(false, &rhs));
             }
-            if (rightStream) // NB: returned stream, implies (spilt or setupHT OOM'd) AND sorted, if not, 'rhs' is filled
+            if (rightStream)
+                setPerformStandardJoin(true);
+
+            // Barrier point, did all slaves succeed in building local RHS HT?
+            if (needGlobal && failoverToLocalLookupJoin)
             {
+                bool localRequiredStandardJoin = doPerformStandardJoin();
+                ActPrintLog("Checking slaves for local RHS lookup status, local rhs %s", localRequiredStandardJoin?"did NOT fit" : "DID fit");
+                broadcaster.reset();
+                broadcast_flags flag = localRequiredStandardJoin ? bcastflag_standardjoin : bcastflag_null;
+                doBroadcastStop(broadcast3MpTag, flag);
+                if (!localRequiredStandardJoin && doPerformStandardJoin())
+                {
+                    ActPrintLog("Other slaves did NOT fit, consequently this slave must fail over to standard join as well");
+                    dbgassertex(!rightStream);
+                    rightStream.setown(rhs.createRowStream());
+                }
+            }
+
+            if (doPerformStandardJoin()) // NB: returned stream, implies (spilt or setupHT OOM'd) AND sorted, if not, 'rhs' is filled
+            {
+                reportRMM("after (rhs) rowLoader->load, local RHS DID NOT fit into memory)");
+
                 left.setown(lhsDistributor->connect(queryRowInterfaces(leftITDL), left.getClear(), leftHash, NULL));
                 ActPrintLog("RHS spilt to disk. Standard Join will be used");
 
@@ -1742,8 +1780,9 @@ public:
     CLookupJoinActivityBase(CGraphElementBase *_container) : PARENT(_container)
     {
         rhsCollated = false;
-        broadcast2MpTag = lhsDistributeTag = rhsDistributeTag = TAG_NULL;
+        broadcast2MpTag = broadcast3MpTag = lhsDistributeTag = rhsDistributeTag = TAG_NULL;
         setPerformLocalLookup(false);
+        setPerformStandardJoin(false);
 
         leftHash = helper->queryHashLeft();
         rightHash = helper->queryHashRight();
@@ -1812,6 +1851,7 @@ public:
         if (!container.queryLocal())
         {
             broadcast2MpTag = container.queryJob().deserializeMPTag(data);
+            broadcast3MpTag = container.queryJob().deserializeMPTag(data);
             lhsDistributeTag = container.queryJob().deserializeMPTag(data);
             rhsDistributeTag = container.queryJob().deserializeMPTag(data);
             rhsDistributor.setown(createHashDistributor(this, queryJob().queryJobComm(), rhsDistributeTag, false, NULL, "RHS"));
@@ -1830,6 +1870,7 @@ public:
         }
 
         setPerformLocalLookup(false);
+        setPerformStandardJoin(false);
         rhsCollated = false;
         flushedRowMarkers.kill();
 
@@ -1905,15 +1946,22 @@ public:
 // IBCastReceive
     virtual void bCastReceive(CSendItem *sendItem)
     {
-        if (sendItem)
+        if (0 != (sendItem->queryFlags() & bcastflag_spilt))
         {
-            if (0 != (sendItem->queryFlags() & bcastflag_spilt))
-            {
-                VStringBuffer msg("Notification that slave %d spilt", sendItem->queryOrigin());
-                clearAllNonLocalRows(msg.str());
-            }
+            VStringBuffer msg("Notification that slave %d spilt", sendItem->queryOrigin());
+            clearAllNonLocalRows(msg.str());
         }
-        rowProcessor.addBlock(sendItem); // NB: NULL indicates end
+        else if (0 != (sendItem->queryFlags() & bcastflag_standardjoin))
+        {
+            VStringBuffer msg("Notification that slave %d required standard join", sendItem->queryOrigin());
+            setPerformStandardJoin(true);
+        }
+        if (bcast_stop == sendItem->queryCode())
+        {
+            sendItem->Release();
+            sendItem = NULL; // NB: NULL indicates end
+        }
+        rowProcessor.addBlock(sendItem);
     }
 // IBufferedRowCallback
     virtual unsigned getSpillCost() const
@@ -1923,7 +1971,11 @@ public:
     virtual bool freeBufferedRows(bool critical)
     {
         // NB: only installed if lookup join and global
-        return clearAllNonLocalRows("Out of memory callback");
+
+        reportRMM("before clearAllNonLocalRows");
+        bool b = clearAllNonLocalRows("Out of memory callback");
+        reportRMM("after clearAllNonLocalRows");
+        return b;
     }
     virtual bool addLocalRHSRow(CThorSpillableRowArray &localRhsRows, const void *row)
     {
