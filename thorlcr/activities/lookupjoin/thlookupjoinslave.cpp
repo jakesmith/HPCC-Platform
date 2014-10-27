@@ -1602,11 +1602,10 @@ protected:
                  * collected [broadcast] rows in the code below for efficiency reasons.
                  */
                 IArrayOf<IRowStream> streams;
-                streams.append(*right.getLink()); // what remains of 'right' will be read through distributor
-
                 if (rhsCollated)
                 {
-                    /* JCSMORE - I think 'right' must be empty if here (if rhsCollated=true)
+                    streams.append(*right.getLink()); // what remains of 'right' will be read through distributor
+                    /* JCSMORE - I think 'right' must be empty if here (since rhsCollated=true)
                      * so above streams.append(*right.getLink()); should go in else block below only AFAICS
                      */
 
@@ -1622,9 +1621,10 @@ protected:
                         CThorExpandingRowArray rowArray(*this, NULL);
                         rowArray.transferFrom(sRowArray);
                         clearNonLocalRows(rowArray, flushedRowMarkers.item(a));
-                        rowArray.compact();
+                        rowArray.compact(); // JCSMORE _could_ realloc now smaller row array (not sure worth it though, as should be freed as collated)
                         streams.append(*rowArray.createRowStream()); // NB: will kill array when stream exhausted
                     }
+                    streams.append(*right.getLink()); // what remains of 'right' will be read through distributor
                 }
                 right.setown(createConcatRowStream(streams.ordinality(), streams.getArray()));
             }
