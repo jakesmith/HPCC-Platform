@@ -675,7 +675,8 @@ class CRowSet : public CSimpleInterface
     unsigned chunk;
     CThorExpandingRowArray rows;
 public:
-    CRowSet(CActivityBase &activity, unsigned _chunk) : rows(activity, &activity, true), chunk(_chunk)
+    CRowSet(CActivityBase &activity, unsigned _chunk, unsigned maxRows)
+        : rows(activity, &activity, true, stableSort_none, true, maxRows), chunk(_chunk)
     {
     }
     void reset(unsigned _chunk)
@@ -897,7 +898,7 @@ protected:
                 }
             }
             rowsRead++;
-            SpinBlock b(parent.spin);
+//            SpinBlock b(parent.spin);
             const void *retrow = rowSet->getRow(row++);
             return retrow;
         }
@@ -911,10 +912,11 @@ protected:
     CActivityBase *activity;
     size32_t minChunkSize;
     unsigned lowestChunk, lowestOutput, outputCount, totalChunksOut;
+    rowidx_t maxRows;
     bool stopped;
     Owned<CRowSet> inMemRows;
     CriticalSection crit;
-    SpinLock spin;
+//    SpinLock spin;
     Linked<IOutputMetaData> meta;
 
     inline COutput &queryCOutput(unsigned i) { return (COutput &) outputs.item(i); }
@@ -1018,13 +1020,14 @@ public:
             if (minChunkSize > 0x10000)
                 minChunkSize += 2*(minSize+1);
         }
+        maxRows = (minChunkSize / minSize) + 1;
         outputCount = _outputCount;
         unsigned c=0;
         for (; c<outputCount; c++)
         {
             outputs.append(* new COutput(*this, c));
         }
-        inMemRows.setown(new CRowSet(*activity, 0));
+        inMemRows.setown(new CRowSet(*activity, 0, maxRows));
     }
     ~CSharedWriteAheadBase()
     {
@@ -1052,7 +1055,7 @@ public:
     }
 
 // ISharedSmartBuffer
-    virtual void putRow(const void *row)
+    virtual void putRow(const void *row, ISharedSmartBufferCallback *callback)
     {
         if (stopped)
         {
@@ -1061,27 +1064,44 @@ public:
         }
         unsigned len=rowSize(row);
         CriticalBlock b(crit);
+        bool paged = false;
         if (totalOutChunkSize >= minChunkSize) // chunks required to be at least minChunkSize
         {
             unsigned reader=anyReaderBehind();
             if (NotFound != reader)
+            {
+//                CriticalUnblock ub(crit); // flushRows can block
                 flushRows();
-            inMemRows.setown(new CRowSet(*activity, ++totalChunksOut));
+            }
+            inMemRows.setown(new CRowSet(*activity, ++totalChunksOut, maxRows));
 #ifdef TRACE_WRITEAHEAD
             totalOutChunkSize = sizeof(unsigned);
 #else
             totalOutChunkSize = 0;
 #endif
+            /* If callback used to signal paged out, only signal readers on page event,
+             * This is to minimize time spent by fast readers constantly catching up and waiting and getting woken up per record
+             */
+            if (callback)
+            {
+                paged = true;
+                callback->paged();
+            }
         }
         {
-            SpinBlock b(spin);
+//            SpinBlock b(spin);
             inMemRows->addRow(row);
         }
 
         totalOutChunkSize += len;
         rowsWritten++; // including NULLs(eogs)
 
-        signalReaders();
+        if (!callback || paged)
+            signalReaders();
+    }
+    virtual void putRow(const void *row)
+    {
+        return putRow(row, NULL);
     }
     virtual void flush()
     {
@@ -1336,7 +1356,7 @@ class CSharedWriteAheadDisk : public CSharedWriteAheadBase
         VALIDATEEQ(diskChunkNum, currentChunkNum);
 #endif
         CThorStreamDeserializerSource ds(stream);
-        Owned<CRowSet> rowSet = new CRowSet(*activity, currentChunkNum);
+        Owned<CRowSet> rowSet = new CRowSet(*activity, currentChunkNum, maxRows);
         loop
         {   
             byte b;
