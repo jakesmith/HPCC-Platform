@@ -898,7 +898,6 @@ protected:
                 }
             }
             rowsRead++;
-//            SpinBlock b(parent.spin);
             const void *retrow = rowSet->getRow(row++);
             return retrow;
         }
@@ -916,7 +915,6 @@ protected:
     bool stopped;
     Owned<CRowSet> inMemRows;
     CriticalSection crit;
-//    SpinLock spin;
     Linked<IOutputMetaData> meta;
 
     inline COutput &queryCOutput(unsigned i) { return (COutput &) outputs.item(i); }
@@ -1069,10 +1067,7 @@ public:
         {
             unsigned reader=anyReaderBehind();
             if (NotFound != reader)
-            {
-//                CriticalUnblock ub(crit); // flushRows can block
                 flushRows();
-            }
             inMemRows.setown(new CRowSet(*activity, ++totalChunksOut, maxRows));
 #ifdef TRACE_WRITEAHEAD
             totalOutChunkSize = sizeof(unsigned);
@@ -1088,10 +1083,7 @@ public:
                 callback->paged();
             }
         }
-        {
-//            SpinBlock b(spin);
-            inMemRows->addRow(row);
-        }
+        inMemRows->addRow(row);
 
         totalOutChunkSize += len;
         rowsWritten++; // including NULLs(eogs)

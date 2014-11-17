@@ -74,7 +74,6 @@ interface ISharedSmartBuffer : extends IRowWriter
     virtual void reset() = 0;
 };
 
-
 extern graph_decl ISharedSmartBuffer *createSharedSmartMemBuffer(CActivityBase *activity, unsigned outputs, IRowInterfaces *rowif, unsigned buffSize=((unsigned)-1));
 interface IDiskUsage;
 extern graph_decl ISharedSmartBuffer *createSharedSmartDiskBuffer(CActivityBase *activity, const char *tempname, unsigned outputs, IRowInterfaces *rowif, IDiskUsage *iDiskUsage=NULL);

@@ -75,24 +75,23 @@ class NSplitterSlaveActivity : public CSlaveActivity
     Owned<IException> startException, writeAheadException;
     Owned<ISharedSmartBuffer> smartBuf;
 
+    // NB: CWriter only used by 'balanced' splitter, which blocks write when too far ahead
     class CWriter : public CSimpleInterface, IThreaded
     {
         NSplitterSlaveActivity &parent;
         CThreadedPersistent threaded;
         bool stopped;
-        rowcount_t max;
 
     public:
         CWriter(NSplitterSlaveActivity &_parent) : parent(_parent), threaded("CWriter", this)
         {
-            max = 0;
             stopped = true;
         }
         ~CWriter() { stop(); }
         virtual void main()
         {
             while (!stopped && !parent.eofHit)
-                parent.writeahead(max, stopped);
+                parent.writeahead(0, stopped); // intentional to avoid 'current' check and write as much as possible, it will block in smartBuf..
         }
         void start()
         {
@@ -447,10 +446,7 @@ void CSplitterOutput::stop()
 const void *CSplitterOutput::nextRow()
 {
     if (rec == max)
-    {
-        bool stopped = false;
-        max = activity.writeahead(max, stopped);
-    }
+        max = activity.writeahead(max, activity.queryAbortSoon());
     ActivityTimer t(totalCycles, activity.queryTimeActivities());
     const void *row = activity.nextRow(output); // pass ptr to max if need more
     ++rec;
