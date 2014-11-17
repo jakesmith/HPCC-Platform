@@ -670,20 +670,22 @@ IRowWriterMultiReader *createOverflowableBuffer(CActivityBase &activity, IRowInt
 #define VALIDATELT(LHS, RHS) if ((LHS)>=(RHS)) { StringBuffer s("FAIL(LT) - LHS="); s.append(LHS).append(", RHS=").append(RHS); PROGLOG("%s", s.str()); throwUnexpected(); }
 
 //#define TRACE_WRITEAHEAD
-class CRowSet : public CSimpleInterface
+class CSharedWriteAheadBase;
+class CRowSet : public CSimpleInterface, implements IInterface
 {
     unsigned chunk;
     CThorExpandingRowArray rows;
+    CSharedWriteAheadBase &sharedWriteAhead;
+    mutable SpinLock lock;
 public:
-    CRowSet(CActivityBase &activity, unsigned _chunk, unsigned maxRows)
-        : rows(activity, &activity, true, stableSort_none, true, maxRows), chunk(_chunk)
+    CRowSet(CSharedWriteAheadBase &_sharedWriteAhead, unsigned _chunk, unsigned maxRows);
+    virtual void Link() const
     {
+        CSimpleInterface::Link();
     }
-    void reset(unsigned _chunk)
-    {
-        chunk = _chunk;
-        rows.kill();
-    }
+    virtual bool Release() const;
+    void clear() { rows.clearRows(); }
+    void setChunk(unsigned _chunk) { chunk = _chunk; }
     inline unsigned queryChunk() const { return chunk; }
     inline unsigned getRowCount() const { return rows.ordinality(); }
     inline void addRow(const void *row) { rows.append(row); }
@@ -732,7 +734,16 @@ class CSharedWriteAheadBase : public CSimpleInterface, implements ISharedSmartBu
     rowcount_t rowsWritten;
     IArrayOf<IRowStream> outputs;
     unsigned readersWaiting;
+    mutable IArrayOf<CRowSet> cachedRowSets;
+    CriticalSection rowSetCacheCrit;
 
+    void reuse(CRowSet *rowset)
+    {
+//        rowset->clear();
+        CriticalBlock b(rowSetCacheCrit);
+        if (cachedRowSets.ordinality() < (outputs.ordinality()*2))
+            cachedRowSets.append(*LINK(rowset));
+    }
     virtual void init()
     {
         stopped = false;
@@ -917,6 +928,20 @@ protected:
     CriticalSection crit;
     Linked<IOutputMetaData> meta;
 
+    CRowSet *newRowSet(unsigned chunk)
+    {
+        if (0)
+        {
+            CriticalBlock b(rowSetCacheCrit);
+            if (cachedRowSets.ordinality())
+            {
+                CRowSet *rowSet = &cachedRowSets.popGet();
+                rowSet->setChunk(chunk);
+                return rowSet;
+            }
+        }
+        return new CRowSet(*this, chunk, maxRows);
+    }
     inline COutput &queryCOutput(unsigned i) { return (COutput &) outputs.item(i); }
     inline unsigned getLowest()
     {
@@ -1025,7 +1050,7 @@ public:
         {
             outputs.append(* new COutput(*this, c));
         }
-        inMemRows.setown(new CRowSet(*activity, 0, maxRows));
+        inMemRows.setown(new CRowSet(*this, 0, maxRows));
     }
     ~CSharedWriteAheadBase()
     {
@@ -1068,7 +1093,7 @@ public:
             unsigned reader=anyReaderBehind();
             if (NotFound != reader)
                 flushRows();
-            inMemRows.setown(new CRowSet(*activity, ++totalChunksOut, maxRows));
+            inMemRows.setown(newRowSet(++totalChunksOut));
 #ifdef TRACE_WRITEAHEAD
             totalOutChunkSize = sizeof(unsigned);
 #else
@@ -1122,10 +1147,25 @@ public:
         unsigned c=0;
         for (; c<outputCount; c++)
             queryCOutput(c).reset();
-        inMemRows->reset(0);
+        inMemRows->clear();
+        inMemRows->setChunk(0);
     }
 friend class COutput;
+friend class CRowSet;
 };
+
+CRowSet::CRowSet(CSharedWriteAheadBase &_sharedWriteAhead, unsigned _chunk, unsigned maxRows)
+    : sharedWriteAhead(_sharedWriteAhead), rows(*_sharedWriteAhead.activity, _sharedWriteAhead.activity, true, stableSort_none, true, maxRows), chunk(_chunk)
+{
+}
+
+bool CRowSet::Release() const
+{
+    SpinBlock b(lock);
+//    if (!IsShared())
+//        sharedWriteAhead.reuse((CRowSet *)this);
+    return CSimpleInterface::Release();
+}
 
 class CSharedWriteAheadDisk : public CSharedWriteAheadBase
 {
@@ -1348,7 +1388,7 @@ class CSharedWriteAheadDisk : public CSharedWriteAheadBase
         VALIDATEEQ(diskChunkNum, currentChunkNum);
 #endif
         CThorStreamDeserializerSource ds(stream);
-        Owned<CRowSet> rowSet = new CRowSet(*activity, currentChunkNum, maxRows);
+        Owned<CRowSet> rowSet = newRowSet(currentChunkNum);
         loop
         {   
             byte b;
