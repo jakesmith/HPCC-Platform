@@ -8348,6 +8348,7 @@ public:
                         else
                             pruned.append(*LINK(&subscriber));
                     }
+                    subs.zap(subscriber);
                 }
             }
             else
