@@ -677,16 +677,14 @@ class CRowSet : public CSimpleInterface, implements IInterface
     CThorExpandingRowArray rows;
     CSharedWriteAheadBase &sharedWriteAhead;
     mutable SpinLock lock;
+    mutable CriticalSection crit;
 public:
     CRowSet(CSharedWriteAheadBase &_sharedWriteAhead, unsigned _chunk, unsigned maxRows);
     virtual void Link() const
     {
         CSimpleInterface::Link();
     }
-    virtual bool Release() const
-    {
-        return CSimpleInterface::Release();
-    }
+    virtual bool Release() const;
     void clear() { rows.clearRows(); }
     void setChunk(unsigned _chunk) { chunk = _chunk; } 
     void reset(unsigned _chunk)
@@ -1166,15 +1164,15 @@ CRowSet::CRowSet(CSharedWriteAheadBase &_sharedWriteAhead, unsigned _chunk, unsi
 {
 }
 
-#if 0
 bool CRowSet::Release() const
 {
-    SpinBlock b(lock);
-//    if (!IsShared())
-//        sharedWriteAhead.reuse((CRowSet *)this);
+    {
+        SpinBlock b(lock);
+        if (!IsShared())
+            sharedWriteAhead.reuse((CRowSet *)this);
+    }
     return CSimpleInterface::Release();
 }
-#endif
 
 class CSharedWriteAheadDisk : public CSharedWriteAheadBase
 {
