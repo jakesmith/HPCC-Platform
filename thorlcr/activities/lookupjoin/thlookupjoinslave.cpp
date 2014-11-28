@@ -453,11 +453,12 @@ class CMarker
     CActivityBase &activity;
     NonReentrantSpinLock lock;
     ICompare *cmp;
-    /* Access to bitSet is currently protected by the implementation
-     * Should move over to an implementation that's based on a lump of
-     * roxiemem and ensure that the threads avoid accessing the same bytes/words etc.
-     */
-    Owned<IBitSet> bitSet; // should be roxiemem, so can cause spilling
+    typedef unsigned bits_t;
+    enum { BitsPerItem = sizeof(bits_t) * 8 };
+    unsigned bitSetUnits;
+    void *pBitSetMem;
+    OwnedConstThorRow bitSetMem;
+
     const void **base;
     rowidx_t nextChunkStartRow; // Updated as threads request next chunk
     rowidx_t rowCount, chunkSize; // There are configured at start of calculate()
@@ -496,12 +497,18 @@ class CMarker
             nextChunkStartRow += chunkSize;
         return nextChunkStartRow; // and end row for this particular chunk request
     }
-    inline void mark(rowidx_t i)
+    inline void mark(rowidx_t n)
     {
-        bitSet->set(i); // mark boundary
+        // NB: Thread safe, because markers are dealing with discrete parts of bitSetMem (alighted to bits_t boundaries)
+        bits_t t=((bits_t)1)<<(n%BitsPerItem);
+        bits_t &m = ((bits_t *)pBitSetMem)[n/BitsPerItem];
+        m |= t;
     }
     rowidx_t doMarking(rowidx_t myStart, rowidx_t myEnd)
     {
+        // myStart must be on unsigned boundary
+        dbgassertex(0 == (myStart % sizeof(unsigned)));
+
         rowidx_t chunkUnique = 0;
         const void **rows = base+myStart;
         rowidx_t i=myStart;
@@ -550,9 +557,28 @@ public:
         // perhaps should make these configurable..
         parallelMinChunkSize = 1024;
         parallelChunkSize = 10*parallelMinChunkSize;
+        pBitSetMem = NULL;
+        bitSetUnits = 0;
+    }
+    bool init(rowidx_t rowCount)
+    {
+        bitSetUnits = (rowCount + (sizeof(bits_t)-1)) / sizeof(bits_t); // rounding up
+        pBitSetMem = activity.queryJob().queryRowManager()->allocate(bitSetUnits*sizeof(bits_t), activity.queryContainer().queryId(), SPILL_PRIORITY_LOW);
+        if (!pBitSetMem)
+            return false;
+        memset(pBitSetMem, 0, bitSetUnits*sizeof(bits_t));
+        bitSetMem.setown(pBitSetMem);
+        return true;
+    }
+    void clear()
+    {
+        bitSetMem.clear();
+        pBitSetMem = NULL;
     }
     rowidx_t calculate(CThorExpandingRowArray &rows, ICompare *_cmp, bool doSort)
     {
+        TimeSection m("CMarker::calculate");
+        dbgassertex(pBitSetMem); // initialized during init()
         cmp = _cmp;
         unsigned threadCount = activity.getOptInt(THOROPT_JOINHELPER_THREADS, activity.queryMaxCores());
         if (0 == threadCount)
@@ -563,7 +589,7 @@ public:
         if (0 == rowCount)
             return 0;
         base = rows.getRowArray();
-        bitSet.setown(createBitSet());
+
         rowidx_t uniqueTotal = 0;
         if ((1 == threadCount) || (rowCount < parallelMinChunkSize))
             uniqueTotal = doMarking(0, rowCount);
@@ -578,6 +604,9 @@ public:
                 chunkSize = parallelMinChunkSize;
                 threadCount = rowCount / chunkSize;
             }
+            // Must be multiple of sizeof unsigned
+            dbgassertex(0 == (chunkSize % sizeof(unsigned)));
+
             /* This is yet another case of requiring a set of small worker threads
              * Thor should really use a common pool of lightweight threadlets made available to all
              * where any particular instances (e.g. lookup) can stipulate min/max it requires etc.
@@ -616,7 +645,50 @@ public:
     {
         if (start==rowCount)
             return 0;
-        return bitSet->scan(start, true)+1;
+        unsigned j=start%BitsPerItem;
+        // returns index of first = val >= from
+        unsigned i;
+        for (i=start/BitsPerItem;i<bitSetUnits;i++)
+        {
+            bits_t &m = ((bits_t *)pBitSetMem)[i];
+            if (0 != m)
+            {
+#if defined(__GNUC__)
+                //Use the __builtin_ffs instead of a loop to find the first bit set/cleared
+                bits_t testMask = m;
+                if (j != 0)
+                {
+                    //Set all the bottom bits to the value we're not searching for
+                    bits_t mask = (((bits_t)1)<<j)-1;
+                    testMask &= ~mask;
+
+                    //May possibly match exactly - if so continue main loop
+                    if (0 == testMask)
+                    {
+                        j = 0;
+                        continue;
+                    }
+                }
+
+                //Guaranteed a match at this point
+
+                //Returns one plus the index of the least significant 1-bit of testMask
+                //(testMask != 0) since that has been checked above (noMatchMask == 0)
+                unsigned pos = __builtin_ffs(testMask)-1;
+                return i*BitsPerItem+pos;
+#else
+                bits_t t = ((bits_t)1)<<j;
+                for (;j<BitsPerItem;j++)
+                {
+                    if (t&m)
+                        return i*BitsPerItem+j;
+                    t <<= 1;
+                }
+#endif
+            }
+            j = 0;
+        }
+        return (unsigned)-1;
     }
 };
 
@@ -1509,8 +1581,11 @@ protected:
                 bool success=false;
                 try
                 {
-                    // NB: If this ensure returns false, it will have called the MM callbacks and have setup isLocalLookup() already
-                    success = rhs.ensure(rhsRows, SPILL_PRIORITY_LOW); // NB: Could OOM, handled by exception handler
+                    if (marker.init(rhsRows))
+                    {
+                        // NB: If this ensure returns false, it will have called the MM callbacks and have setup isLocalLookup() already
+                        success = rhs.ensure(rhsRows, SPILL_PRIORITY_LOW); // NB: Could OOM, handled by exception handler
+                    }
                 }
                 catch (IException *e)
                 {
@@ -2225,6 +2300,7 @@ public:
         }
         // Rows now in hash table, rhs arrays no longer needed
         _rows.kill();
+        marker.clear();
     }
 };
 
