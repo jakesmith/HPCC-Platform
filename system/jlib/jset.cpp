@@ -23,16 +23,11 @@
 
 //-----------------------------------------------------------------------
 
-// Simple BitSet // 0 based all, intermediate items exist, operations threadsafe and atomic
+enum { BitsPerItem = sizeof(bits_t) * 8 };
 
-class CBitSet : public CInterface, implements IBitSet
+// Simple BitSet // 0 based all, intermediate items exist, operations threadsafe and atomic
+class CBitSet : public CSimpleInterfaceOf<IBitSet>
 {
-public:
-    IMPLEMENT_IINTERFACE;
-protected:
-    //unsigned seems to be most efficient, and required for __builtin_ffs below
-    typedef unsigned bits_t;
-    enum { BitsPerItem = sizeof(bits_t) * 8 };
     ArrayOf<bits_t> bits;
     mutable CriticalSection crit;
 
@@ -42,7 +37,7 @@ public:
     {
         deserialize(buffer);
     }
-    void set(unsigned n,bool val) 
+    void set(unsigned n,bool val)
     {
         bits_t t=((bits_t)1)<<(n%BitsPerItem);
         unsigned i=n/BitsPerItem;
@@ -58,13 +53,13 @@ public:
             bits_t m=bits.item(i);
             if (val)
                 m |= t;
-            else 
+            else
                 m &= ~t;
             bits.replace(m,i);
         }
     }
-        
-    bool invert(unsigned n) 
+
+    bool invert(unsigned n)
     {
         bits_t t=((bits_t)1)<<(n%BitsPerItem);
         unsigned i=n/BitsPerItem;
@@ -81,14 +76,14 @@ public:
             ret = ((m&t)==0);
             if (ret)
                 m |= t;
-            else 
+            else
                 m &= ~t;
             bits.replace(m,i);
         }
         return ret;
     }
-        
-    bool test(unsigned n) 
+
+    bool test(unsigned n)
     {
         bits_t t=((bits_t)1)<<(n%BitsPerItem);
         unsigned i=n/BitsPerItem;
@@ -100,8 +95,8 @@ public:
         }
         return false;
     }
-        
-    bool testSet(unsigned n,bool val) 
+
+    bool testSet(unsigned n,bool val)
     {
         bits_t t=((bits_t)1)<<(n%BitsPerItem);
         unsigned i=n/BitsPerItem;
@@ -120,7 +115,7 @@ public:
             ret = (m&t)!=0;
             if (val)
                 m |= t;
-            else 
+            else
                 m &= ~t;
             bits.replace(m,i);
         }
@@ -220,7 +215,7 @@ public:
             }
             j = 0;
         }
-        if (tst) 
+        if (tst)
             return (unsigned)-1;
         unsigned ret = n*BitsPerItem;
         if (n*BitsPerItem<from)
@@ -340,9 +335,254 @@ extern jlib_decl IBitSet *createBitSet()
     return new CBitSet();
 }
 
+
+// Does not expand
+class CBitSetThreadUnsafe : public CSimpleInterfaceOf<IBitSet>
+{
+    bits_t *mem;
+    unsigned bitSetUnits;
+    MemoryBuffer memBuffer; // used if managing own mem
+
+    void deserialize(MemoryBuffer &buffer)
+    {
+        unsigned count;
+        buffer.read(count);
+        if (count)
+        {
+            unsigned bitSets = count/sizeof(bits_t);
+            assertex(bitSets<=bitSetUnits);
+            memcpy(mem, buffer.readDirect(bitSets*sizeof(byte)), bitSets*sizeof(byte));
+            unsigned remaining = bitSetUnits-bitSets;
+            if (remaining)
+                memset(&mem[bitSets], 0, sizeof(bits_t)*remaining);
+        }
+    }
+    unsigned _scan(unsigned from, bool tst, bool scninv)
+    {
+        bits_t noMatchMask=tst?0:(bits_t)-1;
+        unsigned j=from%BitsPerItem;
+        // returns index of first = val >= from
+        unsigned i;
+        for (i=from/BitsPerItem;i<bitSetUnits;i++)
+        {
+            bits_t &m = mem[i];
+            if (m!=noMatchMask)
+            {
+#if defined(__GNUC__)
+                //Use the __builtin_ffs instead of a loop to find the first bit set/cleared
+                bits_t testMask = m;
+                if (j != 0)
+                {
+                    //Set all the bottom bits to the value we're not searching for
+                    bits_t mask = (((bits_t)1)<<j)-1;
+                    if (tst)
+                        testMask &= ~mask;
+                    else
+                        testMask |= mask;
+
+                    //May possibly match exactly - if so continue main loop
+                    if (testMask==noMatchMask)
+                    {
+                        j = 0;
+                        continue;
+                    }
+                }
+
+                //Guaranteed a match at this point
+                if (tst)
+                {
+                    //Returns one plus the index of the least significant 1-bit of testMask
+                    //(testMask != 0) since that has been checked above (noMatchMask == 0)
+                    unsigned pos = __builtin_ffs(testMask)-1;
+                    if (scninv)
+                    {
+                        bits_t t = ((bits_t)1)<<pos;
+                        m &= ~t;
+                    }
+                    return i*BitsPerItem+pos;
+                }
+                else
+                {
+                    //Same as above but invert the bitmask
+                    unsigned pos = __builtin_ffs(~testMask)-1;
+                    if (scninv)
+                    {
+                        bits_t t = ((bits_t)1)<<pos;
+                        m |= t;
+                    }
+                    return i*BitsPerItem+pos;
+                }
+#else
+                bits_t t = ((bits_t)1)<<j;
+                for (;j<BitsPerItem;j++)
+                {
+                    if (t&m)
+                    {
+                        if (tst)
+                        {
+                            if (scninv)
+                                m &= ~t;
+                            return i*BitsPerItem+j;
+                        }
+                    }
+                    else
+                    {
+                        if (!tst)
+                        {
+                            if (scninv)
+                                m |= t;
+                            return i*BitsPerItem+j;
+                        }
+                    }
+                    t <<= 1;
+                }
+#endif
+            }
+            j = 0;
+        }
+        if (tst)
+            return (unsigned)-1;
+        unsigned ret = bitSetUnits*BitsPerItem;
+        if (bitSetUnits*BitsPerItem<from)
+            ret = from;
+        if (scninv)
+            set(ret,true);
+        return ret;
+    }
+    void _incl(unsigned lo, unsigned hi,bool val)
+    {
+        if (hi<lo)
+            return;
+        unsigned j=lo%BitsPerItem;
+        unsigned nb=(hi-lo)+1;
+        unsigned i;
+        for (i=lo/BitsPerItem;i<bitSetUnits;i++)
+        {
+            bits_t *m;
+            if ((nb>=BitsPerItem)&&(j==0))
+            {
+                m = &mem[i];
+                nb -= BitsPerItem;
+                if (val)
+                    *m = ((bits_t)-1);
+            }
+            else
+            {
+                m = &mem[i];;
+                bits_t t = ((bits_t)1)<<j;
+                for (;j<BitsPerItem;j++) {
+                    if (val)
+                        *m |= t;
+                    else
+                        *m &= ~t;
+                    if (--nb==0)
+                        break;
+                    t <<= 1;
+                }
+            }
+            if (nb==0)
+                return;
+            j = 0;
+        }
+    }
+public:
+    CBitSetThreadUnsafe()
+    {
+        UNIMPLEMENTED;
+    }
+    CBitSetThreadUnsafe(size32_t memSz, const void *_mem)
+    {
+        bitSetUnits = memSz*sizeof(byte) / sizeof(bits_t);
+        mem = (bits_t *)_mem;
+        memset(mem, 0, bitSetUnits*sizeof(bits_t));
+    }
+    CBitSetThreadUnsafe(MemoryBuffer &buffer)
+    {
+        deserialize(buffer);
+    }
+    virtual void set(unsigned n, bool val)
+    {
+        bits_t t=((bits_t)1)<<(n%BitsPerItem);
+        unsigned i = n/BitsPerItem;
+        dbgassertex(i<bitSetUnits);
+        bits_t &m = mem[i];
+        m |= t;
+    }
+    virtual bool invert(unsigned n)
+    {
+        bits_t t=((bits_t)1)<<(n%BitsPerItem);
+        unsigned i = n/BitsPerItem;
+        dbgassertex(i<bitSetUnits);
+        bits_t &m = mem[i];
+        bool ret = 0 == (m&t);
+        if (ret)
+            m |= t;
+        else
+            m &= ~t;
+        return ret;
+    }
+    virtual bool test(unsigned n)
+    {
+        bits_t t=((bits_t)1)<<(n%BitsPerItem);
+        unsigned i=n/BitsPerItem;
+        dbgassertex(i<bitSetUnits);
+        bits_t &m = mem[i];
+        return 0 != (m&t);
+    }
+    virtual bool testSet(unsigned n, bool val)
+    {
+        bits_t t=((bits_t)1)<<(n%BitsPerItem);
+        unsigned i=n/BitsPerItem;
+        dbgassertex(i<bitSetUnits);
+        bits_t &m = mem[i];
+        bool ret = 0 != (m&t);
+        if (val)
+            m |= t;
+        else
+            m &= ~t;
+        return ret;
+    }
+    virtual unsigned scan(unsigned from,bool tst)
+    {
+        return _scan(from,tst,false);
+    }
+    virtual unsigned scanInvert(unsigned from,bool tst) // like scan but inverts bit as well
+    {
+        return _scan(from,tst,true);
+    }
+    virtual void incl(unsigned lo, unsigned hi)
+    {
+        _incl(lo,hi,true);
+    }
+    virtual void excl(unsigned lo, unsigned hi)
+    {
+        _incl(lo,hi,false);
+    }
+    virtual void reset()
+    {
+        memset(mem, 0, sizeof(bits_t)*bitSetUnits);
+    }
+    virtual void serialize(MemoryBuffer &buffer) const
+    {
+        buffer.append((unsigned)(sizeof(bits_t)*bitSetUnits));
+        buffer.append(bitSetUnits/sizeof(byte), mem);
+    }
+};
+
+extern jlib_decl IBitSet *createBitSetThreadUnsafe(unsigned maxBits, const void *mem)
+{
+    return new CBitSetThreadUnsafe(maxBits, mem);
+}
+
+// NB: Doubt you'd want to interchange, but serialization format is compatible
 extern jlib_decl IBitSet *deserializeIBitSet(MemoryBuffer &mb)
 {
     return new CBitSet(mb);
+}
+
+extern jlib_decl IBitSet *deserializeIBitSetThreadUnsafe(MemoryBuffer &mb)
+{
+    return new CBitSetThreadUnsafe(mb);
 }
 
 

@@ -40,9 +40,13 @@ interface jlib_decl IBitSet : public IInterface
 
 extern jlib_decl IBitSet *deserializeIBitSet(MemoryBuffer &mb);
 
-// Simple BitSet // 0 based, all intermediate items exist, operations threadsafe and atomic
-extern jlib_decl IBitSet *createBitSet(); 
+typedef unsigned bits_t; // type of underlying bit storage, exposed so thread-unsafe version can know boundaries
 
+// Simple BitSet // 0 based, all intermediate items exist, operations threadsafe and atomic
+extern jlib_decl IBitSet *createBitSet();
+
+// Thread unsafe, but much fast if contention between underlying bits_t's can be guaranteed
+extern jlib_decl IBitSet *createBitSetThreadUnsafe(size32_t memSize, const void *mem=NULL);
 
 
 

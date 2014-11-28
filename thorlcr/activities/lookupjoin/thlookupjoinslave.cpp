@@ -453,12 +453,8 @@ class CMarker
     CActivityBase &activity;
     NonReentrantSpinLock lock;
     ICompare *cmp;
-    typedef unsigned bits_t;
-    enum { BitsPerItem = sizeof(bits_t) * 8 };
-    unsigned bitSetUnits;
-    void *pBitSetMem;
     OwnedConstThorRow bitSetMem;
-
+    Owned<IBitSet> bitSet;
     const void **base;
     rowidx_t nextChunkStartRow; // Updated as threads request next chunk
     rowidx_t rowCount, chunkSize; // There are configured at start of calculate()
@@ -497,12 +493,10 @@ class CMarker
             nextChunkStartRow += chunkSize;
         return nextChunkStartRow; // and end row for this particular chunk request
     }
-    inline void mark(rowidx_t n)
+    inline void mark(rowidx_t i)
     {
         // NB: Thread safe, because markers are dealing with discrete parts of bitSetMem (alighted to bits_t boundaries)
-        bits_t t=((bits_t)1)<<(n%BitsPerItem);
-        bits_t &m = ((bits_t *)pBitSetMem)[n/BitsPerItem];
-        m |= t;
+        bitSet->set(i); // mark boundary
     }
     rowidx_t doMarking(rowidx_t myStart, rowidx_t myEnd)
     {
@@ -557,28 +551,26 @@ public:
         // perhaps should make these configurable..
         parallelMinChunkSize = 1024;
         parallelChunkSize = 10*parallelMinChunkSize;
-        pBitSetMem = NULL;
-        bitSetUnits = 0;
     }
     bool init(rowidx_t rowCount)
     {
-        bitSetUnits = (rowCount + (sizeof(bits_t)-1)) / sizeof(bits_t); // rounding up
-        pBitSetMem = activity.queryJob().queryRowManager()->allocate(bitSetUnits*sizeof(bits_t), activity.queryContainer().queryId(), SPILL_PRIORITY_LOW);
+        unsigned bitSetUnits = (rowCount + (sizeof(bits_t)-1)) / sizeof(bits_t); // rounding up
+        size32_t bitSetMemSz = bitSetUnits*sizeof(bits_t);
+        void *pBitSetMem = activity.queryJob().queryRowManager()->allocate(bitSetMemSz, activity.queryContainer().queryId(), SPILL_PRIORITY_LOW);
         if (!pBitSetMem)
             return false;
-        memset(pBitSetMem, 0, bitSetUnits*sizeof(bits_t));
+
         bitSetMem.setown(pBitSetMem);
-        return true;
+        bitSet.setown(createBitSetThreadUnsafe(bitSetMemSz, pBitSetMem));
     }
-    void clear()
+    void reset()
     {
-        bitSetMem.clear();
-        pBitSetMem = NULL;
+        bitSet.clear();
     }
     rowidx_t calculate(CThorExpandingRowArray &rows, ICompare *_cmp, bool doSort)
     {
         TimeSection m("CMarker::calculate");
-        dbgassertex(pBitSetMem); // initialized during init()
+        assertex(bitSet);
         cmp = _cmp;
         unsigned threadCount = activity.getOptInt(THOROPT_JOINHELPER_THREADS, activity.queryMaxCores());
         if (0 == threadCount)
@@ -645,50 +637,7 @@ public:
     {
         if (start==rowCount)
             return 0;
-        unsigned j=start%BitsPerItem;
-        // returns index of first = val >= from
-        unsigned i;
-        for (i=start/BitsPerItem;i<bitSetUnits;i++)
-        {
-            bits_t &m = ((bits_t *)pBitSetMem)[i];
-            if (0 != m)
-            {
-#if defined(__GNUC__)
-                //Use the __builtin_ffs instead of a loop to find the first bit set/cleared
-                bits_t testMask = m;
-                if (j != 0)
-                {
-                    //Set all the bottom bits to the value we're not searching for
-                    bits_t mask = (((bits_t)1)<<j)-1;
-                    testMask &= ~mask;
-
-                    //May possibly match exactly - if so continue main loop
-                    if (0 == testMask)
-                    {
-                        j = 0;
-                        continue;
-                    }
-                }
-
-                //Guaranteed a match at this point
-
-                //Returns one plus the index of the least significant 1-bit of testMask
-                //(testMask != 0) since that has been checked above (noMatchMask == 0)
-                unsigned pos = __builtin_ffs(testMask)-1;
-                return i*BitsPerItem+pos;
-#else
-                bits_t t = ((bits_t)1)<<j;
-                for (;j<BitsPerItem;j++)
-                {
-                    if (t&m)
-                        return i*BitsPerItem+j;
-                    t <<= 1;
-                }
-#endif
-            }
-            j = 0;
-        }
-        return (unsigned)-1;
+        return bitSet->scan(start, true)+1;
     }
 };
 
@@ -2300,7 +2249,7 @@ public:
         }
         // Rows now in hash table, rhs arrays no longer needed
         _rows.kill();
-        marker.clear();
+        marker.reset();
     }
 };
 
