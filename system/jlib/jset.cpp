@@ -25,114 +25,78 @@
 
 enum { BitsPerItem = sizeof(bits_t) * 8 };
 
-// Simple BitSet // 0 based all, intermediate items exist, operations threadsafe and atomic
-class CBitSet : public CSimpleInterfaceOf<IBitSet>
+class CBitSetArrayHelper
 {
+protected:
+    typedef bits_t bits_settype;
     ArrayOf<bits_t> bits;
     mutable CriticalSection crit;
 
-public:
-    CBitSet() { }
-    CBitSet(MemoryBuffer &buffer)
+    inline bits_settype getBitSet(unsigned i) { return bits.item(i); }
+    inline void setBitSet(unsigned i, bits_t m)
     {
-        deserialize(buffer);
+        bits.replace(m, i);
     }
-    void set(unsigned n,bool val)
+    inline void addBitSet(bits_t m)
     {
-        bits_t t=((bits_t)1)<<(n%BitsPerItem);
-        unsigned i=n/BitsPerItem;
+        bits.append((bits_t)-1);
+    }
+    inline unsigned getWidth() const { return bits.ordinality(); }
+    inline void reset()
+    {
         CriticalBlock block(crit);
-        if (i>=bits.ordinality()) {
-            if (!val)
-                return; // don't bother
-            while (i>bits.ordinality())
-                bits.append(0);
-            bits.append(t);
-        }
-        else {
-            bits_t m=bits.item(i);
-            if (val)
-                m |= t;
-            else
-                m &= ~t;
-            bits.replace(m,i);
-        }
+        bits.kill();
     }
-
-    bool invert(unsigned n)
+    inline void serialize(MemoryBuffer &buffer) const
     {
-        bits_t t=((bits_t)1)<<(n%BitsPerItem);
-        unsigned i=n/BitsPerItem;
         CriticalBlock block(crit);
-        bool ret;
-        if (i>=bits.ordinality()) {
-            while (i>bits.ordinality())
-                bits.append(0);
-            bits.append(t);
-            ret = true;
-        }
-        else {
-            bits_t m=bits.item(i);
-            ret = ((m&t)==0);
-            if (ret)
-                m |= t;
-            else
-                m &= ~t;
-            bits.replace(m,i);
-        }
-        return ret;
+        buffer.append(bits.ordinality());
+        ForEachItemIn(b, bits)
+            buffer.append(bits.item(b));
     }
+};
 
-    bool test(unsigned n)
+class CBitSetMemoryHelper
+{
+    bits_t *mem;
+    unsigned bitSetUnits;
+protected:
+    typedef bits_t &bits_settype;
+    ArrayOf<bits_t> bits;
+    mutable CriticalSection crit;
+
+    inline bits_settype getBitSet(unsigned i) { return bits[i]; }
+    inline void setBitSet(unsigned i, bits_t m) { } // NOP, getBitset returns ref. in this impl and bits_t set directly
+    inline void addBitSet(bits_t m) { UNIMPLEMENTED; }
+    inline unsigned getWidth() const { return bitSetUnits; }
+    inline void reset()
     {
-        bits_t t=((bits_t)1)<<(n%BitsPerItem);
-        unsigned i=n/BitsPerItem;
-        CriticalBlock block(crit);
-        if (i<bits.ordinality()) {
-            bits_t m=bits.item(i);
-            if (m&t)
-                return true;
-        }
-        return false;
+        memset(mem, 0, sizeof(bits_t)*bitSetUnits);
     }
-
-    bool testSet(unsigned n,bool val)
+    inline void serialize(MemoryBuffer &buffer) const
     {
-        bits_t t=((bits_t)1)<<(n%BitsPerItem);
-        unsigned i=n/BitsPerItem;
-        CriticalBlock block(crit);
-        bool ret;
-        if (i>=bits.ordinality()) {
-            ret = false;
-            if (!val)
-                return false; // don't bother
-            while (i>bits.ordinality())
-                bits.append(0);
-            bits.append(t);
-        }
-        else {
-            bits_t m=bits.item(i);
-            ret = (m&t)!=0;
-            if (val)
-                m |= t;
-            else
-                m &= ~t;
-            bits.replace(m,i);
-        }
-        return ret;
+        buffer.append((unsigned)(sizeof(bits_t)*bitSetUnits));
+        buffer.append(bitSetUnits/sizeof(byte), mem);
     }
+    void deserialize(MemoryBuffer &buffer)
+    {
+    }
+};
 
-    unsigned _scan(unsigned from,bool tst,bool scninv)
+template <class BITSETHELPER>
+class CBitSetBase : public BITSETHELPER
+{
+protected:
+    unsigned _scan(unsigned from, bool tst, bool scninv)
     {
         bits_t noMatchMask=tst?0:(bits_t)-1;
         unsigned j=from%BitsPerItem;
-        CriticalBlock block(crit);
         // returns index of first = val >= from
-        unsigned n=bits.ordinality();
+        unsigned n=getWidth();
         unsigned i;
         for (i=from/BitsPerItem;i<n;i++)
         {
-            bits_t m=bits.item(i);
+            bits_settype m = getBitSet(i);
             if (m!=noMatchMask)
             {
 #if defined(__GNUC__)
@@ -165,7 +129,7 @@ public:
                     {
                         bits_t t = ((bits_t)1)<<pos;
                         m &= ~t;
-                        bits.replace(m,i);
+                        setBitSet(i, m);
                     }
                     return i*BitsPerItem+pos;
                 }
@@ -177,7 +141,7 @@ public:
                     {
                         bits_t t = ((bits_t)1)<<pos;
                         m |= t;
-                        bits.replace(m,i);
+                        setBitSet(i, m);
                     }
                     return i*BitsPerItem+pos;
                 }
@@ -192,7 +156,7 @@ public:
                             if (scninv)
                             {
                                 m &= ~t;
-                                bits.replace(m,i);
+                                setBitSet(i, m);
                             }
                             return i*BitsPerItem+j;
                         }
@@ -204,7 +168,7 @@ public:
                             if (scninv)
                             {
                                 m |= t;
-                                bits.replace(m,i);
+                                setbitSet(i, m);
                             }
                             return i*BitsPerItem+j;
                         }
@@ -224,36 +188,30 @@ public:
             set(ret,true);
         return ret;
     }
-
-    unsigned scan(unsigned from,bool tst)
-    {
-        return _scan(from,tst,false);
-    }
-
-    unsigned scanInvert(unsigned from,bool tst) // like scan but inverts bit as well
-    {
-        return _scan(from,tst,true);
-    }
-
-    void _incl(unsigned lo, unsigned hi,bool val)
+    void _incl(unsigned lo, unsigned hi, bool val)
     {
         if (hi<lo)
             return;
         unsigned j=lo%BitsPerItem;
         unsigned nb=(hi-lo)+1;
-        CriticalBlock block(crit);
-        unsigned n=bits.ordinality();
+        unsigned n=getWidth();
         unsigned i;
-        for (i=lo/BitsPerItem;i<n;i++) {
-            bits_t m;
-            if ((nb>=BitsPerItem)&&(j==0)) {
-                m = i;
+        for (i=lo/BitsPerItem;i<n;i++)
+        {
+            bits_settype m = getBitSet(i);
+            if ((nb>=BitsPerItem)&&(j==0))
+            {
+                if (val)
+                    m = (bits_t)-1;
+                else
+                    m = 0;
                 nb -= BitsPerItem;
             }
-            else {
-                m=bits.item(i);
+            else
+            {
                 bits_t t = ((bits_t)1)<<j;
-                for (;j<BitsPerItem;j++) {
+                for (;j<BitsPerItem;j++)
+                {
                     if (val)
                         m |= t;
                     else
@@ -263,54 +221,134 @@ public:
                     t <<= 1;
                 }
             }
-            bits.replace(m,i);
+            setBitset(i, m);
             if (nb==0)
                 return;
             j = 0;
         }
-        if (val) {
-            while (nb>=BitsPerItem) {
-                bits.append((bits_t)-1);
-                nb-=BitsPerItem;
+        if (val)
+        {
+            while (nb>=BitsPerItem)
+            {
+                addBitSet((bits_t)-1);
+                nb -= BitsPerItem;
             }
-            if (nb>0) {
+            if (nb>0)
+            {
                 bits_t m=0;
                 bits_t t = ((bits_t)1)<<j;
-                for (;j<BitsPerItem;j++) {
+                for (;j<BitsPerItem;j++)
+                {
                     m |= t;
                     if (--nb==0)
                         break;
                     t <<= 1;
                 }
-                bits.append(m);
+                addBitSet(m);
             }
         }
     }
 
-    void incl(unsigned lo, unsigned hi)
+protected:
+    void set(unsigned n, bool val)
     {
-        _incl(lo,hi,true);
+        bits_t t=((bits_t)1)<<(n%BitsPerItem);
+        unsigned i = n/BitsPerItem;
+        if (i>=getWidth())
+        {
+            if (!val)
+                return; // don't bother
+            while (i>getWidth())
+                addBitSet(0);
+            addBitSet(t);
+        }
+        else
+        {
+            bits_t m = getBitSet();
+            if (val)
+                m |= t;
+            else
+                m &= ~t;
+            setBitSet(i, m);
+        }
     }
-
-    void excl(unsigned lo, unsigned hi)
+    bool invert(unsigned n)
     {
-        _incl(lo,hi,false);
+        bits_t t=((bits_t)1)<<(n%BitsPerItem);
+        unsigned i=n/BitsPerItem;
+        bool ret;
+        if (i>=getWidth())
+        {
+            while (i>getWidth())
+                addBitSet(0);
+            addBitSet(t);
+            ret = true;
+        }
+        else
+        {
+            bits_settype m = getBitSet(i);
+            ret = 0 == (m&t);
+            if (ret)
+                m |= t;
+            else
+                m &= ~t;
+            setBitSet(i, m);
+        }
+        return ret;
     }
+    bool test(unsigned n)
+    {
+        bits_t t=((bits_t)1)<<(n%BitsPerItem);
+        unsigned i=n/BitsPerItem;
+        if (i<getWidth())
+        {
+            bits_settype m = getBitSet(i);
+            if (m&t)
+                return true;
+        }
+        return false;
+    }
+    bool testSet(unsigned n,bool val)
+    {
+        bits_t t=((bits_t)1)<<(n%BitsPerItem);
+        unsigned i=n/BitsPerItem;
+        bool ret;
+        if (i>=getWidth())
+        {
+            ret = false;
+            if (!val)
+                return false; // don't bother
+            while (i>getWidth())
+                addBitSet(0);
+            addBitSet(t);
+        }
+        else
+        {
+            bits_settype m = getBitSet(i);
+            ret = 0 != (m&t);
+            if (val)
+                m |= t;
+            else
+                m &= ~t;
+            setBitSet(i, m);
+        }
+        return ret;
+    }
+};
 
-    void reset()
+// Simple BitSet // 0 based all, intermediate items exist, operations threadsafe and atomic
+class CBitSet : public CBitSetBase<CBitSetArrayHelper>
+{
+    unsigned _scan(unsigned from, bool tst, bool scninv)
     {
         CriticalBlock block(crit);
-        bits.kill();
+        return CBitSetBase::_scan(from, tst, scninv);
     }
-
-    void serialize(MemoryBuffer &buffer) const
+    void _incl(unsigned lo, unsigned hi, bool val)
     {
         CriticalBlock block(crit);
-        buffer.append(bits.ordinality());
-        ForEachItemIn(b, bits)
-            buffer.append(bits.item(b));
+        CBitSetBase::_incl(lo, hi, val);
     }
-
     void deserialize(MemoryBuffer &buffer)
     {
         CriticalBlock block(crit);
@@ -328,219 +366,48 @@ public:
             }
         }
     }
-};
-
-extern jlib_decl IBitSet *createBitSet()
-{
-    return new CBitSet();
-}
-
-
-// Does not expand
-class CBitSetThreadUnsafe : public CSimpleInterfaceOf<IBitSet>
-{
-    bits_t *mem;
-    unsigned bitSetUnits;
-    MemoryBuffer memBuffer; // used if managing own mem
-
     void deserialize(MemoryBuffer &buffer)
     {
+        CriticalBlock block(crit);
+        bits.kill();
         unsigned count;
         buffer.read(count);
         if (count)
         {
-            unsigned bitSets = count/sizeof(bits_t);
-            assertex(bitSets<=bitSetUnits);
-            memcpy(mem, buffer.readDirect(bitSets*sizeof(byte)), bitSets*sizeof(byte));
-            unsigned remaining = bitSetUnits-bitSets;
-            if (remaining)
-                memset(&mem[bitSets], 0, sizeof(bits_t)*remaining);
-        }
-    }
-    unsigned _scan(unsigned from, bool tst, bool scninv)
-    {
-        bits_t noMatchMask=tst?0:(bits_t)-1;
-        unsigned j=from%BitsPerItem;
-        // returns index of first = val >= from
-        unsigned i;
-        for (i=from/BitsPerItem;i<bitSetUnits;i++)
-        {
-            bits_t &m = mem[i];
-            if (m!=noMatchMask)
+            bits.ensure(count);
+            while (count--)
             {
-#if defined(__GNUC__)
-                //Use the __builtin_ffs instead of a loop to find the first bit set/cleared
-                bits_t testMask = m;
-                if (j != 0)
-                {
-                    //Set all the bottom bits to the value we're not searching for
-                    bits_t mask = (((bits_t)1)<<j)-1;
-                    if (tst)
-                        testMask &= ~mask;
-                    else
-                        testMask |= mask;
-
-                    //May possibly match exactly - if so continue main loop
-                    if (testMask==noMatchMask)
-                    {
-                        j = 0;
-                        continue;
-                    }
-                }
-
-                //Guaranteed a match at this point
-                if (tst)
-                {
-                    //Returns one plus the index of the least significant 1-bit of testMask
-                    //(testMask != 0) since that has been checked above (noMatchMask == 0)
-                    unsigned pos = __builtin_ffs(testMask)-1;
-                    if (scninv)
-                    {
-                        bits_t t = ((bits_t)1)<<pos;
-                        m &= ~t;
-                    }
-                    return i*BitsPerItem+pos;
-                }
-                else
-                {
-                    //Same as above but invert the bitmask
-                    unsigned pos = __builtin_ffs(~testMask)-1;
-                    if (scninv)
-                    {
-                        bits_t t = ((bits_t)1)<<pos;
-                        m |= t;
-                    }
-                    return i*BitsPerItem+pos;
-                }
-#else
-                bits_t t = ((bits_t)1)<<j;
-                for (;j<BitsPerItem;j++)
-                {
-                    if (t&m)
-                    {
-                        if (tst)
-                        {
-                            if (scninv)
-                                m &= ~t;
-                            return i*BitsPerItem+j;
-                        }
-                    }
-                    else
-                    {
-                        if (!tst)
-                        {
-                            if (scninv)
-                                m |= t;
-                            return i*BitsPerItem+j;
-                        }
-                    }
-                    t <<= 1;
-                }
-#endif
+                bits_t b;
+                buffer.read(b);
+                bits.append(b);
             }
-            j = 0;
-        }
-        if (tst)
-            return (unsigned)-1;
-        unsigned ret = bitSetUnits*BitsPerItem;
-        if (bitSetUnits*BitsPerItem<from)
-            ret = from;
-        if (scninv)
-            set(ret,true);
-        return ret;
-    }
-    void _incl(unsigned lo, unsigned hi,bool val)
-    {
-        if (hi<lo)
-            return;
-        unsigned j=lo%BitsPerItem;
-        unsigned nb=(hi-lo)+1;
-        unsigned i;
-        for (i=lo/BitsPerItem;i<bitSetUnits;i++)
-        {
-            bits_t *m;
-            if ((nb>=BitsPerItem)&&(j==0))
-            {
-                m = &mem[i];
-                nb -= BitsPerItem;
-                if (val)
-                    *m = ((bits_t)-1);
-            }
-            else
-            {
-                m = &mem[i];;
-                bits_t t = ((bits_t)1)<<j;
-                for (;j<BitsPerItem;j++) {
-                    if (val)
-                        *m |= t;
-                    else
-                        *m &= ~t;
-                    if (--nb==0)
-                        break;
-                    t <<= 1;
-                }
-            }
-            if (nb==0)
-                return;
-            j = 0;
         }
     }
 public:
-    CBitSetThreadUnsafe()
-    {
-        UNIMPLEMENTED;
-    }
-    CBitSetThreadUnsafe(size32_t memSz, const void *_mem)
-    {
-        bitSetUnits = memSz*sizeof(byte) / sizeof(bits_t);
-        mem = (bits_t *)_mem;
-        memset(mem, 0, bitSetUnits*sizeof(bits_t));
-    }
-    CBitSetThreadUnsafe(MemoryBuffer &buffer)
+    CBitSet() { }
+    CBitSet(MemoryBuffer &buffer)
     {
         deserialize(buffer);
     }
     virtual void set(unsigned n, bool val)
     {
-        bits_t t=((bits_t)1)<<(n%BitsPerItem);
-        unsigned i = n/BitsPerItem;
-        dbgassertex(i<bitSetUnits);
-        bits_t &m = mem[i];
-        m |= t;
+        CriticalBlock block(crit);
+        CBitSetBase::set(n, val);
     }
     virtual bool invert(unsigned n)
     {
-        bits_t t=((bits_t)1)<<(n%BitsPerItem);
-        unsigned i = n/BitsPerItem;
-        dbgassertex(i<bitSetUnits);
-        bits_t &m = mem[i];
-        bool ret = 0 == (m&t);
-        if (ret)
-            m |= t;
-        else
-            m &= ~t;
-        return ret;
+        CriticalBlock block(crit);
+        return CBitSetBase::invert(n);)
     }
     virtual bool test(unsigned n)
     {
-        bits_t t=((bits_t)1)<<(n%BitsPerItem);
-        unsigned i=n/BitsPerItem;
-        dbgassertex(i<bitSetUnits);
-        bits_t &m = mem[i];
-        return 0 != (m&t);
+        CriticalBlock block(crit);
+        return CBitSetBase::test(n);
     }
     virtual bool testSet(unsigned n, bool val)
     {
-        bits_t t=((bits_t)1)<<(n%BitsPerItem);
-        unsigned i=n/BitsPerItem;
-        dbgassertex(i<bitSetUnits);
-        bits_t &m = mem[i];
-        bool ret = 0 != (m&t);
-        if (val)
-            m |= t;
-        else
-            m &= ~t;
-        return ret;
+        CriticalBlock block(crit);
+        return CBitSetBase::testSet(n, val);
     }
     virtual unsigned scan(unsigned from,bool tst)
     {
@@ -560,12 +427,93 @@ public:
     }
     virtual void reset()
     {
-        memset(mem, 0, sizeof(bits_t)*bitSetUnits);
+        CBitSetBase::reset();
     }
     virtual void serialize(MemoryBuffer &buffer) const
     {
-        buffer.append((unsigned)(sizeof(bits_t)*bitSetUnits));
-        buffer.append(bitSetUnits/sizeof(byte), mem);
+        CBitSetBase::serialize(buffer);
+    }
+};
+
+extern jlib_decl IBitSet *createBitSet()
+{
+    return new CBitSet();
+}
+
+
+// Does not expand
+class CBitSetThreadUnsafe : public CBitSetBase<CBitSetMemoryHelper>
+{
+    MemoryBuffer memBuffer; // used if managing own mem
+
+    void deserialize(MemoryBuffer &buffer)
+    {
+        unsigned count;
+        buffer.read(count);
+        if (count)
+        {
+            unsigned bitSets = count/sizeof(bits_t);
+            assertex(bitSets<=bitSetUnits);
+            memcpy(mem, buffer.readDirect(bitSets*sizeof(byte)), bitSets*sizeof(byte));
+            unsigned remaining = bitSetUnits-bitSets;
+            if (remaining)
+                memset(&mem[bitSets], 0, sizeof(bits_t)*remaining);
+        }
+    }
+public:
+    CBitSetThreadUnsafe()
+    {
+        UNIMPLEMENTED;
+    }
+    CBitSetThreadUnsafe(size32_t memSz, const void *_mem)
+    {
+        bitSetUnits = memSz*sizeof(byte) / sizeof(bits_t);
+        mem = (bits_t *)_mem;
+        memset(mem, 0, bitSetUnits*sizeof(bits_t));
+    }
+    CBitSetThreadUnsafe(MemoryBuffer &buffer)
+    {
+        deserialize(buffer);
+    }
+    virtual void set(unsigned n, bool val)
+    {
+        CBitSetBase::set(n, val);
+    }
+    virtual bool invert(unsigned n)
+    {
+        return CBitSetBase::invert(n);
+    }
+    virtual bool test(unsigned n)
+    {
+        return CBitSetBase::test(n);
+    }
+    virtual bool testSet(unsigned n, bool val)
+    {
+        return CBitSetBase::testSet(n, val);
+    }
+    virtual unsigned scan(unsigned from,bool tst)
+    {
+        return _scan(from,tst,false);
+    }
+    virtual unsigned scanInvert(unsigned from,bool tst) // like scan but inverts bit as well
+    {
+        return _scan(from,tst,true);
+    }
+    virtual void incl(unsigned lo, unsigned hi)
+    {
+        _incl(lo,hi,true);
+    }
+    virtual void excl(unsigned lo, unsigned hi)
+    {
+        _incl(lo,hi,false);
+    }
+    virtual void reset()
+    {
+        CBitSetBase::reset();
+    }
+    virtual void serialize(MemoryBuffer &buffer) const
+    {
+        CBitSetBase::serialize(buffer);
     }
 };
 
