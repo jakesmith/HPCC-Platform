@@ -86,7 +86,14 @@ protected:
 template <class BITSETHELPER>
 class CBitSetBase : public BITSETHELPER
 {
+    typedef BITSETHELPER PARENT;
+//    using PARENT::bits_settype;
+    using PARENT::getWidth;
+    using PARENT::getBitSet;
+    using PARENT::setBitSet;
+    using PARENT::addBitSet;
 protected:
+    typedef bits_t bits_settype;
     unsigned _scan(unsigned from, bool tst, bool scninv)
     {
         bits_t noMatchMask=tst?0:(bits_t)-1;
@@ -96,7 +103,8 @@ protected:
         unsigned i;
         for (i=from/BitsPerItem;i<n;i++)
         {
-            bits_settype m = getBitSet(i);
+//            bits_settype m = getBitSet(i);
+            bits_t m = getBitSet(i);
             if (m!=noMatchMask)
             {
 #if defined(__GNUC__)
@@ -221,7 +229,7 @@ protected:
                     t <<= 1;
                 }
             }
-            setBitset(i, m);
+            setBitSet(i, m);
             if (nb==0)
                 return;
             j = 0;
