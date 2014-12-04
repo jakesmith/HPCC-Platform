@@ -138,12 +138,14 @@ protected:
         bool setValue = !initial;
         bool clearValue = initial;
         const unsigned numBits = 400;
+        unsigned elapsed;
+/*
         for (unsigned pass=0; pass < 10000; pass++)
         {
             Owned<IBitSet> bs = createBitSet();
             testSet1(initial, bs, 0, numBits, setValue, clearValue);
         }
-        unsigned elapsed = msTick()-now;
+        elapsed = msTick()-now;
         fprintf(stdout, "Bit test (%u) time taken = %dms\n", initial, elapsed);
         now = msTick();
         for (unsigned pass=0; pass < 10000; pass++)
@@ -153,6 +155,7 @@ protected:
         }
         elapsed = msTick()-now;
         fprintf(stdout, "Bit test [thread-unsafe version] (%u) time taken = %dms\n", initial, elapsed);
+*/
         now = msTick();
         size32_t bitSetMemSz = getBitSetMemoryRequirement(400);
         MemoryBuffer mb;
@@ -164,6 +167,43 @@ protected:
         }
         elapsed = msTick()-now;
         fprintf(stdout, "Bit test [thread-unsafe version, fixed memory] (%u) time taken = %dms\n", initial, elapsed);
+    }
+
+    void testSet2(bool initial)
+    {
+        unsigned now = msTick();
+        bool setValue = !initial;
+        bool clearValue = initial;
+        const unsigned numBits = 400;
+        unsigned elapsed;
+/*
+        for (unsigned pass=0; pass < 10000; pass++)
+        {
+            Owned<IBitSet> bs = createBitSet();
+            testSet1(initial, bs, 0, numBits, setValue, clearValue);
+        }
+        elapsed = msTick()-now;
+        fprintf(stdout, "Bit test (%u) time taken = %dms\n", initial, elapsed);
+        now = msTick();
+        for (unsigned pass=0; pass < 10000; pass++)
+        {
+            Owned<IBitSet> bs = createBitSetSingleThreaded2();
+            testSet1(initial, bs, 0, numBits, setValue, clearValue);
+        }
+        elapsed = msTick()-now;
+        fprintf(stdout, "Bit test [thread-unsafe version] (%u) time taken = %dms\n", initial, elapsed);
+*/
+        now = msTick();
+        size32_t bitSetMemSz = getBitSetMemoryRequirement(400);
+        MemoryBuffer mb;
+        void *mem = mb.reserveTruncate(bitSetMemSz);
+        for (unsigned pass=0; pass < 10000; pass++)
+        {
+            Owned<IBitSet> bs = createBitSetSingleThreaded2(bitSetMemSz, mem);
+            testSet1(initial, bs, 0, numBits, setValue, clearValue);
+        }
+        elapsed = msTick()-now;
+        fprintf(stdout, "Bit test2 [thread-unsafe version, fixed memory] (%u) time taken = %dms\n", initial, elapsed);
     }
 
     class CBitThread : public CSimpleInterfaceOf<IInterface>, implements IThreaded
@@ -276,8 +316,8 @@ protected:
 
     void testSetParallel(bool initial)
     {
-        unsigned numBits = 1000000; // 10M
-        unsigned nThreads = getAffinityCpus();
+        unsigned numBits = 500000; // 10M
+        unsigned nThreads = 16; getAffinityCpus();
         unsigned bitsPerThread = numBits/nThreads;
         bitsPerThread = ((bitsPerThread + (BitsPerItem-1)) / BitsPerItem) * BitsPerItem; // round up to multiple of BitsPerItem
         numBits = bitsPerThread*nThreads; // round
@@ -298,10 +338,17 @@ protected:
 
     void testSimple()
     {
-        testSet(false);
-        testSet(true);
-        testSetParallel(false);
-        testSetParallel(true);
+        for (unsigned t=0; t<30; t++)
+        {
+            testSet(false);
+        }
+        for (unsigned t=0; t<30; t++)
+        {
+            testSet2(false);
+        }
+//        testSet(true);
+//        testSetParallel(false);
+//        testSetParallel(true);
     }
 };
 

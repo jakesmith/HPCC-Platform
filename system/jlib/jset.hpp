@@ -58,6 +58,7 @@ extern jlib_decl IBitSet *createBitSet();
  * IOW, e.g. bits 0-sizeof(bits_t) must be set from only 1 thread at a time.
  */
 extern jlib_decl IBitSet *createBitSetSingleThreaded(size32_t memSize, const void *mem, bool reset=true);
+extern jlib_decl IBitSet *createBitSetSingleThreaded2(size32_t memSize, const void *mem, bool reset=true);
 
 // This form allows the size of the bit set to be dynamic, but there are no guarantees about threading
 extern jlib_decl IBitSet *createBitSetSingleThreaded();
