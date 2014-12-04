@@ -39,6 +39,7 @@ interface jlib_decl IBitSet : public IInterface
 };
 
 extern jlib_decl IBitSet *deserializeIBitSet(MemoryBuffer &mb);
+extern jlib_decl IBitSet *deserializeIBitSetSingleThreaded(MemoryBuffer &mb);
 
 // type of underlying bit storage, exposed so thread-unsafe version can know boundaries
 typedef unsigned bits_t;
@@ -56,10 +57,10 @@ extern jlib_decl IBitSet *createBitSet();
  * in parallel within the same bits_t space.
  * IOW, e.g. bits 0-sizeof(bits_t) must be set from only 1 thread at a time.
  */
-extern jlib_decl IBitSet *createBitSetThreadUnsafe(size32_t memSize, const void *mem, bool reset=true);
+extern jlib_decl IBitSet *createBitSetSingleThreaded(size32_t memSize, const void *mem, bool reset=true);
 
 // This form allows the size of the bit set to be dynamic, but there are no guarantees about threading
-extern jlib_decl IBitSet *createBitSetThreadUnsafe();
+extern jlib_decl IBitSet *createBitSetSingleThreaded();
 
 
 

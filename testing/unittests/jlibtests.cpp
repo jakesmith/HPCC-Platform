@@ -144,22 +144,22 @@ protected:
             testSet1(initial, bs, 0, numBits, setValue, clearValue);
         }
         unsigned elapsed = msTick()-now;
-        now = msTick();
         fprintf(stdout, "Bit test (%u) time taken = %dms\n", initial, elapsed);
+        now = msTick();
         for (unsigned pass=0; pass < 10000; pass++)
         {
-            Owned<IBitSet> bs = createBitSetThreadUnsafe();
+            Owned<IBitSet> bs = createBitSetSingleThreaded();
             testSet1(initial, bs, 0, numBits, setValue, clearValue);
         }
         elapsed = msTick()-now;
-        now = msTick();
         fprintf(stdout, "Bit test [thread-unsafe version] (%u) time taken = %dms\n", initial, elapsed);
+        now = msTick();
         size32_t bitSetMemSz = getBitSetMemoryRequirement(400);
         MemoryBuffer mb;
         void *mem = mb.reserveTruncate(bitSetMemSz);
         for (unsigned pass=0; pass < 10000; pass++)
         {
-            Owned<IBitSet> bs = createBitSetThreadUnsafe(bitSetMemSz, mem);
+            Owned<IBitSet> bs = createBitSetSingleThreaded(bitSetMemSz, mem);
             testSet1(initial, bs, 0, numBits, setValue, clearValue);
         }
         elapsed = msTick()-now;
@@ -279,7 +279,7 @@ protected:
         unsigned numBits = 1000000; // 10M
         unsigned nThreads = getAffinityCpus();
         unsigned bitsPerThread = numBits/nThreads;
-        bitsPerThread = (bitsPerThread + (BitsPerItem-1)) / BitsPerItem * BitsPerItem; // round up to multiple of BitsPerItem
+        bitsPerThread = ((bitsPerThread + (BitsPerItem-1)) / BitsPerItem) * BitsPerItem; // round up to multiple of BitsPerItem
         numBits = bitsPerThread*nThreads; // round
 
         fprintf(stdout, "testSetParallel, testing bit set of size : %d, nThreads=%d\n", numBits, nThreads);
@@ -291,7 +291,7 @@ protected:
         size32_t bitSetMemSz = getBitSetMemoryRequirement(numBits);
         MemoryBuffer mb;
         void *mem = mb.reserveTruncate(bitSetMemSz);
-        bitSet.setown(createBitSetThreadUnsafe(bitSetMemSz, mem));
+        bitSet.setown(createBitSetSingleThreaded(bitSetMemSz, mem));
         took = testParallelRun(*bitSet, nThreads, bitsPerThread, initial);
         fprintf(stdout, "Thread unsafe parallel bit set test (%u) time taken = %dms\n", initial, took);
     }
