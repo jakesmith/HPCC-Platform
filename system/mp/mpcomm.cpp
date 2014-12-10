@@ -81,7 +81,7 @@ struct SocketEndpointV4
 {
     byte ip[4];
     unsigned short port;
-    SocketEndpointV4() {};
+    SocketEndpointV4() { }
     SocketEndpointV4(const SocketEndpoint &val) { set(val); }
     void set(const SocketEndpoint &val)
     {
@@ -654,6 +654,27 @@ void traceSlowReadTms(const char *msg, ISocket *sock, void *dst, size32_t minSiz
     }
 }
 
+struct ScopeSetEP
+{
+    SocketEndpoint &targetEp;
+    SocketEndpoint sourceEp;
+    ScopeSetEP(SocketEndpoint &_targetEp) : targetEp(_targetEp) { }
+    ScopeSetEP(SocketEndpoint &_targetEp, const SocketEndpoint &sourceEp) : targetEp(_targetEp)
+    {
+        set(sourceEp);
+    }
+    ~ScopeSetEP()
+    {
+        if (!sourceEp.isNull())
+            targetEp.set(NULL);
+    }
+    void set(const SocketEndpoint &_sourceEp)
+    {
+        sourceEp.set(_sourceEp);
+        targetEp.set(sourceEp);
+    }
+};
+
 class CMPPacketReader;
 
 class CMPChannel: public CInterface
@@ -664,11 +685,13 @@ class CMPChannel: public CInterface
     Semaphore sendwaitingsig;
     unsigned sendwaiting;               // number waiting on sendwaitingsem (for multi/single clashes to resolve)
     CriticalSection connectsect;
+    CriticalSection attachsect;
     CMPPacketReader *reader;
     bool master;                        // i.e. connected originally
     mptag_t multitag;                   // current multi send in progress
     bool closed;
     IArrayOf<ISocket> keptsockets;
+    SocketEndpoint connectingRemoteEp;
 
 protected: friend class CMPServer;
     SocketEndpoint remoteep;
@@ -685,6 +708,15 @@ protected: friend class CMPPacketReader;
     {
         // must be called from connectsect
         // also in sendmutex
+
+        CriticalBlock block(attachsect);
+        if (remoteep.equals(connectingRemoteEp)) // clash, connect in progress to this remote ep
+            return false;
+        /* NB: If connectingRemoteEp set and non-matching, there's a clash
+         * attachSocket will block wait and have nothing when unblocked (i.e. channelsock will be setup here)
+         */
+
+        ScopeSetEP scopeSetEp(connectingRemoteEp, remoteep);
 
         ISocket *newsock=NULL;
         unsigned retrycount = 10;
@@ -716,7 +748,7 @@ protected: friend class CMPPacketReader;
                 hostep.setLocalHost(parent->getPort());
                 id[0].set(hostep);
                 id[1].set(remoteep);
-                newsock->write(&id[0],sizeof(id)); 
+                newsock->write(&id[0],sizeof(id));
 #ifdef _FULLTRACE
                 StringBuffer tmp1;
                 id[0].getUrlStr(tmp1);
@@ -726,7 +758,10 @@ protected: friend class CMPPacketReader;
 #endif
                 size32_t reply;
                 size32_t rd;
-                traceSlowReadTms("MP: connect to", newsock, &reply, sizeof(reply), sizeof(reply), rd, CONNECT_READ_TIMEOUT, CONNECT_TIMEOUT_INTERVAL);
+                {
+                    CriticalUnblock unblock(attachsect);
+                    traceSlowReadTms("MP: connect to", newsock, &reply, sizeof(reply), sizeof(reply), rd, CONNECT_READ_TIMEOUT, CONNECT_TIMEOUT_INTERVAL);
+                }
 #ifdef _FULLTRACE
                 LOG(MCdebugInfo(100), unknownJob, "MP: connect after socket read %d",reply);
 #endif
@@ -792,7 +827,8 @@ public:
 
     void reset();
 
-    bool attachSocket(ISocket *newsock,const SocketEndpoint &_remoteep,const SocketEndpoint &_localep,bool ismaster, size32_t *confirm);
+    bool attachSocket(ISocket *newsock,const SocketEndpoint &_remoteep,const SocketEndpoint &_localep, bool ismaster, size32_t *confirm);
+    bool attachSocketSafe(ISocket *newsock,const SocketEndpoint &remoteep,const SocketEndpoint &_localep,size32_t *confirm);
 
 
     bool writepacket(const void *hdr,size32_t hdrsize,const void *hdr2,size32_t hdr2size,const void *body,size32_t bodysize,CTimeMon &tm)
@@ -1407,73 +1443,81 @@ CMPChannel::~CMPChannel()
 
 bool CMPChannel::attachSocket(ISocket *newsock,const SocketEndpoint &remoteep,const SocketEndpoint &_localep,bool ismaster, size32_t *confirm) // takes ownership if succeeds
 {
-#ifdef _FULLTRACE       
+#ifdef _FULLTRACE
     PROGLOG("MP: attachSocket on entry");
 #endif
-    CriticalBlock block(connectsect); 
-#ifdef _FULLTRACE       
-    PROGLOG("MP: attachSocket got connectsect");
-#endif
-    // resolution to stop clash i.e. A sends to B at exactly same time B sends to A
-    if (channelsock) {
-        if (remoteep.port==0)
-            return false;
-        StringBuffer ep1;
-        StringBuffer ep2;
-        _localep.getUrlStr(ep1);
-        remoteep.getUrlStr(ep2);
-        LOG(MCdebugInfo(100), unknownJob, "MP: Possible clash between %s->%s %d(%d)",ep1.str(),ep2.str(),(int)ismaster,(int)master);
-        try {
-            if (ismaster!=master) {
-                if (ismaster) {
-                    LOG(MCdebugInfo(100), unknownJob, "MP: resolving socket attach clash (master)");
-                    return false;
-                }
-                else {
-                    Sleep(50);  // give the other side some time to close
-                    CTimeMon tm(10000);
-                    if (verifyConnection(tm,false)) {
-                        LOG(MCdebugInfo(100), unknownJob, "MP: resolving socket attach clash (verified)");
-                        return false;
-                    }
-                }
-            }
-        }
-        catch (IException *e) {
-            FLLOG(MCoperatorWarning, unknownJob, e,"MP attachsocket(1)");
-            e->Release();
-        }
-        try {
-            LOG(MCdebugInfo(100), unknownJob, "Message Passing - removing stale socket to %s",ep2.str());
-            CriticalUnblock unblock(connectsect);
-            closeSocket(true);
-#ifdef REFUSE_STALE_CONNECTION
-            if (!ismaster)
-                return false;
-#endif
-            Sleep(100); // pause to allow close socket triggers to run
-        }
-        catch (IException *e) {
-            FLLOG(MCoperatorWarning, unknownJob, e,"MP attachsocket(2)");
-            e->Release();
-        }
-
-    }
     if (confirm)
         newsock->write(confirm,sizeof(*confirm)); // confirm while still in connectsect
     closed = false;
     reader->init(this);
     channelsock = LINK(newsock);
-#ifdef _FULLTRACE       
+#ifdef _FULLTRACE
     PROGLOG("MP: attachSocket before select add");
 #endif
     parent->querySelectHandler().add(channelsock,SELECTMODE_READ,reader);
-#ifdef _FULLTRACE       
+#ifdef _FULLTRACE
     PROGLOG("MP: attachSocket after select add");
 #endif
     localep = _localep;
     master = ismaster;
     return true;
+}
+
+bool CMPChannel::attachSocketSafe(ISocket *newsock,const SocketEndpoint &remoteep,const SocketEndpoint &localep,size32_t *confirm) // takes ownership if succeeds
+{
+    struct CleareableCriticalBlock
+    {
+        CriticalSection *crit;
+        CleareableCriticalBlock(CriticalSection &_crit) : crit(&_crit)
+        {
+            crit->enter();
+        }
+        ~CleareableCriticalBlock()
+        {
+            if (crit)
+                crit->leave();
+        }
+        void clear()
+        {
+            if (crit)
+            {
+                crit->leave();
+                crit = NULL;
+            }
+        }
+    } attachSectCB(attachsect);
+#ifdef _FULLTRACE
+    PROGLOG("MP: attachSocket got attachsect");
+#endif
+
+    if (remoteep.equals(connectingRemoteEp))
+    {
+        // clash, connect in progress to this remote ep, rejecting this attachSocket, client will complete
+        return false;
+    }
+    ScopeSetEP scopeSetEp(connectingRemoteEp);
+    if (connectingRemoteEp.isNull())
+        scopeSetEp.set(remoteep);
+
+    /* We release attachsect, to allow any connect() to proceed and abort on detecting set connectingRemoteEp
+     * Possible scnearios:
+     * 1) Another attachSocketSafe on the same remoteep - rejected above.
+     * 2) Another attachSocketSafe on a different remoteep -  fall through and potentially block on connectcrit (wait it's turn).
+     * 3) a client connect(), will have set connectingRemoteEp to same as remoteep - rejected above.
+     * 4) a client connect(), will have set connectingRemoteEp to a different remoteep - fall through and block (wait it's turn).
+     */
+    attachSectCB.clear();
+
+    // Now that we securely set connectingRemoteEp or was already set, we lock or block on connectsect to ensure thread safe
+    CriticalBlock block(connectsect);
+
+    /* NB: Could already be connected (channelsock set) by this stage
+     * The client connect() could have beaten us to it.
+     */
+    if (channelsock)
+        return false;
+
+    return attachSocket(newsock, remoteep, localep, false, confirm);
 }
 
 bool CMPChannel::send(MemoryBuffer &mb, mptag_t tag, mptag_t replytag, CTimeMon &tm, bool reply)
@@ -1743,9 +1787,10 @@ int CMPConnectThread::run()
                 PROGLOG("MP: Connect Thread: after read %s",tmp1.str());
 #endif
                 checkSelfDestruct(&id[0],sizeof(id));
-                if (!parent->lookup(remoteep).attachSocket(sock,remoteep,hostep,false, &rd)) {
-#ifdef _FULLTRACE       
-                    PROGLOG("MP Connect Thread: lookup failed");
+                if (!parent->lookup(remoteep).attachSocketSafe(sock,remoteep,hostep,&rd))
+                {
+#ifdef _FULLTRACE
+                    PROGLOG("MP Connect Thread: channel already connected");
 #endif
                 }
                 else {
