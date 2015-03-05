@@ -174,7 +174,7 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
                 CMessageBuffer msgMb;
                 loop
                 {
-                    if (!receiveMsg(msgMb, container.queryJob().queryMyRank()-1, mpTag) || 0 == msgMb.length())
+                    if (!receiveMsg(msgMb, container.queryOwner().queryMyRank()-1, mpTag) || 0 == msgMb.length())
                     {
                         // all [remaining] headers read, or abort
                         // may potentially zero out previously received headers, but ok
@@ -213,7 +213,7 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
     void sendAllDone()
     {
         CMessageBuffer msgMb;
-        unsigned s=container.queryJob().queryMyRank();
+        unsigned s=container.queryOwner().queryMyRank();
         while (s<container.queryJob().querySlaves())
         {
             ++s;
@@ -260,7 +260,7 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
         CMessageBuffer msgMb;
         msgMb.append(subFile);
         msgMb.append(headerLinesRemaining[subFile]);
-        container.queryJob().queryJobComm().send(msgMb, container.queryJob().queryMyRank()+1, mpTag);
+        container.queryJob().queryJobComm().send(msgMb, container.queryOwner().queryMyRank()+1, mpTag);
     }
     void sendRemainingHeaderLines()
     {
@@ -282,7 +282,7 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
             }
             while (which < subFiles);
             if (someLeft)
-                container.queryJob().queryJobComm().send(msgMb, container.queryJob().queryMyRank()+1, mpTag);
+                container.queryJob().queryJobComm().send(msgMb, container.queryOwner().queryMyRank()+1, mpTag);
             else
                 sendAllDone();
         }
@@ -418,7 +418,7 @@ public:
     void abort()
     {
         CDiskReadSlaveActivityBase::abort();
-        cancelReceiveMsg(container.queryJob().queryMyRank()-1, mpTag);
+        cancelReceiveMsg(container.queryOwner().queryMyRank()-1, mpTag);
     }
     virtual bool isGrouped() { return false; }
 

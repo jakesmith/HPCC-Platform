@@ -431,6 +431,7 @@ class graph_decl CGraphBase : public CInterface, implements IEclGraphResults, im
     CGraphTable childGraphsTable;
     CGraphArrayCopy childGraphs;
     Owned<IGraphTempHandler> tmpHandler;
+    rank_t myrank;
 
     void clean();
 
@@ -570,6 +571,7 @@ public:
     IGraphTempHandler *queryTempHandler() const { assertex(tmpHandler.get()); return tmpHandler; }
     CGraphBase *queryOwner() { return owner; }
     CGraphBase *queryParent() { return parent?parent:this; }
+    const rank_t &queryMyRank() const { return myrank; }
     bool syncInitData();
     bool isComplete() const { return complete; }
     bool isPrepared() const { return prepared; }
@@ -754,7 +756,6 @@ protected:
     mptag_t mpJobTag, slavemptag;
     Owned<IGroup> jobGroup, slaveGroup;
     Owned<ICommunicator> jobComm;
-    rank_t myrank;
     ITimeReporter *timeReporter;
     Owned<IPropertyTree> xgmml;
     Owned<IGraphTempHandler> tmpHandler;
@@ -867,7 +868,6 @@ public:
     inline bool queryTimeActivities() const { return timeActivities; }
     unsigned queryMaxDefaultActivityCores() const { return maxActivityCores; }
     IGroup &querySlaveGroup() const { return *slaveGroup; }
-    const rank_t &queryMyRank() const { return myrank; }
     mptag_t allocateMPTag();
     void freeMPTag(mptag_t tag);
     mptag_t deserializeMPTag(MemoryBuffer &mb);
@@ -934,8 +934,8 @@ public:
     void onStart(size32_t _parentExtractSz, const byte *_parentExtract) { parentExtractSz = _parentExtractSz; parentExtract = _parentExtract; }
     bool receiveMsg(CMessageBuffer &mb, const rank_t rank, const mptag_t mpTag, rank_t *sender=NULL, unsigned timeout=MP_WAIT_FOREVER);
     void cancelReceiveMsg(const rank_t rank, const mptag_t mpTag);
-    bool firstNode() { return 1 == container.queryJob().queryMyRank(); }
-    bool lastNode() { return container.queryJob().querySlaves() == container.queryJob().queryMyRank(); }
+    bool firstNode() { return 1 == container.queryOwner().queryMyRank(); }
+    bool lastNode() { return container.queryJob().querySlaves() == container.queryOwner().queryMyRank(); }
     unsigned queryMaxCores() const { return maxCores; }
     IRowInterfaces *getRowInterfaces();
 

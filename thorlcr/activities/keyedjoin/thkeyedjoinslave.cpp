@@ -1827,7 +1827,7 @@ public:
         statsArr = _statsArr.getArray();
         
         fixedRecordSize = helper->queryIndexRecordSize()->getFixedSize(); // 0 if variable and unused
-        node = container.queryJob().queryMyRank()-1;
+        node = container.queryOwner().queryMyRank()-1;
         onFailTransform = (0 != (joinFlags & JFonfail)) && (0 == (joinFlags & JFmatchAbortLimitSkips));
 
         joinFieldsAllocator.setown(queryJob().getRowAllocator(helper->queryJoinFieldsRecordSize(), queryActivityId()));

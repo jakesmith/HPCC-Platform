@@ -41,7 +41,7 @@ class CSelectNthSlaveActivity : public CSlaveActivity, public CThorDataLink, imp
         else
         {
             CMessageBuffer msg;
-            if (!receiveMsg(msg, container.queryJob().queryMyRank()-1, mpTag))
+            if (!receiveMsg(msg, container.queryOwner().queryMyRank()-1, mpTag))
                 return;
             msg.read(N);
             msg.read(seenNth);
@@ -58,7 +58,7 @@ class CSelectNthSlaveActivity : public CSlaveActivity, public CThorDataLink, imp
         CMessageBuffer msg;
         msg.append(N);
         msg.append(seenNth); // used by last node to trigger fail if not seen
-        container.queryJob().queryJobComm().send(msg, container.queryJob().queryMyRank()+1, mpTag);
+        container.queryJob().queryJobComm().send(msg, container.queryOwner().queryMyRank()+1, mpTag);
     }
 
 public:

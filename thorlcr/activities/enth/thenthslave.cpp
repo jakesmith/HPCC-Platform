@@ -195,14 +195,14 @@ class CEnthSlaveActivity : public BaseEnthActivity
             return;
         CMessageBuffer msg;
         msg.append(count);
-        container.queryJob().queryJobComm().send(msg, container.queryJob().queryMyRank()+1, mpTag);
+        container.queryJob().queryJobComm().send(msg, container.queryOwner().queryMyRank()+1, mpTag);
     }
     bool getPrev()
     {
         if (!firstNode()) // no need if 1st node
         {
             CMessageBuffer msg;
-            if (!receiveMsg(msg, container.queryJob().queryMyRank()-1, mpTag))
+            if (!receiveMsg(msg, container.queryOwner().queryMyRank()-1, mpTag))
                 return false;
             msg.read(prevRecCount);
         }
