@@ -122,7 +122,7 @@ class ChooseSetsActivity : public BaseChooseSetsActivity
     void getTallies() // NB: not called on first node.
     {
         CMessageBuffer msg;
-        if (!receiveMsg(msg, container.queryJob().queryMyRank()-1, mpTag))
+        if (!receiveMsg(msg, container.queryOwner().queryMyRank()-1, mpTag))
             return;
         memcpy(tallies, msg.readDirect(numSets*sizeof(unsigned)), numSets*sizeof(unsigned));
 #if THOR_TRACE_LEVEL >= 5
@@ -144,7 +144,7 @@ class ChooseSetsActivity : public BaseChooseSetsActivity
 #endif
         CMessageBuffer msg;
         msg.append(numSets * sizeof(unsigned), tallies); 
-        container.queryJob().queryJobComm().send(msg, container.queryJob().queryMyRank()+1, mpTag);
+        container.queryJob().queryJobComm().send(msg, container.queryOwner().queryMyRank()+1, mpTag);
     }
 
 public:

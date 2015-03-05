@@ -8987,6 +8987,18 @@ class CInitGroups
     StringArray clusternames;
     unsigned defaultTimeout;
 
+    GroupType getGroupType(const char *type)
+    {
+
+        if (0 == strcmp("ThorSlaveProcess", type))
+            return grp_thor;
+        else if (0 == strcmp("ThorSpareProcess", type))
+            return grp_thorspares;
+        else if (0 == strcmp("RoxieServerProcess", type))
+            return grp_roxie;
+        else
+            throwUnexpected();
+    }
     bool clusterGroupCompare(IPropertyTree *newClusterGroup, IPropertyTree *oldClusterGroup)
     {
         if (!newClusterGroup && oldClusterGroup)
@@ -9063,11 +9075,18 @@ class CInitGroups
         grp->setProp("@name", name);
     }
 
-    IGroup *getGroupFromCluster(GroupType groupType, IPropertyTree &cluster)
+    IGroup *getGroupFromCluster(const char *type, IPropertyTree &cluster, bool raw)
+    {
+        GroupType gt = getGroupType(type);
+        return getGroupFromCluster(gt, cluster, raw);
+    }
+
+    IGroup *getGroupFromCluster(GroupType groupType, IPropertyTree &cluster, bool raw)
     {
         SocketEndpointArray eps;
         const char *processName=NULL;
-        switch (groupType) {
+        switch (groupType)
+        {
             case grp_thor:
                 processName = "ThorSlaveProcess";
                 break;
@@ -9125,7 +9144,7 @@ class CInitGroups
         unsigned slavesPerNode = 0;
         if (grp_thor == groupType)
             slavesPerNode = cluster.getPropInt("@slavesPerNode");
-        if (slavesPerNode)
+        if (!raw && slavesPerNode)
         {
             SocketEndpointArray msEps;
             for (unsigned s=0; s<slavesPerNode; s++) {
@@ -9194,7 +9213,7 @@ class CInitGroups
 
     IPropertyTree *createClusterGroupFromEnvCluster(GroupType groupType, IPropertyTree &cluster, const char *dir, bool realCluster)
     {
-        Owned<IGroup> group = getGroupFromCluster(groupType, cluster);
+        Owned<IGroup> group = getGroupFromCluster(groupType, cluster, false);
         if (!group)
             return NULL;
         return createClusterGroup(groupType, group, dir, realCluster);
@@ -9519,6 +9538,17 @@ bool removeClusterSpares(const char *clusterName, const char *type, SocketEndpoi
     CInitGroups init(timems);
     return init.removeSpares(clusterName, type, eps, response);
 }
+
+IGroup *getClusterGroup(const char *clusterName, const char *type, unsigned timems)
+{
+    CInitGroups init(timems);
+    VStirngBuffer cluster("/Environment/Software/%s[%s]", type, clusterName);
+    Owned<IRemoteConnection> conn = querySDS().connect(cluster.str(), myProcessSession(), RTM_LOCK_READ, SDS_CONNECT_TIMEOUT);
+    if (!conn)
+        return NULL;
+    return init.getGroupFromCluster(type, *conn->queryRoot(), true);
+}
+
 
 class CDaliDFSServer: public Thread, public CTransactionLogTracker, implements IDaliServer, implements IExceptionHandler
 {  // Coven size

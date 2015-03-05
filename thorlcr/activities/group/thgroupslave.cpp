@@ -39,7 +39,7 @@ class GroupSlaveActivity : public CSlaveActivity, public CThorDataLink
         {
             useRollover = false;
             // JCSMORE will generate time out log messages, while waiting for next nodes group
-            rank_t myNode = container.queryJob().queryMyRank();
+            rank_t myNode = container.queryOwner().queryMyRank();
             nextNodeStream.setown(createRowStreamFromNode(*this, myNode+1, container.queryJob().queryJobComm(), mpTag, abortSoon));
             stream.set(nextNodeStream);
             return stream->nextRow();
@@ -75,7 +75,7 @@ public:
         {
             useRollover = !lastNode();
 #ifdef _TESTING
-            ActPrintLog("Node number = %d, Total Nodes = %d", container.queryJob().queryMyRank(), container.queryJob().querySlaves());
+            ActPrintLog("Node number = %d, Total Nodes = %d", container.queryOwner().queryMyRank(), container.queryJob().querySlaves());
 #endif
         }
 
@@ -92,7 +92,7 @@ public:
             Owned<IRowWriter> writer = collector->getWriter();
             if (next)
             {
-                ActPrintLog("GROUP: Sending first group to previous node(%d)", container.queryJob().queryMyRank()-1);
+                ActPrintLog("GROUP: Sending first group to previous node(%d)", container.queryOwner().queryMyRank()-1);
                 loop
                 {
                     writer->putRow(next.getLink());

@@ -477,7 +477,7 @@ protected:
             dedupSamples = dedupSuccesses = 0;
             doDedup = owner.doDedup;
             writerPool.setown(createThreadPool("HashDist writer pool", this, this, owner.writerPoolSize, 5*60*1000));
-            self = owner.activity->queryJob().queryMyRank()-1;
+            self = owner.activity->queryOwner().queryMyRank()-1;
 
             targets.ensure(owner.numnodes);
             for (unsigned n=0; n<owner.numnodes; n++)
@@ -993,7 +993,7 @@ public:
     {
         aborted = connected = false;
         doDedup = _doDedup;
-        self = activity->queryJob().queryMyRank() - 1;
+        self = activity->queryOwner().queryMyRank() - 1;
         numnodes = activity->queryJob().querySlaves();
         iCompare = NULL;
         ihash = NULL;
@@ -3756,7 +3756,7 @@ RowAggregator *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBas
             IMPLEMENT_IINTERFACE;
             CRowAggregatedStream(CActivityBase &_activity, IRowInterfaces *_rowIf, RowAggregator *_localAggregated) : activity(_activity), rowIf(_rowIf), localAggregated(_localAggregated), outBuilder(_rowIf->queryRowAllocator())
             {
-                node = activity.queryContainer().queryJob().queryMyRank();
+                node = activity.queryContainer().queryOwner().queryMyRank();
             }
             // IRowStream impl.
             virtual const void *nextRow()
@@ -3987,7 +3987,7 @@ public:
         IHThorHashDistributeArg *distribargs = (IHThorHashDistributeArg *)queryHelper();
         ihash = distribargs->queryHash();
         input = NULL;
-        myNode = container.queryJob().queryMyRank()-1;
+        myNode = container.queryOwner().queryMyRank()-1;
         nodes = container.queryJob().querySlaves();
     }
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)

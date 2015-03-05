@@ -426,7 +426,7 @@ extern graph_decl const LogMsgJobInfo thorJob;
 
 extern graph_decl StringBuffer &getCompoundQueryName(StringBuffer &compoundName, const char *queryName, unsigned version);
 
-extern graph_decl void setClusterGroup(IGroup *group);
+extern graph_decl void setClusterGroup(IGroup *group, IGroup *dfsGroup);
 extern graph_decl bool clusterInitialized();
 extern graph_decl ICommunicator &queryClusterComm();
 extern graph_decl IGroup &queryClusterGroup();

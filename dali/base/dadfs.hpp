@@ -769,6 +769,7 @@ extern da_decl void initClusterGroups(bool force, StringBuffer &response, IPrope
 extern da_decl bool resetClusterGroup(const char *clusterName, const char *type, bool spares, StringBuffer &response, unsigned timems=INFINITE);
 extern da_decl bool addClusterSpares(const char *clusterName, const char *type, SocketEndpointArray &eps, StringBuffer &response, unsigned timems=INFINITE);
 extern da_decl bool removeClusterSpares(const char *clusterName, const char *type, SocketEndpointArray &eps, StringBuffer &response, unsigned timems=INFINITE);
+extern da_decl IGroup *getClusterGroup(const char *clusterName, const char *type, unsigned timems=INFINITE);
 // should poss. belong in lib workunit
 extern da_decl StringBuffer &getClusterGroupName(IPropertyTree &cluster, StringBuffer &groupName);
 extern da_decl StringBuffer &getClusterSpareGroupName(IPropertyTree &cluster, StringBuffer &groupName);

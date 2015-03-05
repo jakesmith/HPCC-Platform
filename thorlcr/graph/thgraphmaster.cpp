@@ -127,7 +127,6 @@ void CSlaveMessageHandler::main()
             CMessageBuffer msg;
             if (stopped || !job.queryJobComm().recv(msg, RANK_ALL, mptag, &sender))
                 break;
-            unsigned slave = ((unsigned)sender)-1;
             SlaveMsgTypes msgType;
             msg.read((int &)msgType);
             switch (msgType)
@@ -203,6 +202,8 @@ void CSlaveMessageHandler::main()
                 case smt_initActDataReq:
                 {
                     graph_id gid;
+                    unsigned slave;
+                    msg.read(slave);
                     msg.read(gid);
                     Owned<CMasterGraph> graph = (CMasterGraph *)job.getGraph(gid);
                     assertex(graph);
@@ -240,7 +241,7 @@ void CSlaveMessageHandler::main()
                     msg.append(replyTag); // second reply
                     replyMsg.setReplyTag(replyTag);
                     CGraphElementArrayIterator iter(toSerialize);
-                    graph->serializeActivityInitData(((unsigned)sender)-1, msg, iter);
+                    graph->serializeActivityInitData(slave, msg, iter);
                     job.queryJobComm().reply(msg);
                     if (!job.queryJobComm().recv(msg, sender, replyTag, NULL, MEDIUMTIMEOUT))
                         throwUnexpected();
@@ -291,11 +292,13 @@ void CSlaveMessageHandler::main()
                 }
                 case smt_actMsg:
                 {
-                    LOG(MCdebugProgress, unknownJob, "smt_actMsg called from slave %d", sender-1);
+                    unsigned slave;
+                    msg.read(slave);
                     graph_id gid;
                     msg.read(gid);
                     activity_id id;
                     msg.read(id);
+                    LOG(MCdebugProgress, unknownJob, "smt_actMsg called from slave %d, graph %" GIDPF "d, activity-id %" ACTPF "d", slave, gid, id);
                     Owned<CMasterGraph> graph = (CMasterGraph *)job.getGraph(gid);
                     assertex(graph);
                     CMasterGraphElement *container = (CMasterGraphElement *)graph->queryElement(id);
@@ -307,13 +310,13 @@ void CSlaveMessageHandler::main()
                 }
                 case smt_getresult:
                 {
-                    LOG(MCdebugProgress, unknownJob, "smt_getresult called from slave %d", sender-1);
                     graph_id gid;
                     msg.read(gid);
                     activity_id ownerId;
                     msg.read(ownerId);
                     unsigned resultId;
                     msg.read(resultId);
+                    LOG(MCdebugProgress, unknownJob, "smt_getresult called for graph %" GIDPF "d, ownerId %" ACTPF " d, resultId %d", gid, ownerId, resultId);
                     mptag_t replyTag = job.deserializeMPTag(msg);
                     Owned<IThorResult> result = job.getOwnedResult(gid, ownerId, resultId);
                     Owned<IRowStream> resultStream = result->getRowStream();
@@ -1310,7 +1313,7 @@ static IException *createBCastException(unsigned slave, const char *errorMsg)
     return e.getClear();
 }
 
-void CJobMaster::broadcastToSlaves(CMessageBuffer &msg, mptag_t mptag, unsigned timeout, const char *errorMsg, CReplyCancelHandler *msgHandler, bool sendOnly)
+void CJobMaster::broadcast(CMessageBuffer &msg, mptag_t mptag, unsigned timeout, const char *errorMsg, CReplyCancelHandler *msgHandler, bool sendOnly, bool perSlave)
 {
     mptag_t replyTag = createReplyTag();
     msg.setReplyTag(replyTag);
@@ -1336,7 +1339,7 @@ void CJobMaster::broadcastToSlaves(CMessageBuffer &msg, mptag_t mptag, unsigned 
         } afor(*this, msg, mptag, timeout, errorMsg);
         try
         {
-            afor.For(querySlaves(), querySlaves());
+            afor.For(queryNodes(), queryNodes());
         }
         catch (IException *e)
         {
@@ -1353,6 +1356,8 @@ void CJobMaster::broadcastToSlaves(CMessageBuffer &msg, mptag_t mptag, unsigned 
         throw e.getClear();
     }
     if (sendOnly) return;
+
+    unsigned expectedRespondents = perSlave ? querySlaves() : queryNodes();
     unsigned respondents = 0;
     Owned<IBitSet> bitSet = createThreadSafeBitSet();
     loop
@@ -1368,12 +1373,12 @@ void CJobMaster::broadcastToSlaves(CMessageBuffer &msg, mptag_t mptag, unsigned 
                 tmpStr.append(": ").append(errorMsg).append(" - ");
             tmpStr.append("Timeout receiving from slaves - no reply from: [");
             unsigned s = bitSet->scan(0, false);
-            assertex(s<querySlaves()); // must be at least one
+            assertex(s<expectedRespondents); // must be at least one
             tmpStr.append(s+1);
             loop
             {
                 s = bitSet->scan(s+1, false);
-                if (s>=querySlaves())
+                if (s>=expectedRespondents)
                     break;
                 tmpStr.append(",").append(s+1);
             }
@@ -1383,7 +1388,14 @@ void CJobMaster::broadcastToSlaves(CMessageBuffer &msg, mptag_t mptag, unsigned 
             throw e.getClear();
         }
         bool error;
-        msg.read(error);
+        if (perSlave)
+        {
+            unsigned slave;
+            msg.read(slave);
+            sender = (rank_t)slave;
+        }
+        else
+            msg.read(error);
         if (error)
         {
             Owned<IThorException> e = deserializeThorException(msg);
@@ -1392,9 +1404,19 @@ void CJobMaster::broadcastToSlaves(CMessageBuffer &msg, mptag_t mptag, unsigned 
         }
         ++respondents;
         bitSet->set((unsigned)sender-1);
-        if (respondents == querySlaveGroup().ordinality())
+        if (respondents == expectedRespondents)
             break;
     }
+}
+
+void CJobMaster::broadcastToNodes(CMessageBuffer &msg, mptag_t mptag, unsigned timeout, const char *errorMsg, CReplyCancelHandler *msgHandler, bool sendOnly)
+{
+    broadcast(msg, mptag, timeout, errorMsg, msgHandler, sendOnly, false);
+}
+
+void CJobMaster::broadcastToSlaves(CMessageBuffer &msg, mptag_t mptag, unsigned timeout, const char *errorMsg, CReplyCancelHandler *msgHandler, bool sendOnly)
+{
+    broadcast(msg, mptag, timeout, errorMsg, msgHandler, sendOnly, true);
 }
 
 CGraphBase *CJobMaster::createGraph()
@@ -1502,7 +1524,7 @@ void CJobMaster::sendQuery()
     compressToBuffer(msg, tmp.length(), tmp.toByteArray());
 
     CTimeMon queryToSlavesTimer;
-    broadcastToSlaves(msg, masterSlaveMpTag, LONGTIMEOUT, "sendQuery");
+    broadcastToNodes(msg, masterSlaveMpTag, LONGTIMEOUT, "sendQuery");
     PROGLOG("Serialization of query init info (%d bytes) to slaves took %d ms", msg.length(), queryToSlavesTimer.elapsed());
     queryJobManager().addCachedSo(soName);
     querySent = true;
@@ -1514,7 +1536,7 @@ void CJobMaster::jobDone()
     CMessageBuffer msg;
     msg.append(QueryDone);
     msg.append(queryKey());
-    broadcastToSlaves(msg, masterSlaveMpTag, LONGTIMEOUT, "jobDone");
+    broadcastToNodes(msg, queryJobMpTag(), LONGTIMEOUT, "jobDone");
 }
 
 void CJobMaster::saveSpills()
@@ -1877,12 +1899,11 @@ class CCollatedResult : public CSimpleInterface, implements IThorResult
         mptag_t replyTag = createReplyTag();
         CMessageBuffer msg;
         msg.append(GraphGetResult);
-        msg.append(activity.queryJob().queryKey());
         msg.append(graph.queryGraphId());
         msg.append(ownerId);
         msg.append(id);
         msg.append(replyTag);
-        ((CJobMaster &)graph.queryJob()).broadcastToSlaves(msg, masterSlaveMpTag, LONGTIMEOUT, "CCollectResult", NULL, true);
+        ((CJobMaster &)graph.queryJob()).broadcastToSlaves(msg, graph.queryJob().queryJobMpTag(), LONGTIMEOUT, "CCollectResult", NULL, true);
 
         unsigned numSlaves = graph.queryJob().querySlaves();
         for (unsigned n=0; n<numSlaves; n++)
@@ -2106,9 +2127,8 @@ void CMasterGraph::abort(IException *e)
         {
             CMessageBuffer msg;
             msg.append(GraphAbort);
-            msg.append(job.queryKey());
             msg.append(queryGraphId());
-            jobM.broadcastToSlaves(msg, masterSlaveMpTag, LONGTIMEOUT, "abort");
+            jobM.broadcastToSlaves(msg, job.queryJobMpTag(), LONGTIMEOUT, "abort");
         }
         catch (IException *e)
         {
@@ -2259,28 +2279,32 @@ void CMasterGraph::sendActivityInitData()
     mptag_t replyTag = createReplyTag();
     msg.setReplyTag(replyTag);
     unsigned pos = msg.length();
-    unsigned w=0;
     unsigned sentTo = 0;
-    for (; w<queryJob().querySlaves(); w++)
+    unsigned needActInit = 0;
+    Owned<IThorActivityIterator> iter = getConnectedIterator();
+    ForEach(*iter)
     {
-        unsigned needActInit = 0;
-        Owned<IThorActivityIterator> iter = getConnectedIterator();
-        ForEach(*iter)
-        {
-            CGraphElementBase &element = iter->query();
-            CActivityBase *activity = element.queryActivity();
-            if (activity && activity->needReInit())
-                element.sentActInitData->set(w, false); // force act init to be resent
-            if (!element.sentActInitData->test(w)) // has it been sent
-                ++needActInit;
-        }
-        if (needActInit)
+        CGraphElementBase &element = iter->query();
+        CActivityBase *activity = element.queryActivity();
+        if (activity && activity->needReInit())
+            element.sentActInitData->reset();
+        if (!element.sentActInitData->test(0)) // sendActivityInitData is synching to all, so just test 0, all will be set by serializeActivityInitData
+            ++needActInit;
+    }
+    if (needActInit)
+    {
+        for (unsigned w=0; w<queryJob().queryNodes(); w++)
         {
             try
             {
                 msg.rewrite(pos);
                 Owned<IThorActivityIterator> iter = getConnectedIterator();
-                serializeActivityInitData(w, msg, *iter);
+                for (unsigned spn=0; spn<queryJob().querySlavesPerNode(); spn++)
+                {
+                    unsigned slave=spn*queryJob().queryNodes();
+                    msg.append(slave);
+                    serializeActivityInitData(slave, msg, *iter);
+                }
             }
             catch (IException *e)
             {
@@ -2290,7 +2314,7 @@ void CMasterGraph::sendActivityInitData()
             if (!job.queryJobComm().send(msg, w+1, mpTag, LONGTIMEOUT))
             {
                 StringBuffer epStr;
-                throw MakeStringException(0, "Timeout sending to slave %s", job.querySlaveGroup().queryNode(w).endpoint().getUrlStr(epStr).str());
+                throw MakeStringException(0, "Timeout sending to slave %s", job.queryJobGroup().queryNode(w+1).endpoint().getUrlStr(epStr).str());
             }
             ++sentTo;
         }
@@ -2400,7 +2424,6 @@ void CMasterGraph::sendGraph()
     CTimeMon atimer;
     CMessageBuffer msg;
     msg.append(GraphInit);
-    msg.append(job.queryKey());
     node->serialize(msg); // everything
     if (TAG_NULL == executeReplyTag)
         executeReplyTag = queryJob().allocateMPTag();
@@ -2410,7 +2433,7 @@ void CMasterGraph::sendGraph()
     // slave graph data
     try
     {
-        jobM.broadcastToSlaves(msg, masterSlaveMpTag, LONGTIMEOUT, "sendGraph", &bcastMsgHandler);
+        jobM.broadcastToSlaves(msg, job.queryJobMpTag(), LONGTIMEOUT, "sendGraph", &bcastMsgHandler);
     }
     catch (IException *e)
     {
@@ -2494,9 +2517,8 @@ void CMasterGraph::getFinalProgress()
     mptag_t replyTag = createReplyTag();
     msg.setReplyTag(replyTag);
     msg.append((unsigned)GraphEnd);
-    msg.append(job.queryKey());
     msg.append(queryGraphId());
-    if (!job.queryJobComm().send(msg, RANK_ALL_OTHER, masterSlaveMpTag, LONGTIMEOUT))
+    if (!job.queryJobComm().send(msg, RANK_ALL_OTHER, job.queryJobMpTag(), LONGTIMEOUT))
         throw MakeGraphException(this, 0, "Timeout sending to slaves");
 
     unsigned n=queryJob().querySlaves();

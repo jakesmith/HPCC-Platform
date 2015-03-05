@@ -362,7 +362,7 @@ public:
     CBroadcaster(CActivityBase &_activity) : activity(_activity), receiver(*this), sender(*this), comm(_activity.queryJob().queryJobComm())
     {
         allDone = allDoneWaiting = allRequestStop = stopping = stopRecv = false;
-        myNode = activity.queryJob().queryMyRank();
+        myNode = activity.queryOwner().queryMyRank();
         slaves = activity.queryJob().querySlaves();
         slavesDone.setown(createThreadSafeBitSet());
         slavesStopping.setown(createThreadSafeBitSet());
@@ -924,7 +924,7 @@ protected:
         MemoryBuffer mb;
         try
         {
-            CThorSpillableRowArray &localRhsRows = *rhsNodeRows.item(queryJob().queryMyRank()-1);
+            CThorSpillableRowArray &localRhsRows = *rhsNodeRows.item(queryOwner().queryMyRank()-1);
             CMemoryRowSerializer mbser(mb);
             while (!abortSoon)
             {
@@ -1129,7 +1129,7 @@ public:
         gotRHS = false;
         nextRhsRow = 0;
         rhsNext = NULL;
-        myNode = queryJob().queryMyRank();
+        myNode = queryOwner().queryMyRank();
         numNodes = queryJob().querySlaves();
         needGlobal = !container.queryLocal() && (container.queryJob().querySlaves() > 1);
 

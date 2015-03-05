@@ -411,17 +411,19 @@ bool CSlaveGraph::recvActivityInitData(size32_t parentExtractSz, const byte *par
 
         if (syncInitData())
         {
+            jobS.recvInitData(*this, msg);
 
             if (!graphCancelHandler.recv(queryJob().queryJobComm(), msg, 0, mpTag, NULL, LONGTIMEOUT))
                 throw MakeStringException(0, "Error receiving actinit data for graph: %" GIDPF "d", graphId);
             replyTag = msg.getReplyTag();
             msg.read(len);
         }
-        else
+        else // for child queries that now need initialization
         {
             // initialize any for which no data was sent
             msg.append(smt_initActDataReq); // may cause graph to be created at master
             msg.append(queryGraphId());
+            msg.append(slave);
             assertex(!parentExtractSz || NULL!=parentExtract);
             msg.append(parentExtractSz);
             msg.append(parentExtractSz, parentExtract);
@@ -435,6 +437,8 @@ bool CSlaveGraph::recvActivityInitData(size32_t parentExtractSz, const byte *par
                     element.serializeStartContext(msg);
                 }
             }
+            // JCSMORE - shouldn't I be avoiding sending *anything* if none serialized in above loop
+
             msg.append((activity_id)0);
             if (!queryJob().queryJobComm().sendRecv(msg, 0, queryJob().querySlaveMpTag(), LONGTIMEOUT))
                 throwUnexpected();
@@ -688,6 +692,7 @@ bool CSlaveGraph::serializeStats(MemoryBuffer &mb)
 {
     unsigned beginPos = mb.length();
     mb.append(queryGraphId());
+    mb.append(slave);
     unsigned cPos = mb.length();
     unsigned count = 0;
     mb.append(count);
@@ -1045,8 +1050,155 @@ public:
     }
 };
 
+class graph_decl CJobSlaveListener : public CInterface, implements IThreaded
+{
+    bool stopped;
+    CriticalSection crit;
+    CThreaded threaded;
+    CJobSlave &job;
+protected:
+    Owned<IException> exception;
+
+public:
+    CJobSlaveListener(CJobSlave &_job) : threaded("CJobSlaveListener"), job(_job)
+    {
+        stopped = false;
+        threaded.init(this);
+    }
+    ~CJobSlaveListener()
+    {
+        PROGLOG("~CJobSlaveListener");
+        join();
+    }
+    void join()
+    {
+        stop();
+        threaded.join();
+    }
+    void main()
+    {
+        bool doReply;
+        CMessageBuffer msg;
+        while (!stopped && job.queryJobComm().recv(msg, 0, job.queryJobMpTag()))
+        {
+            doReply = true;
+            msgids cmd;
+            try
+            {
+                msg.read((unsigned &)cmd);
+                switch (cmd)
+                {
+                    case GraphInit:
+                    {
+                        Owned<IPropertyTree> graphNode = createPTree(msg);
+                        Owned<CSlaveGraph> subGraph = (CSlaveGraph *)job.createGraph();
+                        subGraph->createFromXGMML(graphNode, NULL, NULL, NULL);
+                        PROGLOG("GraphInit: %s, %s, graphId=%" GIDPF "d", job.queryWuid(), job.queryGraphName(), subGraph->queryGraphId());
+                        subGraph->setExecuteReplyTag(subGraph->queryJob().deserializeMPTag(msg));
+                        size32_t len;
+                        msg.read(len);
+                        MemoryBuffer initData;
+                        initData.append(len, msg.readDirect(len));
+                        subGraph->deserializeCreateContexts(initData);
+                        graph_id gid;
+                        msg.read(gid);
+                        assertex(gid == subGraph->queryGraphId());
+                        subGraph->init(msg);
+
+                        job.addSubGraph(*LINK(subGraph));
+                        job.addDependencies(job.queryXGMML(), false);
+
+                        subGraph->execute(0, NULL, true, true);
+
+                        msg.clear();
+                        msg.append(false);
+
+                        break;
+                    }
+                    case GraphEnd:
+                    {
+                        graph_id gid;
+                        msg.read(gid);
+                        msg.clear();
+                        msg.append(false);
+                        Owned<CSlaveGraph> graph = (CSlaveGraph *)job.getGraph(gid);
+                        if (graph)
+                        {
+                            graph->getDone(msg);
+                            graph->join(); // graph will wind-up.
+                        }
+                        else
+                        {
+                            msg.clear();
+                            msg.append(false);
+                        }
+                        break;
+                    }
+                    case GraphAbort:
+                    {
+                        graph_id gid;
+                        msg.read(gid);
+                        Owned<CGraphBase> graph = job.getGraph(gid);
+                        if (graph)
+                        {
+                            Owned<IThorException> e = MakeThorException(0, "GraphAbort");
+                            e->setGraphId(gid);
+                            graph->abort(e);
+                        }
+                        msg.clear();
+                        msg.append(false);
+                        break;
+                    }
+                    case GraphGetResult:
+                    {
+                        graph_id gid;
+                        msg.read(gid);
+                        activity_id ownerId;
+                        msg.read(ownerId);
+                        unsigned resultId;
+                        msg.read(resultId);
+                        PROGLOG("GraphGetResult: %s, %s, gid=%" GIDPF "d, ownerId=%" ACTPF "d, resultId=%d", job.queryWuid(), job.queryGraphName(), gid, ownerId, resultId);
+                        graph_id gid;
+                        mptag_t replyTag = job.deserializeMPTag(msg);
+                        Owned<IThorResult> result = job.getOwnedResult(gid, ownerId, resultId);
+                        Owned<IRowStream> resultStream = result->getRowStream();
+                        msg.setReplyTag(replyTag);
+                        msg.clear();
+                        sendInChunks(job.queryJobComm(), 0, replyTag, resultStream, result->queryRowInterfaces());
+                        doReply = false;
+                        break;
+                    }
+                    default:
+                        throwUnexpected();
+                }
+            }
+            catch (IException *e)
+            {
+                EXCLOG(e, NULL);
+                if (doReply && TAG_NULL != msg.getReplyTag())
+                {
+                    doReply = false;
+                    msg.clear();
+                    msg.append(true);
+                    serializeThorException(e, msg);
+                    job.queryJobComm().reply(msg);
+                }
+                e->Release();
+            }
+            if (doReply && msg.getReplyTag()!=TAG_NULL)
+                job.queryJobComm().reply(msg);
+        }
+    }
+    void stop()
+    {
+        stopped = true;
+        job.queryJobComm().cancel(0, job.queryJobMpTag());
+    }
+};
+
 #define SLAVEGRAPHPOOLLIMIT 10
-CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, const char *graphName, const char *_querySo, mptag_t _mpJobTag, mptag_t _slavemptag) : CJobBase(graphName), watchdog(_watchdog)
+CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, const char *graphName, const char *_querySo, mptag_t _mpJobTag, mptag_t _slavemptag)
+    : CJobBase(graphName), watchdog(_watchdog)
 {
     workUnitInfo.set(_workUnitInfo);
     workUnitInfo->getProp("token", token);
@@ -1127,6 +1279,7 @@ void CJobSlave::startJob()
             throw MakeThorException(TE_NotEnoughFreeSpace, "Node %s has %u MB(s) of available disk space, specified minimum for this job: %u MB(s)", ep.getUrlStr(s).str(), (unsigned) freeSpace / 0x100000, minFreeSpace);
         }
     }
+    listener.setown(new CJobSlaveListener(*this));
 }
 
 __int64 CJobSlave::getWorkUnitValueInt(const char *prop, __int64 defVal) const
@@ -1151,6 +1304,15 @@ bool CJobSlave::getWorkUnitValueBool(const char *prop, bool defVal) const
 IBarrier *CJobSlave::createBarrier(mptag_t tag)
 {
     return new CBarrierSlave(*jobComm, tag);
+}
+
+bool CJobSlave::recvInitData(CSlaveGraph &graph, MemoryBuffer &data)
+{
+    CMessageBuffer msg;
+    if (!jobCancelHandler.recv(queryJobComm(), msg, 0, mpTag, NULL, LONGTIMEOUT))
+        throw MakeStringException(0, "Error receiving actinit data for graph: %"GIDPF"d", graphId);
+    replyTag = msg.getReplyTag();
+    msg.read(len);
 }
 
 IGraphTempHandler *CJobSlave::createTempHandler(bool errorOnMissing)

@@ -124,6 +124,8 @@ public:
     void registerFile(const char *logicalName, StringArray &clusters, unsigned usageCount=0, WUFileKind fileKind=WUFileStandard, bool temp=false);
     void deregisterFile(const char *logicalName, bool kept=false);
     const SocketEndpoint &queryAgentEp() const { return agentEp; }
+    void broadcast(CMessageBuffer &msg, mptag_t mptag, unsigned timeout, const char *errorMsg, CReplyCancelHandler *msgHandler, bool sendOnly, bool perSlave);
+    void broadcastToNodes(CMessageBuffer &msg, mptag_t mptag, unsigned timeout, const char *errorMsg, CReplyCancelHandler *msgHandler=NULL, bool sendOnly=false);
     void broadcastToSlaves(CMessageBuffer &msg, mptag_t mptag, unsigned timeout, const char *errorMsg, CReplyCancelHandler *msgHandler=NULL, bool sendOnly=false);
     IPropertyTree *prepareWorkUnitInfo();
     void sendQuery();

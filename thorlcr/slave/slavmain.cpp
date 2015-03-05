@@ -93,7 +93,7 @@ void disableThorSlaveAsDaliClient()
 #endif
 }
 
-class CJobListener : public CSimpleInterface
+class CJobListener : public CSimpleInterface, implements ISlaveManager
 {
     bool stopped;
     CriticalSection crit;
@@ -281,20 +281,24 @@ public:
                         workUnitInfo->getProp("user", user);
 
                         PROGLOG("Started wuid=%s, user=%s, graph=%s\n", wuid.get(), user.str(), graphName.get());
-
                         PROGLOG("Using query: %s", soPath.str());
-                        Owned<CJobSlave> job = new CJobSlave(watchdog, workUnitInfo, graphName, soPath.str(), mptag, slaveMsgTag);
-                        jobs.replace(*LINK(job));
 
                         Owned<IPropertyTree> deps = createPTree(msg);
-                        job->setXGMML(deps);
-
                         if (!globals->getPropBool("Debug/@slaveDaliClient") && job->getWorkUnitValueBool("slaveDaliClient", false))
                         {
                             PROGLOG("Workunit option 'slaveDaliClient' enabled");
                             enableThorSlaveAsDaliClient();
                         }
-                        job->startJob();
+                        unsigned slavesPerNode = globals->getPropInt("@slavesPerNode", 1);
+                        for (unsigned spn=0; spn<slavesPerNode; spn++)
+                        {
+                            Owned<CJobSlave> job = new CJobSlave(watchdog, workUnitInfo, graphName, soPath.str(), mptag, slaveMsgTag);
+                            jobs.replace(*LINK(job));
+
+                            job->setXGMML(deps);
+
+                            job->startJob();
+                        }
 
                         msg.clear();
                         msg.append(false);
@@ -321,6 +325,7 @@ public:
                         msg.append(false);
                         break;
                     }
+#if 0 // move/delete this
                     case GraphInit:
                     {
                         StringAttr jobKey;
@@ -405,34 +410,11 @@ public:
                         msg.append(false);
                         break;
                     }
+#endif
                     case Shutdown:
                     {
                         doReply = false;
                         stopped = true;
-                        break;
-                    }
-                    case GraphGetResult:
-                    {
-                        StringAttr jobKey;
-                        msg.read(jobKey);
-                        PROGLOG("GraphGetResult: %s", jobKey.get());
-                        CJobSlave *job = jobs.find(jobKey.get());
-                        if (job)
-                        {
-                            graph_id gid;
-                            msg.read(gid);
-                            activity_id ownerId;
-                            msg.read(ownerId);
-                            unsigned resultId;
-                            msg.read(resultId);
-                            mptag_t replyTag = job->deserializeMPTag(msg);
-                            Owned<IThorResult> result = job->getOwnedResult(gid, ownerId, resultId);
-                            Owned<IRowStream> resultStream = result->getRowStream();
-                            msg.setReplyTag(replyTag);
-                            msg.clear();
-                            sendInChunks(job->queryJobComm(), 0, replyTag, resultStream, result->queryRowInterfaces());
-                            doReply = false;
-                        }
                         break;
                     }
                     default:

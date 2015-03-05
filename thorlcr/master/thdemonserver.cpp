@@ -191,9 +191,6 @@ public:
             LOG(MCdebugProgress, unknownJob, "heartbeat packet received with no active graphs, from=%s", sender.getUrlStr(urlStr).str());
             return;
         }
-        rank_t node = querySlaveGroup().rank(sender);
-        assertex(node != RANK_NULL);
-
         size32_t compressedProgressSz = progressMb.remaining();
         if (compressedProgressSz)
         {
@@ -201,16 +198,26 @@ public:
             ThorExpand(progressMb.readDirect(compressedProgressSz), compressedProgressSz, uncompressedMb);
             do
             {
+                unsigned slave;
                 graph_id graphId;
+                uncompressedMb.read(slave);
                 uncompressedMb.read(graphId);
+                uncompressedMb.read(slave);
                 CMasterGraph *graph = NULL;
-                ForEachItemIn(g, activeGraphs) if (activeGraphs.item(g).queryGraphId() == graphId) graph = (CMasterGraph *)&activeGraphs.item(g);
+                ForEachItemIn(g, activeGraphs)
+                {
+                    if (activeGraphs.item(g).queryGraphId() == graphId)
+                    {
+                        graph = (CMasterGraph *)&activeGraphs.item(g);
+                        break;
+                    }
+                }
                 if (!graph)
                 {
                     LOG(MCdebugProgress, unknownJob, "heartbeat received from unknown graph %" GIDPF "d", graphId);
                     break;
                 }
-                if (!graph->deserializeStats(node, uncompressedMb))
+                if (!graph->deserializeStats(slave, uncompressedMb))
                 {
                     LOG(MCdebugProgress, unknownJob, "heartbeat error in graph %" GIDPF "d", graphId);
                     break;

@@ -318,7 +318,7 @@ public:
                 unsigned targetWidth = partDesc->queryOwner().numParts()-(buildTlk?1:0);
                 assertex(0 == container.queryJob().querySlaves() % targetWidth);
                 unsigned partsPerNode = container.queryJob().querySlaves() / targetWidth;
-                unsigned myPart = container.queryJob().queryMyRank();
+                unsigned myPart = container.queryOwner().queryMyRank();
 
                 IArrayOf<IRowStream> streams;
                 streams.append(*LINK(input));
@@ -353,7 +353,7 @@ public:
         // single part key support
         // has to serially pull all data fron nodes 2-N
         // nodes 2-N, could/should start pushing some data (as it's supposed to be small) to cut down on serial nature.
-        unsigned node = container.queryJob().queryMyRank();
+        unsigned node = container.queryOwner().queryMyRank();
         if (singlePartKey)
         {
             if (1 == node)
@@ -490,7 +490,7 @@ public:
                     {
                         if (processed & THORDATALINK_COUNT_MASK)
                         {
-                            CNodeInfo row(container.queryJob().queryMyRank(), lastRow.get(), lastRowSize, totalCount);
+                            CNodeInfo row(container.queryOwner().queryMyRank(), lastRow.get(), lastRowSize, totalCount);
                             row.serialize(msg);
                         }
                         container.queryJob().queryJobComm().send(msg, 1, mpTag);

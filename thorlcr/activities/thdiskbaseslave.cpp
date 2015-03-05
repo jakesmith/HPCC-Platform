@@ -296,7 +296,7 @@ void CDiskWriteSlaveActivityBase::open()
         {
             ActPrintLog("Blocked, waiting for previous part to complete write");
             CMessageBuffer msg;
-            if (!receiveMsg(msg, container.queryJob().queryMyRank()-1, mpTag))
+            if (!receiveMsg(msg, container.queryOwner().queryMyRank()-1, mpTag))
                 return;
             rowcount_t prevRows;
             msg.read(prevRows);
@@ -410,7 +410,7 @@ void CDiskWriteSlaveActivityBase::close()
             CMessageBuffer msg;
             msg.append(rows);
             msg.append(tempExternalName);
-            container.queryJob().queryJobComm().send(msg, container.queryJob().queryMyRank()+1, mpTag);
+            container.queryJob().queryJobComm().send(msg, container.queryOwner().queryMyRank()+1, mpTag);
         }
     }
     catch (IException *e)
@@ -475,7 +475,7 @@ void CDiskWriteSlaveActivityBase::abort()
 {
     ProcessSlaveActivity::abort();
     if (!rfsQueryParallel && dlfn.isExternal() && !firstNode())
-        cancelReceiveMsg(container.queryJob().queryMyRank()-1, mpTag);
+        cancelReceiveMsg(container.queryOwner().queryMyRank()-1, mpTag);
 }
 
 void CDiskWriteSlaveActivityBase::serializeStats(MemoryBuffer &mb)

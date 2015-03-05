@@ -143,6 +143,7 @@ class graphslave_decl CJobSlave : public CJobBase
     Owned<IPropertyTree> workUnitInfo;
     CriticalSection graphRunCrit;
     size32_t oldNodeCacheMem;
+    Owned<IThreaded> listener;
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -164,6 +165,7 @@ public:
         return new CSlaveGraph(*this);
     }
     virtual IBarrier *createBarrier(mptag_t tag);
+    bool recvInitData(CSlaveGraph &graph, MemoryBuffer &data);
 
 // IExceptionHandler
     virtual bool fireException(IException *e)

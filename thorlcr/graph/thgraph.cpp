@@ -2482,7 +2482,6 @@ CJobBase::CJobBase(const char *_graphName) : graphName(_graphName)
 // JCSMORE - Will pass down at job creation time...
     jobGroup.set(&::queryClusterGroup());
     jobComm.setown(createCommunicator(jobGroup));
-    slaveGroup.setown(jobGroup->remove(0));
     myrank = jobGroup->rank(queryMyNode());
     globalMemorySize = globals->getPropInt("@globalMemorySize"); // in MB
     oldNodeCacheMem = 0;
@@ -2751,6 +2750,11 @@ ICodeContext &CJobBase::queryCodeContext() const
 bool CJobBase::queryUseCheckpoints() const
 {
     return globals->getPropBool("@checkPointRecovery") || 0 != getWorkUnitValueInt("checkPointRecovery", 0);
+}
+
+unsigned CJobBase::querySlavesPerNode() const
+{
+    return globals->getPropInt("@slavesPerNode", 1);
 }
 
 void CJobBase::abort(IException *e)

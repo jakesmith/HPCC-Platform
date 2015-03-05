@@ -768,7 +768,7 @@ StringBuffer &getCompoundQueryName(StringBuffer &compoundName, const char *query
     return compoundName.append('V').append(version).append('_').append(queryName);
 }
 
-void setClusterGroup(IGroup *group)
+void setClusterGroup(IGroup *group, IGroup *_dfsGroup)
 {
     ::Release(clusterComm);
     ::Release(clusterGroup);
@@ -777,12 +777,7 @@ void setClusterGroup(IGroup *group)
     clusterGroup = LINK(group);
     // slaveGroup contains endpoints with mp ports of slaves
     slaveGroup = clusterGroup->remove(0);
-    // dfsGroup will match named group in dfs
-    Owned<INodeIterator> nodeIter = slaveGroup->getIterator();
-    IArrayOf<INode> nodes;
-    ForEach(*nodeIter)
-        nodes.append(*createINodeIP(nodeIter->query().endpoint(),0));
-    dfsGroup = createIGroup(nodes.ordinality(), nodes.getArray());
+    dfsGroup = LINK(_dfsGroup);
     clusterComm = createCommunicator(clusterGroup);
 }
 bool clusterInitialized() { return NULL != clusterComm; }

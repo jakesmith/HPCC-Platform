@@ -130,7 +130,7 @@ private:
             return;
         CMessageBuffer msg;
         msg.append(_count);
-        container.queryJob().queryJobComm().send(msg, container.queryJob().queryMyRank()+1, mpTag);
+        container.queryJob().queryJobComm().send(msg, container.queryOwner().queryMyRank()+1, mpTag);
     }
     rowcount_t getPrevCount()
     {
@@ -138,7 +138,7 @@ private:
         {
             CMessageBuffer msg;
             rowcount_t _count;
-            if (!receiveMsg(msg, container.queryJob().queryMyRank()-1, mpTag))
+            if (!receiveMsg(msg, container.queryOwner().queryMyRank()-1, mpTag))
                 return 0;
             msg.read(_count);
             return _count;
@@ -193,7 +193,7 @@ public:
         CSlaveActivity::abort();
         prevRecCountSem.signal();
         if (!firstNode())
-            cancelReceiveMsg(container.queryJob().queryMyRank()-1, mpTag);
+            cancelReceiveMsg(container.queryOwner().queryMyRank()-1, mpTag);
     }
     CATCH_NEXTROW()
     {
