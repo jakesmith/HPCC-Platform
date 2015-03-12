@@ -140,6 +140,10 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                 OwnedConstThorRow row = dedupList.getClear(--i);
                 if ((NULL != prev.get()) && (0 == iCompare->docompare(prev, row)))
                 {
+                    /* JCSMORE - Is this right.. total will deducted from totalSz when bucket sent.. and should be same as added surely??
+                     * I think it gets away with it, because writeTotalSz = querySize() *before* dedup called.
+                     * But this code is still unnecessary at best
+                     */
                     size32_t rsz = owner.rowMemSize(row);
                     total -= rsz;
                 }
@@ -152,11 +156,12 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
             dedupList.clearRows();
             return true; // attempted
         }
-        void add(const void *row, size32_t &rs)
+        size32_t add(const void *row)
         {
-            rs = owner.rowMemSize(row);
+            size32_t rs = owner.rowMemSize(row);
             total += rs;
             rows.enqueue(row);
+            return rs;
         }
         unsigned queryDestination() const { return destination; }
         size32_t querySize() const { return total; }
@@ -321,7 +326,6 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                 Owned<CSendBucket> sendBucket = _sendBucket.getClear();
                 unsigned dest = sendBucket->queryDestination();
                 size32_t writerTotalSz = 0;
-                size32_t sendSz = 0;
                 MemoryBuffer mb;
                 while (!owner.aborted)
                 {
@@ -333,9 +337,8 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                     else // remote
                     {
                         bool wholeBucket = sendBucket->serializeClear(mb, distributor.bucketSendSize);
-                        sendSz = mb.length();
                         // NB: buckets will typically be large enough already, if not check pending buckets
-                        if (sendSz < distributor.bucketSendSize)
+                        if (mb.length() < distributor.bucketSendSize)
                         {
                             // more added to dest I'm processing?
                             {
@@ -356,7 +359,6 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                             fastLZCompressToBuffer(msg, mb.length(), mb.bufferBase());
                             mb.clear();
                             target->send(msg);
-                            sendSz = 0;
                             if (wholeBucket)
                                 break;
                             wholeBucket = sendBucket->serializeClear(mb, distributor.bucketSendSize);
@@ -365,11 +367,11 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                     owner.decTotal(writerTotalSz);
                     writerTotalSz = 0;
                     // see if others to process
-                    // NB: this will never start processing a bucket for a destination which already has an active writer.
                     CriticalBlock b(owner.activeWritersLock);
                     target->decActiveWriters();
+                    // NB: get another pending bucket, up to 'targetWriterLimit' write handlers can be target the same destination
                     sendBucket.setown(owner.getAnotherBucket(nextPending));
-                    if (!sendBucket)
+                    if (!sendBucket) // 0 pending buckets to any target OR those that are pending have enough handlers (>targetWriterLimit)
                     {
                         target = NULL; // will be reinitialized to new target in init(), when thread pool thread is reused
                         break;
@@ -563,6 +565,8 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
             {
                 HDSendPrintLog2("CSender::add disposing of bucket [finished(%d)]", dest);
                 bucket->Release();
+
+                // free totalSz that bucket would have sent
             }
             else
             {
@@ -688,7 +692,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                         loop
                         {
                             if (timer.elapsedCycles() >= queryOneSecCycles()*10)
-                                owner.ActPrintLog("HD sender, waiting for space, active writers = %d", queryInactiveWriters());
+                                owner.ActPrintLog("HD sender, waiting for space, inactive writers = %d, totalSz = %d", queryInactiveWriters(), queryTotalSz());
                             timer.reset();
 
                             if (senderFullSem.wait(10000))
@@ -709,8 +713,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                     else
                     {
                         CSendBucket *bucket = target->queryBucketCreate();
-                        size32_t rs;
-                        bucket->add(row, rs);
+                        size32_t rs = bucket->add(row);
                         totalSent++;
                         {
                             SpinBlock b(totalSzLock);
