@@ -590,7 +590,7 @@ int main( int argc, char *argv[]  )
         }        
         if (!thorGroup)
         {
-            thorGroup.setown(queryNamedGroupStore().lookup(nodeGroup.str()));
+            thorGroup.setown(getClusterGroup(thorname, "ThorSlaveProcess"));
             if (!thorGroup)
             {
                 ERRLOG("Named group '%s' not found", nodeGroup.str());

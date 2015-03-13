@@ -67,6 +67,7 @@ USE_JLIB_ALLOC_HOOK;
 #endif
 
 static SocketEndpoint slfEp;
+static unsigned mySlaveNum;
 
 static char **cmdArgs;
 void mergeCmdParams(IPropertyTree *props)
@@ -117,6 +118,12 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
         if (RANK_NULL == groupPos)
         {
             replyError(TE_FailedToRegisterSlave, "Node not part of thorgroup");
+            return false;
+        }
+        if (globals->hasProp("@SLAVENUM") && (mySlaveNum != (unsigned)groupPos))
+        {
+            VStringBuffer errStr("Slave group rank[%d] does not match provided cmd line slaveNum[%d]", mySlaveNum, (unsigned)groupPos);
+            replyError(TE_FailedToRegisterSlave, errStr.str());
             return false;
         }
         globals->Release();
@@ -213,7 +220,7 @@ void startSlaveLog()
     StringBuffer fileName("thorslave");
     Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(globals->queryProp("@logDir"), "thor");
     StringBuffer slaveNumStr;
-    lf->setPostfix(slaveNumStr.append(slfEp.port).str());
+    lf->setPostfix(slaveNumStr.append(mySlaveNum).str());
     lf->setCreateAliasFile(false);
     lf->setName(fileName.str());//override default filename
     lf->beginLogging();
@@ -280,6 +287,11 @@ int main( int argc, char *argv[]  )
         }
         else 
             slfEp.setLocalHost(0);
+
+        if (globals->hasProp("@SLAVENUM"))
+            mySlaveNum = atoi(globals->queryProp("@SLAVENUM"));
+        else
+            mySlaveNum = slfEp.port; // shouldn't happen, provided by script
 
         setMachinePortBase(slfEp.port);
         slfEp.port = getMachinePortBase();

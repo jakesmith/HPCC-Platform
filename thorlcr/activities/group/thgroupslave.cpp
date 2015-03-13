@@ -40,7 +40,6 @@ class GroupSlaveActivity : public CSlaveActivity, public CThorDataLink
             useRollover = false;
             // JCSMORE will generate time out log messages, while waiting for next nodes group
             rank_t myNode = container.queryOwner().queryMyRank();
-            rank_t myNode = container.queryOwner().queryMyRank();
             nextNodeStream.setown(createRowStreamFromNode(*this, myNode+1, container.queryJob().queryJobComm(), mpTag, abortSoon));
             stream.set(nextNodeStream);
             return stream->nextRow();
