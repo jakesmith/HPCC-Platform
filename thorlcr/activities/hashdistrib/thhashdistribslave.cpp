@@ -405,11 +405,6 @@ protected:
                         HDSendPrintLog2("CWriteHandler, sending raw=%d to LOCAL", rawSz);
                         if (!target->getSenderFinished())
                             distributor.addLocal(sendBucket);
-                        else
-                        {
-                            int i = 0;
-                            ++i;
-                        }
                     }
                     else // remote
                     {
@@ -434,11 +429,6 @@ protected:
                         }
                         if (!target->getSenderFinished())
                             target->send(msg);
-                        else
-                        {
-                            int i = 0;
-                            ++i;
-                        }
                         sendSz = 0;
                         rawSz = 0;
                         msg.clear();
@@ -664,13 +654,9 @@ protected:
                     CTarget *target = targets.item(t);
                     if (target->getSenderFinished())
                     {
-                        Owned<CSendBucket> bucket;
-                        if (target->queryBucket())
-                        {
-                            bucket.setown(target->getBucketClear()); // discard
-                            if (bucket)
-                                decTotal(bucket->querySize());
-                        }
+                        Owned<CSendBucket> bucket = target->getBucketClear();
+                        if (bucket)
+                            decTotal(bucket->querySize());
                         loop
                         {
                             bucket.setown(target->dequeuePendingBucket());
