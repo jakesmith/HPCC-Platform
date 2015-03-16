@@ -147,8 +147,9 @@ protected:
                 OwnedConstThorRow row = dedupList.getClear(--i);
                 if ((NULL != prev.get()) && (0 == iCompare->docompare(prev, row)))
                 {
-                    size32_t rsz = owner.rowMemSize(row);
-                    total -= rsz;
+                    /* NB: do not alter 'total' size. It represents the amount originally added to the bucket
+                     * which will be deducted when sent.
+                     */
                 }
                 else
                 {
@@ -393,16 +394,14 @@ protected:
                 size32_t writerTotalSz = 0;
                 size32_t sendSz = 0;
                 CMessageBuffer msg;
-                size32_t rawSz = 0;
                 while (!owner.aborted)
                 {
-                    writerTotalSz += sendBucket->querySize();
-                    rawSz += sendBucket->querySize();
+                    writerTotalSz += sendBucket->querySize(); // NB: This size is pre-dedup, and is the correct amount to pass to decTotal
                     owner.dedup(sendBucket); // conditional
 
                     if (owner.selfPush(dest))
                     {
-                        HDSendPrintLog2("CWriteHandler, sending raw=%d to LOCAL", rawSz);
+                        HDSendPrintLog2("CWriteHandler, sending raw=%d to LOCAL", writerTotalSz);
                         if (!target->getSenderFinished())
                             distributor.addLocal(sendBucket);
                     }
@@ -430,7 +429,6 @@ protected:
                         if (!target->getSenderFinished())
                             target->send(msg);
                         sendSz = 0;
-                        rawSz = 0;
                         msg.clear();
                     }
                     owner.decTotal(writerTotalSz);
