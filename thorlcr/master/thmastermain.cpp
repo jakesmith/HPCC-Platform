@@ -544,73 +544,37 @@ int main( int argc, char *argv[]  )
             thorname = "local";
             globals->setProp("@name", thorname);
         }
-        Owned<IGroup> thorGroup;
-        OwnedIFile iFile = createIFile("thorgroup");
-        if (iFile->exists())
-        {
-            PROGLOG("Found file 'thorgroup', using to form thor group");
-            OwnedIFileIO iFileIO = iFile->open(IFOread);
-            MemoryBuffer slaveListMb;
-            size32_t sz = (size32_t)iFileIO->size();
-            if (sz)
-            {
-                void *b = slaveListMb.reserveTruncate(sz);
-                verifyex(sz = iFileIO->read(0, sz, b));
-                
-                IArrayOf<INode> nodes;
-                nodes.append(*LINK(queryMyNode()));
-
-                const char *n = (const char *)b;
-                const char *e = n + sz;
-                loop
-                {
-                    while (n < e && isspace(*n)) n++;
-                    if (n == e || !*n) break;
-                    const char *start = n;
-                    while (!isspace(*n)) n++;
-                    StringBuffer nodeStr;
-                    nodeStr.append(n-start, start);
-                    SocketEndpoint ep = nodeStr.str();
-                    ep.port = getFixedPort(ep.port, TPORT_mp);
-                    INode *node = createINode(ep);
-                    nodes.append(*node);
-                }
-                assertex(nodes.ordinality());
-                thorGroup.setown(createIGroup(nodes.ordinality(), nodes.getArray()));
-            }
-            else
-            {
-                ERRLOG("'thorgroup' file is empty");
-                return 0; // no recycle
-            }
-        }
         if (!globals->getProp("@nodeGroup", nodeGroup)) {
             nodeGroup.append(thorname);
             globals->setProp("@nodeGroup", thorname);
-        }        
+        }
+        Owned<IGroup> thorGroup = getClusterGroup(thorname, "ThorSlaveProcess");
         if (!thorGroup)
         {
-            thorGroup.setown(getClusterGroup(thorname, "ThorSlaveProcess"));
-            if (!thorGroup)
-            {
-                ERRLOG("Named group '%s' not found", nodeGroup.str());
-                return 0; // no recycle
-            }
-            else
-            {
-                IArrayOf<INode> nodes;
-                nodes.append(*LINK(queryMyNode()));
-                unsigned r=0;
-                for (; r<thorGroup->ordinality(); r++)
-                {
-                    SocketEndpoint ep = thorGroup->queryNode(r).endpoint();
-                    if (!ep.port)
-                        ep.port = getFixedPort(slavePort, TPORT_mp);
-                    nodes.append(*createINode(ep));
-                }
-                thorGroup.setown(createIGroup(nodes.ordinality(), nodes.getArray()));
-            }
+            ERRLOG("Failed to construct group for thor '%s'", thorname);
+            return 0; // no recycle
         }
+        // NB: for now at least (to keep with legacy), dfsGroup is expanded group containing an IP per slave, i.e. nodes * slavesPerNode
+        Owned<IGroup> dfsGroup = queryNamedGroupStore().lookup(nodeGroup.str());
+        if (!dfsGroup)
+        {
+            ERRLOG("Named group '%s' not found", nodeGroup.str());
+            return 0; // no recycle
+        }
+        // JCSMORE - if *expanded* thorGroup mismatches dfsGroup - could/should abort here
+
+        // Add master into IGroup
+        IArrayOf<INode> nodes;
+        nodes.append(*LINK(queryMyNode()));
+        unsigned r=0;
+        for (; r<thorGroup->ordinality(); r++)
+        {
+            SocketEndpoint ep = thorGroup->queryNode(r).endpoint();
+            if (!ep.port)
+                ep.port = getFixedPort(slavePort, TPORT_mp);
+            nodes.append(*createINode(ep));
+        }
+        thorGroup.setown(createIGroup(nodes.ordinality(), nodes.getArray()));
         setClusterGroup(thorGroup);
         if (globals->getPropBool("@replicateOutputs")&&globals->getPropBool("@validateDAFS",true)&&!checkClusterRelicateDAFS(thorGroup)) {
             FLLOG(MCoperatorError, thorJob, "ERROR: Validate failure(s) detected, exiting Thor");
@@ -758,7 +722,8 @@ int main( int argc, char *argv[]  )
     getThorQueueNames(_queueNames, thorName);
     queueName.set(_queueNames.str());
 
-    try {
+    try
+    {
         CSDSServerStatus &serverStatus = openThorServerStatus();
 
         Owned<CRegistryServer> registry = new CRegistryServer();
