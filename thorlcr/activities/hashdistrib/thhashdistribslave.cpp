@@ -364,6 +364,13 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                     }
                     // see if others to process
                     // NB: this will never start processing a bucket for a destination which already has an active writer.
+ /* fake sleep
+  * before sending
+  * So totalSz exceeds buffer and writer
+  * triggers senderFull and waits
+  */
+ PROGLOG("fake .5s sleep");
+ MilliSleep(1000);
                     CriticalBlock b(owner.activeWritersLock);
                     owner.decTotal(writerTotalSz);
                     target->decActiveWriters();
@@ -475,6 +482,7 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
             totalSz -= sz;
             if (sz && senderFull)
             {
+                PROGLOG("signalling senderFull=false");
                 senderFull = false;
                 senderFullSem.signal();
             }
@@ -561,7 +569,9 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
             CTarget *target = targets.item(dest);
             if (target->getSenderFinished())
             {
-                HDSendPrintLog2("CSender::add disposing of bucket [finished(%d)]", dest);
+                size32_t bucketSz = bucket->querySize();
+                HDSendPrintLog4("CSender::add disposing of bucket [finished(%d)], totalSz = %d, bucketSz = %d", dest, totalSz, bucketSz);
+                decTotal(bucketSz);
                 bucket->Release();
             }
             else
@@ -683,12 +693,13 @@ class CDistributorBase : public CSimpleInterface, implements IHashDistributor, i
                             // some may have been written by now
                             if (totalSz < owner.inputBufferSize)
                                 break;
+                            PROGLOG("Sender full!");
                             senderFull = true;
                         }
                         loop
                         {
                             if (timer.elapsedCycles() >= queryOneSecCycles()*10)
-                                owner.ActPrintLog("HD sender, waiting for space, inactive writers = %d, totalSz = %d", queryInactiveWriters(), queryTotalSz());
+                                owner.ActPrintLog("HD sender, waiting for space, inactive writers = %d, totalSz = %d, numFinished = %d", queryInactiveWriters(), queryTotalSz(), atomic_read(&numFinished));
                             timer.reset();
 
                             if (senderFullSem.wait(10000))
