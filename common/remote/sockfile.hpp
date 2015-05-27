@@ -43,12 +43,13 @@ public:
 #define DEFAULT_PARALLELREQUESTLIMIT 20
 #define DEFAULT_THROTTLEDELAYMS 5000
 #define DEFAULT_THROTTLECPULIMIT 75
+#define DEFAULT_THROTTLEABSOLUTEMAX 1000
 
 extern REMOTE_API IFile * createRemoteFile(SocketEndpoint &ep,const char * _filename); // takes ownershop of socket
 extern REMOTE_API unsigned getRemoteVersion(ISocket * _socket, StringBuffer &ver);
 extern REMOTE_API unsigned stopRemoteServer(ISocket * _socket);
 extern REMOTE_API const char *remoteServerVersionString();
-extern REMOTE_API IRemoteFileServer * createRemoteFileServer(unsigned throttleLimit=DEFAULT_PARALLELREQUESTLIMIT, unsigned throttleDelayMs=DEFAULT_THROTTLEDELAYMS, unsigned throttleCPULimit=DEFAULT_THROTTLECPULIMIT);
+extern REMOTE_API IRemoteFileServer * createRemoteFileServer(unsigned throttleLimit=DEFAULT_PARALLELREQUESTLIMIT, unsigned throttleDelayMs=DEFAULT_THROTTLEDELAYMS, unsigned throttleCPULimit=DEFAULT_THROTTLECPULIMIT, unsigned throttleAbsoluteMax=DEFAULT_THROTTLEABSOLUTEMAX);
 extern REMOTE_API int setDafsTrace(ISocket * socket,byte flags);
 extern REMOTE_API int setDafsThrottleLimit(ISocket * socket, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit);
 extern REMOTE_API bool enableDafsAuthentication(bool on);
