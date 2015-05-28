@@ -2916,6 +2916,123 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
+#if 1
+    {
+        if (argc<4)
+        {
+            PROGLOG("datest <dafilesrv-ip> <numthreads> <fiMax>");
+            return 1;
+        }
+        const char *dafilesrvip = argv[1];
+        unsigned numThreads = atoi(argv[2]);
+        unsigned fiMax = atoi(argv[3]);
+
+        struct PoolInitInfo
+        {
+            StringBuffer fname;
+            unsigned fiMax;
+        };
+        class CThreadFactory : public CSimpleInterfaceOf<IThreadFactory>, implements IExceptionHandler
+        {
+            class CMyPooledThread : public CSimpleInterfaceOf<IPooledThread>
+            {
+                PoolInitInfo *initInfo;
+            public:
+            // IPoolThread impl.
+                virtual void init(void *param)
+                {
+                    initInfo = (PoolInitInfo *)param;
+                }
+                virtual void main()
+                {
+                    StringBuffer &fname = initInfo->fname;
+                    OwnedIFile iFile = createIFile(fname);
+                    OwnedIFileIO iFileIO = iFile->open(IFOcreaterw);
+                    if (!iFileIO)
+                        throw MakeStringException(0, "Failed to create: %s", fname.str());
+                    PROGLOG("Created %s", fname.str());
+                    MemoryBuffer mb;
+                    size32_t rLen = fname.length();
+                    void *readBuf = mb.reserveTruncate(rLen);
+                    for (unsigned fi=0; fi<initInfo->fiMax; fi++)
+                    {
+                        size32_t sz = iFileIO->size();
+                        iFileIO->write(0, rLen, fname.str()); // arbitrary write
+                        iFileIO->read(0, rLen, readBuf);
+                    }
+                }
+                virtual bool stop() { return true; }
+                virtual bool canReuse() { return true; }
+            };
+        public:
+        // IThreadFactory impl.
+            virtual IPooledThread *createNew()
+            {
+                return new CMyPooledThread();
+            }
+        // IThreadException
+            virtual bool fireException(IException *e)
+            {
+                EXCLOG(e, "thread pool exception");
+                return false;
+            }
+        } myThreadPool;
+
+        PROGLOG("Starting %d threads, with %d file op. iterations", numThreads, fiMax);
+        Owned<IThreadPool> threadPool = createThreadPool("mythreadpool", &myThreadPool, &myThreadPool, numThreads);
+        for (unsigned t=0; t<numThreads; t++)
+        {
+            PoolInitInfo *initInfo = new PoolInitInfo;
+            initInfo->fname.appendf("//10.239.222.21/var/lib/HPCCSystems/hpcc-data/tmp%s_%d", GetCachedHostName(), t);
+            initInfo->fiMax = fiMax;
+            threadPool->start(initInfo);
+        }
+        PROGLOG("Waiting for %d threads to finish", numThreads);
+        threadPool->joinAll();
+        return 0;
+    }
+#endif
+#if 0
+    {
+        if (argc<3)
+        {
+            PROGLOG("datest <dafilesrv-ip> <ports>");
+            return 1;
+        }
+        const char *daliip = argv[1];
+        unsigned ports = atoi(argv[2]);
+        IArrayOf<ISocket> sockets;
+        for (unsigned p=0; p<ports; p++)
+        {
+            Owned<ISocket> sock;
+            try
+            {
+                VStringBuffer epStr("%s:7100", daliip);
+                sock.setown(ISocket::connect(epStr.str()));
+            }
+            catch (IException *e)
+            {
+                VStringBuffer errMsg("Failed creating socket # %d", p);
+                EXCLOG(e, errMsg.str());
+                e->Release();
+                return 1;
+            }
+            if (!sock)
+            {
+                PROGLOG("Failed to create socket # %d", p);
+                return 1;
+            }
+            sockets.append(*sock.getClear());
+            if (0 == (p % 100))
+                PROGLOG("sockets added: %d", p);
+        }
+
+        PROGLOG("Successfully created %d ports", ports);
+        PROGLOG("Press a key to exit");
+        getchar();
+    }
+    return 0;
+#endif
     try {
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
