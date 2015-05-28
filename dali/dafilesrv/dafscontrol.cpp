@@ -47,7 +47,7 @@ void usage()
     printf("  dafscontrol [<dali-ip>] CHECKVERMAJOR <ip-or-cluster>\n");
     printf("  dafscontrol [<dali-ip>] TRACE <ip> <num>\n");
     printf("  dafscontrol [<dali-ip>] CHKDSK <ip> <num>\n");
-    printf("  dafscontrol [<dali-ip>] THROTTLE <ip> <limit> <ms-delay> <cpu-limit>\n");
+    printf("  dafscontrol [<dali-ip>] THROTTLE <ip> <class> <limit> <ms-delay> <cpu-limit>\n");
     printf("  dafscontrol MYVER\n");
     exit(1);
 }
@@ -389,20 +389,20 @@ int main(int argc, char* argv[])
                 break;
             }
             if (stricmp(argv[ai],"throttle")==0) {
-                if (ai+4>=ac)
+                if (ai+5>=ac)
                     usage();
                 else {
                     SocketEndpointArray eps;
                     if (!isdali||!getCluster(argv[ai+1],eps)) {
                         SocketEndpoint ep(argv[ai+1]);
-                        int ret = setDafileSvrThrottleLimit(ep, atoi(argv[ai+2]), atoi(argv[ai+3]), atoi(argv[ai+4]));
+                        int ret = setDafileSvrThrottleLimit(ep, atoi(argv[ai+2], atoi(argv[ai+3]), atoi(argv[ai+4]), atoi(argv[ai+5]));
                         if (ret!=0)
                             ERRLOG("setDafileSvrThrottleLimit returned %d", ret);
                     }
                     else {
                         ForEachItemIn(ni,eps) {
                             SocketEndpoint ep = eps.item(ni);
-                            int ret = setDafileSvrThrottleLimit(ep, atoi(argv[ai+2]), atoi(argv[ai+3]), atoi(argv[ai+4]));
+                            int ret = setDafileSvrThrottleLimit(ep, atoi(argv[ai+2], atoi(argv[ai+3]), atoi(argv[ai+4]), atoi(argv[ai+5]));
                             if (ret!=0)
                                 ERRLOG("setDafileSvrThrottleLimit returned %d", ret);
                             StringBuffer s("done ");

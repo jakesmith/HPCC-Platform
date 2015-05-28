@@ -28,6 +28,7 @@
 #include "jfile.hpp"
 #include "jmisc.hpp"
 #include "jthread.hpp"
+#include "jqueue.tpp"
 
 #include "securesocket.hpp"
 #include "sockfile.hpp"
@@ -269,7 +270,7 @@ static byte traceFlags=0x20;
 
 enum {
     RFCopenIO,                                      // 0
-    RFCcloseIO,             
+    RFCcloseIO,
     RFCread,
     RFCwrite,
     RFCsize,
@@ -311,7 +312,53 @@ enum {
 // 1.8
     RFCsetthrottle,
     RFCmax,
-    };
+};
+
+#define RFCopenIO_Text "RFCopenIO"
+#define RFCcloseIO_Text "RFCcloseIO"
+#define RFCread_Text "RFCread"
+#define RFCwrite_Text "RFCwrite"
+#define RFCsize_Text "RFCsize"
+#define RFCexists_Text "RFCexists"
+#define RFCremove_Text "RFCremove"
+#define RFCrename_Text "RFCrename"
+#define RFCgetver_Text "RFCgetver"
+#define RFCisfile_Text "RFCisfile"
+#define RFCisdirectory_Text "RFCisdirectory"
+#define RFCisreadonly_Text "RFCisreadonly"
+#define RFCsetreadonly_Text "RFCsetreadonly"
+#define RFCgettime_Text "RFCgettime"
+#define RFCsettime_Text "RFCsettime"
+#define RFCcreatedir_Text "RFCcreatedir"
+#define RFCgetdir_Text "RFCgetdir"
+#define RFCstop_Text "RFCstop"
+#define RFCexec_Text "RFCexec"
+#define RFCkill_Text "RFCkill"
+#define RFCredeploy_Text "RFCredeploy"
+#define RFCgetcrc_Text "RFCgetcrc"
+#define RFCmove_Text "RFCmove"
+#define RFCsetsize_Text "RFCsetsize"
+#define RFCextractblobelements_Text "RFCextractblobelements"
+#define RFCcopy_Text "RFCcopy"
+#define RFCappend_Text "RFCappend"
+#define RFCmonitordir_Text "RFCmonitordir"
+#define RFCsettrace_Text "RFCsettrace"
+#define RFCgetinfo_Text "RFCgetinfo"
+#define RFCfirewall_Text "RFCfirewall"
+#define RFCunlock_Text "RFCunlock"
+#define RFCunlockreply_Text "RFCunlockreply"
+#define RFCinvalid_Text "RFCinvalid"
+#define RFCcopysection_Text "RFCcopysection"
+#define RFCtreecopy_Text "RFCtreecopy"
+#define RFCtreecopytmp_Text "RFCtreecopytmp"
+#define RFCsetthrottle_Text "RFCsetthrottle"
+
+#define RFCText(cmd) cmd##_Text
+
+#define ThrottleStd_Text "ThrottleStd"
+#define ThrottleSlow_Text "ThrottleSlow"
+
+#define ThrottleText(throttleClass) throttleClass##_Text
 
 
 typedef enum { ACScontinue, ACSdone, ACSerror} AsyncCommandStatus;
@@ -338,16 +385,17 @@ static void mergeOnce(OnceKey &key,size32_t sz,const void *data)
 
 //---------------------------------------------------------------------------
 
+class CRemoteClientHandler;
 class CThrottleQueueItem : public CSimpleInterface
 {
     RemoteFileCommandType cmd;
-    Linked<CRemoteClientHandler> client;
+    CRemoteClientHandler *client;
     CCycleTimer timer;
 public:
-    CThrottleQueueItem(RemoteFileCommandType _cmd, CRemoteClientHandler *_client) : cmd(_cmd), client(_client)
-    {
-    }
+    CThrottleQueueItem(RemoteFileCommandType _cmd, CRemoteClientHandler *_client);
+    ~CThrottleQueueItem();
 };
+
 class CRemoteFileServer;
 class CThrottler
 {
@@ -355,52 +403,19 @@ class CThrottler
     Semaphore sem;
     CriticalSection crit;
     StringAttr msg;
-    unsigned limit;
+    unsigned limit, delay, cpuThreshold;
+    bool disabledLimit;
     unsigned __int64 totalThrottleDelay;
     CCycleTimer totalThrottleDelayTimer;
     QueueOf<CThrottleQueueItem, false> queue;
 public:
-    CThrottler(CRemoteFileServer &_owner, const char *_msg, unsigned _limit, unsigned _delay);
+    CThrottler(CRemoteFileServer &_owner, const char *_msg);
     ~CThrottler();
-    bool take(RemoteFileCommandType cmd, CRemoteClientHandler *client);
+    void configure(unsigned _limit, unsigned _delay, unsigned _cpuThreshold);
+    void addCommand(RemoteFileCommandType cmd, CRemoteClientHandler *client);
+    void take();
     void release();
 };
-
-class CThrottleBlock
-{
-    CThrottler &throttler;
-    bool got;
-public:
-    CThrottleBlock(CThrottler &_throttler) : throttler(_throttler)
-    {
-        got = throttler.take();
-    }
-    ~CThrottleBlock()
-    {
-        if (got)
-            throttler.release();
-    }
-};
-
-class CThrottleBlockCmd
-{
-    CThrottler &throttler;
-    bool got;
-    RemoteFileCommandType cmd;
-    CRemoteClientHandler *client;
-public:
-    CThrottleBlockCmd(CThrottler &_throttler, RemoteFileCommandType cmd, CRemoteClientHandler *client)
-        : throttler(_throttler), cmd(_cmd), client(_client)
-    {
-        got = throttler.take(cmd, client);
-    }
-    ~CThrottleBlockCmd()
-    {
-        if (got)
-            throttler.release();
-    }
-};
-
 
 // temporarily release a throttler slot
 class CThrottleReleaseBlock
@@ -2775,12 +2790,12 @@ int setDafsTrace(ISocket * socket,byte flags)
     return -1;
 }
 
-int setDafsThrottleLimit(ISocket * socket, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit)
+int setDafsThrottleLimit(ISocket * socket, ThrottleClass throttleClass, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit)
 {
     assertex(socket);
     MemoryBuffer sendbuf;
     initSendBuffer(sendbuf);
-    sendbuf.append((RemoteFileCommandType)RFCsetthrottle).append(throttleLimit).append(throttleDelayMs).append(throttleCPULimit);
+    sendbuf.append((RemoteFileCommandType)RFCsetthrottle).append((unsigned)throttleClass).append(throttleLimit).append(throttleDelayMs).append(throttleCPULimit);
     MemoryBuffer replybuf;
     try {
         sendBuffer(socket, sendbuf);
@@ -3063,7 +3078,7 @@ public:
 
 
 
-#define MAPCOMMAND(c,p,throttler) case c: { ret =  this->p(msg, reply) ; break; }
+#define MAPCOMMAND(c,p) case c: { ret =  this->p(msg, reply) ; break; }
 #define MAPCOMMANDCLIENT(c,p,client) case c: { ret = this->p(msg, reply, client); break; }
 #define MAPCOMMANDCLIENTTHROTTLE(c,p,client,throttler) case c: { ret = this->p(msg, reply, client, throttler); break; }
 
@@ -3073,6 +3088,7 @@ static unsigned MaxClientCount = 0;
 static CriticalSection ClientCountSect;
 
 #define TOTAL_THROTTLE_TIME_SECS 60 // log total throttled delay period
+
 
 class CRemoteFileServer : public CInterface, implements IRemoteFileServer, implements IThreadFactory
 {
@@ -3086,12 +3102,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
     unsigned clientcounttick;
     unsigned closedclients;
     CAsyncCommandManager asyncCommandManager;
-    CThrottler throttler, copyCmdThrottler;
-    unsigned throttleLimit, throttleDelayMs, throttleCPULimit, throttleAbsoluteLimit, disabledThrottleLimit;
-    unsigned copyCmdthrottleLimit, copyCmdthrottleDelayMs, copyCmdAbsoluteLimit;
-    unsigned __int64 totalThrottleDelay;
-    CCycleTimer totalThrottleDelayTimer;
-    CriticalSection setThrottleCrit;
+    CThrottler stdCmdThrottler, slowCmdThrottler;
     atomic_t globallasttick;
 
     int getNextHandle()
@@ -3264,12 +3275,9 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
 
         void throttleCommand()
         {
-            MemoryBuffer reply;
             RemoteFileCommandType cmd;
             buf.read(cmd);
             parent->throttleCommand(cmd, this);
-            buf.clear();
-            sendBuffer(socket, reply);
         }
 
         void processCommand(RemoteFileCommandType cmd, CThrottler *throttler)
@@ -3282,7 +3290,8 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
 
         bool immediateCommand() // returns false if socket closed or failure
         {
-            try {
+            try
+            {
                 buf.clear();
                 touch();
                 size32_t avail = (size32_t)socket->avail_read();
@@ -3294,7 +3303,8 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                     return false;
                 throttleCommand();
             }
-            catch (IException *e) {
+            catch (IException *e)
+            {
                 EXCLOG(e,"CRemoteClientHandler::immediateCommand");
                 e->Release();
                 buf.clear();
@@ -3343,7 +3353,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                  *
                  * Either way, a thread pool slot is occupied when processing a request.
                  * Blocked threads, will be blocked for up to 1 minute (as defined by createThreadPool call)
-                 * IOW, if there are lots of incoming clients that can't be serviced by the CThrottle limit,
+                 * IOW, if there are lots of incoming clients that can't be serviced by the CThrottler limit,
                  * a large number of pool threads will build up after a while.
                  *
                  * The CThrottler mechanism, imposes a further hard limit on how many concurrent request threads can be active.
@@ -3405,7 +3415,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             }
             return ok;
         }
-    
+
     };
 
     class cCommandProcessor: public CInterface, implements IPooledThread
@@ -3487,32 +3497,24 @@ public:
 
     IMPLEMENT_IINTERFACE
 
-    CRemoteFileServer(unsigned _throttleLimit, unsigned _throttleDelayMs, unsigned _throttleCPULimit, unsigned _throttleAbsoluteLimit)
-        : throttleLimit(_throttleLimit), throttleDelayMs(_throttleDelayMs), throttleCPULimit(_throttleCPULimit), throttleAbsoluteLimit(_throttleAbsoluteLimit)
+    CRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs)
+        : stdCmdThrottler(*this, "throtlter"), slowCmdThrottler(*this, "copyCmdThrotlter")
     {
-        totalThrottleDelay = 0;
-        disabledThrottleLimit = 0;
         lasthandle = 0;
         selecthandler.setown(createSocketSelectHandler(NULL));
-        threads.setown(createThreadPool("CRemoteFileServerPool",this,NULL,throttleLimit,throttleDelayMs,
+
+        stdCmdThrottler.configure(DEFAULT_STDCMD_PARALLELREQUESTLIMIT, DEFAULT_STDCMD_THROTTLEDELAYMS, DEFAULT_STDCMD_THROTTLECPULIMIT);
+        slowCmdThrottler.configure(DEFAULT_SLOWCMD_PARALLELREQUESTLIMIT, DEFAULT_SLOWCMD_THROTTLEDELAYMS, DEFAULT_SLOWCMD_THROTTLECPULIMIT);
+
+        threads.setown(createThreadPool("CRemoteFileServerPool",this,NULL,maxThreads,maxThreadsDelayMs,
 #ifdef __64BIT__
             0, // Unlimited stack size
 #else
             0x10000,
 #endif
-
         INFINITE,TARGET_MIN_THREADS));
         threads->setStartDelayTracing(60); // trace amount delayed every minute.
 
-        copyCmdThreads.setown(createThreadPool("CRemoteFileServerPool(CopyCmds)",this,NULL,copyCmdthrottleLimit,copyCmdthrottleDelayMs,
-#ifdef __64BIT__
-            0, // Unlimited stack size
-#else
-            0x10000,
-#endif
-
-        INFINITE,TARGET_MIN_THREADS));
-        threads->setStartDelayTracing(60); // trace amount delayed every minute.
         stopping = false;
         clientcounttick = msTick();
         closedclients = 0;
@@ -4459,63 +4461,16 @@ public:
 
     bool cmdSetThrottle(MemoryBuffer & msg, MemoryBuffer & reply)
     {
-        CriticalBlock b(setThrottleCrit);
         try
         {
-            unsigned _throttleLimit, _throttleDelayMs, _throttleCPULimit;
-            msg.read(_throttleLimit);
-            msg.read(_throttleDelayMs);
-            msg.read(_throttleCPULimit);
-            int delta = 0;
-            if (_throttleLimit)
-            {
-                if (disabledThrottleLimit) // if transitioning from disabled to some throttling
-                {
-                    assertex(0 == throttleLimit);
-                    delta = _throttleLimit - disabledThrottleLimit; // + or -
-                    disabledThrottleLimit = 0;
-                }
-                else
-                    delta = _throttleLimit - throttleLimit; // + or -
-            }
-            else if (0 == disabledThrottleLimit)
-            {
-                PROGLOG("Throttling disabled, previous limit: %d", throttleLimit);
-                /* disabling - set limit immediately to let all new transaction through.
-                 * NB: the semaphore signals are not consumed in this case, because transactions could be waiting on it.
-                 * Instead the existing 'throttleLimit' is kept in 'disabledThrottleLimit', so that if/when throttling is
-                 * re-enabled, it is used as a basis for increasing or consuming the semaphore signal count.
-                 */
-                disabledThrottleLimit = throttleLimit;
-                throttleLimit = 0;
-            }
-            if (delta > 0)
-            {
-                PROGLOG("Increasing throttleLimit from %d to %d", throttleLimit, _throttleLimit);
-                throttlesem.signal(delta);
-                throttleLimit = _throttleLimit;
-                // NB: If throttling was off, this doesn't effect transactions in progress, i.e. will only throttle new transactions coming in.
-            }
-            else if (delta < 0)
-            {
-                PROGLOG("Reducing throttleLimit from %d to %d", throttleLimit, _throttleLimit);
-                // NB: This is not expected to take long
-                CCycleTimer timer;
-                while (delta < 0)
-                {
-                    if (throttlesem.wait(1000))
-                        ++delta;
-                    else
-                        PROGLOG("Waited %0.2f seconds so far for a total of %d transactions to complete, %d completed", ((double)timer.elapsedMs())/1000, throttleLimit, -delta);
-                }
-                throttleLimit = _throttleLimit;
-                // NB: doesn't include transactions in progress, i.e. will only throttle new transactions coming in.
-            }
-            PROGLOG("New throttleDelayMs=%d, previous: %d", _throttleDelayMs, throttleDelayMs);
-            PROGLOG("New throttleCPULimit=%d, previous: %d", _throttleCPULimit, throttleCPULimit);
-            throttleDelayMs = _throttleDelayMs;
-            throttleCPULimit = _throttleCPULimit;
-            reply.append((unsigned)RFEnoerror);
+            unsigned throttleClass, limit, delay, cpuThreshold;
+            msg.read(throttleClass);
+            msg.read(limit);
+            msg.read(delay);
+            msg.read(cpuThreshold);
+
+            setThrottle((ThrottleClass)throttleClass, limit, delay, cpuThreshold);
+
             return true;
         }
         catch (IException *e)
@@ -4528,7 +4483,7 @@ public:
         return false;
     }
 
-    bool appendError(CRemoteClientHandler *client, unsigned ret)
+    void appendError(RemoteFileCommandType cmd, CRemoteClientHandler *client, unsigned ret, MemoryBuffer &reply)
     {
         if (reply.length()>=sizeof(unsigned)*2)
         {
@@ -4564,9 +4519,9 @@ public:
             case RFCcopy:
             case RFCappend:
             case RFCcopysection:
-            csae RFCtreecopy:
+            case RFCtreecopy:
             case RFCtreecopytmp:
-                copyCmdThrottler.addCommand(cmd, client);
+                slowCmdThrottler.addCommand(cmd, client);
                 return;
             case RFCcloseIO:
             case RFCopenIO:
@@ -4596,7 +4551,7 @@ public:
             case RFCgetinfo:
             case RFCfirewall:
             case RFCunlock:
-                throttler.addCommand(cmd, client);
+                stdCmdThrottler.addCommand(cmd, client);
                 return;
             case RFCsetthrottle:
                 ret = cmdSetThrottle(msg, reply);
@@ -4605,8 +4560,13 @@ public:
                 ret = cmdUnknown(msg, reply, cmd);
                 break;
         }
+        // for commands that run immediatel without throttling only
+        MemoryBuffer reply;
+        initSendBuffer(reply);
         if (!ret)
-            appendError(client, ret, reply);
+            appendError(cmd, client, ret, reply);
+        buf.clear();
+        sendBuffer(socket, reply);
     }
 
     bool processCommand(RemoteFileCommandType cmd, MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler *client, CThrottler *throttler)
@@ -4647,29 +4607,20 @@ public:
             MAPCOMMAND(RFCfirewall, cmdFirewall);
             MAPCOMMANDCLIENT(RFCunlock, cmdUnlock, *client);
             MAPCOMMANDCLIENT(RFCcopysection, cmdCopySection, *client);
-            MAPCOMMANDCLIENTTHROTTLE(RFCtreecopy, cmdTreeCopy, *client, throttler);
-            MAPCOMMANDCLIENTTHROTTLE(RFCtreecopytmp, cmdTreeCopyTmp, *client, throttler);
+            MAPCOMMANDCLIENTTHROTTLE(RFCtreecopy, cmdTreeCopy, *client, stdCmdThrottler);
+            MAPCOMMANDCLIENTTHROTTLE(RFCtreecopytmp, cmdTreeCopyTmp, *client, stdCmdThrottler);
         default:
             ret = cmdUnknown(msg,reply,cmd);
             break;
         }
         if (!ret) // append error string
-            appendError(client, cmd, reply);
+            appendError(cmd, client, cmd, reply);
         return ret;
     }
 
     virtual IPooledThread *createNew()
     {
         return new cCommandProcessor();
-    }
-
-    virtual bool exceedLimit()
-    {
-        if (threads->runningCount() >= throttleAbsoluteLimit)
-            return false;
-        unsigned cpu = getLatestCPUUsage();
-        // NB: getLatestCPUUsage() is based on interval monitoring, typically 60 secs
-        return cpu<throttleCPULimit;
     }
 
     void run(SocketEndpoint &listenep, bool useSSL)
@@ -4898,8 +4849,7 @@ public:
         params.client = new CRemoteClientHandler(this,sock,user,globallasttick);
         {
             CriticalBlock block(sect);
-            params.client->Link();
-            clients.append(*params.client);
+            clients.append(*LINK(params.client));
         }
         // NB: This could be blocked, by thread pool limit
         threads->start(&params);
@@ -5009,15 +4959,48 @@ public:
         unsigned t = (unsigned)atomic_read(&globallasttick);
         return msTick()-t;
     }
+
+    void setThrottle(ThrottleClass throttleClass, unsigned limit, unsigned delayMs, unsigned cpuThreshold)
+    {
+        switch (throttleClass)
+        {
+            case ThrottleStd:
+                stdCmdThrottler.configure(limit, delay, cpuThreshold);
+                break;
+            case ThrottleSlow:
+                slowCmdThrottler.configure(limit, delay, cpuThreshold);
+                break;
+            default:
+            {
+                StringBuffer availableClasses("{ ");
+                for (unsigned c=0; c<ThrottleClassMax; c++)
+                {
+                    availableClassses.append(c).append(" = ").append(ThrottleText(c);
+                    if (c+1<ThrottleClassMax)
+                        availableClasses.append(", ");
+                }
+                throw MakeStringException(0, "Unknown throttle class: %u, available classes are: %s", (unsigned)throttleClass, availableClasses.str());
+            }
+        }
+    }
 };
 
 
-CThrottler::CThrottler(CRemoteFileServer &_owner, const char *_msg, unsigned _limit, unsigned _delay)
-    : owner(_owner), msg(_msg), limit(_limit), delay(_delay)
+CThrottleQueueItem::CThrottleQueueItem(RemoteFileCommandType _cmd, CRemoteClientHandler *_client) : cmd(_cmd)
+{
+    client = LINK(_client);
+}
+
+CThrottleQueueItem::~CThrottleQueueItem()
+{
+    client->Release();
+}
+
+CThrottler::CThrottler(CRemoteFileServer &_owner, const char *_msg) : owner(_owner), msg(_msg)
 {
     totalThrottleDelay = 0;
-    if (limit) // if 0, throttling not used
-        sem.signal(limit);
+    limit = 0;
+    delay = 1000;
 }
 
 CThrottler::~CThrottler()
@@ -5030,34 +5013,122 @@ CThrottler::~CThrottler()
     }
 }
 
+void CThrottler::configure(unsigned _limit, unsigned _delay, unsigned _cpuThreshold)
+{
+    CriticalBlock b(crit);
+    int delta = 0;
+    if (_limit)
+    {
+        if (disabledLimit) // if transitioning from disabled to some throttling
+        {
+            assertex(0 == limit);
+            delta = _limit - disabledLimit; // + or -
+            disabledLimit = 0;
+        }
+        else
+            delta = _limit - limit; // + or -
+    }
+    else if (0 == disabledLimit)
+    {
+        PROGLOG("Throttler(%s): disabled, previous limit: %d", msg.get(), limit);
+        /* disabling - set limit immediately to let all new transaction through.
+         * NB: the semaphore signals are not consumed in this case, because transactions could be waiting on it.
+         * Instead the existing 'limit' is kept in 'disabledLimit', so that if/when throttling is
+         * re-enabled, it is used as a basis for increasing or consuming the semaphore signal count.
+         */
+        disabledLimit = limit;
+        limit = 0;
+    }
+    if (delta > 0)
+    {
+        PROGLOG("Throttler(%s): Increasing limit from %d to %d", msg.get(), limit, _limit);
+        throttlesem.signal(delta);
+        limit = _limit;
+        // NB: If throttling was off, this doesn't effect transactions in progress, i.e. will only throttle new transactions coming in.
+    }
+    else if (delta < 0)
+    {
+        PROGLOG("Throttler(%s): Reducing limit from %d to %d", msg.get(), limit, _limit);
+        // NB: This is not expected to take long
+        CCycleTimer timer;
+        while (delta < 0)
+        {
+            if (throttlesem.wait(1000))
+                ++delta;
+            else
+                PROGLOG("Throttler(%s): Waited %0.2f seconds so far for a total of %d transactions to complete, %d completed", msg.get(), ((double)timer.elapsedMs())/1000, limit, -delta);
+        }
+        limit = _limit;
+        // NB: doesn't include transactions in progress, i.e. will only throttle new transactions coming in.
+    }
+    PROGLOG("Throttler(%s): New delay=%d, previous: %d", msg.get(), _delay, delay);
+    PROGLOG("Throttler(%s): New cpuThreshold=%d, previous: %d", msg.get(), _cpuThreshold, cpuThreshold);
+    delay = _delay;
+    cpuThreshold = _cpuThreshold;
+}
+
+void CThrottler::take(RemoteFileCommandType cmd) // cmd for info. only
+{
+    loop
+    {
+        if (sem.wait(delay))
+            return;
+        PROGLOG("Throttler(%s): transaction delayed [cmd=%s]", msg.get(), RFCText(cmd));
+    }
+}
+
+void CThrottler::release()
+{
+    sem.signal()
+}
+
 void CThrottler::addCommand(RemoteFileCommandType cmd, CRemoteClientHandler *client)
 {
     CCycleTimer timer;
     Owned<IException> exception;
+    bool hadSem = true;
     if (!sem.wait(delay))
     {
         CriticalBlock b(crit);
         if (!sem.wait(0)) // check hasn't become available
         {
-            queue.enqueue(new CThrottleQueueItem(cmd, client));
-            PROGLOG("Throttler(%s): transaction delayed", msg.get());
-            return;
+            unsigned cpu = getLatestCPUUsage();
+            if (getLatestCPUUsage()<cpuThreshold)
+            {
+                /* Allow to proceed, despite hitting throttle limit because CPU < threshold
+                 * NB: The overall number of threads is still capped by the thread pool.
+                 */
+                PROGLOG("Throttler(%s): transaction delayed [cmd=%s], proceeding as cpu(%u)<throttleCPULimit(%u)", msg.get(), RFCText(cmd), cpu, cpuThreshold);
+                hadSem = false;
+                break;
+            }
+            else
+            {
+                queue.enqueue(new CThrottleQueueItem(cmd, client)); // NB: takes over ownership of 'client' from running thread
+                PROGLOG("Throttler(%s): transaction delayed [cmd=%s], queuing (%u queueud)", msg.get(), RFCText(cmd), queue.ordinality());
+                return;
+            }
         }
     }
+
+    /* Guarantee that sem is released.
+     * Should normally release on clean exit when queue is empty.
+     */
     struct ReleaseSem
     {
         Semaphore *sem;
-        ReleaseSem(Semaphore &_sem) { sem = &_sem; }
+        ReleaseSem(Semaphore *_sem) { sem = _sem; }
         ~ReleaseSem() { if (sem) sem->signal(); }
-    } releaseSem(sem);
-    unsigned ms = timer.elapsedMs();
+    } releaseSem(hadSem?&sem:NULL);
 
+    Linked<CRemoteClientHandler> currentClient = client;
+    unsigned ms = timer.elapsedMs();
     loop
     {
         if (ms >= 1000)
         {
             if (ms>delay)
-                PROGLOG("Throttle(%s): transaction delayed for : %d seconds", msg.get(), ms/1000);
+                PROGLOG("Throttle(%s): transaction delayed [cmd=%s] for : %d seconds", msg.get(), RFCText(cmd), ms/1000);
         }
         totalThrottleDelay += ms;
         if (totalThrottleDelay && (totalThrottleDelayTimer.elapsedCycles() >= (queryOneSecCycles() * TOTAL_THROTTLE_TIME_SECS)))
@@ -5071,39 +5142,42 @@ void CThrottler::addCommand(RemoteFileCommandType cmd, CRemoteClientHandler *cli
             dt.set(simple);
             StringBuffer dateStr;
             dt.getTimeString(dateStr, true);
-            PROGLOG("Throttler(%s): total delay of %0.2f seconds, since: %s", msg.get(), ((double)totalThrottleDelay)/1000, dateStr.str());
+            PROGLOG("Throttler(%s): total delay of %0.2f seconds [cmd=%s], since: %s", msg.get(), ((double)totalThrottleDelay)/1000, RFCText(cmd), dateStr.str());
 
             totalThrottleDelayTimer.reset();
             totalThrottleDelay = 0;
         }
 
-        client->processCommand(cmd, this);
+        currentClient->processCommand(cmd, this);
 
-        /* commands are only queued if semaphore is exhaused (checked inside crit)
-         * so only signal the semaphore inside the crit, after checking if there are no queued items
+        /* Whilst holding on this throttle slot (i.e. before signalling semaphore back), process
+         * queued items. NB: others that are finishing will do also.
          */
-        Owned<CThrottleQueueItem> item;
         {
             CriticalBlock b(crit);
-            item.setown(queue.dequeue());
+            Owned<CThrottleQueueItem> item = queue.dequeue();
             if (!item)
             {
                 releaseSem.sem = NULL;
-                sem.signal();
+                /* Commands are only queued if semaphore is exhaused (checked inside crit)
+                 * so only signal the semaphore inside the crit, after checking if there are no queued items
+                 */
+                if (hadSem)
+                    sem.signal();
                 break;
             }
+            cmd = item->cmd;
+            currentClient.setown(item->client.getClear());
+            ms = item->timer.elapsedMs();
         }
-        cmd = item->cmd;
-        client = item->client.getClear();
-        ms = item->timer.elapsedMs();
     }
 }
 
-IRemoteFileServer * createRemoteFileServer(unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit, unsigned throttleAbsoluteLimit)
+IRemoteFileServer * createRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs)
 {
 #if SIMULATE_PACKETLOSS
     errorSimulationOn = false;
 #endif
-    return new CRemoteFileServer(throttleLimit, throttleDelayMs, throttleCPULimit, throttleAbsoluteLimit);
+    return new CRemoteFileServer(maxThreads, maxThreadsDelayMs);
 }
 

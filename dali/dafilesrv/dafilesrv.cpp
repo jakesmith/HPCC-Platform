@@ -354,9 +354,14 @@ int main(int argc,char **argv)
     unsigned short  dafsPort;//DAFILESRV_PORT or SECURE_DAFILESRV_PORT
     querySecuritySettings(&useSSL, &dafsPort, &sslCertFile, NULL);
 
-    unsigned parallelRequestLimit = DEFAULT_PARALLELREQUESTLIMIT;
-    unsigned throttleDelayMs = DEFAULT_THROTTLEDELAYMS;
-    unsigned throttleCPULimit = DEFAULT_THROTTLECPULIMIT;
+    unsigned maxThreads = DEFAULT_THREADLIMIT;
+    unsigned maxThreadsDelayMs = DEFAULT_THREADLIMITDELAYMS;
+    unsigned parallelRequestLimit = DEFAULT_STDCMD_PARALLELREQUESTLIMIT;
+    unsigned throttleDelayMs = DEFAULT_STDCMD_THROTTLEDELAYMS;
+    unsigned throttleCPULimit = DEFAULT_STDCMD_THROTTLECPULIMIT;
+    unsigned parallelSlowRequestLimit = DEFAULT_SLOWCMD_PARALLELREQUESTLIMIT;
+    unsigned throttleSlowDelayMs = DEFAULT_SLOWCMD_THROTTLEDELAYMS;
+    unsigned throttleSlowCPULimit = DEFAULT_SLOWCMD_THROTTLECPULIMIT;
 
     Owned<IPropertyTree> env = getHPCCEnvironment();
     if (env)
@@ -368,9 +373,17 @@ int main(int argc,char **argv)
         if (daFileSrv)
         {
             // global DaFileSrv settings:
-            parallelRequestLimit = daFileSrv->getPropInt("@parallelRequestLimit", DEFAULT_PARALLELREQUESTLIMIT);
-            throttleDelayMs = daFileSrv->getPropInt("@throttleDelayMs", DEFAULT_THROTTLEDELAYMS);
-            throttleCPULimit = daFileSrv->getPropInt("@throttleCPULimit", DEFAULT_THROTTLECPULIMIT);
+
+            maxThreads = daFileSrv->getPropInt("@maxThreads", DEFAULT_THREADLIMIT);
+            maxThreadsDelayMs = daFileSrv->getPropInt("@maxThreadsDelayMs", DEFAULT_THREADLIMITDELAYMS);
+
+            parallelRequestLimit = daFileSrv->getPropInt("@parallelRequestLimit", DEFAULT_STDCMD_PARALLELREQUESTLIMIT);
+            throttleDelayMs = daFileSrv->getPropInt("@throttleDelayMs", DEFAULT_STDCMD_THROTTLEDELAYMS);
+            throttleCPULimit = daFileSrv->getPropInt("@throttleCPULimit", DEFAULT_STDCMD_THROTTLECPULIMIT);
+
+            parallelSlowRequestLimit = daFileSrv->getPropInt("@parallelSlowRequestLimit", DEFAULT_SLOWCMD_PARALLELREQUESTLIMIT);
+            throttleSlowDelayMs = daFileSrv->getPropInt("@throttleSlowDelayMs", DEFAULT_SLOWCMD_THROTTLEDELAYMS);
+            throttleSlowCPULimit = daFileSrv->getPropInt("@throttleSlowCPULimit", DEFAULT_SLOWCMD_THROTTLECPULIMIT);
 
             // any overrides by Instance definitions?
             // NB: This won't work if netAddress is "." or if we start supporting hostnames there
@@ -380,9 +393,16 @@ int main(int argc,char **argv)
             IPropertyTree *dafileSrvInstance = daFileSrv->queryPropTree(daFileSrvPath);
             if (dafileSrvInstance)
             {
+                maxThreads = dafileSrvInstance->getPropInt("@maxThreads", maxThreads);
+                maxThreadsDelayMs = dafileSrvInstance->getPropInt("@maxThreadsDelayMs", maxThreadsDelayMs);
+
                 parallelRequestLimit = dafileSrvInstance->getPropInt("@parallelRequestLimit", parallelRequestLimit);
                 throttleDelayMs = dafileSrvInstance->getPropInt("@throttleDelayMs", throttleDelayMs);
                 throttleCPULimit = dafileSrvInstance->getPropInt("@throttleCPULimit", throttleCPULimit);
+
+                parallelSlowRequestLimit = dafileSrvInstance->getPropInt("@parallelSlowRequestLimit", parallelSlowRequestLimit);
+                throttleSlowDelayMs = dafileSrvInstance->getPropInt("@throttleSlowDelayMs", throttleSlowDelayMs);
+                throttleSlowCPULimit = dafileSrvInstance->getPropInt("@throttleSlowCPULimit", throttleSlowCPULimit);
             }
         }
     }
@@ -581,7 +601,9 @@ int main(int argc,char **argv)
                 PROGLOG("Version: %s", verstring);
                 PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
                 PROGLOG(DAFS_SERVICE_DISPLAY_NAME " Running");
-                server.setown(createRemoteFileServer(parallelRequestLimit, throttleDelayMs, throttleCPULimit));
+                server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs));
+                server->setThrottle(ThrottleStd, parallelRequestLimit, throttleDelayMs, throttleCPULimit);
+                server->setThrottle(ThrottleSlow, parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit);
                 try {
                     server->run(listenep, useSSL);
                 }
@@ -621,7 +643,9 @@ int main(int argc,char **argv)
     PROGLOG("Version: %s", verstring);
     PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
     startPerformanceMonitor(10*60*1000, PerfMonStandard);
-    server.setown(createRemoteFileServer(parallelRequestLimit, throttleDelayMs, throttleCPULimit));
+    server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs));
+    server->setThrottle(ThrottleStd, parallelRequestLimit, throttleDelayMs, throttleCPULimit);
+    server->setThrottle(ThrottleSlow, parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit);
     writeSentinelFile(sentinelFile);
     try {
         server->run(listenep, useSSL);

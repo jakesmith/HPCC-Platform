@@ -205,7 +205,6 @@ public:
 interface IThreadFactory: extends IInterface                // factory for creating new pooled instances (called when pool empty)
 {
        virtual IPooledThread *createNew()=0;
-       virtual bool exceedLimit() { return true; }
 };
 
 typedef IIteratorOf<IPooledThread> IPooledThreadIterator;
@@ -237,8 +236,7 @@ extern jlib_decl IThreadPool *createThreadPool(
                                 unsigned delay=1000,        // maximum delay on each block
                                 unsigned stacksize=0,       // stack size (bytes) 0 is default
                                 unsigned timeoutOnRelease=INFINITE, // maximum time waited for thread to terminate on releasing pool
-                                unsigned targetpoolsize=0,          // target maximum size of pool (default same as defaultmax)
-                                unsigned absoluteMax=0      // absolute maximum number of threads (default is unlimited)
+                                unsigned targetpoolsize=0          // target maximum size of pool (default same as defaultmax)
                              );
 
 extern jlib_decl StringBuffer &getThreadList(StringBuffer &str);
