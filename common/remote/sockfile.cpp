@@ -2907,16 +2907,18 @@ static unsigned ClientCount = 0;
 static unsigned MaxClientCount = 0;
 static CriticalSection ClientCountSect;
 
-#define TOTAL_THROTTLE_TIME_SECS 60 // log total throttled delay period
+#define DEFAULT_THROTTLOG_LOG_INTERVAL_SECS 60 // log total throttled delay period
 
 
 class CRemoteFileServer : public CInterface, implements IRemoteFileServer, implements IThreadFactory
 {
     class CThrottler;
-    struct CRemoteClientHandler: public CInterface, implements ISocketSelectNotify
+    class CRemoteClientHandler : public CInterface, implements ISocketSelectNotify
     {
+    public:
         CRemoteFileServer *parent;
         Owned<ISocket> socket;
+        StringAttr peerName;
         Owned<IAuthenticatedUser> user;
         MemoryBuffer buf;
         bool selecthandled;
@@ -2942,8 +2944,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             if (TF_TRACE_CLIENT_CONN) {
                 StringBuffer s;
                 s.appendf("Connecting(%x) [%d,%d] to ",(unsigned)(long)this,ClientCount,MaxClientCount);
-                peerName(s);
-                PROGLOG("%s",s.str());
+                PROGLOG("%s",queryPeerName());
             }
             parent = _parent;
             left = 0;
@@ -3162,26 +3163,38 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             atomic_set(&globallasttick,lasttick);
         }
 
-        bool peerName(StringBuffer &buf)
+        const char *queryPeerName()
         {
-            if (socket) {
+            if (socket)
+            {
+                StringBuffer buf;
                 char name[256];
                 name[0] = 0;
                 int port = socket->peer_name(name,sizeof(name)-1);
-                if (port>=0) {
+                if (port>=0)
+                {
                     buf.append(name);
                     if (port)
                         buf.append(':').append(port);
-                    return true;
+                    peerName.set(buf);
+                    return peerName;
                 }
             }
-            return false;
+            return NULL;
         }
 
         bool getInfo(StringBuffer &str)
         {
             str.append("client(");
-            bool ok = peerName(str);
+            const char *name = queryPeerName();
+            bool ok;
+            if (name)
+            {
+                ok = true;
+                str.append(name);
+            }
+            else
+                ok = false;
             unsigned ms = msTick();
             str.appendf("): last touch %d ms ago (%d, %d)",ms-lasttick,lasttick,ms);
             ForEachItemIn(i,handles) {
@@ -3190,7 +3203,6 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             }
             return ok;
         }
-
     };
 
     class CThrottleQueueItem : public CSimpleInterface
@@ -3210,19 +3222,22 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         Semaphore sem;
         CriticalSection crit;
         StringAttr msg;
-        unsigned limit, delay, cpuThreshold;
+        unsigned limit, delayMs, cpuThreshold;
         unsigned disabledLimit;
         unsigned __int64 totalThrottleDelay;
         CCycleTimer totalThrottleDelayTimer;
         QueueOf<CThrottleQueueItem, false> queue;
+        unsigned statsIntervalSecs;
+
     public:
         CThrottler(CRemoteFileServer &_owner, const char *_msg) : owner(_owner), msg(_msg)
         {
             totalThrottleDelay = 0;
             limit = 0;
-            delay = DEFAULT_STDCMD_THROTTLEDELAYMS;
+            delayMs = DEFAULT_STDCMD_THROTTLEDELAYMS;
             cpuThreshold = DEFAULT_STDCMD_THROTTLECPULIMIT;
             disabledLimit = 0;
+            statsIntervalSecs = DEFAULT_STDCMD_THROTTLECPULIMIT;
         }
         ~CThrottler()
         {
@@ -3233,7 +3248,29 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                     break;
             }
         }
-        void configure(unsigned _limit, unsigned _delay, unsigned _cpuThreshold)
+        StringBuffer &getInfoSummary(StringBuffer &info)
+        {
+            info.appendf("Thottler(%s) - limit=%u, delayMs=%u, cpuThreshold=%u", msg.get(), limit, delayMs, cpuThreshold).newline();
+            unsigned elapsedSecs = totalThrottleDelayTimer.elapsedMs()/1000;
+            time_t simple;
+            time(&simple);
+            simple -= elapsedSecs;
+
+            CDateTime dt;
+            dt.set(simple);
+            StringBuffer dateStr;
+            dt.getTimeString(dateStr, true);
+            info.appendf("Throttler(%s): statistics since %s", msg.get(), dateStr.str()).newline();
+            info.appendf("Total delay of %0.2f seconds", ((double)totalThrottleDelay)/1000).newline();
+            info.appendf("Requests currently queued: %u", queue.ordinality()).newline();
+            return info;
+        }
+        void getInfo(StringBuffer &info)
+        {
+            CriticalBlock b(crit);
+            getInfoSummary(info).newline();
+        }
+        void configure(unsigned _limit, unsigned _delayMs, unsigned _cpuThreshold)
         {
             CriticalBlock b(crit);
             int delta = 0;
@@ -3281,22 +3318,30 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                 limit = _limit;
                 // NB: doesn't include transactions in progress, i.e. will only throttle new transactions coming in.
             }
-            if (_delay != delay)
+            if (_delayMs != delayMs)
             {
-                PROGLOG("Throttler(%s): New delay=%d, previous: %d", msg.get(), _delay, delay);
-                delay = _delay;
+                PROGLOG("Throttler(%s): New delayMs=%u, previous: %u", msg.get(), _delayMs, delayMs);
+                delayMs = _delayMs;
             }
             if (_cpuThreshold != cpuThreshold)
             {
-                PROGLOG("Throttler(%s): New cpuThreshold=%d, previous: %d", msg.get(), _cpuThreshold, cpuThreshold);
+                PROGLOG("Throttler(%s): New cpuThreshold=%u, previous: %u", msg.get(), _cpuThreshold, cpuThreshold);
                 cpuThreshold = _cpuThreshold;
+            }
+        }
+        void setStatsInterval(unsigned _statsIntervalSecs)
+        {
+            if (_statsIntervalSecs != statsIntervalSecs)
+            {
+                PROGLOG("Throttler(%s): New statsIntervalSecs=%u, previous: %u", msg.get(), _statsIntervalSecs, statsIntervalSecs);
+                statsIntervalSecs = _statsIntervalSecs;
             }
         }
         void take(RemoteFileCommandType cmd) // cmd for info. only
         {
             loop
             {
-                if (sem.wait(delay))
+                if (sem.wait(delayMs))
                     return;
                 PROGLOG("Throttler(%s): transaction delayed [cmd=%s]", msg.get(), getRFCText(cmd));
             }
@@ -3305,12 +3350,23 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         {
             sem.signal();
         }
+        StringBuffer &getStats(StringBuffer &stats, bool reset)
+        {
+            CriticalBlock b(crit);
+            getInfoSummary(stats);
+            if (reset)
+            {
+                totalThrottleDelayTimer.reset();
+                totalThrottleDelay = 0;
+            }
+            return stats;
+        }
         void addCommand(RemoteFileCommandType cmd, CRemoteClientHandler *client)
         {
             CCycleTimer timer;
             Owned<IException> exception;
             bool hadSem = true;
-            if (!sem.wait(delay))
+            if (!sem.wait(delayMs))
             {
                 CriticalBlock b(crit);
                 if (!sem.wait(0)) // check hasn't become available
@@ -3349,27 +3405,12 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             {
                 if (ms >= 1000)
                 {
-                    if (ms>delay)
+                    if (ms>delayMs)
                         PROGLOG("Throttle(%s): transaction delayed [cmd=%s] for : %d seconds", msg.get(), getRFCText(cmd), ms/1000);
                 }
-                totalThrottleDelay += ms;
-                if (totalThrottleDelay && (totalThrottleDelayTimer.elapsedCycles() >= (queryOneSecCycles() * TOTAL_THROTTLE_TIME_SECS)))
                 {
-                    unsigned elapsedSecs = totalThrottleDelayTimer.elapsedMs()/1000;
-                    time_t simple;
-                    time(&simple);
-                    simple -= elapsedSecs;
-
-                    CDateTime dt;
-                    dt.set(simple);
-                    StringBuffer dateStr;
-                    dt.getTimeString(dateStr, true);
-                    {
-                        CriticalBlock b(crit); // protect queue
-                        PROGLOG("Throttler(%s): total delay of %0.2f seconds [cmd=%s], since: %s - %u requests currently queued", msg.get(), ((double)totalThrottleDelay)/1000, getRFCText(cmd), dateStr.str(), queue.ordinality());
-                    }
-                    totalThrottleDelayTimer.reset();
-                    totalThrottleDelay = 0;
+                    CriticalBlock b(crit);
+                    totalThrottleDelay += ms;
                 }
 
                 currentClient->processCommand(cmd, this);
@@ -3382,12 +3423,14 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                     Owned<CThrottleQueueItem> item = queue.dequeue();
                     if (!item)
                     {
-                        releaseSem.sem = NULL;
                         /* Commands are only queued if semaphore is exhaused (checked inside crit)
                          * so only signal the semaphore inside the crit, after checking if there are no queued items
                          */
                         if (hadSem)
+                        {
+                            releaseSem.sem = NULL;
                             sem.signal();
+                        }
                         break;
                     }
                     cmd = item->cmd;
@@ -3425,6 +3468,8 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
     unsigned closedclients;
     CAsyncCommandManager asyncCommandManager;
     CThrottler stdCmdThrottler, slowCmdThrottler;
+    atomic_t cmdStats[RFCmax-1];
+    AtomRefTable clientCounts;
     atomic_t globallasttick;
 
     int getNextHandle()
@@ -3563,6 +3608,8 @@ public:
         clientcounttick = msTick();
         closedclients = 0;
         atomic_set(&globallasttick,msTick());
+        for (unsigned c=0; c<RFCmax; c++)
+            atomic_set(&cmdStats[c], 0);
     }
 
     ~CRemoteFileServer()
@@ -3613,8 +3660,7 @@ public:
             return;
         CriticalBlock block(sect);
 #ifdef _DEBUG
-        StringBuffer s;
-        client->peerName(s);
+        StringBuffer s(client->queryPeerName());
         PROGLOG("onCloseSocket(%d) %s",which,s.str());
 #endif
         if (client->socket) {
@@ -4636,10 +4682,11 @@ public:
     bool cmdUnlock(MemoryBuffer & msg, MemoryBuffer & reply,CRemoteClientHandler &client)
     {
         // this is an attempt to authenticate when we haven't got authentication turned on
-        StringBuffer s;
-        client.peerName(s);
         if (TF_TRACE_CLIENT_STATS)
+        {
+            StringBuffer s(client.queryPeerName());
             PROGLOG("Connect from %s",s.str());
+        }
         throwErr2(RFSERR_InvalidCommand,(unsigned)RFCunlock);
         return false;
     }
@@ -4648,13 +4695,13 @@ public:
     {
         try
         {
-            unsigned throttleClass, limit, delay, cpuThreshold;
+            unsigned throttleClass, limit, delayMs, cpuThreshold;
             msg.read(throttleClass);
             msg.read(limit);
-            msg.read(delay);
+            msg.read(delayMs);
             msg.read(cpuThreshold);
 
-            setThrottle((ThrottleClass)throttleClass, limit, delay, cpuThreshold);
+            setThrottle((ThrottleClass)throttleClass, limit, delayMs, cpuThreshold);
 
             reply.append((unsigned)RFEnoerror);
             return true;
@@ -4679,8 +4726,12 @@ public:
             reply.read(z).read(e);
             StringBuffer err("ERR(");
             err.append(e).append(") ");
-            if (client&&(client->peerName(err)))
-                err.append(" : ");
+            if (client)
+            {
+                const char *peer = client->queryPeerName();
+                if (peer)
+                    err.append(peer).append(" : ");
+            }
             if (e&&(reply.getPos()<reply.length()))
             {
                 StringAttr es;
@@ -4747,6 +4798,8 @@ public:
 
     bool processCommand(RemoteFileCommandType cmd, MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler *client, CThrottler *throttler)
     {
+        atomic_inc(&cmdStats[cmd]);
+        clientCounts.linkKey(client->queryPeerName()); // NB AtomRefTable is thread safe
         bool ret = true;
         switch(cmd)
         {
@@ -5107,18 +5160,73 @@ public:
         }
     }
 
-    int getInfo(StringBuffer &str)
+    static int compareHashKeyElement(void* const *ll, void* const *rr)
+    {
+        const HashKeyElement *l = (const HashKeyElement *) *ll;
+        const HashKeyElement *r = (const HashKeyElement *) *rr;
+        unsigned lc = l->queryReferences();
+        unsigned rc = r->queryReferences();
+        if (lc == rc)
+            return 0;
+        else if (lc<rc)
+            return 1;
+        else
+            return -1;
+    }
+
+    int getInfo(StringBuffer &info)
     {
         {
             CriticalBlock block(ClientCountSect);
-            str.append(VERSTRING).append('\n');
-            str.appendf("Client count = %d\n",ClientCount);
-            str.appendf("Max client count = %d",MaxClientCount);
+            info.append(VERSTRING).append('\n');
+            info.appendf("Client count = %d\n",ClientCount);
+            info.appendf("Max client count = %d",MaxClientCount);
         }
         CriticalBlock block(sect);
-        ForEachItemIn(i,clients) {
-            str.append('\n').append(i).append(": ");
-            clients.item(i).getInfo(str);
+        ForEachItemIn(i,clients)
+        {
+            info.newline().append(i).append(": ");
+            clients.item(i).getInfo(info);
+        }
+        info.newline().appendf("Running threads: %u", threadRunningCount());
+        info.newline();
+        stdCmdThrottler.getInfo(info);
+        info.newline();
+        slowCmdThrottler.getInfo(info);
+
+        unsigned __int64 totalCmds = 0;
+        for (unsigned c=0; c<RFCmax; c++)
+            totalCmds += atomic_read(&cmdStats[c]);
+        unsigned totalClients = clientCounts.ordinality();
+        info.appendf("Commands processed = %" I64F "u, unique clients = %u", totalCmds, totalClients);
+        if (totalCmds)
+        {
+            info.append("Command stats:").newline();
+            for (unsigned c=0; c<RFCmax; c++)
+            {
+                unsigned count = atomic_read(&cmdStats[c]);
+                if (count)
+                    info.append(getRFCText(c)).append(": ").append(count).newline();
+            }
+        }
+        if (totalClients)
+        {
+            PointerArrayOf<HashKeyElement> elements;
+            SuperHashIteratorOf<HashKeyElement> iter(clientCounts);
+            ForEach(iter)
+            {
+                HashKeyElement &elem = iter.query();
+                elements.append(&elem);
+            }
+            elements.sort(&compareHashKeyElement);
+            unsigned max=elements.ordinality();
+            if (max>10) max = 10;
+            info.append("Top 10 clients:").newline();
+            for (unsigned e=0; e<max; e++)
+            {
+                const HashKeyElement &element = *elements.item(e);
+                info.appendf("Client %s - %u requests handled", element.get(), element.queryReferences()).newline();
+            }
         }
         return 0;
     }
@@ -5159,6 +5267,20 @@ public:
                 throw MakeStringException(0, "Unknown throttle class: %u, available classes are: %s", (unsigned)throttleClass, availableClasses.str());
             }
         }
+    }
+
+    StringBuffer &getStats(StringBuffer &stats, bool reset)
+    {
+        CriticalBlock block(sect);
+        stdCmdThrottler.getStats(stats, reset).newline();
+        slowCmdThrottler.getStats(stats, reset);
+        if (reset)
+        {
+            for (unsigned c=0; c<RFCmax; c++)
+                atomic_set(&cmdStats[c], 0);
+            clientCounts.kill();
+        }
+        return stats;
     }
 };
 

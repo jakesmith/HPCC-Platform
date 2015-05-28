@@ -54,6 +54,7 @@ interface IRemoteFileServer : extends IInterface
     virtual void stop() = 0;
     virtual unsigned idleTime() = 0; // in ms
     virtual void setThrottle(ThrottleClass throttleClass, unsigned limit, unsigned delayMs=DEFAULT_STDCMD_THROTTLEDELAYMS, unsigned cpuThreshold=DEFAULT_STDCMD_THROTTLECPULIMIT) = 0;
+    virtual StringBuffer &getStats(StringBuffer &stats, bool reset) = 0;
 };
 
 #define FILESRV_VERSION 18 // don't forget VERSTRING in sockfile.cpp

@@ -642,18 +642,37 @@ int main(int argc,char **argv)
     PROGLOG("Opening Dali File Server on %s%s", useSSL?"SECURE ":"",eps.str());
     PROGLOG("Version: %s", verstring);
     PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
-    startPerformanceMonitor(10*60*1000, PerfMonStandard);
     server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs));
     server->setThrottle(ThrottleStd, parallelRequestLimit, throttleDelayMs, throttleCPULimit);
     server->setThrottle(ThrottleSlow, parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit);
+    class CPerfHook : public CSimpleInterfaceOf<IPerfMonHook>
+    {
+    public:
+        virtual void processPerfStats(unsigned processorUsage, unsigned memoryUsage, unsigned memoryTotal, unsigned __int64 fistDiskUsage, unsigned __int64 firstDiskTotal, unsigned __int64 secondDiskUsage, unsigned __int64 secondDiskTotal, unsigned threadCount)
+        {
+        }
+        virtual StringBuffer &extraLogging(StringBuffer &extra)
+        {
+            return server->getStats(extra, true);
+        }
+        virtual void log(int level, const char *msg)
+        {
+            PROGLOG("%s", msg);
+        }
+    } perfHook;
+//    startPerformanceMonitor(10*60*1000, PerfMonStandard, &perfHook);
+    startPerformanceMonitor(1*60*1000, PerfMonStandard, &perfHook);
     writeSentinelFile(sentinelFile);
-    try {
+    try
+    {
         server->run(listenep, useSSL);
     }
-    catch (IException *e) {
+    catch (IException *e)
+    {
         EXCLOG(e,"DAFILESRV");
         e->Release();
     }
+    stopPerformanceMonitor();
     if (server)
         server->stop();
     server.clear();

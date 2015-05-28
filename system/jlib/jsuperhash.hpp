@@ -452,14 +452,14 @@ public:
 class jlib_decl HashKeyElement
 {
 public:
-    const char *get() { return (const char *)keyPtr(); }
-    unsigned length() { return (size32_t)strlen((const char *)keyPtr()); }
+    const char *get() const { return keyPtr(); }
+    unsigned length() const { return (size32_t)strlen((const char *)keyPtr()); }
     unsigned queryHash() const { return hashValue; }
-    operator const char * () { return (NULL==this)?NULL:keyPtr(); }
-    unsigned queryReferences() { return linkCount+1; } // 1 implicit
+    operator const char * () const { return (NULL==this)?NULL:keyPtr(); }
+    unsigned queryReferences() const { return linkCount+1; } // 1 implicit
 
-private:        
-    const char *keyPtr() { return ((const char *)this)+sizeof(*this); }
+private:
+    const char *keyPtr() const { return ((const char *)this)+sizeof(*this); }
 
     unsigned hashValue;
     unsigned linkCount;

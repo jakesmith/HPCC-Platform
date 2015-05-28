@@ -411,7 +411,7 @@ int main(int argc, char* argv[])
                             SocketEndpoint ep = eps.item(ni);
                             StringBuffer epStr;
                             ep.getUrlStr(epStr);
-                            VStringBuffer result("Info for %s", epStr.str());
+                            VStringBuffer result("Info for %s: ", epStr.str());
                             int ret = getDafileSvrInfo(ep, result);
                             if (ret!=0)
                                 ERRLOG("getDafileSvrInfo for %s returned %d", epStr.str(), ret);

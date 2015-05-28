@@ -2983,7 +2983,7 @@ int main(int argc, char* argv[])
         for (unsigned t=0; t<numThreads; t++)
         {
             PoolInitInfo *initInfo = new PoolInitInfo;
-            initInfo->fname.appendf("//10.239.222.21/var/lib/HPCCSystems/hpcc-data/tmp%s_%d", GetCachedHostName(), t);
+            initInfo->fname.appendf("//%s/var/lib/HPCCSystems/hpcc-data/tmp%s_%d", dafilesrvip, GetCachedHostName(), t);
             initInfo->fiMax = fiMax;
             threadPool->start(initInfo);
         }
