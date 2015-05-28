@@ -393,18 +393,19 @@ int main(int argc, char* argv[])
                     usage();
                 else {
                     SocketEndpointArray eps;
+                    StringBuffer errMsg;
                     if (!isdali||!getCluster(argv[ai+1],eps)) {
                         SocketEndpoint ep(argv[ai+1]);
-                        int ret = setDafileSvrThrottleLimit(ep, atoi(argv[ai+2], atoi(argv[ai+3]), atoi(argv[ai+4]), atoi(argv[ai+5]));
+                        int ret = setDafileSvrThrottleLimit(ep, (ThrottleClass)atoi(argv[ai+2]), atoi(argv[ai+3]), atoi(argv[ai+4]), atoi(argv[ai+5]), &errMsg);
                         if (ret!=0)
-                            ERRLOG("setDafileSvrThrottleLimit returned %d", ret);
+                            ERRLOG("setDafileSvrThrottleLimit returned %d, error = %s", ret, errMsg.str());
                     }
                     else {
                         ForEachItemIn(ni,eps) {
                             SocketEndpoint ep = eps.item(ni);
-                            int ret = setDafileSvrThrottleLimit(ep, atoi(argv[ai+2], atoi(argv[ai+3]), atoi(argv[ai+4]), atoi(argv[ai+5]));
+                            int ret = setDafileSvrThrottleLimit(ep, (ThrottleClass)atoi(argv[ai+2]), atoi(argv[ai+3]), atoi(argv[ai+4]), atoi(argv[ai+5]), &errMsg.clear());
                             if (ret!=0)
-                                ERRLOG("setDafileSvrThrottleLimit returned %d", ret);
+                                ERRLOG("setDafileSvrThrottleLimit returned %d, error = %s", ret, errMsg.str());
                             StringBuffer s("done ");
                             ep.getUrlStr(s);
                             PROGLOG("%s",s.str());

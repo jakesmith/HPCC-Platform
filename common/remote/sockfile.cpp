@@ -314,6 +314,16 @@ enum {
     RFCmax,
 };
 
+#define RFCText(cmd) "cmd##_Text"
+
+const char *RFCStrings[] =
+{
+    RFCText(RFCopenIO),
+    RFCText(RFCcloseIO),
+};
+static const char *getRFCText(RemoteFileCommandType cmd) { return RFCStrings[cmd]; }
+
+/*
 #define RFCopenIO_Text "RFCopenIO"
 #define RFCcloseIO_Text "RFCcloseIO"
 #define RFCread_Text "RFCread"
@@ -352,14 +362,18 @@ enum {
 #define RFCtreecopy_Text "RFCtreecopy"
 #define RFCtreecopytmp_Text "RFCtreecopytmp"
 #define RFCsetthrottle_Text "RFCsetthrottle"
-
-#define RFCText(cmd) cmd##_Text
+*/
 
 #define ThrottleStd_Text "ThrottleStd"
 #define ThrottleSlow_Text "ThrottleSlow"
 
 #define ThrottleText(throttleClass) throttleClass##_Text
-
+const char *ThrottleStrings[] =
+{
+    ThrottleText(ThrottleStd),
+    ThrottleText(ThrottleSlow)
+};
+static const char *getThrottleClassText(ThrottleClass throttleClass) { return ThrottleStrings[throttleClass]; }
 
 typedef enum { ACScontinue, ACSdone, ACSerror} AsyncCommandStatus;
 
@@ -384,53 +398,6 @@ static void mergeOnce(OnceKey &key,size32_t sz,const void *data)
 }
 
 //---------------------------------------------------------------------------
-
-class CRemoteClientHandler;
-class CThrottleQueueItem : public CSimpleInterface
-{
-    RemoteFileCommandType cmd;
-    CRemoteClientHandler *client;
-    CCycleTimer timer;
-public:
-    CThrottleQueueItem(RemoteFileCommandType _cmd, CRemoteClientHandler *_client);
-    ~CThrottleQueueItem();
-};
-
-class CRemoteFileServer;
-class CThrottler
-{
-    CRemoteFileServer &owner;
-    Semaphore sem;
-    CriticalSection crit;
-    StringAttr msg;
-    unsigned limit, delay, cpuThreshold;
-    bool disabledLimit;
-    unsigned __int64 totalThrottleDelay;
-    CCycleTimer totalThrottleDelayTimer;
-    QueueOf<CThrottleQueueItem, false> queue;
-public:
-    CThrottler(CRemoteFileServer &_owner, const char *_msg);
-    ~CThrottler();
-    void configure(unsigned _limit, unsigned _delay, unsigned _cpuThreshold);
-    void addCommand(RemoteFileCommandType cmd, CRemoteClientHandler *client);
-    void take();
-    void release();
-};
-
-// temporarily release a throttler slot
-class CThrottleReleaseBlock
-{
-    CThrottler &throttler;
-public:
-    CThrottleReleaseBlock(CThrottler &_throttler) : throttler(_throttler)
-    {
-        throttler.release();
-    }
-    ~CThrottleReleaseBlock()
-    {
-        throttler.take();
-    }
-};
 
 //---------------------------------------------------------------------------
 
@@ -876,148 +843,6 @@ static Semaphore                 treeCopySem;
 
 #define DEBUGSAMEIP false
 
-static void treeCopyFile(RemoteFilename &srcfn, RemoteFilename &dstfn, const char *net, const char *mask, IpAddress &ip, bool usetmp, CThrottler *throttler, CFflags copyFlags=CFnone)
-{
-    unsigned start = msTick();
-    Owned<IFile> dstfile = createIFile(dstfn);
-    // the following is really to check the dest node is up and working (otherwise not much point in continuing!)
-    if (dstfile->exists())
-        PROGLOG("TREECOPY overwriting '%s'",dstfile->queryFilename());
-    Owned<IFile> srcfile = createIFile(srcfn);
-    unsigned lastmin = 0;
-    if (!srcfn.queryIP().ipequals(dstfn.queryIP())) {
-        CriticalBlock block(treeCopyCrit);
-        loop {
-            CDateTime dt;
-            offset_t sz;
-            try {
-                sz = srcfile->size();
-                if (sz==(offset_t)-1) {
-                    if (TF_TRACE_TREE_COPY)
-                        PROGLOG("TREECOPY source not found '%s'",srcfile->queryFilename());
-                    break;
-                }
-                srcfile->getTime(NULL,&dt,NULL);
-            }
-            catch (IException *e) {
-                EXCLOG(e,"treeCopyFile(1)");
-                e->Release();
-                break;
-            }
-            Linked<CTreeCopyItem> tc;
-            unsigned now = msTick();
-            ForEachItemInRev(i1,treeCopyArray) {
-                CTreeCopyItem &item = treeCopyArray.item(i1);
-                // prune old entries (not strictly needed buf I think better)
-                if (now-item.lastused>TREECOPYPRUNETIME) 
-                    treeCopyArray.remove(i1);
-                else if (!tc.get()&&item.equals(srcfn,net,mask,sz,dt)) {
-                    tc.set(&item);
-                    item.lastused = now;
-                }
-            }
-            if (!tc.get()) {
-                if (treeCopyArray.ordinality()>=TREECOPY_CACHE_SIZE)
-                    treeCopyArray.remove(0);
-                tc.setown(new CTreeCopyItem(srcfn,net,mask,sz,dt));
-                treeCopyArray.append(*tc.getLink());
-            }
-            ForEachItemInRev(cand,tc->loc) { // rev to choose copied locations first (maybe optional?)
-                if (!tc->busy->testSet(cand)) {
-                    // check file accessible and matches
-                    if (!cand&&dstfn.equals(tc->loc.item(cand)))  // hmm trying to overwrite existing, better humor
-                        continue;
-                    bool ok = true;
-                    Owned<IFile> rmtfile = createIFile(tc->loc.item(cand));
-                    if (cand) { // only need to check if remote
-                        try {
-                            if (rmtfile->size()!=sz)
-                                ok = false;
-                            else {
-                                CDateTime fdt;
-                                rmtfile->getTime(NULL,&fdt,NULL);
-                                ok = fdt.equals(dt);
-                            }
-                        }
-                        catch (IException *e) {
-                            EXCLOG(e,"treeCopyFile(2)");
-                            e->Release();
-                            ok = false;
-                        }
-                    }
-                    if (ok) { // if not ok leave 'busy'
-                        // finally lets try and copy!
-                        try {
-                            if (TF_TRACE_TREE_COPY)
-                                PROGLOG("TREECOPY(started) %s to %s",rmtfile->queryFilename(),dstfile->queryFilename());
-                            {
-                                CriticalUnblock unblock(treeCopyCrit); // note we have tc linked
-                                rmtfile->copyTo(dstfile,DEFAULT_COPY_BLKSIZE,NULL,usetmp,copyFlags);
-                            }
-                            if (TF_TRACE_TREE_COPY)
-                                PROGLOG("TREECOPY(done) %s to %s",rmtfile->queryFilename(),dstfile->queryFilename());
-                            tc->busy->set(cand,false); 
-                            if (treeCopyWaiting)
-                                treeCopySem.signal((treeCopyWaiting>1)?2:1); 
-                            // add to known locations
-                            tc->busy->set(tc->loc.ordinality(),false); // prob already is clear
-                            tc->loc.append(dstfn);
-                            ip.ipset(tc->loc.item(cand).queryIP());
-                            return;
-                        }
-                        catch (IException *e) {
-                            if (cand==0) {
-                                tc->busy->set(0,false); // don't leave busy 
-                                if (treeCopyWaiting)
-                                    treeCopySem.signal();
-                                throw;      // what more can we do!
-                            }
-                            EXCLOG(e,"treeCopyFile(3)");
-                            e->Release();
-                        }
-                    }
-                }
-            }
-            // all locations busy
-            if (msTick()-start>TREECOPYTIMEOUT) {
-                WARNLOG("Treecopy %s wait timed out", srcfile->queryFilename());
-                break;
-            }
-            treeCopyWaiting++; // note this isn't precise - just indication
-            {
-                CriticalUnblock unblock(treeCopyCrit);
-                if (throttler)
-                {
-                    CThrottleReleaseBlock block(*throttler);
-                    treeCopySem.wait(TREECOPYPOLLTIME);
-                }
-                else
-                    treeCopySem.wait(TREECOPYPOLLTIME);
-            }
-            treeCopyWaiting--;
-            if ((msTick()-start)/10*1000!=lastmin) {
-                lastmin = (msTick()-start)/10*1000;
-                PROGLOG("treeCopyFile delayed: %s to %s",srcfile->queryFilename(),dstfile->queryFilename());
-            }
-        }
-    }
-    else if (TF_TRACE_TREE_COPY)
-        PROGLOG("TREECOPY source on same node as destination");
-    if (TF_TRACE_TREE_COPY)
-        PROGLOG("TREECOPY(started,fallback) %s to %s",srcfile->queryFilename(),dstfile->queryFilename());
-    try {
-        GetHostIp(ip);
-        srcfile->copyTo(dstfile,DEFAULT_COPY_BLKSIZE,NULL,usetmp,copyFlags);
-    }
-    catch (IException *e) {
-        EXCLOG(e,"TREECOPY(done,fallback)");
-        throw;
-    }
-    if (TF_TRACE_TREE_COPY)
-        PROGLOG("TREECOPY(done,fallback) %s to %s",srcfile->queryFilename(),dstfile->queryFilename());
-}
-
-
 
 //---------------------------------------------------------------------------
 
@@ -1072,7 +897,7 @@ class CRemoteBase: public CInterface
                         throw createDafsException(DAFSERR_connection_failed,"Failure to establish secure connection");
                     socket.setown(ssock.getLink());
                 }
-            } 
+            }
             catch (IJSOCK_Exception *e) {
                 ok = false;
                 if (!retries||(tm.timemon&&tm.timemon->timedout())) {
@@ -1103,14 +928,14 @@ class CRemoteBase: public CInterface
                         StringBuffer err;
                         WARNLOG("Remote file authenticate %s for %s ",e->errorMessage(err).str(),ep.getUrlStr(eps.clear()).str());
                         e->Release();
-                        if (!retries) 
+                        if (!retries)
                             break;
                     }
                 }
                 else
                     break;
             }
-            unsigned sleeptime = getRandom()%3000+1000;     
+            unsigned sleeptime = getRandom()%3000+1000;
             if (tm.timemon) {
                 unsigned remaining;
                 tm.timemon->timedout(&remaining);
@@ -1119,7 +944,7 @@ class CRemoteBase: public CInterface
             }
             Sleep(sleeptime);       // prevent multiple retries beating
             PROGLOG("Retrying %sconnect",useSSL?"SECURE ":"");
-        }  
+        }
         if (ConnectionTable)
             ConnectionTable->addLink(ep,socket);
     }
@@ -1146,7 +971,7 @@ protected: friend class CRemoteFileIO;
     StringAttr          filename;
     CriticalSection     crit;
     SocketEndpoint      ep;
-    
+
 
     void sendRemoteCommand(MemoryBuffer & src, MemoryBuffer & reply, bool retry=true, bool lengthy=false)
     {
@@ -1201,7 +1026,7 @@ protected: friend class CRemoteFileIO;
                     catch (IException *e) {
                         e->Release();
                     }
-                    if (!ok) 
+                    if (!ok)
                         killSocket(tep);
                 }
             }
@@ -1252,14 +1077,14 @@ protected: friend class CRemoteFileIO;
                 else if (len&&(rest[len-1]==0))
                     msg.append((const char *)rest);
                 else {
-                    msg.appendf("extra data[%d]",len); 
+                    msg.appendf("extra data[%d]",len);
                     for (unsigned i=0;(i<16)&&(i<len);i++)
                         msg.appendf(" %2x",(int)rest[i]);
                 }
             }
             else if(errCode == 8209)
                 msg.append("Failed to open directory.");
-            else 
+            else
                 msg.append("ERROR #").append(errCode);
 #ifdef _DEBUG
             ERRLOG("%s",msg.str());
@@ -1267,7 +1092,7 @@ protected: friend class CRemoteFileIO;
 #endif
             throw createDafsException(errCode,msg.str());
         }
-    }   
+    }
 
     void sendRemoteCommand(MemoryBuffer & src, bool retry)
     {
@@ -1335,13 +1160,13 @@ protected: friend class CRemoteFileIO;
         if (skeybuf.remaining()<sizeof(OnceKey))
             throwUnauthenticated(serverip,username.str());
         OnceKey sokey;
-        skeybuf.read(sizeof(OnceKey),&sokey); 
+        skeybuf.read(sizeof(OnceKey),&sokey);
         // now we have the key to use to send user/password
         MemoryBuffer tosend;
         tosend.append((byte)2).append(username).append(password);
         initSendBuffer(sendbuf.clear());
         sendbuf.append((RemoteFileCommandType)RFCunlockreply);
-        aesEncrypt(&sokey, sizeof(oncekey), tosend.toByteArray(), tosend.length(), encbuf); 
+        aesEncrypt(&sokey, sizeof(oncekey), tosend.toByteArray(), tosend.length(), encbuf);
         sendbuf.append(encbuf.length());
         sendbuf.append(encbuf);
         try {
@@ -2790,7 +2615,7 @@ int setDafsTrace(ISocket * socket,byte flags)
     return -1;
 }
 
-int setDafsThrottleLimit(ISocket * socket, ThrottleClass throttleClass, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit)
+int setDafsThrottleLimit(ISocket * socket, ThrottleClass throttleClass, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit, StringBuffer *errMsg)
 {
     assertex(socket);
     MemoryBuffer sendbuf;
@@ -2802,6 +2627,8 @@ int setDafsThrottleLimit(ISocket * socket, ThrottleClass throttleClass, unsigned
         receiveBuffer(socket, replybuf, NORMAL_RETRIES, 1024);
         int retcode;
         replybuf.read(retcode);
+        if (retcode && errMsg && replybuf.remaining())
+            replybuf.read(*errMsg);
         return retcode;
     }
     catch (IException *e) {
@@ -3092,52 +2919,7 @@ static CriticalSection ClientCountSect;
 
 class CRemoteFileServer : public CInterface, implements IRemoteFileServer, implements IThreadFactory
 {
-    int                 lasthandle;
-    CriticalSection     sect;
-    Owned<ISocket>      acceptsock;
-    Owned<ISocket>      rejectsock;//used to immediately reject nonsecure connection requests when in secure mode
-    Owned<ISocketSelectHandler> selecthandler;
-    Owned<IThreadPool>  threads;    // for commands
-    bool stopping;
-    unsigned clientcounttick;
-    unsigned closedclients;
-    CAsyncCommandManager asyncCommandManager;
-    CThrottler stdCmdThrottler, slowCmdThrottler;
-    atomic_t globallasttick;
-
-    int getNextHandle()
-    {
-        // called in sect critical block
-        loop {
-            if (lasthandle==INT_MAX)
-                lasthandle = 1;
-            else
-                lasthandle++;
-            unsigned idx1;
-            unsigned idx2;
-            if (!findHandle(lasthandle,idx1,idx2))
-                return lasthandle;
-        }
-    }
-
-    bool findHandle(int handle,unsigned &clientidx,unsigned &handleidx)
-    {
-        // called in sect critical block
-        clientidx = (unsigned)-1;
-        handleidx = (unsigned)-1;
-        ForEachItemIn(i,clients) {
-            CRemoteClientHandler &client = clients.item(i);
-            ForEachItemIn(j,client.handles) {
-                if (client.handles.item(j)==handle) {
-                    handleidx = j;
-                    clientidx = i;
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
+    class CThrottler;
     struct CRemoteClientHandler: public CInterface, implements ISocketSelectNotify
     {
         CRemoteFileServer *parent;
@@ -3162,7 +2944,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         {
             previdx = (unsigned)-1;
             CriticalBlock block(ClientCountSect);
-            if (++ClientCount>MaxClientCount) 
+            if (++ClientCount>MaxClientCount)
                 MaxClientCount = ClientCount;
             if (TF_TRACE_CLIENT_CONN) {
                 StringBuffer s;
@@ -3172,12 +2954,12 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             }
             parent = _parent;
             left = 0;
-            buf.setEndian(__BIG_ENDIAN); 
+            buf.setEndian(__BIG_ENDIAN);
             selecthandled = false;
             touch();
         }
         ~CRemoteClientHandler()
-        {   
+        {
             {
                 CriticalBlock block(ClientCountSect);
                 ClientCount--;
@@ -3198,7 +2980,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         {
             if (TF_TRACE_FULL)
                 PROGLOG("notifySelected(%x)",(unsigned)(long)this);
-            if (sock!=socket) 
+            if (sock!=socket)
                 WARNLOG("notifySelected - invalid socket passed");
             size32_t avail = (size32_t)socket->avail_read();
             if (avail)
@@ -3269,7 +3051,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
 
         void logPrevHandle()
         {
-            if (previdx<opennames.ordinality()) 
+            if (previdx<opennames.ordinality())
                 PROGLOG("Previous handle(%d): %s",handles.item(previdx),opennames.item(previdx).text.get());
         }
 
@@ -3315,7 +3097,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
 
         void process()
         {
-            if (selecthandled) 
+            if (selecthandled)
                 throttleCommand(); // buffer already filled
             else
             {
@@ -3337,7 +3119,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                         break;
                     if ((w<0)||!immediateCommand())
                     {
-                        if (w<0) 
+                        if (w<0)
                             WARNLOG("CRemoteClientHandler::main wait_read error");
                         parent->onCloseSocket(this,1);
                         return;
@@ -3403,7 +3185,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             return false;
         }
 
-        bool getInfo(StringBuffer &str) 
+        bool getInfo(StringBuffer &str)
         {
             str.append("client(");
             bool ok = peerName(str);
@@ -3418,6 +3200,271 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
 
     };
 
+    class CThrottleQueueItem : public CSimpleInterface
+    {
+    public:
+        RemoteFileCommandType cmd;
+        Linked<CRemoteClientHandler> client;
+        CCycleTimer timer;
+        CThrottleQueueItem(RemoteFileCommandType _cmd, CRemoteClientHandler *_client) : cmd(_cmd), client(_client)
+        {
+        }
+    };
+
+    class CThrottler
+    {
+        CRemoteFileServer &owner;
+        Semaphore sem;
+        CriticalSection crit;
+        StringAttr msg;
+        unsigned limit, delay, cpuThreshold;
+        unsigned disabledLimit;
+        unsigned __int64 totalThrottleDelay;
+        CCycleTimer totalThrottleDelayTimer;
+        QueueOf<CThrottleQueueItem, false> queue;
+    public:
+        CThrottler(CRemoteFileServer &_owner, const char *_msg) : owner(_owner), msg(_msg)
+        {
+            totalThrottleDelay = 0;
+            limit = 0;
+            delay = DEFAULT_STDCMD_THROTTLEDELAYMS;
+            cpuThreshold = DEFAULT_STDCMD_THROTTLECPULIMIT;
+            disabledLimit = 0;
+        }
+        ~CThrottler()
+        {
+            loop
+            {
+                Owned<CThrottleQueueItem> item = queue.dequeue();
+                if (!item)
+                    break;
+            }
+        }
+        void configure(unsigned _limit, unsigned _delay, unsigned _cpuThreshold)
+        {
+            CriticalBlock b(crit);
+            int delta = 0;
+            if (_limit)
+            {
+                if (disabledLimit) // if transitioning from disabled to some throttling
+                {
+                    assertex(0 == limit);
+                    delta = _limit - disabledLimit; // + or -
+                    disabledLimit = 0;
+                }
+                else
+                    delta = _limit - limit; // + or -
+            }
+            else if (0 == disabledLimit)
+            {
+                PROGLOG("Throttler(%s): disabled, previous limit: %d", msg.get(), limit);
+                /* disabling - set limit immediately to let all new transaction through.
+                 * NB: the semaphore signals are not consumed in this case, because transactions could be waiting on it.
+                 * Instead the existing 'limit' is kept in 'disabledLimit', so that if/when throttling is
+                 * re-enabled, it is used as a basis for increasing or consuming the semaphore signal count.
+                 */
+                disabledLimit = limit;
+                limit = 0;
+            }
+            if (delta > 0)
+            {
+                PROGLOG("Throttler(%s): Increasing limit from %d to %d", msg.get(), limit, _limit);
+                sem.signal(delta);
+                limit = _limit;
+                // NB: If throttling was off, this doesn't effect transactions in progress, i.e. will only throttle new transactions coming in.
+            }
+            else if (delta < 0)
+            {
+                PROGLOG("Throttler(%s): Reducing limit from %d to %d", msg.get(), limit, _limit);
+                // NB: This is not expected to take long
+                CCycleTimer timer;
+                while (delta < 0)
+                {
+                    if (sem.wait(1000))
+                        ++delta;
+                    else
+                        PROGLOG("Throttler(%s): Waited %0.2f seconds so far for a total of %d transactions to complete, %d completed", msg.get(), ((double)timer.elapsedMs())/1000, limit, -delta);
+                }
+                limit = _limit;
+                // NB: doesn't include transactions in progress, i.e. will only throttle new transactions coming in.
+            }
+            if (_delay != delay)
+            {
+                PROGLOG("Throttler(%s): New delay=%d, previous: %d", msg.get(), _delay, delay);
+                delay = _delay;
+            }
+            if (_cpuThreshold != cpuThreshold)
+            {
+                PROGLOG("Throttler(%s): New cpuThreshold=%d, previous: %d", msg.get(), _cpuThreshold, cpuThreshold);
+                cpuThreshold = _cpuThreshold;
+            }
+        }
+        void take(RemoteFileCommandType cmd) // cmd for info. only
+        {
+            loop
+            {
+                if (sem.wait(delay))
+                    return;
+                PROGLOG("Throttler(%s): transaction delayed [cmd=%s]", msg.get(), getRFCText(cmd));
+            }
+        }
+        void release()
+        {
+            sem.signal();
+        }
+        void addCommand(RemoteFileCommandType cmd, CRemoteClientHandler *client)
+        {
+            CCycleTimer timer;
+            Owned<IException> exception;
+            bool hadSem = true;
+            if (!sem.wait(delay))
+            {
+                CriticalBlock b(crit);
+                if (!sem.wait(0)) // check hasn't become available
+                {
+                    unsigned cpu = getLatestCPUUsage();
+                    if (getLatestCPUUsage()<cpuThreshold)
+                    {
+                        /* Allow to proceed, despite hitting throttle limit because CPU < threshold
+                         * NB: The overall number of threads is still capped by the thread pool.
+                         */
+                        PROGLOG("Throttler(%s): transaction delayed [cmd=%s], proceeding as cpu(%u)<throttleCPULimit(%u)", msg.get(), getRFCText(cmd), cpu, cpuThreshold);
+                        hadSem = false;
+                    }
+                    else
+                    {
+                        queue.enqueue(new CThrottleQueueItem(cmd, client)); // NB: takes over ownership of 'client' from running thread
+                        PROGLOG("Throttler(%s): transaction delayed [cmd=%s], queuing (%u queueud)", msg.get(), getRFCText(cmd), queue.ordinality());
+                        return;
+                    }
+                }
+            }
+
+            /* Guarantee that sem is released.
+             * Should normally release on clean exit when queue is empty.
+             */
+            struct ReleaseSem
+            {
+                Semaphore *sem;
+                ReleaseSem(Semaphore *_sem) { sem = _sem; }
+                ~ReleaseSem() { if (sem) sem->signal(); }
+            } releaseSem(hadSem?&sem:NULL);
+
+            Linked<CRemoteClientHandler> currentClient = client;
+            unsigned ms = timer.elapsedMs();
+            loop
+            {
+                if (ms >= 1000)
+                {
+                    if (ms>delay)
+                        PROGLOG("Throttle(%s): transaction delayed [cmd=%s] for : %d seconds", msg.get(), getRFCText(cmd), ms/1000);
+                }
+                totalThrottleDelay += ms;
+                if (totalThrottleDelay && (totalThrottleDelayTimer.elapsedCycles() >= (queryOneSecCycles() * TOTAL_THROTTLE_TIME_SECS)))
+                {
+                    unsigned elapsedSecs = totalThrottleDelayTimer.elapsedMs()/1000;
+                    time_t simple;
+                    time(&simple);
+                    simple -= elapsedSecs;
+
+                    CDateTime dt;
+                    dt.set(simple);
+                    StringBuffer dateStr;
+                    dt.getTimeString(dateStr, true);
+                    PROGLOG("Throttler(%s): total delay of %0.2f seconds [cmd=%s], since: %s", msg.get(), ((double)totalThrottleDelay)/1000, getRFCText(cmd), dateStr.str());
+
+                    totalThrottleDelayTimer.reset();
+                    totalThrottleDelay = 0;
+                }
+
+                currentClient->processCommand(cmd, this);
+
+                /* Whilst holding on this throttle slot (i.e. before signalling semaphore back), process
+                 * queued items. NB: others that are finishing will do also.
+                 */
+                {
+                    CriticalBlock b(crit);
+                    Owned<CThrottleQueueItem> item = queue.dequeue();
+                    if (!item)
+                    {
+                        releaseSem.sem = NULL;
+                        /* Commands are only queued if semaphore is exhaused (checked inside crit)
+                         * so only signal the semaphore inside the crit, after checking if there are no queued items
+                         */
+                        if (hadSem)
+                            sem.signal();
+                        break;
+                    }
+                    cmd = item->cmd;
+                    currentClient.setown(item->client.getClear());
+                    ms = item->timer.elapsedMs();
+                }
+            }
+        }
+    };
+
+    // temporarily release a throttler slot
+    class CThrottleReleaseBlock
+    {
+        CThrottler &throttler;
+        RemoteFileCommandType cmd;
+    public:
+        CThrottleReleaseBlock(CThrottler &_throttler, RemoteFileCommandType _cmd) : throttler(_throttler), cmd(_cmd)
+        {
+            throttler.release();
+        }
+        ~CThrottleReleaseBlock()
+        {
+            throttler.take(cmd);
+        }
+    };
+
+    int                 lasthandle;
+    CriticalSection     sect;
+    Owned<ISocket>      acceptsock;
+    Owned<ISocket>      rejectsock;//used to immediately reject nonsecure connection requests when in secure mode
+    Owned<ISocketSelectHandler> selecthandler;
+    Owned<IThreadPool>  threads;    // for commands
+    bool stopping;
+    unsigned clientcounttick;
+    unsigned closedclients;
+    CAsyncCommandManager asyncCommandManager;
+    CThrottler stdCmdThrottler, slowCmdThrottler;
+    atomic_t globallasttick;
+
+    int getNextHandle()
+    {
+        // called in sect critical block
+        loop {
+            if (lasthandle==INT_MAX)
+                lasthandle = 1;
+            else
+                lasthandle++;
+            unsigned idx1;
+            unsigned idx2;
+            if (!findHandle(lasthandle,idx1,idx2))
+                return lasthandle;
+        }
+    }
+
+    bool findHandle(int handle,unsigned &clientidx,unsigned &handleidx)
+    {
+        // called in sect critical block
+        clientidx = (unsigned)-1;
+        handleidx = (unsigned)-1;
+        ForEachItemIn(i,clients) {
+            CRemoteClientHandler &client = clients.item(i);
+            ForEachItemIn(j,client.handles) {
+                if (client.handles.item(j)==handle) {
+                    handleidx = j;
+                    clientidx = i;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     class cCommandProcessor: public CInterface, implements IPooledThread
     {
         Owned<CRemoteClientHandler> client;
@@ -3427,7 +3474,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
 
         struct cCommandProcessorParams
         {
-            CRemoteClientHandler *client; 
+            CRemoteClientHandler *client;
         };
 
         void init(void *_params)
@@ -3498,7 +3545,7 @@ public:
     IMPLEMENT_IINTERFACE
 
     CRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs)
-        : stdCmdThrottler(*this, "throtlter"), slowCmdThrottler(*this, "copyCmdThrotlter")
+        : stdCmdThrottler(*this, "stdCmdThrotlter"), slowCmdThrottler(*this, "slowCmdThrotlter")
     {
         lasthandle = 0;
         selecthandler.setown(createSocketSelectHandler(NULL));
@@ -3514,6 +3561,8 @@ public:
 #endif
         INFINITE,TARGET_MIN_THREADS));
         threads->setStartDelayTracing(60); // trace amount delayed every minute.
+
+        PROGLOG("CRemoteFileServer: maxThreads = %u, maxThreadsDelayMs = %u", maxThreads, maxThreadsDelayMs);
 
         stopping = false;
         clientcounttick = msTick();
@@ -4264,6 +4313,147 @@ public:
         return true;
     }
 
+    static void treeCopyFile(RemoteFilename &srcfn, RemoteFilename &dstfn, const char *net, const char *mask, IpAddress &ip, bool usetmp, CThrottler *throttler, CFflags copyFlags=CFnone)
+    {
+        unsigned start = msTick();
+        Owned<IFile> dstfile = createIFile(dstfn);
+        // the following is really to check the dest node is up and working (otherwise not much point in continuing!)
+        if (dstfile->exists())
+            PROGLOG("TREECOPY overwriting '%s'",dstfile->queryFilename());
+        Owned<IFile> srcfile = createIFile(srcfn);
+        unsigned lastmin = 0;
+        if (!srcfn.queryIP().ipequals(dstfn.queryIP())) {
+            CriticalBlock block(treeCopyCrit);
+            loop {
+                CDateTime dt;
+                offset_t sz;
+                try {
+                    sz = srcfile->size();
+                    if (sz==(offset_t)-1) {
+                        if (TF_TRACE_TREE_COPY)
+                            PROGLOG("TREECOPY source not found '%s'",srcfile->queryFilename());
+                        break;
+                    }
+                    srcfile->getTime(NULL,&dt,NULL);
+                }
+                catch (IException *e) {
+                    EXCLOG(e,"treeCopyFile(1)");
+                    e->Release();
+                    break;
+                }
+                Linked<CTreeCopyItem> tc;
+                unsigned now = msTick();
+                ForEachItemInRev(i1,treeCopyArray) {
+                    CTreeCopyItem &item = treeCopyArray.item(i1);
+                    // prune old entries (not strictly needed buf I think better)
+                    if (now-item.lastused>TREECOPYPRUNETIME)
+                        treeCopyArray.remove(i1);
+                    else if (!tc.get()&&item.equals(srcfn,net,mask,sz,dt)) {
+                        tc.set(&item);
+                        item.lastused = now;
+                    }
+                }
+                if (!tc.get()) {
+                    if (treeCopyArray.ordinality()>=TREECOPY_CACHE_SIZE)
+                        treeCopyArray.remove(0);
+                    tc.setown(new CTreeCopyItem(srcfn,net,mask,sz,dt));
+                    treeCopyArray.append(*tc.getLink());
+                }
+                ForEachItemInRev(cand,tc->loc) { // rev to choose copied locations first (maybe optional?)
+                    if (!tc->busy->testSet(cand)) {
+                        // check file accessible and matches
+                        if (!cand&&dstfn.equals(tc->loc.item(cand)))  // hmm trying to overwrite existing, better humor
+                            continue;
+                        bool ok = true;
+                        Owned<IFile> rmtfile = createIFile(tc->loc.item(cand));
+                        if (cand) { // only need to check if remote
+                            try {
+                                if (rmtfile->size()!=sz)
+                                    ok = false;
+                                else {
+                                    CDateTime fdt;
+                                    rmtfile->getTime(NULL,&fdt,NULL);
+                                    ok = fdt.equals(dt);
+                                }
+                            }
+                            catch (IException *e) {
+                                EXCLOG(e,"treeCopyFile(2)");
+                                e->Release();
+                                ok = false;
+                            }
+                        }
+                        if (ok) { // if not ok leave 'busy'
+                            // finally lets try and copy!
+                            try {
+                                if (TF_TRACE_TREE_COPY)
+                                    PROGLOG("TREECOPY(started) %s to %s",rmtfile->queryFilename(),dstfile->queryFilename());
+                                {
+                                    CriticalUnblock unblock(treeCopyCrit); // note we have tc linked
+                                    rmtfile->copyTo(dstfile,DEFAULT_COPY_BLKSIZE,NULL,usetmp,copyFlags);
+                                }
+                                if (TF_TRACE_TREE_COPY)
+                                    PROGLOG("TREECOPY(done) %s to %s",rmtfile->queryFilename(),dstfile->queryFilename());
+                                tc->busy->set(cand,false);
+                                if (treeCopyWaiting)
+                                    treeCopySem.signal((treeCopyWaiting>1)?2:1);
+                                // add to known locations
+                                tc->busy->set(tc->loc.ordinality(),false); // prob already is clear
+                                tc->loc.append(dstfn);
+                                ip.ipset(tc->loc.item(cand).queryIP());
+                                return;
+                            }
+                            catch (IException *e) {
+                                if (cand==0) {
+                                    tc->busy->set(0,false); // don't leave busy
+                                    if (treeCopyWaiting)
+                                        treeCopySem.signal();
+                                    throw;      // what more can we do!
+                                }
+                                EXCLOG(e,"treeCopyFile(3)");
+                                e->Release();
+                            }
+                        }
+                    }
+                }
+                // all locations busy
+                if (msTick()-start>TREECOPYTIMEOUT) {
+                    WARNLOG("Treecopy %s wait timed out", srcfile->queryFilename());
+                    break;
+                }
+                treeCopyWaiting++; // note this isn't precise - just indication
+                {
+                    CriticalUnblock unblock(treeCopyCrit);
+                    if (throttler)
+                    {
+                        CThrottleReleaseBlock block(*throttler, RFCtreecopy);
+                        treeCopySem.wait(TREECOPYPOLLTIME);
+                    }
+                    else
+                        treeCopySem.wait(TREECOPYPOLLTIME);
+                }
+                treeCopyWaiting--;
+                if ((msTick()-start)/10*1000!=lastmin) {
+                    lastmin = (msTick()-start)/10*1000;
+                    PROGLOG("treeCopyFile delayed: %s to %s",srcfile->queryFilename(),dstfile->queryFilename());
+                }
+            }
+        }
+        else if (TF_TRACE_TREE_COPY)
+            PROGLOG("TREECOPY source on same node as destination");
+        if (TF_TRACE_TREE_COPY)
+            PROGLOG("TREECOPY(started,fallback) %s to %s",srcfile->queryFilename(),dstfile->queryFilename());
+        try {
+            GetHostIp(ip);
+            srcfile->copyTo(dstfile,DEFAULT_COPY_BLKSIZE,NULL,usetmp,copyFlags);
+        }
+        catch (IException *e) {
+            EXCLOG(e,"TREECOPY(done,fallback)");
+            throw;
+        }
+        if (TF_TRACE_TREE_COPY)
+            PROGLOG("TREECOPY(done,fallback) %s to %s",srcfile->queryFilename(),dstfile->queryFilename());
+    }
+
     bool cmdTreeCopy(MemoryBuffer &msg, MemoryBuffer &reply, CRemoteClientHandler &client, CThrottler *throttler, bool usetmp=false)
     {
         IMPERSONATE_USER(client);
@@ -4471,6 +4661,7 @@ public:
 
             setThrottle((ThrottleClass)throttleClass, limit, delay, cpuThreshold);
 
+            reply.append((unsigned)RFEnoerror);
             return true;
         }
         catch (IException *e)
@@ -4511,7 +4702,6 @@ public:
 
     void throttleCommand(RemoteFileCommandType cmd, CRemoteClientHandler *client)
     {
-        bool ret = true;
         switch(cmd)
         {
             case RFCexec:
@@ -4554,19 +4744,10 @@ public:
                 stdCmdThrottler.addCommand(cmd, client);
                 return;
             case RFCsetthrottle:
-                ret = cmdSetThrottle(msg, reply);
-                break;
             default:
-                ret = cmdUnknown(msg, reply, cmd);
+                client->processCommand(cmd, NULL);
                 break;
         }
-        // for commands that run immediatel without throttling only
-        MemoryBuffer reply;
-        initSendBuffer(reply);
-        if (!ret)
-            appendError(cmd, client, ret, reply);
-        buf.clear();
-        sendBuffer(socket, reply);
     }
 
     bool processCommand(RemoteFileCommandType cmd, MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler *client, CThrottler *throttler)
@@ -4607,8 +4788,9 @@ public:
             MAPCOMMAND(RFCfirewall, cmdFirewall);
             MAPCOMMANDCLIENT(RFCunlock, cmdUnlock, *client);
             MAPCOMMANDCLIENT(RFCcopysection, cmdCopySection, *client);
-            MAPCOMMANDCLIENTTHROTTLE(RFCtreecopy, cmdTreeCopy, *client, stdCmdThrottler);
-            MAPCOMMANDCLIENTTHROTTLE(RFCtreecopytmp, cmdTreeCopyTmp, *client, stdCmdThrottler);
+            MAPCOMMANDCLIENTTHROTTLE(RFCtreecopy, cmdTreeCopy, *client, &stdCmdThrottler);
+            MAPCOMMANDCLIENTTHROTTLE(RFCtreecopytmp, cmdTreeCopyTmp, *client, &stdCmdThrottler);
+            MAPCOMMAND(RFCsetthrottle, cmdSetThrottle);
         default:
             ret = cmdUnknown(msg,reply,cmd);
             break;
@@ -4754,7 +4936,6 @@ public:
             cmd = RFCinvalid;
         MemoryBuffer reply;
         processCommand(cmd, msg, initSendBuffer(reply), NULL, NULL);
-        buf.clear();
         sendBuffer(socket, reply);
     }
 
@@ -4822,7 +5003,7 @@ public:
         reply.clear();
         throwErr(RFSERR_AuthenticateFailed);
         sendBuffer(socket, reply); // send OK
-        return false;       
+        return false;
     }
 
     void runClient(ISocket *sock)
@@ -4831,7 +5012,7 @@ public:
         IAuthenticatedUser *user=NULL;
         bool authenticated = false;
         try {
-            if (checkAuthentication(sock,user)) 
+            if (checkAuthentication(sock,user))
                 authenticated = true;
         }
         catch (IException *e) {
@@ -4860,7 +5041,7 @@ public:
         // stop accept loop
         if (TF_TRACE_CLIENT_STATS)
             PROGLOG("CRemoteFileServer::stop");
-        if (acceptsock) 
+        if (acceptsock)
             acceptsock->cancel_accept();
         if (rejectsock)
             rejectsock->cancel_accept();
@@ -4883,7 +5064,7 @@ public:
              */
             threads->start(&params);
         }
-        else 
+        else
             onCloseSocket(client,3);    // removes owned handles
 
         return false;
@@ -4921,7 +5102,7 @@ public:
                 }
                 else {
 #ifndef _DEBUG
-                    if (TF_TRACE_CLIENT_CONN) 
+                    if (TF_TRACE_CLIENT_CONN)
 #endif
                         PROGLOG("Timing out %s",s.str());
                     closedclients++;
@@ -4965,213 +5146,27 @@ public:
         switch (throttleClass)
         {
             case ThrottleStd:
-                stdCmdThrottler.configure(limit, delay, cpuThreshold);
+                stdCmdThrottler.configure(limit, delayMs, cpuThreshold);
                 break;
             case ThrottleSlow:
-                slowCmdThrottler.configure(limit, delay, cpuThreshold);
+                slowCmdThrottler.configure(limit, delayMs, cpuThreshold);
                 break;
             default:
             {
                 StringBuffer availableClasses("{ ");
                 for (unsigned c=0; c<ThrottleClassMax; c++)
                 {
-                    availableClassses.append(c).append(" = ").append(ThrottleText(c);
+                    availableClasses.append(c).append(" = ").append(getThrottleClassText((ThrottleClass)c));
                     if (c+1<ThrottleClassMax)
                         availableClasses.append(", ");
                 }
+                availableClasses.append(" }");
                 throw MakeStringException(0, "Unknown throttle class: %u, available classes are: %s", (unsigned)throttleClass, availableClasses.str());
             }
         }
     }
 };
 
-
-CThrottleQueueItem::CThrottleQueueItem(RemoteFileCommandType _cmd, CRemoteClientHandler *_client) : cmd(_cmd)
-{
-    client = LINK(_client);
-}
-
-CThrottleQueueItem::~CThrottleQueueItem()
-{
-    client->Release();
-}
-
-CThrottler::CThrottler(CRemoteFileServer &_owner, const char *_msg) : owner(_owner), msg(_msg)
-{
-    totalThrottleDelay = 0;
-    limit = 0;
-    delay = 1000;
-}
-
-CThrottler::~CThrottler()
-{
-    loop
-    {
-        Owned<CThrottleQueueItem> item = queue.dequeue();
-        if (!item)
-            break;
-    }
-}
-
-void CThrottler::configure(unsigned _limit, unsigned _delay, unsigned _cpuThreshold)
-{
-    CriticalBlock b(crit);
-    int delta = 0;
-    if (_limit)
-    {
-        if (disabledLimit) // if transitioning from disabled to some throttling
-        {
-            assertex(0 == limit);
-            delta = _limit - disabledLimit; // + or -
-            disabledLimit = 0;
-        }
-        else
-            delta = _limit - limit; // + or -
-    }
-    else if (0 == disabledLimit)
-    {
-        PROGLOG("Throttler(%s): disabled, previous limit: %d", msg.get(), limit);
-        /* disabling - set limit immediately to let all new transaction through.
-         * NB: the semaphore signals are not consumed in this case, because transactions could be waiting on it.
-         * Instead the existing 'limit' is kept in 'disabledLimit', so that if/when throttling is
-         * re-enabled, it is used as a basis for increasing or consuming the semaphore signal count.
-         */
-        disabledLimit = limit;
-        limit = 0;
-    }
-    if (delta > 0)
-    {
-        PROGLOG("Throttler(%s): Increasing limit from %d to %d", msg.get(), limit, _limit);
-        throttlesem.signal(delta);
-        limit = _limit;
-        // NB: If throttling was off, this doesn't effect transactions in progress, i.e. will only throttle new transactions coming in.
-    }
-    else if (delta < 0)
-    {
-        PROGLOG("Throttler(%s): Reducing limit from %d to %d", msg.get(), limit, _limit);
-        // NB: This is not expected to take long
-        CCycleTimer timer;
-        while (delta < 0)
-        {
-            if (throttlesem.wait(1000))
-                ++delta;
-            else
-                PROGLOG("Throttler(%s): Waited %0.2f seconds so far for a total of %d transactions to complete, %d completed", msg.get(), ((double)timer.elapsedMs())/1000, limit, -delta);
-        }
-        limit = _limit;
-        // NB: doesn't include transactions in progress, i.e. will only throttle new transactions coming in.
-    }
-    PROGLOG("Throttler(%s): New delay=%d, previous: %d", msg.get(), _delay, delay);
-    PROGLOG("Throttler(%s): New cpuThreshold=%d, previous: %d", msg.get(), _cpuThreshold, cpuThreshold);
-    delay = _delay;
-    cpuThreshold = _cpuThreshold;
-}
-
-void CThrottler::take(RemoteFileCommandType cmd) // cmd for info. only
-{
-    loop
-    {
-        if (sem.wait(delay))
-            return;
-        PROGLOG("Throttler(%s): transaction delayed [cmd=%s]", msg.get(), RFCText(cmd));
-    }
-}
-
-void CThrottler::release()
-{
-    sem.signal()
-}
-
-void CThrottler::addCommand(RemoteFileCommandType cmd, CRemoteClientHandler *client)
-{
-    CCycleTimer timer;
-    Owned<IException> exception;
-    bool hadSem = true;
-    if (!sem.wait(delay))
-    {
-        CriticalBlock b(crit);
-        if (!sem.wait(0)) // check hasn't become available
-        {
-            unsigned cpu = getLatestCPUUsage();
-            if (getLatestCPUUsage()<cpuThreshold)
-            {
-                /* Allow to proceed, despite hitting throttle limit because CPU < threshold
-                 * NB: The overall number of threads is still capped by the thread pool.
-                 */
-                PROGLOG("Throttler(%s): transaction delayed [cmd=%s], proceeding as cpu(%u)<throttleCPULimit(%u)", msg.get(), RFCText(cmd), cpu, cpuThreshold);
-                hadSem = false;
-                break;
-            }
-            else
-            {
-                queue.enqueue(new CThrottleQueueItem(cmd, client)); // NB: takes over ownership of 'client' from running thread
-                PROGLOG("Throttler(%s): transaction delayed [cmd=%s], queuing (%u queueud)", msg.get(), RFCText(cmd), queue.ordinality());
-                return;
-            }
-        }
-    }
-
-    /* Guarantee that sem is released.
-     * Should normally release on clean exit when queue is empty.
-     */
-    struct ReleaseSem
-    {
-        Semaphore *sem;
-        ReleaseSem(Semaphore *_sem) { sem = _sem; }
-        ~ReleaseSem() { if (sem) sem->signal(); }
-    } releaseSem(hadSem?&sem:NULL);
-
-    Linked<CRemoteClientHandler> currentClient = client;
-    unsigned ms = timer.elapsedMs();
-    loop
-    {
-        if (ms >= 1000)
-        {
-            if (ms>delay)
-                PROGLOG("Throttle(%s): transaction delayed [cmd=%s] for : %d seconds", msg.get(), RFCText(cmd), ms/1000);
-        }
-        totalThrottleDelay += ms;
-        if (totalThrottleDelay && (totalThrottleDelayTimer.elapsedCycles() >= (queryOneSecCycles() * TOTAL_THROTTLE_TIME_SECS)))
-        {
-            unsigned elapsedSecs = totalThrottleDelayTimer.elapsedMs()/1000;
-            time_t simple;
-            time(&simple);
-            simple -= elapsedSecs;
-
-            CDateTime dt;
-            dt.set(simple);
-            StringBuffer dateStr;
-            dt.getTimeString(dateStr, true);
-            PROGLOG("Throttler(%s): total delay of %0.2f seconds [cmd=%s], since: %s", msg.get(), ((double)totalThrottleDelay)/1000, RFCText(cmd), dateStr.str());
-
-            totalThrottleDelayTimer.reset();
-            totalThrottleDelay = 0;
-        }
-
-        currentClient->processCommand(cmd, this);
-
-        /* Whilst holding on this throttle slot (i.e. before signalling semaphore back), process
-         * queued items. NB: others that are finishing will do also.
-         */
-        {
-            CriticalBlock b(crit);
-            Owned<CThrottleQueueItem> item = queue.dequeue();
-            if (!item)
-            {
-                releaseSem.sem = NULL;
-                /* Commands are only queued if semaphore is exhaused (checked inside crit)
-                 * so only signal the semaphore inside the crit, after checking if there are no queued items
-                 */
-                if (hadSem)
-                    sem.signal();
-                break;
-            }
-            cmd = item->cmd;
-            currentClient.setown(item->client.getClear());
-            ms = item->timer.elapsedMs();
-        }
-    }
-}
 
 IRemoteFileServer * createRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs)
 {
