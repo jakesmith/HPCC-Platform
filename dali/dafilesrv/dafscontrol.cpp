@@ -47,7 +47,8 @@ void usage()
     printf("  dafscontrol [<dali-ip>] CHECKVERMAJOR <ip-or-cluster>\n");
     printf("  dafscontrol [<dali-ip>] TRACE <ip> <num>\n");
     printf("  dafscontrol [<dali-ip>] CHKDSK <ip> <num>\n");
-    printf("  dafscontrol [<dali-ip>] THROTTLE <ip> <class> <limit> <ms-delay> <cpu-limit>\n");
+    printf("  dafscontrol [<dali-ip>] INFO <ip-or-clsuter>\n");
+    printf("  dafscontrol [<dali-ip>] THROTTLE <ip-or-cluster> <class> <limit> <ms-delay> <cpu-limit>\n");
     printf("  dafscontrol MYVER\n");
     exit(1);
 }
@@ -81,7 +82,7 @@ bool getCluster(const char *clustername,SocketEndpointArray &eps)
     unsigned p = getDaliServixPort();
     for (unsigned i=0;i<n;i++) {
         SocketEndpoint ep(p,grp->queryNode(i).endpoint());
-        eps.append(ep);
+        eps.appendUniq(ep);
     }
     return eps.ordinality()!=0;
 }
@@ -383,6 +384,39 @@ int main(int argc, char* argv[])
                             StringBuffer s("done ");
                             ep.getUrlStr(s);
                             PROGLOG("%s",s.str());
+                        }
+                    }
+                }
+                break;
+            }
+            if (stricmp(argv[ai], "info")==0) {
+                if (ai+1>=ac)
+                    usage();
+                else {
+                    SocketEndpointArray eps;
+                    StringBuffer errMsg;
+                    if (!isdali||!getCluster(argv[ai+1],eps)) {
+                        SocketEndpoint ep(argv[ai+1]);
+                        StringBuffer epStr;
+                        ep.getUrlStr(epStr);
+                        VStringBuffer result("Info for %s", epStr.str());
+                        int ret = getDafileSvrInfo(ep, result);
+                        if (ret!=0)
+                            ERRLOG("getDafileSvrInfo for %s returned %d", epStr.str(), ret);
+                        else
+                            PROGLOG("%s", result.str());
+                    }
+                    else {
+                        ForEachItemIn(ni,eps) {
+                            SocketEndpoint ep = eps.item(ni);
+                            StringBuffer epStr;
+                            ep.getUrlStr(epStr);
+                            VStringBuffer result("Info for %s", epStr.str());
+                            int ret = getDafileSvrInfo(ep, result);
+                            if (ret!=0)
+                                ERRLOG("getDafileSvrInfo for %s returned %d", epStr.str(), ret);
+                            else
+                                PROGLOG("%s", result.str());
                         }
                     }
                 }

@@ -314,64 +314,57 @@ enum {
     RFCmax,
 };
 
-#define RFCText(cmd) "cmd##_Text"
+//#define RFCText(cmd) "cmd##_Text"
+#define RFCText(cmd) #cmd
 
 const char *RFCStrings[] =
 {
     RFCText(RFCopenIO),
     RFCText(RFCcloseIO),
+    RFCText(RFCread),
+    RFCText(RFCwrite),
+    RFCText(RFCsize),
+    RFCText(RFCexists),
+    RFCText(RFCremove),
+    RFCText(RFCrename),
+    RFCText(RFCgetver),
+    RFCText(RFCisfile),
+    RFCText(RFCisdirectory),
+    RFCText(RFCisreadonly),
+    RFCText(RFCsetreadonly),
+    RFCText(RFCgettime),
+    RFCText(RFCsettime),
+    RFCText(RFCcreatedir),
+    RFCText(RFCgetdir),
+    RFCText(RFCstop),
+    RFCText(RFCexec),
+    RFCText(RFCkill),
+    RFCText(RFCredeploy),
+    RFCText(RFCgetcrc),
+    RFCText(RFCmove),
+    RFCText(RFCsetsize),
+    RFCText(RFCextractblobelements),
+    RFCText(RFCcopy),
+    RFCText(RFCappend),
+    RFCText(RFCmonitordir),
+    RFCText(RFCsettrace),
+    RFCText(RFCgetinfo),
+    RFCText(RFCfirewall),
+    RFCText(RFCunlock),
+    RFCText(RFCunlockreply),
+    RFCText(RFCinvalid),
+    RFCText(RFCcopysection),
+    RFCText(RFCtreecopy),
+    RFCText(RFCtreecopytmp),
+    RFCText(RFCsetthrottle),
 };
 static const char *getRFCText(RemoteFileCommandType cmd) { return RFCStrings[cmd]; }
 
-/*
-#define RFCopenIO_Text "RFCopenIO"
-#define RFCcloseIO_Text "RFCcloseIO"
-#define RFCread_Text "RFCread"
-#define RFCwrite_Text "RFCwrite"
-#define RFCsize_Text "RFCsize"
-#define RFCexists_Text "RFCexists"
-#define RFCremove_Text "RFCremove"
-#define RFCrename_Text "RFCrename"
-#define RFCgetver_Text "RFCgetver"
-#define RFCisfile_Text "RFCisfile"
-#define RFCisdirectory_Text "RFCisdirectory"
-#define RFCisreadonly_Text "RFCisreadonly"
-#define RFCsetreadonly_Text "RFCsetreadonly"
-#define RFCgettime_Text "RFCgettime"
-#define RFCsettime_Text "RFCsettime"
-#define RFCcreatedir_Text "RFCcreatedir"
-#define RFCgetdir_Text "RFCgetdir"
-#define RFCstop_Text "RFCstop"
-#define RFCexec_Text "RFCexec"
-#define RFCkill_Text "RFCkill"
-#define RFCredeploy_Text "RFCredeploy"
-#define RFCgetcrc_Text "RFCgetcrc"
-#define RFCmove_Text "RFCmove"
-#define RFCsetsize_Text "RFCsetsize"
-#define RFCextractblobelements_Text "RFCextractblobelements"
-#define RFCcopy_Text "RFCcopy"
-#define RFCappend_Text "RFCappend"
-#define RFCmonitordir_Text "RFCmonitordir"
-#define RFCsettrace_Text "RFCsettrace"
-#define RFCgetinfo_Text "RFCgetinfo"
-#define RFCfirewall_Text "RFCfirewall"
-#define RFCunlock_Text "RFCunlock"
-#define RFCunlockreply_Text "RFCunlockreply"
-#define RFCinvalid_Text "RFCinvalid"
-#define RFCcopysection_Text "RFCcopysection"
-#define RFCtreecopy_Text "RFCtreecopy"
-#define RFCtreecopytmp_Text "RFCtreecopytmp"
-#define RFCsetthrottle_Text "RFCsetthrottle"
-*/
-
-#define ThrottleStd_Text "ThrottleStd"
-#define ThrottleSlow_Text "ThrottleSlow"
-
-#define ThrottleText(throttleClass) throttleClass##_Text
+#define ThrottleText(throttleClass) #throttleClass
 const char *ThrottleStrings[] =
 {
     ThrottleText(ThrottleStd),
-    ThrottleText(ThrottleSlow)
+    ThrottleText(ThrottleSlow),
 };
 static const char *getThrottleClassText(ThrottleClass throttleClass) { return ThrottleStrings[throttleClass]; }
 
@@ -3371,8 +3364,10 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                     dt.set(simple);
                     StringBuffer dateStr;
                     dt.getTimeString(dateStr, true);
-                    PROGLOG("Throttler(%s): total delay of %0.2f seconds [cmd=%s], since: %s", msg.get(), ((double)totalThrottleDelay)/1000, getRFCText(cmd), dateStr.str());
-
+                    {
+                        CriticalBlock b(crit); // protect queue
+                        PROGLOG("Throttler(%s): total delay of %0.2f seconds [cmd=%s], since: %s - %u requests currently queued", msg.get(), ((double)totalThrottleDelay)/1000, getRFCText(cmd), dateStr.str(), queue.ordinality());
+                    }
                     totalThrottleDelayTimer.reset();
                     totalThrottleDelay = 0;
                 }
