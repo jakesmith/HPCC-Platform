@@ -3262,7 +3262,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             dt.getTimeString(dateStr, true);
             info.appendf("Throttler(%s): statistics since %s", msg.get(), dateStr.str()).newline();
             info.appendf("Total delay of %0.2f seconds", ((double)totalThrottleDelay)/1000).newline();
-            info.appendf("Requests currently queued: %u", queue.ordinality()).newline();
+            info.appendf("Requests currently queued: %u", queue.ordinality());
             return info;
         }
         void getInfo(StringBuffer &info)
