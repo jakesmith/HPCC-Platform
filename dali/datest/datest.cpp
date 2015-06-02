@@ -2950,15 +2950,17 @@ int main(int argc, char* argv[])
                     OwnedIFileIO iFileIO = iFile->open(IFOcreaterw);
                     if (!iFileIO)
                         throw MakeStringException(0, "Failed to create: %s", fname.str());
-                    PROGLOG("Created %s", fname.str());
+                    size32_t sz = 10; // 0x100000*10;
+                    PROGLOG("Created %s, writing %u", fname.str(), sz);
                     MemoryBuffer mb;
-                    size32_t rLen = fname.length();
-                    void *readBuf = mb.reserveTruncate(rLen);
+                    void *p = mb.reserveTruncate(sz);
+                    memset(p, 0, sz);
                     for (unsigned fi=0; fi<initInfo->fiMax; fi++)
                     {
-                        size32_t sz = iFileIO->size();
-                        iFileIO->write(0, rLen, fname.str()); // arbitrary write
-                        iFileIO->read(0, rLen, readBuf);
+                        size32_t fsz = iFileIO->size();
+                        size32_t w = iFileIO->write(0, sz, p); // arbitrary write
+                        PROGLOG("written %u", w);
+                        iFileIO->read(0, sz, p);
                     }
                 }
                 virtual bool stop() { return true; }

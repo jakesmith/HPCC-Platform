@@ -47,8 +47,8 @@ void usage()
     printf("  dafscontrol [<dali-ip>] CHECKVERMAJOR <ip-or-cluster>\n");
     printf("  dafscontrol [<dali-ip>] TRACE <ip> <num>\n");
     printf("  dafscontrol [<dali-ip>] CHKDSK <ip> <num>\n");
-    printf("  dafscontrol [<dali-ip>] INFO <ip-or-clsuter>\n");
-    printf("  dafscontrol [<dali-ip>] THROTTLE <ip-or-cluster> <class> <limit> <ms-delay> <cpu-limit>\n");
+    printf("  dafscontrol [<dali-ip>] INFO <ip-or-clsuter> [level]\n");
+    printf("  dafscontrol [<dali-ip>] THROTTLE <ip-or-cluster> <class> <limit> <ms-delay> <cpu-limit> <queue-limit>\n");
     printf("  dafscontrol MYVER\n");
     exit(1);
 }
@@ -395,12 +395,16 @@ int main(int argc, char* argv[])
                 else {
                     SocketEndpointArray eps;
                     StringBuffer errMsg;
+                    unsigned level=1;
+                    if (ac-(ai+1)>1)
+                        level = atoi(argv[ai+2]);
+                    PROGLOG("Info level = %u", level);
                     if (!isdali||!getCluster(argv[ai+1],eps)) {
                         SocketEndpoint ep(argv[ai+1]);
                         StringBuffer epStr;
                         ep.getUrlStr(epStr);
                         VStringBuffer result("Info for %s", epStr.str());
-                        int ret = getDafileSvrInfo(ep, result);
+                        int ret = getDafileSvrInfo(ep, level, result);
                         if (ret!=0)
                             ERRLOG("getDafileSvrInfo for %s returned %d", epStr.str(), ret);
                         else
@@ -412,7 +416,7 @@ int main(int argc, char* argv[])
                             StringBuffer epStr;
                             ep.getUrlStr(epStr);
                             VStringBuffer result("Info for %s: ", epStr.str());
-                            int ret = getDafileSvrInfo(ep, result);
+                            int ret = getDafileSvrInfo(ep, level, result);
                             if (ret!=0)
                                 ERRLOG("getDafileSvrInfo for %s returned %d", epStr.str(), ret);
                             else
@@ -423,21 +427,21 @@ int main(int argc, char* argv[])
                 break;
             }
             if (stricmp(argv[ai],"throttle")==0) {
-                if (ai+5>=ac)
+                if (ai+6>=ac)
                     usage();
                 else {
                     SocketEndpointArray eps;
                     StringBuffer errMsg;
                     if (!isdali||!getCluster(argv[ai+1],eps)) {
                         SocketEndpoint ep(argv[ai+1]);
-                        int ret = setDafileSvrThrottleLimit(ep, (ThrottleClass)atoi(argv[ai+2]), atoi(argv[ai+3]), atoi(argv[ai+4]), atoi(argv[ai+5]), &errMsg);
+                        int ret = setDafileSvrThrottleLimit(ep, (ThrottleClass)atoi(argv[ai+2]), atoi(argv[ai+3]), atoi(argv[ai+4]), atoi(argv[ai+5]), atoi(argv[ai+6]), &errMsg);
                         if (ret!=0)
                             ERRLOG("setDafileSvrThrottleLimit returned %d, error = %s", ret, errMsg.str());
                     }
                     else {
                         ForEachItemIn(ni,eps) {
                             SocketEndpoint ep = eps.item(ni);
-                            int ret = setDafileSvrThrottleLimit(ep, (ThrottleClass)atoi(argv[ai+2]), atoi(argv[ai+3]), atoi(argv[ai+4]), atoi(argv[ai+5]), &errMsg.clear());
+                            int ret = setDafileSvrThrottleLimit(ep, (ThrottleClass)atoi(argv[ai+2]), atoi(argv[ai+3]), atoi(argv[ai+4]), atoi(argv[ai+5]), atoi(argv[ai+6]), &errMsg.clear());
                             if (ret!=0)
                                 ERRLOG("setDafileSvrThrottleLimit returned %d, error = %s", ret, errMsg.str());
                             StringBuffer s("done ");

@@ -2608,12 +2608,13 @@ int setDafsTrace(ISocket * socket,byte flags)
     return -1;
 }
 
-int setDafsThrottleLimit(ISocket * socket, ThrottleClass throttleClass, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit, StringBuffer *errMsg)
+int setDafsThrottleLimit(ISocket * socket, ThrottleClass throttleClass, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit, unsigned queueLimit, StringBuffer *errMsg)
 {
     assertex(socket);
     MemoryBuffer sendbuf;
     initSendBuffer(sendbuf);
-    sendbuf.append((RemoteFileCommandType)RFCsetthrottle).append((unsigned)throttleClass).append(throttleLimit).append(throttleDelayMs).append(throttleCPULimit);
+    sendbuf.append((RemoteFileCommandType)RFCsetthrottle).append((unsigned)throttleClass).append(throttleLimit);
+    sendbuf.append(throttleDelayMs).append(throttleCPULimit).append(queueLimit);
     MemoryBuffer replybuf;
     try {
         sendBuffer(socket, sendbuf);
@@ -2631,7 +2632,7 @@ int setDafsThrottleLimit(ISocket * socket, ThrottleClass throttleClass, unsigned
     return -1;
 }
 
-int getDafsInfo(ISocket * socket,StringBuffer &retstr)
+int getDafsInfo(ISocket * socket,unsigned level,StringBuffer &retstr)
 {
     if (!socket) {
         retstr.append(VERSTRING);
@@ -2639,7 +2640,7 @@ int getDafsInfo(ISocket * socket,StringBuffer &retstr)
     }
     MemoryBuffer sendbuf;
     initSendBuffer(sendbuf);
-    sendbuf.append((RemoteFileCommandType)RFCgetinfo);
+    sendbuf.append((RemoteFileCommandType)RFCgetinfo).append(level);
     MemoryBuffer replybuf;
     try {
         sendBuffer(socket, sendbuf);
@@ -2901,7 +2902,8 @@ public:
 #define MAPCOMMAND(c,p) case c: { ret =  this->p(msg, reply) ; break; }
 #define MAPCOMMANDCLIENT(c,p,client) case c: { ret = this->p(msg, reply, client); break; }
 #define MAPCOMMANDCLIENTTHROTTLE(c,p,client,throttler) case c: { ret = this->p(msg, reply, client, throttler); break; }
-
+#define MAPCOMMANDSTATS(c,p,stats) case c: { ret = this->p(msg, reply, stats); break; }
+#define MAPCOMMANDCLIENTSTATS(c,p,client,stats) case c: { ret = this->p(msg, reply, client, stats); break; }
 
 static unsigned ClientCount = 0;
 static unsigned MaxClientCount = 0;
@@ -2909,6 +2911,129 @@ static CriticalSection ClientCountSect;
 
 #define DEFAULT_THROTTLOG_LOG_INTERVAL_SECS 60 // log total throttled delay period
 
+
+struct ClientStats
+{
+    ClientStats(const char *_client) : client(_client) { count = 0; bRead = 0; bWritten = 0; }
+    const char *queryFindString() const { return client; }
+
+    StringAttr client;
+    unsigned __int64 count;
+    unsigned __int64 bRead;
+    unsigned __int64 bWritten;
+};
+class CClientStats : public StringSuperHashTableOf<ClientStats>
+{
+    typedef StringSuperHashTableOf<ClientStats> PARENT;
+    CriticalSection crit;
+    unsigned cmdStats[RFCmax-1];
+
+    inline ClientStats *addClientCommon(RemoteFileCommandType cmd, const char *client)
+    {
+        ClientStats *stats = PARENT::find(client);
+        if (!stats)
+        {
+            stats = new ClientStats(client);
+            PARENT::replace(*stats);
+        }
+        ++(cmdStats[cmd]);
+        ++stats->count;
+        return stats;
+    }
+
+    static int compareElement(void* const *ll, void* const *rr)
+    {
+        const ClientStats *l = (const ClientStats *) *ll;
+        const ClientStats *r = (const ClientStats *) *rr;
+        if (l->count == r->count)
+            return 0;
+        else if (l->count<r->count)
+            return 1;
+        else
+            return -1;
+    }
+public:
+    CClientStats()
+    {
+        memset(&cmdStats[0], 0, sizeof(cmdStats));
+    }
+    ClientStats *addClientReference(RemoteFileCommandType cmd, const char *client)
+    {
+        CriticalBlock b(crit);
+        return addClientCommon(cmd, client);
+    }
+    void addRead(ClientStats &stats, unsigned len)
+    {
+        CriticalBlock b(crit);
+        stats.bRead += len;
+    }
+    void addWrite(ClientStats &stats, unsigned len)
+    {
+        CriticalBlock b(crit);
+        stats.bWritten += len;
+    }
+    StringBuffer &getInfo(StringBuffer &info, unsigned level=1)
+    {
+        CriticalBlock b(crit);
+        unsigned __int64 totalCmds = 0;
+        for (unsigned c=0; c<RFCmax; c++)
+            totalCmds += cmdStats[c];
+        unsigned totalClients = PARENT::ordinality();
+        info.appendf("Commands processed = %" I64F "u, unique clients = %u", totalCmds, totalClients);
+        if (totalCmds)
+        {
+            info.append("Command stats:").newline();
+            for (unsigned c=0; c<RFCmax; c++)
+            {
+                unsigned __int64 count = cmdStats[c];
+                if (count)
+                    info.append(getRFCText(c)).append(": ").append(count).newline();
+            }
+        }
+        if (totalClients)
+        {
+            SuperHashIteratorOf<ClientStats> iter(*this);
+            if (level < 10)
+            {
+                // list up to 10 clients ordered by # of commands processed
+                PointerArrayOf<ClientStats> elements;
+                ForEach(iter)
+                {
+                    ClientStats &elem = iter.query();
+                    elements.append(&elem);
+                }
+                elements.sort(&compareElement);
+                unsigned max=elements.ordinality();
+                if (max>10)
+                    max = 10; // cap
+                info.append("Top 10 clients:").newline();
+                for (unsigned e=0; e<max; e++)
+                {
+                    const ClientStats &element = *elements.item(e);
+                    info.appendf("Client %s - %" I64F "d requests handled, bytes read = %" I64F "d, bytes written = % " I64F "d",
+                            element.client.get(), element.count, element.bRead, element.bWritten).newline();
+                }
+            }
+            else // list all
+            {
+                info.append("All clients:").newline();
+                ForEach(iter)
+                {
+                    ClientStats &element = iter.query();
+                    info.appendf("Client %s - %" I64F "d requests handled, bytes read = %" I64F "d, bytes written = % " I64F "d",
+                            element.client.get(), element.count, element.bRead, element.bWritten).newline();
+                }
+            }
+        }
+        return info;
+    }
+    void reset()
+    {
+        CriticalBlock b(crit);
+        memset(&cmdStats[0], 0, sizeof(cmdStats));
+        PARENT::kill();
+    }
+};
 
 class CRemoteFileServer : public CInterface, implements IRemoteFileServer, implements IThreadFactory
 {
@@ -3222,7 +3347,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         Semaphore sem;
         CriticalSection crit;
         StringAttr msg;
-        unsigned limit, delayMs, cpuThreshold;
+        unsigned limit, delayMs, cpuThreshold, queueLimit;
         unsigned disabledLimit;
         unsigned __int64 totalThrottleDelay;
         CCycleTimer totalThrottleDelayTimer;
@@ -3237,6 +3362,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             delayMs = DEFAULT_STDCMD_THROTTLEDELAYMS;
             cpuThreshold = DEFAULT_STDCMD_THROTTLECPULIMIT;
             disabledLimit = 0;
+            queueLimit = DEFAULT_STDCMD_THROTTLEQUEUELIMIT;
             statsIntervalSecs = DEFAULT_STDCMD_THROTTLECPULIMIT;
         }
         ~CThrottler()
@@ -3270,7 +3396,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             CriticalBlock b(crit);
             getInfoSummary(info).newline();
         }
-        void configure(unsigned _limit, unsigned _delayMs, unsigned _cpuThreshold)
+        void configure(unsigned _limit, unsigned _delayMs, unsigned _cpuThreshold, unsigned _queueLimit)
         {
             CriticalBlock b(crit);
             int delta = 0;
@@ -3328,6 +3454,11 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                 PROGLOG("Throttler(%s): New cpuThreshold=%u, previous: %u", msg.get(), _cpuThreshold, cpuThreshold);
                 cpuThreshold = _cpuThreshold;
             }
+            if (_queueLimit != queueLimit)
+            {
+                PROGLOG("Throttler(%s): New queueLimit=%u, previous: %u", msg.get(), _queueLimit, queueLimit);
+                queueLimit = _queueLimit;
+            }
         }
         void setStatsInterval(unsigned _statsIntervalSecs)
         {
@@ -3377,11 +3508,18 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                         /* Allow to proceed, despite hitting throttle limit because CPU < threshold
                          * NB: The overall number of threads is still capped by the thread pool.
                          */
-                        PROGLOG("Throttler(%s): transaction delayed [cmd=%s], proceeding as cpu(%u)<throttleCPULimit(%u)", msg.get(), getRFCText(cmd), cpu, cpuThreshold);
+                        unsigned ms = timer.elapsedMs();
+                        {
+                            CriticalBlock b(crit);
+                            totalThrottleDelay += ms;
+                        }
+                        PROGLOG("Throttler(%s): transaction delayed [cmd=%s] for : %d milliseconds, proceeding as cpu(%u)<throttleCPULimit(%u)", msg.get(), getRFCText(cmd), cpu, ms, cpuThreshold);
                         hadSem = false;
                     }
                     else
                     {
+                        if (queue.ordinality()>queueLimit)
+                            throw MakeStringException(0, "Throttle(%s), there are %u items queued, rejecting new command[%s]", msg.str(), queue.ordinality(), getRFCText(cmd));
                         queue.enqueue(new CThrottleQueueItem(cmd, client)); // NB: takes over ownership of 'client' from running thread
                         PROGLOG("Throttler(%s): transaction delayed [cmd=%s], queuing (%u queueud)", msg.get(), getRFCText(cmd), queue.ordinality());
                         return;
@@ -3468,8 +3606,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
     unsigned closedclients;
     CAsyncCommandManager asyncCommandManager;
     CThrottler stdCmdThrottler, slowCmdThrottler;
-    atomic_t cmdStats[RFCmax-1];
-    AtomRefTable clientCounts;
+    CClientStats clientStats;
     atomic_t globallasttick;
 
     int getNextHandle()
@@ -3590,8 +3727,8 @@ public:
         lasthandle = 0;
         selecthandler.setown(createSocketSelectHandler(NULL));
 
-        stdCmdThrottler.configure(DEFAULT_STDCMD_PARALLELREQUESTLIMIT, DEFAULT_STDCMD_THROTTLEDELAYMS, DEFAULT_STDCMD_THROTTLECPULIMIT);
-        slowCmdThrottler.configure(DEFAULT_SLOWCMD_PARALLELREQUESTLIMIT, DEFAULT_SLOWCMD_THROTTLEDELAYMS, DEFAULT_SLOWCMD_THROTTLECPULIMIT);
+        stdCmdThrottler.configure(DEFAULT_STDCMD_PARALLELREQUESTLIMIT, DEFAULT_STDCMD_THROTTLEDELAYMS, DEFAULT_STDCMD_THROTTLECPULIMIT, DEFAULT_STDCMD_THROTTLEQUEUELIMIT);
+        slowCmdThrottler.configure(DEFAULT_SLOWCMD_PARALLELREQUESTLIMIT, DEFAULT_SLOWCMD_THROTTLEDELAYMS, DEFAULT_SLOWCMD_THROTTLECPULIMIT, DEFAULT_SLOWCMD_THROTTLEQUEUELIMIT);
 
         threads.setown(createThreadPool("CRemoteFileServerPool",this,NULL,maxThreads,maxThreadsDelayMs,
 #ifdef __64BIT__
@@ -3608,8 +3745,6 @@ public:
         clientcounttick = msTick();
         closedclients = 0;
         atomic_set(&globallasttick,msTick());
-        for (unsigned c=0; c<RFCmax; c++)
-            atomic_set(&cmdStats[c], 0);
     }
 
     ~CRemoteFileServer()
@@ -3749,7 +3884,6 @@ public:
         return false;
     }
 
-
     bool cmdCloseFileIO(MemoryBuffer & msg, MemoryBuffer & reply)
     {
         int handle;
@@ -3763,9 +3897,7 @@ public:
         return true;
     }
 
-
-
-    bool cmdRead(MemoryBuffer & msg, MemoryBuffer & reply)
+    bool cmdRead(MemoryBuffer & msg, MemoryBuffer & reply, ClientStats &stats)
     {
         int handle;
         __int64 pos;
@@ -3799,6 +3931,7 @@ public:
             e->Release();
             return false;
         }
+        clientStats.addRead(stats, len);
         if (TF_TRACE)
             PROGLOG("read file,  handle = %d, pos = %" I64F "d, toread = %d, read = %d",handle,pos,len,numRead);
         {
@@ -3807,7 +3940,6 @@ public:
         }
         return true;
     }
-
 
     bool cmdSize(MemoryBuffer & msg, MemoryBuffer & reply)
     {
@@ -3839,7 +3971,7 @@ public:
     }
 
 
-    bool cmdWrite(MemoryBuffer & msg, MemoryBuffer & reply)
+    bool cmdWrite(MemoryBuffer & msg, MemoryBuffer & reply, ClientStats &stats)
     {
         int handle;
         __int64 pos;
@@ -3854,8 +3986,12 @@ public:
             if (TF_TRACE_PRE_IO)
                 PROGLOG("before write file,  handle = %d, towrite = %d",handle,len);
             size32_t numWritten = fileio->write(pos,len,data);
+            clientStats.addWrite(stats, numWritten);
             if (TF_TRACE)
                 PROGLOG("write file,  handle = %d, towrite = %d, written = %d",handle,len,numWritten);
+ unsigned ms = 22500 + (getRandom() % 500); // fake slow transactions
+ PROGLOG("Fake delay of %u ms", ms);
+ MilliSleep(ms);
             reply.append((unsigned)RFEnoerror).append(numWritten);
             return true;
         }
@@ -4008,10 +4144,9 @@ public:
         }
 
         return false;
-        
     }
 
-    bool cmdAppend(MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler &client)
+    bool cmdAppend(MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler &client, ClientStats &stats)
     {
         IMPERSONATE_USER(client);
         int handle;
@@ -4026,6 +4161,7 @@ public:
         try {
             Owned<IFile> file = createIFile(srcname.get());
             __int64 written = fileio->appendFile(file,pos,len);
+            clientStats.addWrite(stats, written);
             if (TF_TRACE)
                 PROGLOG("append file,  handle = %d, file=%s, pos = %" I64F "d len = %" I64F "d written = %" I64F "d",handle,srcname.get(),pos,len,written);
             reply.append((unsigned)RFEnoerror).append(written);
@@ -4621,9 +4757,12 @@ public:
 
     bool cmdGetInfo(MemoryBuffer &msg, MemoryBuffer &reply)
     {
+        unsigned level=1;
+        if (msg.remaining() >= sizeof(unsigned))
+            msg.read(level);
         StringBuffer retstr;
-        int retcode = getInfo(retstr);
-        reply.append(retcode).append(retstr.str());
+        getInfo(retstr, level);
+        reply.append(0).append(retstr.str());
         return true;
     }
 
@@ -4631,8 +4770,8 @@ public:
     {
         // TBD
         StringBuffer retstr;
-        int retcode = getInfo(retstr);
-        reply.append(retcode).append(retstr.str());
+        getInfo(retstr);
+        reply.append(0).append(retstr.str());
         return true;
     }
 
@@ -4695,13 +4834,14 @@ public:
     {
         try
         {
-            unsigned throttleClass, limit, delayMs, cpuThreshold;
+            unsigned throttleClass, limit, delayMs, cpuThreshold, queueLimit;
             msg.read(throttleClass);
             msg.read(limit);
             msg.read(delayMs);
             msg.read(cpuThreshold);
+            msg.read(queueLimit);
 
-            setThrottle((ThrottleClass)throttleClass, limit, delayMs, cpuThreshold);
+            setThrottle((ThrottleClass)throttleClass, limit, delayMs, cpuThreshold, queueLimit);
 
             reply.append((unsigned)RFEnoerror);
             return true;
@@ -4798,16 +4938,16 @@ public:
 
     bool processCommand(RemoteFileCommandType cmd, MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler *client, CThrottler *throttler)
     {
-        atomic_inc(&cmdStats[cmd]);
-        clientCounts.linkKey(client->queryPeerName()); // NB AtomRefTable is thread safe
+        ClientStats *stats = clientStats.addClientReference(cmd, client->queryPeerName());
         bool ret = true;
         switch(cmd)
         {
+            MAPCOMMANDSTATS(RFCread, cmdRead, *stats);
+            MAPCOMMANDSTATS(RFCwrite, cmdWrite, *stats);
+            MAPCOMMANDCLIENTSTATS(RFCappend, cmdAppend, *client, *stats);
             MAPCOMMAND(RFCcloseIO, cmdCloseFileIO);
             MAPCOMMANDCLIENT(RFCopenIO, cmdOpenFileIO, *client);
-            MAPCOMMAND(RFCread, cmdRead);
             MAPCOMMAND(RFCsize, cmdSize);
-            MAPCOMMAND(RFCwrite, cmdWrite);
             MAPCOMMANDCLIENT(RFCexists, cmdExists, *client);
             MAPCOMMANDCLIENT(RFCremove, cmdRemove, *client);
             MAPCOMMANDCLIENT(RFCrename, cmdRename, *client);
@@ -4829,7 +4969,6 @@ public:
             MAPCOMMANDCLIENT(RFCgetcrc, cmdGetCRC, *client);
             MAPCOMMANDCLIENT(RFCmove, cmdMove, *client);
             MAPCOMMANDCLIENT(RFCcopy, cmdCopy, *client);
-            MAPCOMMANDCLIENT(RFCappend, cmdAppend, *client);
             MAPCOMMAND(RFCsetsize, cmdSetSize);
             MAPCOMMAND(RFCsettrace, cmdSetTrace);
             MAPCOMMAND(RFCgetinfo, cmdGetInfo);
@@ -5160,21 +5299,7 @@ public:
         }
     }
 
-    static int compareHashKeyElement(void* const *ll, void* const *rr)
-    {
-        const HashKeyElement *l = (const HashKeyElement *) *ll;
-        const HashKeyElement *r = (const HashKeyElement *) *rr;
-        unsigned lc = l->queryReferences();
-        unsigned rc = r->queryReferences();
-        if (lc == rc)
-            return 0;
-        else if (lc<rc)
-            return 1;
-        else
-            return -1;
-    }
-
-    int getInfo(StringBuffer &info)
+    void getInfo(StringBuffer &info, unsigned level=1)
     {
         {
             CriticalBlock block(ClientCountSect);
@@ -5193,42 +5318,7 @@ public:
         stdCmdThrottler.getInfo(info);
         info.newline();
         slowCmdThrottler.getInfo(info);
-
-        unsigned __int64 totalCmds = 0;
-        for (unsigned c=0; c<RFCmax; c++)
-            totalCmds += atomic_read(&cmdStats[c]);
-        unsigned totalClients = clientCounts.ordinality();
-        info.appendf("Commands processed = %" I64F "u, unique clients = %u", totalCmds, totalClients);
-        if (totalCmds)
-        {
-            info.append("Command stats:").newline();
-            for (unsigned c=0; c<RFCmax; c++)
-            {
-                unsigned count = atomic_read(&cmdStats[c]);
-                if (count)
-                    info.append(getRFCText(c)).append(": ").append(count).newline();
-            }
-        }
-        if (totalClients)
-        {
-            PointerArrayOf<HashKeyElement> elements;
-            SuperHashIteratorOf<HashKeyElement> iter(clientCounts);
-            ForEach(iter)
-            {
-                HashKeyElement &elem = iter.query();
-                elements.append(&elem);
-            }
-            elements.sort(&compareHashKeyElement);
-            unsigned max=elements.ordinality();
-            if (max>10) max = 10;
-            info.append("Top 10 clients:").newline();
-            for (unsigned e=0; e<max; e++)
-            {
-                const HashKeyElement &element = *elements.item(e);
-                info.appendf("Client %s - %u requests handled", element.get(), element.queryReferences()).newline();
-            }
-        }
-        return 0;
+        clientStats.getInfo(info, level);
     }
 
     unsigned threadRunningCount()
@@ -5244,15 +5334,15 @@ public:
         return msTick()-t;
     }
 
-    void setThrottle(ThrottleClass throttleClass, unsigned limit, unsigned delayMs, unsigned cpuThreshold)
+    void setThrottle(ThrottleClass throttleClass, unsigned limit, unsigned delayMs, unsigned cpuThreshold, unsigned queueLimit)
     {
         switch (throttleClass)
         {
             case ThrottleStd:
-                stdCmdThrottler.configure(limit, delayMs, cpuThreshold);
+                stdCmdThrottler.configure(limit, delayMs, cpuThreshold, queueLimit);
                 break;
             case ThrottleSlow:
-                slowCmdThrottler.configure(limit, delayMs, cpuThreshold);
+                slowCmdThrottler.configure(limit, delayMs, cpuThreshold, queueLimit);
                 break;
             default:
             {
@@ -5275,11 +5365,7 @@ public:
         stdCmdThrottler.getStats(stats, reset).newline();
         slowCmdThrottler.getStats(stats, reset);
         if (reset)
-        {
-            for (unsigned c=0; c<RFCmax; c++)
-                atomic_set(&cmdStats[c], 0);
-            clientCounts.kill();
-        }
+            clientStats.reset();
         return stats;
     }
 };
