@@ -3229,8 +3229,9 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         void processCommand(RemoteFileCommandType cmd, CThrottler *throttler)
         {
             MemoryBuffer reply;
-            parent->processCommand(cmd, buf, initSendBuffer(reply), this, throttler);
-            buf.clear();
+            MemoryBuffer msg;
+            msg.swapWith(buf);
+            parent->processCommand(cmd, msg, initSendBuffer(reply), this, throttler);
             sendBuffer(socket, reply);
         }
 
@@ -3379,10 +3380,8 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         RemoteFileCommandType cmd;
         Linked<CRemoteClientHandler> client;
         CCycleTimer timer;
-        MemoryBuffer buf;
         CThrottleQueueItem(RemoteFileCommandType _cmd, CRemoteClientHandler *_client) : cmd(_cmd), client(_client)
         {
-            buf.swapWith(client->buf);
         }
     };
 
@@ -3565,7 +3564,6 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                     {
                         if (queue.ordinality()>=queueLimit)
                             throw MakeStringException(0, "Throttle(%s), there are %u items queued, rejecting new command[%s]", msg.str(), queue.ordinality(), getRFCText(cmd));
-                        // JCSMORE will need to ensure the order remains the same!!
                         queue.enqueue(new CThrottleQueueItem(cmd, client)); // NB: takes over ownership of 'client' from running thread
                         PROGLOG("Throttler(%s): transaction delayed [cmd=%s], queuing (%u queueud), [client=%p, sock=%u]", msg.get(), getRFCText(cmd), queue.ordinality(), client, client->socket->OShandle());
                         return;
@@ -3583,57 +3581,69 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                 ~ReleaseSem() { if (sem) sem->signal(); }
             } releaseSem(hadSem?&sem:NULL);
 
-            Linked<CRemoteClientHandler> currentClient = client;
-            unsigned ms = timer.elapsedMs();
+            /* Whilst holding on this throttle slot (i.e. before signalling semaphore back), process
+             * queued items. NB: other threads that are finishing will do also.
+             * Queued items are processed 1st, the current request, then anything that was queued when handling current request
+             * Throttle slot (semaphore) is only given back when no more to do.
+             */
+            RemoteFileCommandType currentCmd;
+            Linked<CRemoteClientHandler> currentClient;
             loop
             {
+                Owned<CThrottleQueueItem> item;
                 {
                     CriticalBlock b(crit);
-                    Owned<CThrottleQueueItem> item = queue.dequeue();
-                    if (!item)
+                    item.setown(queue.dequeue());
+                    if (item)
                     {
-                        /* Commands are only queued if semaphore is exhaused (checked inside crit)
-                         * so only signal the semaphore inside the crit, after checking if there are no queued items
-                         */
-                        if (hadSem)
+                        currentCmd = item->cmd;
+                        currentClient.setown(item->client.getClear());
+                    }
+                    else
+                    {
+                        if (NULL == client) // previously handled and queue empty
                         {
-                            releaseSem.sem = NULL;
-                            sem.signal();
+                            /* Commands are only queued if semaphore is exhaused (checked inside crit)
+                             * so only signal the semaphore inside the crit, after checking if there are no queued items
+                             */
+                            if (hadSem)
+                            {
+                                releaseSem.sem = NULL;
+                                sem.signal();
+                            }
+                            break;
                         }
-                        break;
+                        currentCmd = cmd;
+                        currentClient.set(client); // process current request after dealing with queue
+                        client = NULL;
                     }
-                    if (cmd>=RFCmax)
-                    {
-                        VStringBuffer errMsg("cmd too high: %u, client sock=%u", cmd, client->socket->OShandle());
-                        PrintStackReport();
-                        raiseAssertException(errMsg.str(), __FILE__, __LINE__);
-                    }
-                    cmd = item->cmd;
-                    client->buf.swapWith(item->buf);
-                    if (cmd>=RFCmax)
-                    {
-                        VStringBuffer errMsg("cmd too high: %u, client sock=%u", cmd, client->socket->OShandle());
-                        PrintStackReport();
-                        raiseAssertException(errMsg.str(), __FILE__, __LINE__);
-                    }
-                    currentClient.setown(item->client.getClear());
-                    ms = item->timer.elapsedMs();
                 }
+                if (currentCmd>=RFCmax)
+                {
+                    VStringBuffer errMsg("cmd too high: %u, client sock=%u", currentCmd, client->socket->OShandle());
+                    PrintStackReport();
+                    raiseAssertException(errMsg.str(), __FILE__, __LINE__);
+                }
+                unsigned ms = item->timer.elapsedMs();
                 if (ms >= 1000)
                 {
                     if (ms>delayMs)
-                        PROGLOG("Throttle(%s): transaction delayed [cmd=%s] for : %d seconds", msg.get(), getRFCText(cmd), ms/1000);
+                        PROGLOG("Throttle(%s): transaction delayed [cmd=%s] for : %d seconds", msg.get(), getRFCText(currentCmd), ms/1000);
                 }
                 {
                     CriticalBlock b(crit);
                     totalThrottleDelay += ms;
                 }
-
-                /* Whilst holding on this throttle slot (i.e. before signalling semaphore back), process
-                 * queued items. NB: others that are finishing will do also.
-                 */
+                try
+                {
+                    currentClient->processCommand(currentCmd, this);
+                }
+                catch (IException *e)
+                {
+                    EXCLOG(e, "addCommand: processCommand failed");
+                    e->Release();
+                }
             }
-            currentClient->processCommand(cmd, this);
         }
     };
 
@@ -3745,7 +3755,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         }
         bool canReuse()
         {
-            return false; // want to free owned osocke
+            return false; // want to free owned socket
         }
     };
 
