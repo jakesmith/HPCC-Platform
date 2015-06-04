@@ -2945,6 +2945,7 @@ int main(int argc, char* argv[])
                 }
                 virtual void main()
                 {
+                    try
                     {
                         StringBuffer &fname = initInfo->fname;
                         OwnedIFile iFile = createIFile(fname);
@@ -2965,6 +2966,11 @@ int main(int argc, char* argv[])
                         }
                         iFileIO.clear();
                         iFile.clear();
+                    }
+                    catch (IException *e)
+                    {
+                        EXCLOG(e, "myestpool");
+                        e->Release();
                     }
                 }
                 virtual bool stop() { return true; }
