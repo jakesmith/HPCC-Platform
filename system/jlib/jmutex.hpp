@@ -22,6 +22,7 @@
 
 
 #include <assert.h>
+#include <signal.h>
 #include "jiface.hpp"
 #include "jsem.hpp"
 
@@ -299,7 +300,8 @@ public:
 #ifdef _ASSERT_LOCK_SUPPORT
         if (owner)
         {
-            assertex(owner==GetCurrentThreadId());
+            if(owner!=GetCurrentThreadId())
+                raise (SIGABRT);
             depth++;
         }
         else
@@ -310,7 +312,8 @@ public:
     inline void leave()
     {
 #ifdef _ASSERT_LOCK_SUPPORT
-        assertex(owner==GetCurrentThreadId());
+        if (owner!=GetCurrentThreadId())
+            raise (SIGABRT);
         if (depth)
             depth--;
         else
@@ -321,7 +324,8 @@ public:
     inline void assertLocked()
     {
 #ifdef _ASSERT_LOCK_SUPPORT
-        assertex(owner == GetCurrentThreadId());
+        if(owner != GetCurrentThreadId())
+            raise (SIGABRT);
 #endif
     }
 };

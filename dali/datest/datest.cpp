@@ -2945,22 +2945,26 @@ int main(int argc, char* argv[])
                 }
                 virtual void main()
                 {
-                    StringBuffer &fname = initInfo->fname;
-                    OwnedIFile iFile = createIFile(fname);
-                    OwnedIFileIO iFileIO = iFile->open(IFOcreaterw);
-                    if (!iFileIO)
-                        throw MakeStringException(0, "Failed to create: %s", fname.str());
-                    size32_t sz = 10; // 0x100000*10;
-                    PROGLOG("Created %s, writing %u", fname.str(), sz);
-                    MemoryBuffer mb;
-                    void *p = mb.reserveTruncate(sz);
-                    memset(p, 0, sz);
-                    for (unsigned fi=0; fi<initInfo->fiMax; fi++)
                     {
-                        size32_t fsz = iFileIO->size();
-                        size32_t w = iFileIO->write(0, sz, p); // arbitrary write
-                        PROGLOG("written %u", w);
-                        iFileIO->read(0, sz, p);
+                        StringBuffer &fname = initInfo->fname;
+                        OwnedIFile iFile = createIFile(fname);
+                        OwnedIFileIO iFileIO = iFile->open(IFOcreaterw);
+                        if (!iFileIO)
+                            throw MakeStringException(0, "Failed to create: %s", fname.str());
+                        size32_t sz = 10; // 0x100000*10;
+                        PROGLOG("Created %s, writing %u", fname.str(), sz);
+                        MemoryBuffer mb;
+                        void *p = mb.reserveTruncate(sz);
+                        memset(p, 0, sz);
+                        for (unsigned fi=0; fi<initInfo->fiMax; fi++)
+                        {
+                            size32_t fsz = iFileIO->size();
+                            size32_t w = iFileIO->write(0, sz, p); // arbitrary write
+                            PROGLOG("written %u", w);
+                            iFileIO->read(0, sz, p);
+                        }
+                        iFileIO.clear();
+                        iFile.clear();
                     }
                 }
                 virtual bool stop() { return true; }

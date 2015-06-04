@@ -59,7 +59,7 @@
 
 
 #ifdef _DEBUG
-#define     CHECKREADPOS(len)  assertex(readPos+(len)<=length())
+#define     CHECKREADPOS(len)  if (readPos+(len)>length()) { VStringBuffer s("CHECKREADPOS(readPos=%d, len=%d, buf-len=%d)", readPos, (unsigned)len, length()); raiseAssertException(s.str(), __FILE__, __LINE__); }
 #else
 #define     CHECKREADPOS(len)  
 #endif

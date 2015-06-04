@@ -813,6 +813,7 @@ int CSocket::pre_connect (bool block)
         int err = ERRNO();
         THROWJSOCKEXCEPTION(err);
     }
+    PROGLOG("CSocket::pre_connect(%p) , sock=%u", this, (unsigned)sock);
     STATS.activesockets++;
     int err = 0;
     set_nonblock(!block);
@@ -868,6 +869,7 @@ void CSocket::open(int listen_queue_size,bool reuseports)
     if (sock == INVALID_SOCKET) {
         THROWJSOCKEXCEPTION(ERRNO());
     }
+    PROGLOG("CSocket::open(%p) , sock=%u", this, (unsigned)sock);
     STATS.activesockets++;
 
 #ifdef SOCKTRACE
@@ -2394,6 +2396,7 @@ bool CSocket::leave_multicast_group(SocketEndpoint &ep)
 
 CSocket::~CSocket()
 {
+  PROGLOG("~CSocket(%p) , sock=%u", this, OShandle());
   if (owned) 
     close();
   free(hostname);
@@ -2407,6 +2410,7 @@ CSocket::~CSocket()
 
 CSocket::CSocket(const SocketEndpoint &ep,SOCKETMODE smode,const char *name)
 {
+  PROGLOG("CSocket(%p)", this);
     state = ss_close;
     nonblocking = false;
 #ifdef USERECVSEM
@@ -2449,6 +2453,7 @@ CSocket::CSocket(const SocketEndpoint &ep,SOCKETMODE smode,const char *name)
 
 CSocket::CSocket(T_SOCKET new_sock,SOCKETMODE smode,bool _owned)
 {
+  PROGLOG("CSocket(%p), sock=%u", this, (unsigned)new_sock);
     nonblocking = false;
 #ifdef USERECVSEM
     receiveblocksemowned = false;
@@ -4776,6 +4781,11 @@ public:
 enum EpollMethod { EPOLL_INIT = 0, EPOLL_DISABLED, EPOLL_ENABLED };
 static EpollMethod epoll_method = EPOLL_INIT;
 static CriticalSection epollsect;
+
+ISocketSelectHandler *createSocketSelectHandlerReal(const char *trc)
+{
+    return new CSocketSelectHandler(trc);
+}
 
 ISocketSelectHandler *createSocketSelectHandler(const char *trc)
 {

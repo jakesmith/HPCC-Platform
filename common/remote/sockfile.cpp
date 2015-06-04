@@ -41,10 +41,6 @@
 
 #define SOCKET_CACHE_MAX 500
 
-#define MAX_THREADS             100
-#define TARGET_MIN_THREADS      20
-#define TARGET_ACTIVE_THREADS   80
-
 #ifdef _DEBUG
 //#define SIMULATE_PACKETLOSS 1
 #endif
@@ -1188,6 +1184,10 @@ public:
         useSSL = securitySettings.useSSL;
     }
 
+    ~CRemoteBase()
+    {
+        socket.clear();
+    }
 
     void connect()
     {
@@ -2936,7 +2936,13 @@ class CClientStats : public StringSuperHashTableOf<ClientStats>
             stats = new ClientStats(client);
             PARENT::replace(*stats);
         }
-        ++(cmdStats[cmd]);
+        if (cmd>=RFCmax)
+        {
+            VStringBuffer errMsg("cmd too high: %u", cmd);
+            PrintStackReport();
+            raiseAssertException(errMsg.str(), __FILE__, __LINE__);
+        }
+        cmdStats[cmd] = cmdStats[cmd]+1;
         ++stats->count;
         return stats;
     }
@@ -2956,6 +2962,20 @@ public:
     CClientStats()
     {
         memset(&cmdStats[0], 0, sizeof(cmdStats));
+    }
+    ~CClientStats()
+    {
+        kill();
+    }
+    void kill()
+    {
+        SuperHashIteratorOf<ClientStats> iter(*this);
+        ForEach(iter)
+        {
+            ClientStats *elem = &iter.query();
+            delete elem;
+        }
+        PARENT::kill();
     }
     ClientStats *addClientReference(RemoteFileCommandType cmd, const char *client)
     {
@@ -3031,7 +3051,7 @@ public:
     {
         CriticalBlock b(crit);
         memset(&cmdStats[0], 0, sizeof(cmdStats));
-        PARENT::kill();
+        kill();
     }
 };
 
@@ -3062,28 +3082,48 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         CRemoteClientHandler(CRemoteFileServer *_parent,ISocket *_socket,IAuthenticatedUser *_user,atomic_t &_globallasttick)
             : socket(_socket), user(_user), globallasttick(_globallasttick)
         {
+            PROGLOG("CRemoteClientHandler(%p)", this);
             previdx = (unsigned)-1;
-            CriticalBlock block(ClientCountSect);
-            if (++ClientCount>MaxClientCount)
-                MaxClientCount = ClientCount;
-            if (TF_TRACE_CLIENT_CONN) {
-                StringBuffer s;
-                s.appendf("Connecting(%x) [%d,%d] to ",(unsigned)(long)this,ClientCount,MaxClientCount);
-                PROGLOG("%s",queryPeerName());
+            if (socket)
+            {
+                StringBuffer peerBuf;
+                char name[256];
+                name[0] = 0;
+                int port = socket->peer_name(name,sizeof(name)-1);
+                if (port>=0)
+                {
+                    peerBuf.append(name);
+                    if (port)
+                        peerBuf.append(':').append(port);
+                    peerName.set(peerBuf);
+                }
+            }
+            {
+                CriticalBlock block(ClientCountSect);
+                if (++ClientCount>MaxClientCount)
+                    MaxClientCount = ClientCount;
+                if (TF_TRACE_CLIENT_CONN) {
+                    StringBuffer s;
+                    s.appendf("Connecting(%p) [%d,%d] to ",this,ClientCount,MaxClientCount);
+                    s.append(peerName);
+                    PROGLOG("%s", s.str());
+                }
             }
             parent = _parent;
             left = 0;
             buf.setEndian(__BIG_ENDIAN);
             selecthandled = false;
+
             touch();
         }
         ~CRemoteClientHandler()
         {
+            PROGLOG("~CRemoteClientHandler(%p)", this);
             {
                 CriticalBlock block(ClientCountSect);
                 ClientCount--;
                 if (TF_TRACE_CLIENT_CONN) {
-                    PROGLOG("Disconnecting(%x) [%d,%d] ",(unsigned)(long)this,ClientCount,MaxClientCount);
+                    PROGLOG("Disconnecting(%p) [%d,%d] ",this,ClientCount,MaxClientCount);
                 }
             }
             ISocket *sock = socket.getClear();
@@ -3098,13 +3138,18 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         bool notifySelected(ISocket *sock,unsigned selected)
         {
             if (TF_TRACE_FULL)
-                PROGLOG("notifySelected(%x)",(unsigned)(long)this);
+                PROGLOG("notifySelected(%p)",this);
             if (sock!=socket)
                 WARNLOG("notifySelected - invalid socket passed");
             size32_t avail = (size32_t)socket->avail_read();
+            PROGLOG("notifySelected(%p), sock=%u, selected=%u, avail=%u, left=%u",this, socket->OShandle(), selected, avail, left);
             if (avail)
                 touch();
             if (left==0) {
+                if (0 == avail)
+                {
+                    avail = 0;
+                }
                 try {
                     left = avail?receiveBufferSize(socket):0;
                 }
@@ -3217,10 +3262,23 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         void process()
         {
             if (selecthandled)
-                throttleCommand(); // buffer already filled
+            {
+                PROGLOG("process() selecthandled=true %p", this);
+                try
+                {
+                    throttleCommand(); // buffer already filled
+                }
+                catch (IException *e)
+                {
+                    EXCLOG(e, "throttleCommand() failed");
+                    buf.clear(); // important to clear here to ensure notify() doesn't trigger another read
+                    throw;
+                }
+            }
             else
             {
-                while (parent->threadRunningCount()<=TARGET_ACTIVE_THREADS) // if too many threads add to select handler
+                PROGLOG("process() selecthandled=false %p", this);
+                while (parent->threadRunningCount()<=parent->targetActiveThreads) // if too many threads add to select handler
                 {
                     int w;
                     try
@@ -3290,22 +3348,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
 
         const char *queryPeerName()
         {
-            if (socket)
-            {
-                StringBuffer buf;
-                char name[256];
-                name[0] = 0;
-                int port = socket->peer_name(name,sizeof(name)-1);
-                if (port>=0)
-                {
-                    buf.append(name);
-                    if (port)
-                        buf.append(':').append(port);
-                    peerName.set(buf);
-                    return peerName;
-                }
-            }
-            return NULL;
+            return peerName;
         }
 
         bool getInfo(StringBuffer &str)
@@ -3336,8 +3379,10 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         RemoteFileCommandType cmd;
         Linked<CRemoteClientHandler> client;
         CCycleTimer timer;
+        MemoryBuffer buf;
         CThrottleQueueItem(RemoteFileCommandType _cmd, CRemoteClientHandler *_client) : cmd(_cmd), client(_client)
         {
+            buf.swapWith(client->buf);
         }
     };
 
@@ -3345,7 +3390,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
     {
         CRemoteFileServer &owner;
         Semaphore sem;
-        CriticalSection crit;
+        CriticalSection crit, configureCrit;
         StringAttr msg;
         unsigned limit, delayMs, cpuThreshold, queueLimit;
         unsigned disabledLimit;
@@ -3376,7 +3421,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         }
         StringBuffer &getInfoSummary(StringBuffer &info)
         {
-            info.appendf("Thottler(%s) - limit=%u, delayMs=%u, cpuThreshold=%u", msg.get(), limit, delayMs, cpuThreshold).newline();
+            info.appendf("Thottler(%s) - limit=%u, delayMs=%u, cpuThreshold=%u, queueLimit=%u", msg.get(), limit, delayMs, cpuThreshold, queueLimit).newline();
             unsigned elapsedSecs = totalThrottleDelayTimer.elapsedMs()/1000;
             time_t simple;
             time(&simple);
@@ -3398,7 +3443,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
         }
         void configure(unsigned _limit, unsigned _delayMs, unsigned _cpuThreshold, unsigned _queueLimit)
         {
-            CriticalBlock b(crit);
+            CriticalBlock b(configureCrit);
             int delta = 0;
             if (_limit)
             {
@@ -3439,7 +3484,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                     if (sem.wait(1000))
                         ++delta;
                     else
-                        PROGLOG("Throttler(%s): Waited %0.2f seconds so far for a total of %d transactions to complete, %d completed", msg.get(), ((double)timer.elapsedMs())/1000, limit, -delta);
+                        PROGLOG("Throttler(%s): Waited %0.2f seconds so far for up to a maximum of %d (previous limit) transactions to complete, %d completed", msg.get(), ((double)timer.elapsedMs())/1000, limit, -delta);
                 }
                 limit = _limit;
                 // NB: doesn't include transactions in progress, i.e. will only throttle new transactions coming in.
@@ -3518,10 +3563,11 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                     }
                     else
                     {
-                        if (queue.ordinality()>queueLimit)
+                        if (queue.ordinality()>=queueLimit)
                             throw MakeStringException(0, "Throttle(%s), there are %u items queued, rejecting new command[%s]", msg.str(), queue.ordinality(), getRFCText(cmd));
+                        // JCSMORE will need to ensure the order remains the same!!
                         queue.enqueue(new CThrottleQueueItem(cmd, client)); // NB: takes over ownership of 'client' from running thread
-                        PROGLOG("Throttler(%s): transaction delayed [cmd=%s], queuing (%u queueud)", msg.get(), getRFCText(cmd), queue.ordinality());
+                        PROGLOG("Throttler(%s): transaction delayed [cmd=%s], queuing (%u queueud), [client=%p, sock=%u]", msg.get(), getRFCText(cmd), queue.ordinality(), client, client->socket->OShandle());
                         return;
                     }
                 }
@@ -3541,21 +3587,6 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             unsigned ms = timer.elapsedMs();
             loop
             {
-                if (ms >= 1000)
-                {
-                    if (ms>delayMs)
-                        PROGLOG("Throttle(%s): transaction delayed [cmd=%s] for : %d seconds", msg.get(), getRFCText(cmd), ms/1000);
-                }
-                {
-                    CriticalBlock b(crit);
-                    totalThrottleDelay += ms;
-                }
-
-                currentClient->processCommand(cmd, this);
-
-                /* Whilst holding on this throttle slot (i.e. before signalling semaphore back), process
-                 * queued items. NB: others that are finishing will do also.
-                 */
                 {
                     CriticalBlock b(crit);
                     Owned<CThrottleQueueItem> item = queue.dequeue();
@@ -3571,11 +3602,38 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                         }
                         break;
                     }
+                    if (cmd>=RFCmax)
+                    {
+                        VStringBuffer errMsg("cmd too high: %u, client sock=%u", cmd, client->socket->OShandle());
+                        PrintStackReport();
+                        raiseAssertException(errMsg.str(), __FILE__, __LINE__);
+                    }
                     cmd = item->cmd;
+                    client->buf.swapWith(item->buf);
+                    if (cmd>=RFCmax)
+                    {
+                        VStringBuffer errMsg("cmd too high: %u, client sock=%u", cmd, client->socket->OShandle());
+                        PrintStackReport();
+                        raiseAssertException(errMsg.str(), __FILE__, __LINE__);
+                    }
                     currentClient.setown(item->client.getClear());
                     ms = item->timer.elapsedMs();
                 }
+                if (ms >= 1000)
+                {
+                    if (ms>delayMs)
+                        PROGLOG("Throttle(%s): transaction delayed [cmd=%s] for : %d seconds", msg.get(), getRFCText(cmd), ms/1000);
+                }
+                {
+                    CriticalBlock b(crit);
+                    totalThrottleDelay += ms;
+                }
+
+                /* Whilst holding on this throttle slot (i.e. before signalling semaphore back), process
+                 * queued items. NB: others that are finishing will do also.
+                 */
             }
+            currentClient->processCommand(cmd, this);
         }
     };
 
@@ -3608,6 +3666,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
     CThrottler stdCmdThrottler, slowCmdThrottler;
     CClientStats clientStats;
     atomic_t globallasttick;
+    unsigned targetActiveThreads;
 
     int getNextHandle()
     {
@@ -3730,13 +3789,20 @@ public:
         stdCmdThrottler.configure(DEFAULT_STDCMD_PARALLELREQUESTLIMIT, DEFAULT_STDCMD_THROTTLEDELAYMS, DEFAULT_STDCMD_THROTTLECPULIMIT, DEFAULT_STDCMD_THROTTLEQUEUELIMIT);
         slowCmdThrottler.configure(DEFAULT_SLOWCMD_PARALLELREQUESTLIMIT, DEFAULT_SLOWCMD_THROTTLEDELAYMS, DEFAULT_SLOWCMD_THROTTLECPULIMIT, DEFAULT_SLOWCMD_THROTTLEQUEUELIMIT);
 
+        unsigned targetMinThreads=maxThreads*20/100; // 20%
+        if (0 == targetMinThreads) targetMinThreads = 1;
+        targetActiveThreads=maxThreads*80/100; // 80%
+        if (0 == targetActiveThreads) targetActiveThreads = 1;
+
+ targetActiveThreads = 0; // test to hang all off select handler
+
         threads.setown(createThreadPool("CRemoteFileServerPool",this,NULL,maxThreads,maxThreadsDelayMs,
 #ifdef __64BIT__
             0, // Unlimited stack size
 #else
             0x10000,
 #endif
-        INFINITE,TARGET_MIN_THREADS));
+        INFINITE,targetMinThreads));
         threads->setStartDelayTracing(60); // trace amount delayed every minute.
 
         PROGLOG("CRemoteFileServer: maxThreads = %u, maxThreadsDelayMs = %u", maxThreads, maxThreadsDelayMs);
@@ -3989,7 +4055,7 @@ public:
             clientStats.addWrite(stats, numWritten);
             if (TF_TRACE)
                 PROGLOG("write file,  handle = %d, towrite = %d, written = %d",handle,len,numWritten);
- unsigned ms = 22500 + (getRandom() % 500); // fake slow transactions
+ unsigned ms = 2500 + (getRandom() % 500); // fake slow transactions
  PROGLOG("Fake delay of %u ms", ms);
  MilliSleep(ms);
             reply.append((unsigned)RFEnoerror).append(numWritten);
@@ -4931,8 +4997,16 @@ public:
                 return;
             case RFCsetthrottle:
             default:
+            {
+                if (cmd>=RFCmax)
+                {
+                    VStringBuffer errMsg("cmd too high: %u, client sock=%u", cmd, client->socket->OShandle());
+                    PrintStackReport();
+                    raiseAssertException(errMsg.str(), __FILE__, __LINE__);
+                }
                 client->processCommand(cmd, NULL);
                 break;
+            }
         }
     }
 
@@ -4979,6 +5053,12 @@ public:
             MAPCOMMANDCLIENTTHROTTLE(RFCtreecopytmp, cmdTreeCopyTmp, *client, &stdCmdThrottler);
             MAPCOMMAND(RFCsetthrottle, cmdSetThrottle);
         default:
+            if (cmd>=RFCmax)
+            {
+                VStringBuffer errMsg("cmd too high: %u, client sock=%u", cmd, client->socket->OShandle());
+                PrintStackReport();
+                raiseAssertException(errMsg.str(), __FILE__, __LINE__);
+            }
             ret = cmdUnknown(msg,reply,cmd);
             break;
         }
@@ -5242,7 +5322,9 @@ public:
         client.set(_client);
         if (TF_TRACE_FULL)
             PROGLOG("notify %d",client->buf.length());
-        if (client->buf.length()) {
+        if (client->buf.length())
+        {
+            PROGLOG("notify CRemoteClientHandler(%p), buf length=%u", _client, client->buf.length());
             cCommandProcessor::cCommandProcessorParams params;
             params.client = client.getClear();
 
