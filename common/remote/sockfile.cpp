@@ -2675,7 +2675,6 @@ void remoteExtractBlobElements(const SocketEndpoint &ep,const char * prefix, con
 
 class CAsyncCommandManager
 {
-
     class CAsyncJob: public CInterface
     {
         class cThread: public Thread
@@ -2698,15 +2697,15 @@ class CAsyncCommandManager
                 {
                     parent->setException(e);
                 }
-                parent->threadsem.signal();
+                parent->signal();
                 return ret;
             }
         } *thread;
         StringAttr uuid;
+        CAsyncCommandManager &parent;
     public:
-        Semaphore &threadsem;
-        CAsyncJob(const char *_uuid,Semaphore &_threadsem)
-            : uuid(_uuid),threadsem(_threadsem)
+        CAsyncJob(CAsyncCommandManager &_parent, const char *_uuid)
+            : parent(_parent), uuid(_uuid)
         {
             thread = new cThread(this);
             hash = hashc((const byte *)uuid.get(),uuid.length(),~0U);
@@ -2720,9 +2719,13 @@ class CAsyncCommandManager
         {
             j->Release();
         }
+        void signal()
+        {
+            parent.signal();
+        }
         void start()
         {
-            threadsem.wait();
+            parent.wait();
             thread->start();
         }
         void join()
@@ -2759,8 +2762,8 @@ class CAsyncCommandManager
         AsyncCommandStatus status;
         Owned<IException> exc;
     public:
-        CAsyncCopySection(const char *_uuid, const char *fromFile, const char *toFile, offset_t _toOfs, offset_t _fromOfs, offset_t _size, Semaphore &threadsem)
-            : CAsyncJob(_uuid,threadsem)
+        CAsyncCopySection(CAsyncCommandManager &parent, const char *_uuid, const char *fromFile, const char *toFile, offset_t _toOfs, offset_t _fromOfs, offset_t _size)
+            : CAsyncJob(parent, _uuid)
         {
             status = ACScontinue;
             src.setown(createIFile(fromFile));
@@ -2828,12 +2831,13 @@ class CAsyncCommandManager
     CMinHashTable<CAsyncJob> jobtable;
     CriticalSection sect;
     Semaphore threadsem;
+    unsigned limit;
 
 public:
-
-    CAsyncCommandManager()
+    CAsyncCommandManager(unsigned _limit) : limit(_limit)
     {
-        threadsem.signal(10); // max number of async jobs
+        if (limit) // 0 == unbound
+            threadsem.signal(limit); // max number of async jobs
     }
     void join()
     {
@@ -2844,6 +2848,18 @@ public:
             j->join();
             j=jobtable.next(i);
         }
+    }
+
+    void signal()
+    {
+        if (limit)
+            threadsem.signal();
+    }
+
+    void wait()
+    {
+        if (limit)
+            threadsem.signal();
     }
 
     AsyncCommandStatus copySection(const char *uuid, const char *fromFile, const char *toFile, offset_t toOfs, offset_t fromOfs, offset_t size, offset_t &done, offset_t &total, unsigned timeout)
@@ -2861,7 +2877,7 @@ public:
                 }
             }
             else {
-                job = new CAsyncCopySection(uuid, fromFile, toFile, toOfs, fromOfs, size, threadsem);
+                job = new CAsyncCopySection(*this, uuid, fromFile, toFile, toOfs, fromOfs, size);
                 cjob.setown(job);
                 jobtable.add(cjob.getLink());
                 cjob->start();
@@ -2934,7 +2950,7 @@ struct ClientStats
     unsigned __int64 bRead;
     unsigned __int64 bWritten;
 };
-class CClientStats : public StringSuperHashTableOf<ClientStats>
+class CClientStatsTable : public StringSuperHashTableOf<ClientStats>
 {
     typedef StringSuperHashTableOf<ClientStats> PARENT;
     CriticalSection crit;
@@ -2971,11 +2987,11 @@ class CClientStats : public StringSuperHashTableOf<ClientStats>
             return -1;
     }
 public:
-    CClientStats()
+    CClientStatsTable()
     {
         memset(&cmdStats[0], 0, sizeof(cmdStats));
     }
-    ~CClientStats()
+    ~CClientStatsTable()
     {
         kill();
     }
@@ -3703,7 +3719,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer
     unsigned closedclients;
     CAsyncCommandManager asyncCommandManager;
     CThrottler stdCmdThrottler, slowCmdThrottler;
-    CClientStats clientStats;
+    CClientStatsTable clientStatsTable;
     atomic_t globallasttick;
     unsigned targetActiveThreads;
 
@@ -3826,8 +3842,8 @@ public:
 
     IMPLEMENT_IINTERFACE
 
-    CRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs)
-        : stdCmdThrottler(*this, "stdCmdThrotlter"), slowCmdThrottler(*this, "slowCmdThrotlter")
+    CRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy)
+        : stdCmdThrottler(*this, "stdCmdThrotlter"), slowCmdThrottler(*this, "slowCmdThrotlter"), asyncCommandManager(maxAsyncCopy)
     {
         lasthandle = 0;
         selecthandler.setown(createSocketSelectHandler(NULL));
@@ -3839,8 +3855,6 @@ public:
         if (0 == targetMinThreads) targetMinThreads = 1;
         targetActiveThreads=maxThreads*80/100; // 80%
         if (0 == targetActiveThreads) targetActiveThreads = 1;
-
-        targetActiveThreads = 0; // test to hang all off select handler
 
         class CCommandFactory : public CSimpleInterfaceOf<IThreadFactory>
         {
@@ -3862,7 +3876,7 @@ public:
         INFINITE,targetMinThreads));
         threads->setStartDelayTracing(60); // trace amount delayed every minute.
 
-        PROGLOG("CRemoteFileServer: maxThreads = %u, maxThreadsDelayMs = %u", maxThreads, maxThreadsDelayMs);
+        PROGLOG("CRemoteFileServer: maxThreads = %u, maxThreadsDelayMs = %u, maxAsyncCopy = %u", maxThreads, maxThreadsDelayMs, maxAsyncCopy);
 
         stopping = false;
         clientcounttick = msTick();
@@ -4044,7 +4058,7 @@ public:
             e->Release();
             return false;
         }
-        clientStats.addRead(stats, len);
+        clientStatsTable.addRead(stats, len);
         if (TF_TRACE)
             PROGLOG("read file,  handle = %d, pos = %" I64F "d, toread = %d, read = %d",handle,pos,len,numRead);
         {
@@ -4098,7 +4112,7 @@ public:
         if (TF_TRACE_PRE_IO)
             PROGLOG("before write file,  handle = %d, towrite = %d",handle,len);
         size32_t numWritten = fileio->write(pos,len,data);
-        clientStats.addWrite(stats, numWritten);
+        clientStatsTable.addWrite(stats, numWritten);
         if (TF_TRACE)
             PROGLOG("write file,  handle = %d, towrite = %d, written = %d",handle,len,numWritten);
         reply.append((unsigned)RFEnoerror).append(numWritten);
@@ -4204,7 +4218,7 @@ public:
 
         Owned<IFile> file = createIFile(srcname.get());
         __int64 written = fileio->appendFile(file,pos,len);
-        clientStats.addWrite(stats, written);
+        clientStatsTable.addWrite(stats, written);
         if (TF_TRACE)
             PROGLOG("append file,  handle = %d, file=%s, pos = %" I64F "d len = %" I64F "d written = %" I64F "d",handle,srcname.get(),pos,len,written);
         reply.append((unsigned)RFEnoerror).append(written);
@@ -4788,7 +4802,6 @@ public:
             case RFCgetcrc:
             case RFCcopy:
             case RFCappend:
-            case RFCcopysection:
             case RFCtreecopy:
             case RFCtreecopytmp:
                 slowCmdThrottler.addCommand(cmd, msg, client);
@@ -4823,7 +4836,9 @@ public:
             case RFCunlock:
                 stdCmdThrottler.addCommand(cmd, msg, client);
                 return;
+            // NB: The following commands are still bound by the the thread pool
             case RFCsetthrottle:
+            case RFCcopysection: // slightly odd, but has it's own limit
             default:
             {
                 if (cmd>=RFCmax)
@@ -4840,7 +4855,7 @@ public:
 
     bool processCommand(RemoteFileCommandType cmd, MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler *client, CThrottler *throttler)
     {
-        ClientStats *stats = clientStats.addClientReference(cmd, client->queryPeerName());
+        ClientStats *stats = clientStatsTable.addClientReference(cmd, client->queryPeerName());
         bool ret = true;
         try
         {
@@ -4879,8 +4894,8 @@ public:
                 MAPCOMMAND(RFCfirewall, cmdFirewall);
                 MAPCOMMANDCLIENT(RFCunlock, cmdUnlock, *client);
                 MAPCOMMANDCLIENT(RFCcopysection, cmdCopySection, *client);
-                MAPCOMMANDCLIENTTHROTTLE(RFCtreecopy, cmdTreeCopy, *client, &stdCmdThrottler);
-                MAPCOMMANDCLIENTTHROTTLE(RFCtreecopytmp, cmdTreeCopyTmp, *client, &stdCmdThrottler);
+                MAPCOMMANDCLIENTTHROTTLE(RFCtreecopy, cmdTreeCopy, *client, &slowCmdThrottler);
+                MAPCOMMANDCLIENTTHROTTLE(RFCtreecopytmp, cmdTreeCopyTmp, *client, &slowCmdThrottler);
                 MAPCOMMAND(RFCsetthrottle, cmdSetThrottle);
             default:
                 if (cmd>=RFCmax)
@@ -5240,7 +5255,7 @@ public:
         stdCmdThrottler.getInfo(info);
         info.newline();
         slowCmdThrottler.getInfo(info);
-        clientStats.getInfo(info, level);
+        clientStatsTable.getInfo(info, level);
     }
 
     unsigned threadRunningCount()
@@ -5287,17 +5302,17 @@ public:
         stdCmdThrottler.getStats(stats, reset).newline();
         slowCmdThrottler.getStats(stats, reset);
         if (reset)
-            clientStats.reset();
+            clientStatsTable.reset();
         return stats;
     }
 };
 
 
-IRemoteFileServer * createRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs)
+IRemoteFileServer * createRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy)
 {
 #if SIMULATE_PACKETLOSS
     errorSimulationOn = false;
 #endif
-    return new CRemoteFileServer(maxThreads, maxThreadsDelayMs);
+    return new CRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy);
 }
 

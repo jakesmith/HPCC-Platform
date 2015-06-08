@@ -39,6 +39,7 @@ enum ThrottleClass
 // RemoteFileServer throttling defaults
 #define DEFAULT_THREADLIMIT 100
 #define DEFAULT_THREADLIMITDELAYMS (60*1000)
+#define DEFAULT_ASYNCCOPYMAX 10
 
 #define DEFAULT_STDCMD_PARALLELREQUESTLIMIT 80
 #define DEFAULT_STDCMD_THROTTLEDELAYMS 1000
@@ -65,7 +66,7 @@ extern REMOTE_API IFile * createRemoteFile(SocketEndpoint &ep,const char * _file
 extern REMOTE_API unsigned getRemoteVersion(ISocket * _socket, StringBuffer &ver);
 extern REMOTE_API unsigned stopRemoteServer(ISocket * _socket);
 extern REMOTE_API const char *remoteServerVersionString();
-extern REMOTE_API IRemoteFileServer * createRemoteFileServer(unsigned maxThreads=DEFAULT_THREADLIMIT, unsigned maxThreadsDelayMs=DEFAULT_THREADLIMITDELAYMS);
+extern REMOTE_API IRemoteFileServer * createRemoteFileServer(unsigned maxThreads=DEFAULT_THREADLIMIT, unsigned maxThreadsDelayMs=DEFAULT_THREADLIMITDELAYMS, unsigned maxAsyncCopy=DEFAULT_ASYNCCOPYMAX);
 extern REMOTE_API int setDafsTrace(ISocket * socket,byte flags);
 extern REMOTE_API int setDafsThrottleLimit(ISocket * socket, ThrottleClass throttleClass, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit, unsigned queueLimit, StringBuffer *errMsg=NULL);
 extern REMOTE_API bool enableDafsAuthentication(bool on);

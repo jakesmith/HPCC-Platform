@@ -356,6 +356,7 @@ int main(int argc,char **argv)
 
     unsigned maxThreads = DEFAULT_THREADLIMIT;
     unsigned maxThreadsDelayMs = DEFAULT_THREADLIMITDELAYMS;
+    unsigned maxAsyncCopy = DEFAULT_ASYNCCOPYMAX;
     unsigned parallelRequestLimit = DEFAULT_STDCMD_PARALLELREQUESTLIMIT;
     unsigned throttleDelayMs = DEFAULT_STDCMD_THROTTLEDELAYMS;
     unsigned throttleCPULimit = DEFAULT_STDCMD_THROTTLECPULIMIT;
@@ -378,6 +379,7 @@ int main(int argc,char **argv)
 
             maxThreads = daFileSrv->getPropInt("@maxThreads", DEFAULT_THREADLIMIT);
             maxThreadsDelayMs = daFileSrv->getPropInt("@maxThreadsDelayMs", DEFAULT_THREADLIMITDELAYMS);
+            maxAsyncCopy = daFileSrv->getPropInt("@maxAsyncCopy", DEFAULT_ASYNCCOPYMAX);
 
             parallelRequestLimit = daFileSrv->getPropInt("@parallelRequestLimit", DEFAULT_STDCMD_PARALLELREQUESTLIMIT);
             throttleDelayMs = daFileSrv->getPropInt("@throttleDelayMs", DEFAULT_STDCMD_THROTTLEDELAYMS);
@@ -399,6 +401,7 @@ int main(int argc,char **argv)
             {
                 maxThreads = dafileSrvInstance->getPropInt("@maxThreads", maxThreads);
                 maxThreadsDelayMs = dafileSrvInstance->getPropInt("@maxThreadsDelayMs", maxThreadsDelayMs);
+                maxAsyncCopy = dafileSrvInstance->getPropInt("@maxAsyncCopy", maxAsyncCopy);
 
                 parallelRequestLimit = dafileSrvInstance->getPropInt("@parallelRequestLimit", parallelRequestLimit);
                 throttleDelayMs = dafileSrvInstance->getPropInt("@throttleDelayMs", throttleDelayMs);
@@ -607,7 +610,7 @@ int main(int argc,char **argv)
                 PROGLOG("Version: %s", verstring);
                 PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
                 PROGLOG(DAFS_SERVICE_DISPLAY_NAME " Running");
-                server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs));
+                server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy));
                 server->setThrottle(ThrottleStd, parallelRequestLimit, throttleDelayMs, throttleCPULimit);
                 server->setThrottle(ThrottleSlow, parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit);
                 try {
@@ -649,7 +652,7 @@ int main(int argc,char **argv)
     PROGLOG("Opening Dali File Server on %s%s", useSSL?"SECURE ":"",eps.str());
     PROGLOG("Version: %s", verstring);
     PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
-    server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs));
+    server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy));
     server->setThrottle(ThrottleStd, parallelRequestLimit, throttleDelayMs, throttleCPULimit);
     server->setThrottle(ThrottleSlow, parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit);
     class CPerfHook : public CSimpleInterfaceOf<IPerfMonHook>
