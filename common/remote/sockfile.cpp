@@ -3067,7 +3067,7 @@ public:
     }
 };
 
-class CRemoteFileServer : public CInterface, implements IRemoteFileServer, implements IThreadFactory
+class CRemoteFileServer : public CInterface, implements IRemoteFileServer
 {
     class CThrottler;
     class CRemoteClientHandler : public CInterface, implements ISocketSelectNotify
@@ -3525,7 +3525,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
             }
             if (_queueLimit != queueLimit)
             {
-                PROGLOG("Throttler(%s): New queueLimit=%u, previous: %u", title.get(), _queueLimit, queueLimit);
+                PROGLOG("Throttler(%s): New queueLimit=%u%s, previous: %u", title.get(), _queueLimit, 0==_queueLimit?"(disabled)":"", queueLimit);
                 queueLimit = _queueLimit;
             }
         }
@@ -3587,7 +3587,7 @@ class CRemoteFileServer : public CInterface, implements IRemoteFileServer, imple
                     }
                     else
                     {
-                        if (queue.ordinality()>=queueLimit)
+                        if (queueLimit && queue.ordinality()>=queueLimit)
                             throw MakeStringException(0, "Throttler(%s), the maxiumum number of items are queued (%u), rejecting new command[%s]", title.str(), queue.ordinality(), getRFCText(cmd));
                         queue.enqueue(new CThrottleQueueItem(cmd, msg, client)); // NB: takes over ownership of 'client' from running thread
                         PROGLOG("Throttler(%s): transaction delayed [cmd=%s], queuing (%u queueud), [client=%p, sock=%u]", title.get(), getRFCText(cmd), queue.ordinality(), client, client->socket->OShandle());
@@ -3840,9 +3840,20 @@ public:
         targetActiveThreads=maxThreads*80/100; // 80%
         if (0 == targetActiveThreads) targetActiveThreads = 1;
 
- targetActiveThreads = 0; // test to hang all off select handler
+        targetActiveThreads = 0; // test to hang all off select handler
 
-        threads.setown(createThreadPool("CRemoteFileServerPool",this,NULL,maxThreads,maxThreadsDelayMs,
+        class CCommandFactory : public CSimpleInterfaceOf<IThreadFactory>
+        {
+            CRemoteFileServer &parent;
+        public:
+            CCommandFactory(CRemoteFileServer &_parent) : parent(_parent) { }
+            virtual IPooledThread *createNew()
+            {
+                return parent.createCommandProcessor();
+            }
+        };
+        Owned<IThreadFactory> factory = new CCommandFactory(*this); // NB: pool links factory, so takes ownership
+        threads.setown(createThreadPool("CRemoteFileServerPool", factory, NULL, maxThreads, maxThreadsDelayMs,
 #ifdef __64BIT__
             0, // Unlimited stack size
 #else
@@ -4895,7 +4906,7 @@ public:
         return ret;
     }
 
-    virtual IPooledThread *createNew()
+    IPooledThread *createCommandProcessor()
     {
         return new cCommandProcessor();
     }
