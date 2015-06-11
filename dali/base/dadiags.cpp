@@ -123,7 +123,7 @@ public:
                     mb.append(getReceiveQueueDetails(buf).str());
                 }
                 else if (0 == stricmp(id, "locks")) {
-                    querySDS().getLocks(mb);
+                    mb.append(querySDS().getLocks(buf).str());
                 }
                 else if (0 == stricmp(id, "sdsstats")) {
                     mb.append(querySDS().getUsageStats(buf).str());

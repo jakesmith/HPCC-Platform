@@ -1937,6 +1937,7 @@ public:
     IExternalHandler *queryExternalHandler(const char *handler) { if (!handler) return NULL; CExternalHandlerMapping *mapping = externalHandlers.find(handler); return mapping ? &mapping->query() : NULL; }
     void handleNotify(CSubscriberContainerBase &subscriber, MemoryBuffer &notifyData);
     void startNotification(IPropertyTree &changeTree, CPTStack &stack, CBranchChange &changes); // subscription notification
+    MemoryBuffer &collectLocks(MemoryBuffer &mb);
     MemoryBuffer &collectUsageStats(MemoryBuffer &out);
     MemoryBuffer &collectConnections(MemoryBuffer &out);
     MemoryBuffer &collectSubscribers(MemoryBuffer &out);
@@ -1991,7 +1992,6 @@ public:
     virtual void unsubscribe(SubscriptionId id);
     virtual void unsubscribeExact(SubscriptionId id);
     virtual StringBuffer &getLocks(StringBuffer &out);
-    virtual void getLocks(CMessageBuffer &out);
     virtual StringBuffer &getUsageStats(StringBuffer &out);
     virtual StringBuffer &getConnections(StringBuffer &out);
     virtual StringBuffer &getSubscribers(StringBuffer &out);
@@ -3758,12 +3758,8 @@ int CSDSTransactionServer::run()
                             {
                                 case DIAG_CMD_LOCKINFO:
                                 {
-                                    StringBuffer out;
-                                    SDSManager->getLocks(out);
                                     mb.clear().append(DAMP_SDSREPLY_OK);
-                                    mb.append(out.length());
-                                    mb.append(out.length(), out.str());
-
+                                    SDSManager->collectLocks(mb);
                                     break;
                                 }
                                 case DIAG_CMD_STATS:
@@ -7787,7 +7783,7 @@ void CCovenSDSManager::disconnect(ConnectionId id, bool deleteRoot, Owned<CLCLoc
     connection->unsubscribeSession();
 }
 
-StringBuffer &CCovenSDSManager::getLocks(StringBuffer &out)
+StringBuffer &CCovenSDSManager::formatLocks(MemoryBuffer &src, StringBuffer &out)
 {
     CHECKEDCRITICALBLOCK(lockCrit, fakeCritTimeout);
     SuperHashIteratorOf<CLockInfo> iter(lockTable.queryBaseTable());    
@@ -7802,29 +7798,6 @@ StringBuffer &CCovenSDSManager::getLocks(StringBuffer &out)
         if (out.length()) out.newline();
     }
     return out.length() ? out : out.append("No current locks");
-}
-
-void CCovenSDSManager::getLocks(CMessageBuffer &mb)
-{
-    CLockDataHelper helper;
-    unsigned lockCount=0;
-    mb.clear();
-    mb.append(lockCount);
-
-    CHECKEDCRITICALBLOCK(lockCrit, fakeCritTimeout);
-    SuperHashIteratorOf<CLockInfo> iter(lockTable.queryBaseTable());
-    iter.first();
-    while (iter.isValid())
-    {
-        CLockInfo &lockInfo = iter.query();
-        if (lockInfo.lockCount())
-            lockInfo.serializeLockData(helper, mb);
-        lockCount++;
-        if (!iter.next())
-            break;
-    }
-    mb.writeDirect(0,sizeof(lockCount),&lockCount);
-    return;
 }
 
 StringBuffer &formatUsageStats(MemoryBuffer &src, StringBuffer &out)
@@ -7938,6 +7911,29 @@ unsigned CCovenSDSManager::countActiveLocks()
     return activeLocks;
 }
 
+MemoryBuffer &CCovenSDSManager::collectLocks(MemoryBuffer &mb)
+{
+    CLockDataHelper helper;
+    unsigned lockCount=0;
+    mb.clear();
+    mb.append(lockCount);
+
+    CHECKEDCRITICALBLOCK(lockCrit, fakeCritTimeout);
+    SuperHashIteratorOf<CLockInfo> iter(lockTable.queryBaseTable());
+    iter.first();
+    while (iter.isValid())
+    {
+        CLockInfo &lockInfo = iter.query();
+        if (lockInfo.lockCount())
+            lockInfo.serializeLockData(helper, mb);
+        lockCount++;
+        if (!iter.next())
+            break;
+    }
+    mb.writeDirect(0,sizeof(lockCount),&lockCount);
+    return;
+}
+
 MemoryBuffer &CCovenSDSManager::collectUsageStats(MemoryBuffer &out)
 {
     { CHECKEDCRITICALBLOCK(cTableCrit, fakeCritTimeout);
@@ -7989,13 +7985,6 @@ void CCovenSDSManager::blockingSave(unsigned *writeTransactions)
     SDSManager->saveStore();
 }
 
-StringBuffer &CCovenSDSManager::getUsageStats(StringBuffer &out)
-{
-    MemoryBuffer mb;
-    formatUsageStats(collectUsageStats(mb), out);
-    return out;
-}
-
 bool CCovenSDSManager::updateEnvironment(IPropertyTree *newEnv, bool forceGroupUpdate, StringBuffer &response)
 {
     Owned<IRemoteConnection> conn = querySDS().connect("/",myProcessSession(),0, INFINITE);
@@ -8030,6 +8019,13 @@ StringBuffer &CCovenSDSManager::getExternalReport(StringBuffer &out)
 }
 
 
+StringBuffer &CCovenSDSManager::getLocks(StringBuffer &out)
+{
+    MemoryBuffer mb;
+    formatLocks(collectLocks(mb), out);
+    return out;
+}
+
 StringBuffer &CCovenSDSManager::getConnections(StringBuffer &out)
 {
     MemoryBuffer mb;
@@ -8041,6 +8037,13 @@ StringBuffer &CCovenSDSManager::getSubscribers(StringBuffer &out)
 {
     MemoryBuffer mb;
     formatSubscribers(collectSubscribers(mb), out);
+    return out;
+}
+
+StringBuffer &CCovenSDSManager::getUsageStats(StringBuffer &out)
+{
+    MemoryBuffer mb;
+    formatUsageStats(collectUsageStats(mb), out);
     return out;
 }
 

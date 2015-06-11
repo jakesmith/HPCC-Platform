@@ -1863,9 +1863,12 @@ StringBuffer &CClientSDSManager::getInfo(SdsDiagCommand cmd, StringBuffer &out)
                     formatUsageStats(mb, out);
                     break;
                 case DIAG_CMD_LOCKINFO:
+                    formatLocks(mb, out);
+#if 0
                     size32_t sz;
                     mb.read(sz);
                     out.append(sz, (const char *)mb.readDirect(sz));
+#endif
                     break;
                 case DIAG_CMD_CONNECTIONS:
                     formatConnections(mb, out);
@@ -1885,19 +1888,6 @@ StringBuffer &CClientSDSManager::getInfo(SdsDiagCommand cmd, StringBuffer &out)
 StringBuffer &CClientSDSManager::getLocks(StringBuffer &out)
 {
     return getInfo(DIAG_CMD_LOCKINFO, out);
-}
-
-void CClientSDSManager::getLocks(CMessageBuffer &out)
-{
-    out.append((int)DAMP_SDSCMD_DIAGNOSTIC);
-    out.append((int)DIAG_CMD_LOCKINFO);
-
-    if (!queryCoven().sendRecv(out, RANK_RANDOM, MPTAG_DALI_SDS_REQUEST))
-    {
-        out.clear();
-        throw MakeSDSException(SDSExcpt_FailedToCommunicateWithServer, "querying sds diagnositc info");
-    }
-    return;
 }
 
 StringBuffer &CClientSDSManager::getUsageStats(StringBuffer &out)
