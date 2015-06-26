@@ -41,6 +41,10 @@ class JoinActivityMaster : public CMasterActivity
     Owned<IBarrier> barrier;
     Owned<ProgressInfo> lhsProgress, rhsProgress;
 
+    Linked<IRowInterfaces> primaryRowIf, secondaryRowIf;
+    ICompare *primaryCompare, *secondaryCompare;
+    ISortKeySerializer *primaryKeySerializer, *secondaryKeySerializer;
+
     bool nosortPrimary()
     {
         if (ALWAYS_SORT_PRIMARY)
@@ -75,8 +79,6 @@ class JoinActivityMaster : public CMasterActivity
                 return -1;
             return 0;
         }
-
-
     } *climitedcmp;
 public:
     JoinActivityMaster(CMasterGraphElement * info, bool local) : CMasterActivity(info)
@@ -93,6 +95,8 @@ public:
         barrierMpTag = container.queryJob().allocateMPTag();
         barrier.setown(container.queryJob().createBarrier(barrierMpTag));
         climitedcmp = NULL;
+        primaryCompare  = secondaryCompare = NULL;
+        primaryKeySerializer = secondaryKeySerializer = NULL;
     }
     ~JoinActivityMaster()
     {
@@ -128,7 +132,8 @@ public:
     {
         ActPrintLog("process");
         CMasterActivity::process();
-        if (!islocal) {
+        if (!islocal)
+        {
             helper = (IHThorJoinArg *)queryHelper();
             StringBuffer skewV;
             double skewError;
@@ -139,7 +144,7 @@ public:
             {
                 skewError = helper->getSkew();
                 if (!skewError)
-                {
+k                {
                     container.queryJob().getWorkUnitValue("defaultSkewError", skewV.clear());
                     if (skewV.length())
                         skewError = atof(skewV.str());
@@ -158,23 +163,53 @@ public:
             try
             {
                 size32_t maxdeviance = getOptUInt(THOROPT_SORT_MAX_DEVIANCE, 10*1024*1024);
-                rightpartition = (container.getKind() == TAKjoin)&&((helper->getJoinFlags()&JFpartitionright)!=0);
-                bool betweenjoin = (helper->getJoinFlags()&JFslidingmatch)!=0;
-                if (!container.queryLocalOrGrouped() && container.getKind() == TAKselfjoin)
+                rightpartition = (container.getKind() == TAKjoin) && ((helper->getJoinFlags()&JFpartitionright)!=0);
+
+                CGraphElementBase *primaryInput = NULL;
+                CGraphElementBase *secondaryInput = NULL;
+                if (!rightpartition)
                 {
-                    if (betweenjoin) {
-                        throw MakeActivityException(this, -1, "SELF BETWEEN JOIN not supported"); // Gavin shouldn't generate
+                    primaryInput = container.queryInput(0);
+                    primaryCompare = helper->queryCompareLeft();
+                    primaryKeySerializer = helper->querySerializeLeft();
+                    if (container.getKind() != TAKselfjoin)
+                    {
+                        secondaryInput = container.queryInput(1);
+                        secondaryCompare = helper->queryCompareRight();
+                        secondaryKeySerializer = helper->querySerializeRight();
                     }
-                    Owned<IRowInterfaces> rowif = createRowInterfaces(container.queryInput(0)->queryHelper()->queryOutputMeta(),queryActivityId(),queryCodeContext());
-                    ICompare *cmpleft = helper->queryCompareLeft();
-                    if ((helper->getJoinFlags()&JFlimitedprefixjoin)&&(helper->getJoinLimit())) {
+                }
+                else
+                {
+                    primaryInput = container.queryInput(1);
+                    secondaryInput = container.queryInput(0);
+                    primaryCompare = helper->queryCompareRight();
+                    secondaryCompare = helper->queryCompareLeft();
+                    primaryKeySerializer = helper->querySerializeRight();
+                    secondaryKeySerializer = helper->querySerializeLeft();
+                }
+                Owned<IRowInterfaces> primaryRowIf = createRowInterfaces(primaryInput->queryHelper()->queryOutputMeta(), queryActivityId(), queryCodeContext());
+                Owned<IRowInterfaces> secondaryRowIf;
+                if (secondaryInput)
+                    secondaryRowIf.setown(createRowInterfaces(secondaryInput->queryHelper()->queryOutputMeta(), queryActivityId(), queryCodeContext()));
+
+
+                bool betweenjoin = (helper->getJoinFlags()&JFslidingmatch)!=0;
+                if (container.getKind() == TAKselfjoin)
+                {
+                    if (betweenjoin)
+                        throw MakeActivityException(this, -1, "SELF BETWEEN JOIN not supported"); // Gavin shouldn't generate
+                    ICompare *cmpleft = primaryCompare;
+                    if ((helper->getJoinFlags()&JFlimitedprefixjoin)&&(helper->getJoinLimit()))
+                    {
                         delete climitedcmp;
                         climitedcmp = new cLimitedCmp(helper->queryCompareLeftRight(),helper->queryPrefixCompare());
                         cmpleft = climitedcmp;
                         // partition by L/R
                     }
-                    imaster->SortSetup(rowif,cmpleft, helper->querySerializeLeft(), false, true, NULL, NULL);
-                    if (barrier->wait(false)) { // local sort complete
+                    imaster->SortSetup(primaryRowIf, cmpleft, primaryKeySerializer, false, true, NULL, NULL);
+                    if (barrier->wait(false)) // local sort complete
+                    {
                         try
                         {
                             imaster->Sort(skewThreshold,skewWarning,skewError,maxdeviance,false,false,false,0);
@@ -197,11 +232,14 @@ public:
                     }
                     imaster->SortDone();
                 }
-                else if (!nosortPrimary()||betweenjoin) {
-                    Owned<IRowInterfaces> rowif = createRowInterfaces(container.queryInput(rightpartition?1:0)->queryHelper()->queryOutputMeta(),queryActivityId(),queryCodeContext());
-                    imaster->SortSetup(rowif,rightpartition?helper->queryCompareRight():helper->queryCompareLeft(),rightpartition?helper->querySerializeRight():helper->querySerializeLeft(),false,true, NULL, NULL);
+                else if (!nosortPrimary()||betweenjoin)
+                {
+                    Owned<IRowInterfaces> secondaryRowIf = createRowInterfaces(secondaryInput->queryHelper()->queryOutputMeta(), queryActivityId(), queryCodeContext());
+
+                    imaster->SortSetup(primaryRowIf, primaryCompare, primaryKeySerializer, false, true, NULL, NULL);
                     ActPrintLog("JOIN waiting for barrier.1");
-                    if (barrier->wait(false)) {
+                    if (barrier->wait(false))
+                    {
                         ActPrintLog("JOIN barrier.1 raised");
                         try
                         {
@@ -220,14 +258,15 @@ public:
                                 throw;
                         }
                         ActPrintLog("JOIN waiting for barrier.2");
-                        if (barrier->wait(false)) { // merge complete
+                        if (barrier->wait(false)) // merge complete
+                        {
                             ActPrintLog("JOIN barrier.2 raised");
                             imaster->SortDone();
                             // NB on the cosort should use same serializer as sort (but in fact it only gets used when 0 rows on primary side)
-                            Owned<IRowInterfaces> rowif2 = createRowInterfaces(container.queryInput(rightpartition?0:1)->queryHelper()->queryOutputMeta(),queryActivityId(),queryCodeContext());
-                            imaster->SortSetup(rowif2,rightpartition?helper->queryCompareLeft():helper->queryCompareRight(),rightpartition?helper->querySerializeRight():helper->querySerializeLeft(),true,false, NULL, NULL); //serializers OK
+                            imaster->SortSetup(secondaryRowIf, secondaryCompare, primaryKeySerializer, true, false, NULL, NULL); //serializers OK
                             ActPrintLog("JOIN waiting for barrier.3");
-                            if (barrier->wait(false)) { // local sort complete
+                            if (barrier->wait(false)) // local sort complete
+                            {
                                 ActPrintLog("JOIN barrier.3 raised");
                                 try
                                 {
@@ -254,12 +293,12 @@ public:
                         imaster->SortDone();
                     }
                 }
-                else { // only sort non-partition side
-                    Owned<IRowInterfaces> rowif = createRowInterfaces(container.queryInput(rightpartition?0:1)->queryHelper()->queryOutputMeta(),queryActivityId(),queryCodeContext());
-                    Owned<IRowInterfaces> auxrowif = createRowInterfaces(container.queryInput(rightpartition?1:0)->queryHelper()->queryOutputMeta(),queryActivityId(),queryCodeContext());
-                    imaster->SortSetup(rowif,rightpartition?helper->queryCompareLeft():helper->queryCompareRight(),rightpartition?helper->querySerializeLeft():helper->querySerializeRight(),true,true, NULL, auxrowif);
+                else // only sort non-partition side
+                {
+                    imaster->SortSetup(secondaryRowIf, secondaryCompare, secondaryKeySerializer, true, true, NULL, primaryRowIf);
                     ActPrintLog("JOIN waiting for barrier.1");
-                    if (barrier->wait(false)) { // local sort complete
+                    if (barrier->wait(false)) // local sort complete
+                    {
                         ActPrintLog("JOIN barrier.1 raised");
                         try
                         {
