@@ -334,7 +334,7 @@ void CDiskWriteSlaveActivityBase::open()
     if (query && compress)
         UNIMPLEMENTED;
 
-    unsigned twFlags = 0;
+    unsigned twFlags = external ? TW_External : 0;
     if (query || (external && !firstNode()))
         twFlags |= TW_Direct;
     if (!external || (!query && lastNode()))

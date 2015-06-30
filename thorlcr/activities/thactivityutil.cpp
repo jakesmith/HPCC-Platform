@@ -766,18 +766,17 @@ IFileIO *createMultipleWrite(CActivityBase *activity, IPartDescriptor &partDesc,
     }
     else
     {
-        // use temp name for std. local files or external files
+        // use temp name
+        GetTempName(outLocationName, "partial");
         if (rfn.isLocal() || (twFlags & TW_External))
-        {
-            GetTempName(outLocationName, "partial");
-            // ensure local tmp in same directory as target
+        { // ensure local tmp in same directory as target
             StringBuffer dir;
             splitDirTail(primaryName, dir);
             addPathSepChar(dir);
             dir.append(pathTail(outLocationName));
             outLocationName.swapWith(dir);
-            assertex(outLocationName.length());
         }
+        assertex(outLocationName.length());
         ensureDirectoryForFile(outLocationName.str());
     }
     OwnedIFile file = createIFile(outLocationName.str());
