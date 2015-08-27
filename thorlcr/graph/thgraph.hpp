@@ -248,7 +248,7 @@ protected:
     StringAttr eclText;
     Owned<IPropertyTree> xgmml;
     bool isLocal, isLocalData, isGrouped, sink, prepared, onCreateCalled, onStartCalled, onlyUpdateIfChanged, nullAct, log;
-    Owned<CActivityBase> activity;
+    Owned<CActivityBase> activity2;
     CGraphBase *resultsGraph, *owner;
     CGraphDependencyArray dependsOn;
     Owned<IThorBoundLoopGraph> loopGraph; // really only here as master and slave derivatives set/use
@@ -330,7 +330,6 @@ public:
     IHThorArg *queryHelper() const { return baseHelper; }
 
     IPropertyTree &queryXGMML() const { return *xgmml; }
-    CActivityBase *queryActivity() const { return activity; }
     const activity_id &queryOwnerId() const { return ownerId; }
     void createActivity(size32_t parentExtractSz, const byte *parentExtract);
 //
@@ -343,10 +342,11 @@ public:
     }
     virtual bool prepareContext(size32_t parentExtractSz, const byte *parentExtract, bool checkDependencies, bool shortCircuit, bool async);
 //
+    virtual CActivityBase *queryActivity() { return activity2; }
     virtual void initActivity();
     virtual CActivityBase *factory(ThorActivityKind kind) { assertex(false); return NULL; }
     virtual CActivityBase *factory() { return factory(getKind()); }
-    virtual CActivityBase *factorySet(ThorActivityKind kind) { CActivityBase *_activity = factory(kind); activity.setown(_activity); return _activity; }
+    virtual CActivityBase *factorySet(ThorActivityKind kind) { CActivityBase *_activity = factory(kind); activity2.setown(_activity); return _activity; }
     virtual ICodeContext *queryCodeContext();
 };
 

@@ -89,9 +89,9 @@ public:
         CMasterGraphElement::serializeCreateContext(mb);
         if (kind == TAKworkunitread)
         {
-            if (!activity)
+            if (!activity2)
                 doCreateActivity();
-            IHThorArg *helper = activity->queryHelper();
+            IHThorArg *helper = activity2->queryHelper();
             IHThorDiskReadArg *diskHelper = QUERYINTERFACE(helper, IHThorDiskReadArg);
             mb.append(NULL != diskHelper); // flag to slaves that they should create diskread
             if (diskHelper)

@@ -259,6 +259,8 @@ CActivityBase *createDictionaryWorkunitWriteSlave(CGraphElementBase *container);
 CActivityBase *createDictionaryResultWriteSlave(CGraphElementBase *container);
 
 
+CriticalSection nullActivityCs;
+Owned<CActivityBase> nullActivity;
 class CGenericSlaveGraphElement : public CSlaveGraphElement
 {
     bool wuidread2diskread; // master decides after interrogating result and sneaks in info before slave creates
@@ -286,6 +288,20 @@ public:
                 mb.read(wuidreadFilename);
         }
         haveCreateCtx = true;
+    }
+    virtual CActivityBase *queryActivity()
+    {
+        if (isEof)
+        {
+            CriticalBlock b(nullActivityCs);
+            if (nullActivity)
+                return nullActivity;
+            else
+                nullActivity.setown(createNullSlave(this));
+            return nullActivity;
+        }
+        else
+            return activity2;
     }
     virtual CActivityBase *factory(ThorActivityKind kind)
     {

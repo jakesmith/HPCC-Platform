@@ -380,7 +380,7 @@ CGraphElementBase::CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml) 
 
 CGraphElementBase::~CGraphElementBase()
 {
-    activity.clear();
+    activity2.clear();
     baseHelper.clear(); // clear before dll is unloaded
 }
 
@@ -401,12 +401,12 @@ void CGraphElementBase::releaseIOs()
 {
     loopGraph.clear();
     associatedChildGraphs.kill();
-    if (activity)
-        activity->releaseIOs();
+    if (activity2)
+        activity2->releaseIOs();
     connectedInputs.kill();
     inputs.kill();
     outputs.kill();
-    activity.clear();
+    activity2.clear();
 }
 
 void CGraphElementBase::addDependsOn(CGraphBase *graph, int controlId)
@@ -433,8 +433,8 @@ void CGraphElementBase::reset()
 {
     onStartCalled = false;
 //  prepared = false;
-    if (activity)
-        activity->reset();
+    if (activity2)
+        activity2->reset();
 }
 
 void CGraphElementBase::ActPrintLog(const char *format, ...)
@@ -476,7 +476,7 @@ void CGraphElementBase::doconnect()
     {
         CIOConnection *io = connectedInputs.item(i);
         if (io)
-            io->connect(i, activity);
+            io->connect(i, queryActivity());
     }
 }
 
@@ -484,8 +484,8 @@ void CGraphElementBase::clearConnections()
 {
     connectedInputs.kill();
     connectedOutputs.kill();
-    if (activity)
-        activity->clearConnections();
+    if (activity2)
+        activity2->clearConnections();
 }
 
 void CGraphElementBase::addInput(unsigned input, CGraphElementBase *inputAct, unsigned inputOutIdx)
@@ -751,7 +751,7 @@ bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *par
 
 void CGraphElementBase::preStart(size32_t parentExtractSz, const byte *parentExtract)
 {
-    activity->preStart(parentExtractSz, parentExtract);
+    activity2->preStart(parentExtractSz, parentExtract);
 }
 
 void CGraphElementBase::initActivity()
@@ -759,9 +759,9 @@ void CGraphElementBase::initActivity()
     CriticalBlock b(crit);
     if (isSink())
         owner->addActiveSink(*this);
-    if (activity) // no need to recreate
+    if (activity2) // no need to recreate
         return;
-    activity.setown(factory());
+    activity2.setown(factory());
     if (isLoopActivity(*this))
     {
         unsigned loopId = queryXGMML().getPropInt("att[@name=\"_loopid\"]/@value");
@@ -806,7 +806,7 @@ void CGraphElementBase::createActivity(size32_t parentExtractSz, const byte *par
                 else
                 {
                     onCreate();
-                    if (!activity)
+                    if (!activity2)
                         factorySet(TAKnull);
                 }
                 break;
@@ -838,44 +838,44 @@ void CGraphElementBase::createActivity(size32_t parentExtractSz, const byte *par
                         CGraphElementBase *input = inputs.item(i)->activity;
                         input->createActivity(parentExtractSz, parentExtract);
                     }
-                }
-                onCreate();
-                if (isDiskInput(getKind()))
-                    onStart(parentExtractSz, parentExtract);
-                ForEachItemIn(i2, inputs)
-                {
-                    CIOConnection *inputIO = inputs.item(i2);
-                    loop
+                    onCreate();
+                    if (isDiskInput(getKind()))
+                        onStart(parentExtractSz, parentExtract);
+                    ForEachItemIn(i2, inputs)
                     {
-                        CGraphElementBase *input = inputIO->activity;
-                        switch (input->getKind())
+                        CIOConnection *inputIO = inputs.item(i2);
+                        loop
                         {
-                            case TAKif:
-                            case TAKcase:
+                            CGraphElementBase *input = inputIO->activity;
+                            switch (input->getKind())
                             {
-                                if (input->whichBranch >= input->getInputs()) // if, will have TAKnull activity, made at create time.
+                                case TAKif:
+                                case TAKcase:
                                 {
-                                    input = NULL;
+                                    if (input->whichBranch >= input->getInputs()) // if, will have TAKnull activity, made at create time.
+                                    {
+                                        input = NULL;
+                                        break;
+                                    }
+                                    inputIO = input->inputs.item(input->whichBranch);
+                                    assertex(inputIO);
                                     break;
                                 }
-                                inputIO = input->inputs.item(input->whichBranch);
-                                assertex(inputIO);
-                                break;
+                                default:
+                                    input = NULL;
+                                    break;
                             }
-                            default:
-                                input = NULL;
+                            if (!input)
                                 break;
                         }
-                        if (!input)
-                            break;
+                        connectInput(i2, inputIO->activity, inputIO->index);
                     }
-                    connectInput(i2, inputIO->activity, inputIO->index);
                 }
                 initActivity();
                 break;
         }
     }
-    catch (IException *e) { ActPrintLog(e); activity.clear(); throw; }
+    catch (IException *e) { ActPrintLog(e); activity2.clear(); throw; }
 }
 
 ICodeContext *CGraphElementBase::queryCodeContext()
