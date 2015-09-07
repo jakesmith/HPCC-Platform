@@ -2022,7 +2022,7 @@ int CMPConnectThread::run()
                 PROGLOG("MP: Connect Thread: after read %s",tmp1.str());
 #endif
                 checkSelfDestruct(&id[0],sizeof(id));
-                Linked<CMPChannel> channel = parent->lookup(_remoteep);
+                Owned<CMPChannel> channel = parent->lookup(_remoteep);
                 if (!channel->attachSocket(sock,_remoteep,hostep,false,&rd,addrval)) {
 #ifdef _FULLTRACE       
                     PROGLOG("MP Connect Thread: lookup failed");
@@ -2433,7 +2433,7 @@ public:
         }
 
         CTimeMon tm(timeout);
-        Linked<CMPChannel> channel = parent->lookup(dst->endpoint());
+        Owned<CMPChannel> channel = parent->lookup(dst->endpoint());
         unsigned remaining;
         if (tm.timedout(&remaining))
             return false;
@@ -2447,7 +2447,7 @@ public:
     {
         CriticalBlock block(verifysect);
         CTimeMon tm(timeout);
-        Linked<CMPChannel> channel = parent->lookup(node->endpoint());
+        Owned<CMPChannel> channel = parent->lookup(node->endpoint());
         unsigned remaining;
         if (tm.timedout(&remaining))
             return false;
@@ -2490,7 +2490,7 @@ public:
                 else
                     doverify = (myrank<rank);
                 if (doverify) {
-                    Linked<CMPChannel> channel = parent->lookup(group->queryNode(rank).endpoint());
+                    Owned<CMPChannel> channel = parent->lookup(group->queryNode(rank).endpoint());
                     unsigned remaining;
                     if (tm.timedout(&remaining)) {
                         return false;
@@ -2505,7 +2505,7 @@ public:
             ForEachNodeInGroup(rank,*group) {
                 bool doverify = ((rank&1)==(myrank&1))?(myrank<rank):(myrank>rank);
                 if (doverify) {
-                    Linked<CMPChannel> channel = parent->lookup(group->queryNode(rank).endpoint());
+                    Owned<CMPChannel> channel = parent->lookup(group->queryNode(rank).endpoint());
                     while (!channel->verifyConnection(tm,false)) {
                         unsigned remaining;
                         if (tm.timedout(&remaining))
@@ -2603,7 +2603,7 @@ public:
     void disconnect(INode *node)
     {
         CriticalBlock block(verifysect);
-        Linked<CMPChannel> channel = parent->lookup(node->endpoint());
+        Owned<CMPChannel> channel = parent->lookup(node->endpoint());
         channel->closeSocket();
         parent->removeChannel(channel);
     }
@@ -2680,7 +2680,7 @@ public:
                 endrank = dstrank;
             for (;dstrank<=endrank;dstrank++) {
                 if (dstrank!=myrank) {
-                    Linked<CMPChannel> channel = getChannel(dstrank);
+                    Owned<CMPChannel> channel = getChannel(dstrank);
                     unsigned remaining;
                     if (tm.timedout(&remaining))
                         return false;
@@ -2748,7 +2748,7 @@ public:
         assertex(rank!=RANK_RANDOM);
         assertex(rank!=RANK_ALL);
         CTimeMon tm(timeout);
-        Linked<CMPChannel> channel = getChannel(rank);
+        Owned<CMPChannel> channel = getChannel(rank);
         unsigned remaining;
         if (tm.timedout(&remaining))
             return false;
@@ -2769,7 +2769,7 @@ public:
                 else
                     doverify = (myrank<rank);
                 if (doverify) {
-                    Linked<CMPChannel> channel = getChannel(rank);
+                    Owned<CMPChannel> channel = getChannel(rank);
                     unsigned remaining;
                     if (tm.timedout(&remaining)) {
                         return false;
@@ -2783,7 +2783,7 @@ public:
             ForEachNodeInGroup(rank,*group) {
                 bool doverify = ((rank&1)==(myrank&1))?(myrank<rank):(myrank>rank);
                 if (doverify) {
-                    Linked<CMPChannel> channel = getChannel(rank);
+                    Owned<CMPChannel> channel = getChannel(rank);
                     while (!channel->verifyConnection(tm,false)) {
                         unsigned remaining;
                         if (tm.timedout(&remaining))
@@ -2899,7 +2899,7 @@ public:
         }
             
         CTimeMon tm(timeout);
-        Linked<CMPChannel> channel = parent->lookup(mbuf.getSender());
+        Owned<CMPChannel> channel = parent->lookup(mbuf.getSender());
         unsigned remaining;
         if (tm.timedout(&remaining)) {
             return false;
@@ -2966,7 +2966,16 @@ ICommunicator *createCommunicator(IGroup *group,bool outer)
     return MPserver->createCommunicator(group, outer);
 }
 
+
 static IInterCommunicator *worldcomm=NULL;
+MODULE_INIT(INIT_PRIORITY_STANDARD)
+{
+    return true;
+}
+MODULE_EXIT()
+{
+    ::Release(worldcomm);
+}
 
 IInterCommunicator &queryWorldCommunicator()
 {

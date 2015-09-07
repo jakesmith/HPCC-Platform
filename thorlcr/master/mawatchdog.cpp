@@ -223,7 +223,7 @@ void CMasterWatchdogBase::main()
                     {
                         Owned<IJobManager> jobManager = getJobManager();
                         if (jobManager)
-                            jobManager->queryDeMonServer()->takeHeartBeat(hb.sender, progressData);
+                            jobManager->queryDeMonServer()->takeHeartBeat(progressData);
                     }
                 }
                 else
@@ -313,15 +313,14 @@ public:
     virtual unsigned readData(MemoryBuffer &mb)
     {
         CMessageBuffer msg;
-        rank_t sender;
-        if (!queryClusterComm().recv(msg, RANK_ALL, MPTAG_THORWATCHDOG, &sender, watchdogMachineTimeout))
+        if (!queryNodeComm().recv(msg, RANK_ALL, MPTAG_THORWATCHDOG, NULL, watchdogMachineTimeout))
             return 0;
         mb.swapWith(msg);
         return mb.length();
     }
     virtual void stopReading()
     {
-        queryClusterComm().cancel(0, MPTAG_THORWATCHDOG);
+        queryNodeComm().cancel(0, MPTAG_THORWATCHDOG);
     }
 };
 

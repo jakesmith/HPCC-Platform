@@ -19,6 +19,7 @@
 #define SLAVMAIN_HPP
 
 void abortSlave();
+void initSlaveMPServers();
 void slaveMain();
 void enableThorSlaveAsDaliClient();
 void disableThorSlaveAsDaliClient();

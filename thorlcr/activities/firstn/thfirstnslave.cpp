@@ -236,7 +236,7 @@ public:
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         CFirstNSlaveBase::init(data, slaveData);
-        mpTag = container.queryJob().deserializeMPTag(data);
+        mpTag = container.queryJobChannel().deserializeMPTag(data);
     }
     void start()
     {
@@ -319,7 +319,7 @@ public:
         CMessageBuffer msgMb;
         msgMb.append(read);
         msgMb.append(skip);
-        container.queryJob().queryJobComm().send(msgMb, 0, mpTag);
+        queryJobChannel().queryJobComm().send(msgMb, 0, mpTag);
         ActPrintLog("FIRSTN: Read %" RCPF "d records, left to skip=%" RCPF "d", read, skip);
     }
     CATCH_NEXTROW()

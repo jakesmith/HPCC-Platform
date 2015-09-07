@@ -91,7 +91,7 @@ public:
         {
             MemoryBuffer progressData;
             { CriticalBlock b(crit);
-                ForEachItemIn(g, activeGraphs)
+                ForEachItemIn(g, activeGraphs) // NB: 1 for each slavesPerProcess
                 {
                     CGraphBase &graph = activeGraphs.item(g);
                     graph.serializeStats(progressData);
@@ -161,7 +161,7 @@ public:
     CGraphProgressUDPHandler()
     {
         StringBuffer ipStr;
-        queryClusterGroup().queryNode(0).endpoint().getIpText(ipStr);
+        queryMasterNode().endpoint().getIpText(ipStr);
         sock.setown(ISocket::udp_connect(getFixedPort(getMasterPortBase(), TPORT_watchdog),ipStr.str()));
     }
     virtual void sendData(MemoryBuffer &mb)
