@@ -2723,7 +2723,7 @@ void CJobBase::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
             CGraphElementBase *parentElement = subGraph.queryOwner()->queryElement(subGraph.queryParentActivityId());
             if (isLoopActivity(*parentElement))
             {
-                if (!parentElement->queryOwner().isLocalChild() && !subGraph.isLocalOnly())
+                if (!parentElement->queryOwner().isLocalChild())
                     subGraph.setGlobal(true);
             }
         }
