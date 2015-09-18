@@ -455,13 +455,18 @@ class ForwardPacketHandler;
 class UserPacketHandler;
 class CMPNotifyClosedThread;
 
-static class CMPServer: private SuperHashTableOf<CMPChannel,SocketEndpoint>
+static byte RTsalt=0xff;
+
+typedef SuperHashTableOf<CMPChannel,SocketEndpoint> CMPChannelHT;
+static class CMPServer: private CMPChannelHT, implements IMPServer
 {
-    unsigned short              port;
     ISocketSelectHandler        *selecthandler;
     CMPConnectThread            *connectthread;
     CBufferQueue                receiveq;
     CMPNotifyClosedThread       *notifyclosedthread;
+    CriticalSection sect;
+protected:
+    unsigned short              port;
 public:
     static CriticalSection  serversect;
     static int                      servernest;
@@ -476,11 +481,12 @@ public:
     BroadcastPacketHandler      *broadcastpackethandler;    // TAG_SYS_BCAST
     UserPacketHandler           *userpackethandler;         // default
 
+    IMPLEMENT_IINTERFACE_USING(CMPChannelHT);
 
     CMPServer(unsigned _port);
     ~CMPServer();
     void start();
-    void stop();
+    virtual void stop();
     unsigned short getPort() { return port; }
     void setPort(unsigned short _port) { port = _port; }
     CMPChannel *lookup(const SocketEndpoint &remoteep);
@@ -509,35 +515,44 @@ protected:
 
     IMPLEMENT_SUPERHASHTABLEOF_REF_FIND(CMPChannel,SocketEndpoint);
 
+    CriticalSection replyTagSect;
+    int rettag;
+    INode *myNode;
 
+public:
+    virtual mptag_t createReplyTag()
+    {
+        // these are short-lived so a simple increment will do (I think this is OK!)
+        mptag_t ret;
+        {
+            CriticalBlock block(replyTagSect);
+            if (RTsalt==0xff) {
+                RTsalt = (byte)(getRandom()%16);
+                rettag = (int)TAG_REPLY_BASE-RTsalt;
+            }
+            if (rettag>(int)TAG_REPLY_BASE) {           // wrapped
+                rettag = (int)TAG_REPLY_BASE-RTsalt;
+            }
+            ret = (mptag_t)rettag;
+            rettag -= 16;
+        }
+        flush(ret);
+        return ret;
+    }
+    virtual ICommunicator *createCommunicator(IGroup *group, bool outer);
+    virtual INode *queryMyNode()
+    {
+        return myNode;
+    }
 } *MPserver=NULL;
 int CMPServer::servernest=0;
 bool CMPServer::serverpaused=false;
 CriticalSection CMPServer::serversect;
 
-byte RTsalt=0xff;
-
 mptag_t createReplyTag()
 {
-    // these are short-lived so a simple increment will do (I think this is OK!)
-    mptag_t ret;
-    {
-        static CriticalSection sect;
-        CriticalBlock block(sect);
-        static int rettag=(int)TAG_REPLY_BASE;  // NB negative
-        if (RTsalt==0xff) {
-            RTsalt = (byte)(getRandom()%16);
-            rettag = (int)TAG_REPLY_BASE-RTsalt;
-        }
-        if (rettag>(int)TAG_REPLY_BASE) {           // wrapped
-            rettag = (int)TAG_REPLY_BASE-RTsalt;
-        }
-        ret = (mptag_t)rettag;
-        rettag -= 16;
-    }
-    if (MPserver)
-        MPserver->flush(ret);
-    return ret;
+    assertex(MPserver);
+    return MPserver->createReplyTag();
 }
 
 void checkTagOK(mptag_t tag)
@@ -2093,7 +2108,7 @@ public:
 CMPChannel *CMPServer::lookup(const SocketEndpoint &endpoint)
 {
     // there is an assumption here that no removes will be done within this loop
-    CriticalBlock block(serversect);
+    CriticalBlock block(sect);
     SocketEndpoint ep = endpoint;
     CMPChannel *e=find(ep);
     // Check for freed channels
@@ -2136,8 +2151,11 @@ CMPServer::CMPServer(unsigned _port)
     userpackethandler = new UserPacketHandler(this);        // default
     notifyclosedthread = new CMPNotifyClosedThread(this);
     notifyclosedthread->start();
-    initMyNode(port); // NB port set by connectthread constructor
     selecthandler->start();
+    rettag = (int)TAG_REPLY_BASE; // NB negative
+
+    SocketEndpoint ep(port); // NB port set by connectthread constructor
+    myNode = createINode(ep);
 }
 
 CMPServer::~CMPServer()
@@ -2160,6 +2178,7 @@ CMPServer::~CMPServer()
     delete multipackethandler;
     delete broadcastpackethandler;
     delete userpackethandler;
+    ::Release(myNode);
 }
 
 
@@ -2374,7 +2393,7 @@ bool CMPServer::matchesFindParam(const void * et, const void *fp, unsigned) cons
 
 bool CMPServer::nextChannel(CMPChannel *&cur)
 {
-    CriticalBlock block(serversect);
+    CriticalBlock block(sect);
     cur = (CMPChannel *)SuperHashTableOf<CMPChannel,SocketEndpoint>::next(cur);
     return cur!=NULL;
 }
@@ -2460,7 +2479,7 @@ public:
     {
         CriticalBlock block(verifysect);
         CTimeMon tm(timeout);
-        rank_t myrank = group->rank();
+        rank_t myrank = group->rank(parent->queryMyNode());
         {
             ForEachNodeInGroup(rank,*group) {
                 bool doverify;
@@ -2607,6 +2626,7 @@ class CCommunicator: public CInterface, public ICommunicator
     IGroup *group;
     CMPServer *parent;
     bool outer;
+    rank_t myrank;
 
     const SocketEndpoint &queryEndpoint(rank_t rank)
     {
@@ -2627,11 +2647,10 @@ public:
         // send does not corrupt mbuf
         if (dstrank==RANK_NULL)
             return false;
-        rank_t myrank = group->rank();
         if (dstrank==myrank) {
             CMessageBuffer *msg = mbuf.clone();
             // change sender
-            msg->init(queryMyNode()->endpoint(),tag,mbuf.getReplyTag());
+            msg->init(parent->queryMyNode()->endpoint(),tag,mbuf.getReplyTag());
             parent->getReceiveQ().enqueue(msg);
         }
         else {
@@ -2687,7 +2706,6 @@ public:
          * process i sends to process (i + 2^k) % p and receives from process (i - 2^k + p) % p.
          */
 
-        int myrank = group->rank();
         int numranks = group->ordinality();
         CMessageBuffer mb;
         rank_t r;
@@ -2741,7 +2759,6 @@ public:
     {
         CriticalBlock block(verifysect);
         CTimeMon tm(timeout);
-        rank_t myrank = group->rank();
         {
             ForEachNodeInGroup(rank,*group) {
                 bool doverify;
@@ -2850,10 +2867,10 @@ public:
             if (group->ordinality()>1) {
                 do {
                     sendrank = getRandom()%group->ordinality();
-                } while (sendrank==group->rank());
+                } while (sendrank==myrank);
             }
             else {
-                assertex(group->rank()!=0);
+                assertex(myrank!=0);
                 sendrank = 0;
             }
         }
@@ -2913,6 +2930,7 @@ public:
         outer = _outer;
         parent = _parent;
         group = LINK(_group); 
+        myrank = group->rank(parent->queryMyNode());
     }
     ~CCommunicator()
     {
@@ -2922,10 +2940,30 @@ public:
 };
 
 
+// Additional CMPServer methods
+
+ICommunicator *CMPServer::createCommunicator(IGroup *group, bool outer)
+{
+    return new CCommunicator(this,group,outer);
+}
+
+///////////////////////////////////
+
+
+class CGlobalMPServer : public CMPServer
+{
+public:
+    CGlobalMPServer(unsigned _port) : CMPServer(_port)
+    {
+        initMyNode(port); // NB port set by connectthread constructor in base
+    }
+};
+
+
 ICommunicator *createCommunicator(IGroup *group,bool outer)
 {
     assertex(MPserver!=NULL);
-    return new CCommunicator(MPserver,group,outer);
+    return MPserver->createCommunicator(group, outer);
 }
 
 static IInterCommunicator *worldcomm=NULL;
@@ -2939,6 +2977,15 @@ IInterCommunicator &queryWorldCommunicator()
     return *worldcomm;
 }
 
+
+IMPServer *startNewMPServer(unsigned port)
+{
+    assertex(sizeof(PacketHeader)==32);
+    CMPServer *mpServer = new CMPServer(port);
+    mpServer->start();
+    return mpServer;
+}
+
 void startMPServer(unsigned port, bool paused)
 {
     assertex(sizeof(PacketHeader)==32);
@@ -2948,7 +2995,7 @@ void startMPServer(unsigned port, bool paused)
         if (!CMPServer::serverpaused)
         {
             delete MPserver;
-            MPserver = new CMPServer(port);
+            MPserver = new CGlobalMPServer(port);
         }
         if (paused)
         {
@@ -2962,6 +3009,12 @@ void startMPServer(unsigned port, bool paused)
     CMPServer::servernest++;
 }
 
+IMPServer *getMPServer()
+{
+    CriticalBlock block(CMPServer::serversect);
+    assertex(MPserver);
+    return LINK(MPserver);
+}
 
 void stopMPServer()
 {
@@ -2976,8 +3029,6 @@ void stopMPServer()
         MPserver->stop();
         delete MPserver;
         MPserver = NULL;
-        ::Release(worldcomm);
-        worldcomm = NULL;
         initMyNode(0);
 #ifdef _TRACE
         LOG(MCdebugInfo(100), unknownJob, "MP: Stopped MP Server");
