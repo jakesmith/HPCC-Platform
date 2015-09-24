@@ -98,7 +98,7 @@ public:
         got = _got;
 //      DebugBreak();
 
-        if ((recursion++==0)&&!expected) {
+//        if ((recursion++==0)&&!expected) {
 // Bit risky if *very* out of memory so protect against recursion and catch exceptions
             try { 
                 // try to log
@@ -107,7 +107,7 @@ public:
                 PrintMemoryReport();
             }
             catch (...) {
-            }
+//            }
         }
         recursion--;
     };
