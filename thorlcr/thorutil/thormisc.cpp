@@ -32,6 +32,7 @@
 #include "commonext.hpp"
 #include "dasds.hpp"
 #include "dafdesc.hpp"
+#include "dadfs.hpp"
 
 #include "thor.hpp"
 #include "thorport.hpp"
@@ -777,7 +778,7 @@ StringBuffer &getCompoundQueryName(StringBuffer &compoundName, const char *query
     return compoundName.append('V').append(version).append('_').append(queryName);
 }
 
-void setClusterGroup(INode *_masterNode, IGroup *_rawGroup, unsigned slavesPerProcess, unsigned portBase, unsigned portInc)
+void setClusterGroup(INode *_masterNode, IGroup *_rawGroup, unsigned slavesPerNode, unsigned portBase, unsigned portInc)
 {
     ::Release(masterNode);
     ::Release(rawGroup);
@@ -789,22 +790,10 @@ void setClusterGroup(INode *_masterNode, IGroup *_rawGroup, unsigned slavesPerPr
     masterNode = LINK(_masterNode);
     rawGroup = LINK(_rawGroup);
     IArrayOf<INode> nodes;
-    if (slavesPerProcess) // if 0, then processPerSlave is enabled and slavesPerProcess/portBase/portInc not provided
+    if (slavesPerNode) // if 0, then processPerSlave is enabled and slavesPerNode/portBase/portInc not provided
     {
-        nodes.append(*LINK(masterNode));
-        for (unsigned s=0; s<slavesPerProcess; s++)
-        {
-            for (unsigned n=0; n<rawGroup->ordinality(); n++)
-            {
-                SocketEndpoint ep = rawGroup->queryNode(n).endpoint();
-                ep.port = portBase + (s * portInc);
-                nodes.append(*createINode(ep));
-            }
-        }
-        clusterGroup = createIGroup(nodes.ordinality(), nodes.getArray());
-        // slaveGroup contains endpoints with mp ports of slaves
-        slaveGroup = clusterGroup->remove(0);
-        nodes.kill();
+        slaveGroup = expandSlaveGroup(rawGroup, slavesPerNode, portBase, portInc);
+        clusterGroup = slaveGroup->add(masterNode, 0);
 
         nodes.append(*LINK(masterNode));
         unsigned n=0;

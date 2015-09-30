@@ -988,6 +988,7 @@ public:
     CGraphElementBase &queryContainer() const { return container; }
     CJobBase &queryJob() const { return container.queryJob(); }
     CJobChannel &queryJobChannel() const { return container.queryJobChannel(); }
+    CActivityBase &queryChannelActivity(unsigned channel) { return queryJob().queryChannelActivity(channel, queryGraph().queryGraphId(), container.queryId()); }
     inline IMPServer &queryMPServer() const { return queryJobChannel().queryMPServer(); }
     CGraphBase &queryGraph() const { return container.queryOwner(); }
     CActivityBase &queryChannelActivity(unsigned channel) const

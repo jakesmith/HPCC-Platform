@@ -78,6 +78,10 @@ export slavespernode=<xsl:choose>
 <xsl:when test="string(@slavesPerNode) != ''"><xsl:value-of select="@slavesPerNode"/></xsl:when>
 <xsl:otherwise>1</xsl:otherwise>
 </xsl:choose>
+export slaveprocessespernode=<xsl:choose>
+<xsl:when test="string(@slaveProcessesPerNode) != ''"><xsl:value-of select="@slaveProcessesPerNode"/></xsl:when>
+<xsl:otherwise>1</xsl:otherwise>
+</xsl:choose>
 <xsl:if test="string(@multiSlaves) != ''">
 export multislaves=<xsl:value-of select="@multiSlaves"/>
 </xsl:if>
@@ -94,9 +98,6 @@ export DALISERVER=<xsl:call-template name="getDaliServers">
 </xsl:if>
 <xsl:if test="string(@localThor) != ''">
 export localthor=<xsl:value-of select="@localThor"/>
-</xsl:if>
-<xsl:if test="string(@processPerSlave) != ''">
-export processperslave=<xsl:value-of select="@processPerSlave"/>
 </xsl:if>
 <xsl:if test="string(Storage/@breakoutLimit) != ''">
 export breakoutlimit=<xsl:value-of select="Storage/@breakoutLimit"/>

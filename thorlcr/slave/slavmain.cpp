@@ -100,8 +100,7 @@ class CJobListener : public CSimpleInterface
     OwningStringSuperHashTableOf<CJobSlave> jobs;
     CFifoFileCache querySoCache; // used to mirror master cache
     IArrayOf<IMPServer> mpServers;
-    bool processPerSlave;
-    unsigned slavesPerNode;
+    unsigned slavesPerProcess;
 
     class CThreadExceptionCatcher : implements IExceptionHandler
     {
@@ -162,14 +161,13 @@ public:
     CJobListener() : excptHandler(*this)
     {
         stopped = true;
-        processPerSlave = globals->getPropBool("@processPerSlave");
-        slavesPerNode = globals->getPropInt("@slavesPerNode", 1);
+        slavesPerProcess = globals->getPropInt("@_slavesPerProcess", 1);
         mpServers.append(* getMPServer());
-        if (!processPerSlave)
+        if (slavesPerProcess>1)
         {
             unsigned port = getMachinePortBase();
             unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", 200);
-            for (unsigned sc=1; sc<slavesPerNode; sc++)
+            for (unsigned sc=1; sc<slavesPerProcess; sc++)
             {
                 port += localThorPortInc;
                 mpServers.append(*startNewMPServer(port));
@@ -178,7 +176,7 @@ public:
     }
     ~CJobListener()
     {
-        for (unsigned sc=1; sc<slavesPerNode; sc++)
+        for (unsigned sc=1; sc<slavesPerProcess; sc++)
             mpServers.item(sc).stop();
         mpServers.kill();
         stop();
@@ -189,7 +187,7 @@ public:
     }
     virtual void main()
     {
-        if (!processPerSlave)
+        if (slavesPerProcess>1)
         {
             class CVerifyThread : public CInterface, implements IThreaded
             {
@@ -216,7 +214,7 @@ public:
                 }
             };
             CIArrayOf<CInterface> verifyThreads;
-            for (unsigned c=0; c<slavesPerNode; c++)
+            for (unsigned c=0; c<slavesPerProcess; c++)
                 verifyThreads.append(*new CVerifyThread(*this, c));
         }
 

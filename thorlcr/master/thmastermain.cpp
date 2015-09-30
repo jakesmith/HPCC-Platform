@@ -569,16 +569,23 @@ int main( int argc, char *argv[]  )
             nodeGroup.append(thorname);
             globals->setProp("@nodeGroup", thorname);
         }
+        unsigned slaveProcessesPerNode = globals->getPropInt("@slaveProcessesPerNode", 1);
         bool processPerSlave = globals->getPropBool("@processPerSlave");
         Owned<IGroup> rawGroup = getClusterGroup(thorname, "ThorCluster", processPerSlave);
-        unsigned slavesPerNode = globals->getPropInt("@slavesPerNode", 1);
+        unsigned slavesPerProcess = globals->getPropInt("@slavesPerNode", 1);
+        unsigned slavesPerNode = slaveProcessesPerNode;
+        unsigned slaves = slaveProcessesPerNode * slavesPerProcess;
         if (processPerSlave)
+        {
+            slavesPerProcess = 1;
+            slavesPerNode = slaves;
             setClusterGroup(queryMyNode(), rawGroup);
+        }
         else
         {
             unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", DEFAULT_SLAVEPORTINC);
             unsigned slaveBasePort = globals->getPropInt("@slaveport", DEFAULT_THORSLAVEPORT);
-            setClusterGroup(queryMyNode(), rawGroup, slavesPerNode, slaveBasePort, localThorPortInc);
+            setClusterGroup(queryMyNode(), rawGroup, slaves, slaveBasePort, localThorPortInc);
         }
         if (globals->getPropBool("@replicateOutputs")&&globals->getPropBool("@validateDAFS",true)&&!checkClusterRelicateDAFS(rawGroup)) {
             FLLOG(MCoperatorError, thorJob, "ERROR: Validate failure(s) detected, exiting Thor");
@@ -633,10 +640,10 @@ int main( int argc, char *argv[]  )
                     mmemSize = gmemSize; // default to same as slaves
             }
             unsigned perSlaveSize = gmemSize;
-            if (processPerSlave && slavesPerNode>1)
+            if (slavesPerNode>1)
             {
-                PROGLOG("Sharing globalMemorySize(%d MB), between %d slave. %d MB each", perSlaveSize, slavesPerNode, perSlaveSize / slavesPerNode);
                 perSlaveSize /= slavesPerNode;
+                PROGLOG("Sharing globalMemorySize(%d MB), between %d slave processes. %d MB each", gmemSize, slavesPerNode, perSlaveSize);
             }
             globals->setPropInt("@globalMemorySize", perSlaveSize);
         }

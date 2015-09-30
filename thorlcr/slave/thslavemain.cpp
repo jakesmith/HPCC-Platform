@@ -115,14 +115,22 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
         globals = createPTree(msg);
         mergeCmdParams(globals); // cmd line
 
+        unsigned slaveProcessesPerNode = globals->getPropInt("@slaveProcessesPerNode", 1);
         bool processPerSlave = globals->getPropBool("@processPerSlave");
-        unsigned slavesPerNode = globals->getPropInt("@slavesPerNode", 1);
+        unsigned slavesPerProcess = globals->getPropInt("@slavesPerNode", 1);
+        unsigned slavesPerNode = slaveProcessesPerNode;
+        unsigned slaves = slaveProcessesPerNode * slavesPerProcess;
         unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", 200);
         unsigned basePort = getMachinePortBase();
         if (processPerSlave)
+        {
+            slavesPerProcess = 1;
+            slavesPerNode = slaves;
             setClusterGroup(masterNode, group);
+        }
         else
-            setClusterGroup(masterNode, group, slavesPerNode, basePort, localThorPortInc);
+            setClusterGroup(masterNode, group, slaves, basePort, localThorPortInc);
+        globals->setPropInt("@_slavesPerProcess", slavesPerProcess);
 
         SocketEndpoint myEp = queryMyNode()->endpoint();
         unsigned _mySlaveNum = group->rank(queryMyNode())+1;

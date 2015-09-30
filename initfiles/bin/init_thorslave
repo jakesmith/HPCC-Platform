@@ -85,18 +85,16 @@ start_slaves()
     ln -s -f $deploydir/thorslave_lcr ${slavename}
 
     # sync to current master thorgroup
-    log "rsync -e ssh -o LogLevel=QUIET -o StrictHostKeyChecking=no ${master}:${instancedir}/thorgroup ${instancedir}/thorgroup.slave"
-    rsync -e "ssh -o LogLevel=QUIET -o StrictHostKeyChecking=no" $master:$instancedir/thorgroup $instancedir/thorgroup.slave
+    log "rsync -e ssh -o LogLevel=QUIET -o StrictHostKeyChecking=no ${master}:${instancedir}/clustergroup ${instancedir}/clustergroup.slave"
+    rsync -e "ssh -o LogLevel=QUIET -o StrictHostKeyChecking=no" $master:$instancedir/clustergroup $instancedir/clustergroup.slave
 
-    let "slavenum = 1";
-    for slave in $(cat $instancedir/thorgroup.slave); do
-        slaveip=${slave/:*/}
-        if [[ ${slaveip} = ${ip} ]]; then
-            slaveport=${slave/*:/}
-            if [[ "$slaveport" = "" ]]; then
-                slaveport=$THORSLAVEPORT
-            fi
-            log "$slavename  master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname"
+    local slavenum = 1
+    local portinc = ${localthorportinc} * ${slavespernode}
+    for slave in $(cat $instancedir/clustergroup.slave); do
+        local p=0
+        slaveport=$THORSLAVEPORT
+        for ((p=0;p < ${slaveprocessespernode};p++)); do
+            log "$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname"
             ./$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname 2>/dev/null 1>/dev/null &
             slavepid=$!
             if [[ "$slavepid" -eq "0" ]]; then
@@ -106,8 +104,9 @@ start_slaves()
                 PID_NAME="$PID/${slavename}_${slavenum}.pid"
                 echo $slavepid > $PID_NAME
             fi
-        fi
-        let "slavenum += 1";
+            slaveport = ${slaveport}+${portinc}
+            slavenum = ${slavenum} + 1
+        done 
     done
 }
 

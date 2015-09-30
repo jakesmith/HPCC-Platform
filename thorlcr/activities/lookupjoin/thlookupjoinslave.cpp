@@ -833,6 +833,7 @@ protected:
     const void *rhsNext;
     CThorExpandingRowArray rhs;
     Owned<IOutputMetaData> outputMeta;
+    Semaphore channelRHSSem;
 
     PointerArrayOf<CThorSpillableRowArray> rhsNodeRows;
 
@@ -1263,13 +1264,26 @@ public:
         info.unknownRowsOutput = true;
         info.canStall = true;
     }
+    void waitRHS()
+    {
+        channelRHSSem.wait();
+    }
     void doBroadcastRHS(bool stopping)
     {
-        rowProcessor.start();
-        broadcaster.start(this, mpTag, stopping);
-        broadcastRHS();
-        broadcaster.end();
-        rowProcessor.wait();
+        if (0 == queryJobChannel().queryChannel())
+        {
+            rowProcessor.start();
+            broadcaster.start(this, mpTag, stopping);
+            broadcastRHS();
+            broadcaster.end();
+            rowProcessor.wait();
+            channelRHSSem.signal();
+        }
+        else
+        {
+            CInMemJoinBase &channel0Activity = (CInMemJoinBase &)queryChannelActivity(0);
+            channel0Activity.waitRHS();
+        }
     }
     void doBroadcastStop(mptag_t tag, broadcast_flags flag)
     {
@@ -1293,7 +1307,7 @@ public:
         }
         return (rowidx_t)rhsRows;
     }
-    virtual bool addRHSRow(CThorSpillableRowArray &rhsRows, const void *row)
+    virtual bool doAddRHSRow(CThorSpillableRowArray &rhsRows, const void *row)
     {
         LinkThorRow(row);
         {
@@ -1303,6 +1317,16 @@ public:
         }
         ReleaseThorRow(row);
         return false;
+    }
+    virtual bool addRHSRow(CThorSpillableRowArray &rhsRows, const void *row)
+    {
+        for (unsigned c=0; c<queryJob().queryJobChannels(); c++)
+        {
+            CInMemJoinBase &channelActivity = (CInMemJoinBase &)queryChannelActivity(c);
+            if (!doAddRHSRow(rhsRows, row))
+                return false;
+        }
+        return true;
     }
 // ISmartBufferNotify
     virtual void onInputStarted(IException *except)
@@ -1317,6 +1341,22 @@ public:
     virtual void onInputFinished(rowcount_t count)
     {
         ActPrintLog("LHS input finished, %" RCPF "d rows read", count);
+    }
+    virtual void handleBCast(CSendItem *sendItem) { }
+    // IBCastReceive
+    virtual void bCastReceive(CSendItem *sendItem)
+    {
+        for (unsigned c=0; c<queryJob().queryJobChannels(); c++)
+        {
+            CInMemJoinBase &channelSlave = (CInMemJoinBase &)queryChannelActivity(c);
+            channelSlave.handleBCast(sendItem);
+        }
+        if (bcast_stop == sendItem->queryCode())
+        {
+            sendItem->Release();
+            sendItem = NULL; // NB: NULL indicates end
+        }
+        rowProcessor.addBlock(sendItem);
     }
 };
 
@@ -2126,8 +2166,7 @@ public:
     {
         return isSmart() ? false : inputs.item(0)->isGrouped();
     }
-// IBCastReceive
-    virtual void bCastReceive(CSendItem *sendItem)
+    virtual void handleBCast(CSendItem *sendItem)
     {
         if (0 != (sendItem->queryFlags() & bcastflag_spilt))
         {
@@ -2139,12 +2178,6 @@ public:
             VStringBuffer msg("Notification that slave %d required standard join", sendItem->queryOrigin());
             setStandardJoin(true);
         }
-        if (bcast_stop == sendItem->queryCode())
-        {
-            sendItem->Release();
-            sendItem = NULL; // NB: NULL indicates end
-        }
-        rowProcessor.addBlock(sendItem);
     }
 // IBufferedRowCallback
     virtual unsigned getSpillCost() const
@@ -2156,21 +2189,21 @@ public:
         // NB: only installed if lookup join and global
         return clearAllNonLocalRows("Out of memory callback");
     }
-    virtual bool addRHSRow(CThorSpillableRowArray &rhsRows, const void *row)
+    virtual bool doAddRHSRow(CThorSpillableRowArray &rhsRows, const void *row)
     {
-        /* NB: If PARENT::addRHSRow fails, it will cause clearAllNonLocalRows() to have been triggered and localLookup to be set
+        /* NB: If PARENT::doAddRHSRow fails, it will cause clearAllNonLocalRows() to have been triggered and localLookup to be set
          * When all is done, a last pass is needed to clear out non-locals
          */
         if (!overflowWriteFile)
         {
-            if (!isLocalLookup() && PARENT::addRHSRow(rhsRows, row))
+            if (!isLocalLookup() && PARENT::doAddRHSRow(rhsRows, row))
                 return true;
             dbgassertex(isLocalLookup());
             // keep it only if it hashes to my node
             unsigned hv = rightHash->hash(row);
             if ((myNode-1) != (hv % numNodes))
                 return true; // throw away non-local row
-            if (PARENT::addRHSRow(rhsRows, row))
+            if (PARENT::doAddRHSRow(rhsRows, row))
                 return true;
 
             /* Could OOM whilst still failing over to local lookup again, dealing with last row, or trailing
@@ -2586,16 +2619,6 @@ public:
         PARENT::stop();
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
-// IBCastReceive
-    virtual void bCastReceive(CSendItem *sendItem)
-    {
-        if (bcast_stop == sendItem->queryCode())
-        {
-            sendItem->Release();
-            sendItem = NULL; // NB: NULL indicates end
-        }
-        rowProcessor.addBlock(sendItem);
-    }
 };
 
 

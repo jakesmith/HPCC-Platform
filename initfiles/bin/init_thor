@@ -70,30 +70,6 @@ contains()
     return 1
 }
 
-makethorgroup()
-{
-    if [[ -z "$localthorportinc" ]]; then
-        localthorportinc=200
-    fi
-    rm -f thorgroup
-
-    declare -a ports_used
-    declare -a hosts
-    for slave in $(cat slaves); do
-        p=$(contains "${hosts[@]}" "${slave}")
-        if [[ 0 == ${p} ]]; then
-            echo "${slave}:${THORSLAVEPORT}" >> thorgroup
-            p=$((${#hosts[@]}+1))
-            ports[${p}]=${THORSLAVEPORT}
-            hosts=(${hosts[@]} $slave)
-        else
-            newport=$((${ports[${p}]}+${localthorportinc}))
-            echo "${slave}:${newport}" >> thorgroup
-            ports[${p}]=${newport}
-        fi
-    done
-}
-
 kill_slaves()
 {
     log "Killing slaves"
@@ -101,13 +77,11 @@ kill_slaves()
         $deploydir/init_thorslave stop localhost $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
     else
         # we want to kill only slaves that have already been started in run_thor
-        if [[ -r $instancedir/uslaves.start ]]; then
-            nslaves=$(cat $instancedir/uslaves.start 2> /dev/null | wc -l)
-            $deploydir/frunssh $instancedir/uslaves.start "/bin/sh -c '$deploydir/init_thorslave stop %a $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
+        if [[ -r $instancedir/clustergroup ]]; then
+            nslaves=$(cat $instancedir/clustergroup 2> /dev/null | wc -l)
+            $deploydir/frunssh $instancedir/clustergroup "/bin/sh -c '$deploydir/init_thorslave stop %a $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
         fi
     fi
-
-    rm -f $instancedir/uslaves.start > /dev/null 2>&1
 }
 
 killed()
@@ -120,8 +94,8 @@ killed()
         log "$component Stopped"
         unlock /var/lock/HPCCSystems/$component/${component}.lock
         kill_slaves
-        log "removing init.pid file and uslaves.start file"
-        rm -f $INIT_PID_NAME $instancedir/uslaves.start > /dev/null 2>&1
+        log "removing init.pid file"
+        rm -f $INIT_PID_NAME > /dev/null 2>&1
     fi
     exit 255
 }
@@ -133,18 +107,12 @@ thorpid=0
 
 while [[ 1 ]]; do
     # update slaves file in case state of environment has been altered since last run
-    if [[ "$processperslave" = "true" ]]; then
-        daliadmin server=$DALISERVER dfsgroup ${groupName} slaves
-    else
-        daliadmin server=$DALISERVER clusternodes ${groupName} slaves
-    fi
+    daliadmin server=$DALISERVER clusternodes ${groupName} $instancedir/clustergroup
     errcode=$?
     if [[ 0 != ${errcode} ]]; then
     log "failed to lookup dali group for $groupName"
         exit 1
     fi
-    makethorgroup
-    sort $instancedir/slaves | uniq > $instancedir/uslaves.start
 
     ${INSTALL_DIR}/sbin/configgen -env ${CONFIG_DIR}/${ENV_XML_FILE} -c ${THORNAME} -listall2 | awk 'BEGIN {FS=",";} /ThorSlaveProcess/ { print $3 }' > $instancedir/configgen.out
     rm -f $instancedir/hosts.resolve > /dev/null 2>&1
@@ -159,10 +127,9 @@ while [[ 1 ]]; do
         fi
     done < $instancedir/configgen.out
 
-    sort $instancedir/hosts.resolve | uniq > $instancedir/hosts.uniq
-    diff $instancedir/uslaves.start $instancedir/hosts.uniq > /dev/null 2>&1
+    diff $instancedir/clustergroup $instancedir/hosts.resolve > /dev/null 2>&1
     DFSGROUP_CHECK=$?
-    rm -f $instancedir/hosts.resolve $instancedir/configgen.out $instancedir/hosts.uniq > /dev/null 2>&1
+    rm -f $instancedir/hosts.resolve $instancedir/configgen.out > /dev/null 2>&1
     if [[ $DFSGROUP_CHECK -ne 0 ]]; then
         log "ERROR:  Your environment has changed. dfsgroup $groupName does not match environmnent.xml file"
         log "If this was intentional, please run 'updtdalienv ${CONFIG_DIR}/${ENV_XML_FILE} -f'"
@@ -175,11 +142,11 @@ while [[ 1 ]]; do
 
     # Would be simpler, if there was simple way to test if ip is local and get rid of 'localthor' setting
     if [[ "$localthor" = "true" ]]; then
-        slaveip=$(head -n 1 $instancedir/uslaves.start)
+        slaveip=$(head -n 1 $instancedir/clustergroup)
         $deploydir/init_thorslave start $slaveip $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
     else
-        nslaves=$(cat $instancedir/uslaves.start | wc -l)
-        $deploydir/frunssh $instancedir/uslaves.start "/bin/sh -c '$deploydir/init_thorslave start %a $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
+        nslaves=$(cat $instancedir/clustergroup | wc -l)
+        $deploydir/frunssh $instancedir/clustergroup "/bin/sh -c '$deploydir/init_thorslave start %a $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
         FRUNSSH_RC=$?
         if [[ ${FRUNSSH_RC} -gt 0 ]]; then
             log "Error ${FRUNSSH_RC} in frunssh"
@@ -202,7 +169,7 @@ while [[ 1 ]]; do
         case $errcode in
         # TEC_Clean
         0)  log "Thormaster ($thorpid) Exited cleanly"
-            rm -f $instancedir/uslaves.start $PID_NAME $INIT_PID_NAME > /dev/null 2>&1
+            rm -f $PID_NAME $INIT_PID_NAME > /dev/null 2>&1
             exit 0
             ;;
         # TEC_CtrlC

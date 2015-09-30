@@ -9132,26 +9132,15 @@ class CInitGroups
         }
         if (!eps.ordinality())
             return NULL;
-        Owned<IGroup> grp;
+        Owned<IGroup> grp = createIGroup(eps);
         unsigned slavesPerNode = 0;
         if (grp_thor == groupType)
             slavesPerNode = cluster.getPropInt("@slavesPerNode");
         if (expand && slavesPerNode)
         {
-            SocketEndpointArray msEps;
-            for (unsigned s=0; s<slavesPerNode; s++)
-            {
-                ForEachItemIn(e, eps)
-                {
-                    SocketEndpoint ep = eps.item(e);
-                    ep.port = slavePort + (s * localThorPortInc);
-                    msEps.append(ep);
-                }
-            }
-            grp.setown(createIGroup(msEps));
+            unsigned slaveProcessesPerNode = cluster.getPropInt("@slaveProcessesPerNode", 1);
+            grp.setown(expandSlaveGroup(grp, slaveProcessesPerNode * slavesPerNode, slavePort, localThorPortInc));
         }
-        else
-            grp.setown(createIGroup(eps));
         return grp.getClear();
     }
 
@@ -9545,6 +9534,23 @@ bool removeClusterSpares(const char *clusterName, const char *type, SocketEndpoi
 {
     CInitGroups init(timems);
     return init.removeSpares(clusterName, type, eps, response);
+}
+
+IGroup *expandSlaveGroup(IGroup *group, unsigned slaves, unsigned basePort, unsigned portInc)
+{
+    IArrayOf<INode> nodes;
+    unsigned port = basePort;
+    for (unsigned s=0; s<slaves; s++)
+    {
+        for (unsigned n=0; n<group->ordinality(); n++)
+        {
+            SocketEndpoint ep = group->queryNode(n).endpoint();
+            ep.port = port;
+            nodes.append(*createINode(ep));
+            port += portInc;
+        }
+    }
+    return createIGroup(nodes.ordinality(), nodes.getArray());
 }
 
 IGroup *getClusterGroup(const char *clusterName, const char *type, bool expand, unsigned timems)
