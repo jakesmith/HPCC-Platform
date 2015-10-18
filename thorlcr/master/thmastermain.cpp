@@ -642,6 +642,8 @@ int main( int argc, char *argv[]  )
         }
         else
         {
+            if (!processPerSlave)
+                gmemSize = gmemSize * slavesPerNode;
             if (gmemSize >= hdwInfo.totalMemory)
             {
                 // should prob. error here
