@@ -177,7 +177,7 @@ protected:
             return false;
 
         StringBuffer tempName;
-        VStringBuffer tempPrefix("streamspill_%d", activity.queryActivityId());
+        VStringBuffer tempPrefix("streamspill_%d", activity.queryId());
         GetTempName(tempName, tempPrefix.str(), true);
         spillFile.setown(createIFile(tempName.str()));
 
@@ -1503,7 +1503,7 @@ protected:
             ActPrintLog(&activity, "Sort took: %f", ((float)timer.elapsedMs())/1000);
             tempPrefix.append("srt");
         }
-        tempPrefix.appendf("spill_%d", activity.queryActivityId());
+        tempPrefix.appendf("spill_%d", activity.queryId());
         GetTempName(tempName, tempPrefix.str(), true);
         Owned<IFile> iFile = createIFile(tempName.str());
         VStringBuffer spillPrefixStr("RowCollector(%d)", spillPriority);
@@ -2126,11 +2126,11 @@ public:
         return createRoxieRowAllocator(cache, *rowManager, meta, activityId, id, flags);
     }
 // IThorAllocator
-    virtual IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, unsigned activityId, roxiemem::RoxieHeapFlags flags) const
+    virtual IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, activity_id activityId, roxiemem::RoxieHeapFlags flags) const
     {
         return allocatorMetaCache->ensure(meta, activityId, flags);
     }
-    virtual IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, unsigned activityId) const
+    virtual IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, activity_id activityId) const
     {
         return allocatorMetaCache->ensure(meta, activityId, defaultFlags);
     }

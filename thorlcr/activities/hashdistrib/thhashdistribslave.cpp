@@ -2855,7 +2855,7 @@ public:
         iCompare = helper->queryCompare();
 
         // JCSMORE - really should ask / lookup what flags the allocator created for extractKey has...
-        allocFlags = queryJobChannel().queryThorAllocator()->queryFlags();
+        allocFlags = queryJobChannel().queryThorAllocator().queryFlags();
 
         // JCSMORE - it may not be worth extracting the key,
         // if there's an upstream activity that holds onto rows for periods of time (e.g. sort)
@@ -2876,7 +2876,7 @@ public:
         }
         if (extractKey)
         {
-            _keyRowInterfaces.setown(createRowInterfaces(km, queryActivityId(), queryCodeContext()));
+            _keyRowInterfaces.setown(createRowInterfaces(km, queryId(), queryCodeContext()));
             keyRowInterfaces = _keyRowInterfaces;
             rowKeyCompare = helper->queryRowKeyCompare();
             iKeyHash = helper->queryKeyHash();
@@ -3087,7 +3087,7 @@ CBucket::CBucket(HashDedupSlaveActivityBase &_owner, IRowInterfaces *_rowIf, IRo
      */
     if (extractKey)
     {
-        _keyAllocator.setown(owner.queryJobChannel().getRowAllocator(keyIf->queryRowMetaData(), owner.queryActivityId(), owner.allocFlags));
+        _keyAllocator.setown(owner.getRowAllocator(keyIf->queryRowMetaData(), owner.allocFlags));
         keyAllocator = _keyAllocator;
     }
     else
@@ -3772,7 +3772,7 @@ RowAggregator *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBas
             virtual void stop() { }
         };
         Owned<IOutputMetaData> nodeRowMeta = createOutputMetaDataWithChildRow(activity.queryRowAllocator(), sizeof(size32_t));
-        Owned<IRowInterfaces> nodeRowMetaRowIf = createRowInterfaces(nodeRowMeta, activity.queryActivityId(), activity.queryCodeContext());
+        Owned<IRowInterfaces> nodeRowMetaRowIf = createRowInterfaces(nodeRowMeta, activity.queryId(), activity.queryCodeContext());
         Owned<IRowStream> localAggregatedStream = new CRowAggregatedStream(activity, nodeRowMetaRowIf, localAggTable);
         class CNodeCompare : implements ICompare, implements IHash
         {
