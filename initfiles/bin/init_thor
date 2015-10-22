@@ -45,6 +45,7 @@ fi
 
 instancedir=$(pwd -P)
 source $instancedir/setvars
+slaveportinc=$(($channelsperslave * $localthorportinc))
 
 if [[ ! -z ${THORPRIMARY} ]]; then
     groupName=${THORPRIMARY}
@@ -70,40 +71,16 @@ contains()
     return 1
 }
 
-makethorgroup()
-{
-    if [[ -z "$localthorportinc" ]]; then
-        localthorportinc=200
-    fi
-    rm -f thorgroup
-
-    declare -a ports_used
-    declare -a hosts
-    for slave in $(cat slaves); do
-        p=$(contains "${hosts[@]}" "${slave}")
-        if [[ 0 == ${p} ]]; then
-            echo "${slave}:${THORSLAVEPORT}" >> thorgroup
-            p=$((${#hosts[@]}+1))
-            ports[${p}]=${THORSLAVEPORT}
-            hosts=(${hosts[@]} $slave)
-        else
-            newport=$((${ports[${p}]}+${localthorportinc}))
-            echo "${slave}:${newport}" >> thorgroup
-            ports[${p}]=${newport}
-        fi
-    done
-}
-
 kill_slaves()
 {
     log "Killing slaves"
     if [[ "$localthor" = "true" ]]; then
-        $deploydir/init_thorslave stop localhost $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
+        $deploydir/init_thorslave stop $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
     else
         # we want to kill only slaves that have already been started in run_thor
         if [[ -r $instancedir/uslaves.start ]]; then
             nslaves=$(cat $instancedir/uslaves.start 2> /dev/null | wc -l)
-            $deploydir/frunssh $instancedir/uslaves.start "/bin/sh -c '$deploydir/init_thorslave stop %a $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
+            $deploydir/frunssh $instancedir/uslaves.start "/bin/sh -c '$deploydir/init_thorslave stop $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
         fi
     fi
 
@@ -133,18 +110,12 @@ thorpid=0
 
 while [[ 1 ]]; do
     # update slaves file in case state of environment has been altered since last run
-    if [[ "$processperslave" = "true" ]]; then
-        daliadmin server=$DALISERVER dfsgroup ${groupName} slaves
-    else
-        daliadmin server=$DALISERVER clusternodes ${groupName} slaves
-    fi
+    daliadmin server=$DALISERVER clusternodes ${groupName} uslaves.start
     errcode=$?
     if [[ 0 != ${errcode} ]]; then
     log "failed to lookup dali group for $groupName"
         exit 1
     fi
-    makethorgroup
-    sort $instancedir/slaves | uniq > $instancedir/uslaves.start
 
     ${INSTALL_DIR}/sbin/configgen -env ${CONFIG_DIR}/${ENV_XML_FILE} -c ${THORNAME} -listall2 | awk 'BEGIN {FS=",";} /ThorSlaveProcess/ { print $3 }' > $instancedir/configgen.out
     rm -f $instancedir/hosts.resolve > /dev/null 2>&1
@@ -175,11 +146,10 @@ while [[ 1 ]]; do
 
     # Would be simpler, if there was simple way to test if ip is local and get rid of 'localthor' setting
     if [[ "$localthor" = "true" ]]; then
-        slaveip=$(head -n 1 $instancedir/uslaves.start)
-        $deploydir/init_thorslave start $slaveip $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
+        $deploydir/init_thorslave start $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
     else
         nslaves=$(cat $instancedir/uslaves.start | wc -l)
-        $deploydir/frunssh $instancedir/uslaves.start "/bin/sh -c '$deploydir/init_thorslave start %a $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
+        $deploydir/frunssh $instancedir/uslaves.start "/bin/sh -c '$deploydir/init_thorslave start $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
         FRUNSSH_RC=$?
         if [[ ${FRUNSSH_RC} -gt 0 ]]; then
             log "Error ${FRUNSSH_RC} in frunssh"

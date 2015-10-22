@@ -70,12 +70,17 @@ export THORSLAVEPORT=<xsl:value-of select="@slaveport"/>
 export THORSLAVEPORT=20100
     </xsl:otherwise>
 </xsl:choose>
-<xsl:if test="string(@localThorPortInc) != ''">
-export localthorportinc=<xsl:value-of select="@localThorPortInc"/>
-</xsl:if>
+export localthorportinc=<xsl:choose>
+<xsl:when test="string(@localThorPortInc) != ''"><xsl:value-of select="@localThorPortInc"/></xsl:when>
+<xsl:otherwise>200</xsl:otherwise>
+</xsl:choose>
 export domain=<xsl:value-of select="$domainName"/>
 export slavespernode=<xsl:choose>
 <xsl:when test="string(@slavesPerNode) != ''"><xsl:value-of select="@slavesPerNode"/></xsl:when>
+<xsl:otherwise>1</xsl:otherwise>
+</xsl:choose>
+export channelsperslave=<xsl:choose>
+<xsl:when test="string(@channelsPerSlave) != ''"><xsl:value-of select="@channelsPerSlave"/></xsl:when>
 <xsl:otherwise>1</xsl:otherwise>
 </xsl:choose>
 <xsl:if test="string(@multiSlaves) != ''">
@@ -94,9 +99,6 @@ export DALISERVER=<xsl:call-template name="getDaliServers">
 </xsl:if>
 <xsl:if test="string(@localThor) != ''">
 export localthor=<xsl:value-of select="@localThor"/>
-</xsl:if>
-<xsl:if test="string(@processPerSlave) != ''">
-export processperslave=<xsl:value-of select="@processPerSlave"/>
 </xsl:if>
 <xsl:if test="string(Storage/@breakoutLimit) != ''">
 export breakoutlimit=<xsl:value-of select="Storage/@breakoutLimit"/>

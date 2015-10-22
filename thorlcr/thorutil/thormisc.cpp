@@ -777,7 +777,7 @@ StringBuffer &getCompoundQueryName(StringBuffer &compoundName, const char *query
     return compoundName.append('V').append(version).append('_').append(queryName);
 }
 
-void setClusterGroup(INode *_masterNode, IGroup *_rawGroup, unsigned slavesPerProcess, unsigned portBase, unsigned portInc)
+void setClusterGroup(INode *_masterNode, IGroup *_rawGroup, unsigned slavesPerNode, unsigned channelsPerSlave, unsigned portBase, unsigned portInc)
 {
     ::Release(masterNode);
     ::Release(rawGroup);
@@ -788,42 +788,49 @@ void setClusterGroup(INode *_masterNode, IGroup *_rawGroup, unsigned slavesPerPr
     ::Release(nodeComm);
     masterNode = LINK(_masterNode);
     rawGroup = LINK(_rawGroup);
+
     IArrayOf<INode> nodes;
-    if (slavesPerProcess) // if 0, then processPerSlave is enabled and slavesPerProcess/portBase/portInc not provided
+    nodes.append(*LINK(masterNode));
+    for (unsigned p=0; p<slavesPerNode; p++)
     {
-        nodes.append(*LINK(masterNode));
-        for (unsigned s=0; s<slavesPerProcess; s++)
+        for (unsigned s=0; s<channelsPerSlave; s++)
         {
             for (unsigned n=0; n<rawGroup->ordinality(); n++)
             {
                 SocketEndpoint ep = rawGroup->queryNode(n).endpoint();
-                ep.port = portBase + (s * portInc);
+                ep.port = portBase + (((p * channelsPerSlave) + s) * portInc);
                 nodes.append(*createINode(ep));
             }
         }
-        clusterGroup = createIGroup(nodes.ordinality(), nodes.getArray());
-        // slaveGroup contains endpoints with mp ports of slaves
-        slaveGroup = clusterGroup->remove(0);
-        nodes.kill();
-
-        nodes.append(*LINK(masterNode));
-        unsigned n=0;
-        for (n=0; n<rawGroup->ordinality(); n++)
-        {
-            SocketEndpoint ep = rawGroup->queryNode(n).endpoint();
-            ep.port = portBase;
-            nodes.append(*createINode(ep));
-        }
-        nodeGroup = createIGroup(nodes.ordinality(), nodes.getArray());
-        nodes.kill();
     }
+    // clusterGroup contains master + all slaves (including virtuals)
+    clusterGroup = createIGroup(nodes.ordinality(), nodes.getArray());
+
+    // slaveGroup contains all slaves (including virtuals) but excludes master
+    slaveGroup = clusterGroup->remove(0);
+
+    // nodeGroup container master + all slave processes (excludes virtual slaves)
+    if (1 == channelsPerSlave)
+        nodeGroup = LINK(clusterGroup); // NB: If channelsPerSlave=1, then it is a process per slave
     else
     {
-        slaveGroup = LINK(rawGroup);
-        clusterGroup = rawGroup->add(masterNode, 0);
-        nodeGroup = LINK(clusterGroup);
+        nodes.kill();
+        nodes.append(*LINK(masterNode));
+        unsigned n=0;
+        for (unsigned p=0; p<slavesPerNode; p++)
+        {
+            for (n=0; n<rawGroup->ordinality(); n++)
+            {
+                SocketEndpoint ep = rawGroup->queryNode(n).endpoint();
+                ep.port = portBase + ((p * channelsPerSlave) * portInc);
+                nodes.append(*createINode(ep));
+            }
+        }
+        nodeGroup = createIGroup(nodes.ordinality(), nodes.getArray());
     }
-    // dfsGroup will match named group in dfs
+
+    // dfsGroup is same as slaveGroup, but stripped of ports. So is a IP group as wide as slaveGroup, used for publishing
+    nodes.kill();
     Owned<INodeIterator> nodeIter = slaveGroup->getIterator();
     ForEach(*nodeIter)
         nodes.append(*createINodeIP(nodeIter->query().endpoint(),0));

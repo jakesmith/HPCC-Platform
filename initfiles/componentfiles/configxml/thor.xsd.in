@@ -406,7 +406,7 @@
       <xs:attribute name="globalMemorySize" type="xs:nonNegativeInteger" use="optional">
         <xs:annotation>
           <xs:appinfo>
-            <tooltip>Memory (in MB) to use for rows. If unset, default = [75% of physical memory] / slavesPerNode</tooltip>
+            <tooltip>Memory (in MB) to use for rows per Thor slave process. If unset, default = [75% of physical memory] / slavesPerNode</tooltip>
           </xs:appinfo>
         </xs:annotation>
       </xs:attribute>
@@ -486,14 +486,14 @@
       <xs:attribute name="slavesPerNode" type="xs:nonNegativeInteger" use="optional" default="1">
         <xs:annotation>
           <xs:appinfo>
-            <tooltip>This allows multiple slaves to exist on each node</tooltip>
+            <tooltip>Defines how many slave processes there are node</tooltip>
           </xs:appinfo>
         </xs:annotation>
       </xs:attribute>
-      <xs:attribute name="processPerSlave" type="xs:boolean" use="optional" default="true">
+      <xs:attribute name="channelsPerSlave" type="xs:nonNegativeInteger" use="optional" default="1">
         <xs:annotation>
           <xs:appinfo>
-            <tooltip>Makes each slave run in it's own process</tooltip>
+            <tooltip>Defines how many slave channels per slave process</tooltip>
           </xs:appinfo>
         </xs:annotation>
       </xs:attribute>

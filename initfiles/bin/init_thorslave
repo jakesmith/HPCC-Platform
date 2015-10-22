@@ -16,15 +16,17 @@
 ################################################################################
 
 cmd=$1
-ip=$2
-master=$3
-masterport=$4
-logpth=$5
-instancedir=$6
-deploydir=$7
-hpcc_compname=$8
-hpcc_setenv=$9
-export logfile="${logpth}/${hpcc_compname}/${10}"
+slavespernode=$2
+slaveportinc=$3
+master=$4
+masterport=$5
+logpth=$6
+instancedir=$7
+deploydir=$8
+hpcc_compname=$9
+hpcc_setenv=${10}
+
+export logfile="${logpth}/${hpcc_compname}/${11}"
 
 source "$hpcc_setenv"
 source "$(dirname $hpcc_setenv)/../etc/init.d/hpcc_common"
@@ -55,7 +57,6 @@ stop_slaves()
 
 start_slaves()
 {
-
     # insuring dafilesrv is running on the machine as it is a prerequisite
     sudo /etc/init.d/dafilesrv status > /dev/null 2>&1
     if [[ $? -ne 0 ]];then
@@ -78,42 +79,34 @@ start_slaves()
     ulimit -Sn hard > /dev/null 2>&1
     [[ $? -ne 0 ]] && log "Failed to set ulimit for number of file descriptors open"
 
-    log "slave(${ip}) init"
+    log "slave init"
     log "slave(s) starting"
 
     # create symlink for easier identification of slaves by compName
     ln -s -f $deploydir/thorslave_lcr ${slavename}
 
-    # sync to current master thorgroup
-    log "rsync -e ssh -o LogLevel=QUIET -o StrictHostKeyChecking=no ${master}:${instancedir}/thorgroup ${instancedir}/thorgroup.slave"
-    rsync -e "ssh -o LogLevel=QUIET -o StrictHostKeyChecking=no" $master:$instancedir/thorgroup $instancedir/thorgroup.slave
-
-    let "slavenum = 1";
-    for slave in $(cat $instancedir/thorgroup.slave); do
-        slaveip=${slave/:*/}
-        if [[ ${slaveip} = ${ip} ]]; then
-            slaveport=${slave/*:/}
-            if [[ "$slaveport" = "" ]]; then
-                slaveport=$THORSLAVEPORT
-            fi
-            log "$slavename  master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname"
-            ./$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname 2>/dev/null 1>/dev/null &
-            slavepid=$!
-            if [[ "$slavepid" -eq "0" ]]; then
-                log "failed to start"
-            else
-                log "slave pid $slavepid started"
-                PID_NAME="$PID/${slavename}_${slavenum}.pid"
-                echo $slavepid > $PID_NAME
-            fi
+    slavenum=1
+    slaveport=${THORSLAVEPORT}
+    for (( slave=1; slave<=${slavespernode}; slave++ ))
+    do
+        log "$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname"
+        ./$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname 2>/dev/null 1>/dev/null &
+        slavepid=$!
+        if [[ "$slavepid" -eq "0" ]]; then
+            log "failed to start"
+        else
+            log "slave pid $slavepid started"
+            PID_NAME="$PID/${slavename}_${slavenum}.pid"
+            echo $slavepid > $PID_NAME
         fi
-        let "slavenum += 1";
+        slavenum=$(($slavenum + 1))
+        slaveport=$(($slaveport + $slaveportinc))
     done
 }
 
 print_usage()
 {
-  log "usage: cmd ip master masterport logdir workingdir deploydir hpcc_compname hpcc_setenv logredirect"
+    log "usage: cmd slavesPerNode slaveportinc master masterport logdir workingdir deploydir hpcc_compname hpcc_setenv logredirect"
 }
 
 ##  Main
