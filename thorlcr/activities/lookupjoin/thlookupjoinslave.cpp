@@ -45,13 +45,13 @@ enum broadcast_flags { bcastflag_null=0, bcastflag_spilt=0x100, bcastflag_standa
 class CSendItem : public CSimpleInterface
 {
     CMessageBuffer msg;
-    unsigned info;
-    unsigned origin, headerLen;
+    unsigned info, origin, slave, headerLen;
 public:
-    CSendItem(broadcast_code _code, unsigned _origin) : info((unsigned)_code), origin(_origin)
+    CSendItem(broadcast_code _code, unsigned _origin, unsigned _slave) : info((unsigned)_code), origin(_origin), slave(_slave)
     {
         msg.append(info);
         msg.append(origin);
+        msg.append(slave);
         headerLen = msg.length();
     }
     CSendItem(CMessageBuffer &_msg)
@@ -59,13 +59,15 @@ public:
         msg.swapWith(_msg);
         msg.read(info);
         msg.read(origin);
+        msg.read(slave);
         headerLen = msg.getPos();
     }
     unsigned length() const { return msg.length(); }
     void reset() { msg.setLength(headerLen); }
     CMessageBuffer &queryMsg() { return msg; }
     broadcast_code queryCode() const { return (broadcast_code)(info & BROADCAST_CODE_MASK); }
-    unsigned queryOrigin() const { return origin; }
+    unsigned queryOrigin() const { return origin; } // 0 based
+    unsigned querySlave() const { return slave; } // 0 based
     broadcast_flags queryFlags() const { return (broadcast_flags)(info & BROADCAST_FLAG_MASK); }
     void setFlag(broadcast_flags _flag)
     {
@@ -92,11 +94,12 @@ class CBroadcaster : public CSimpleInterface
     ICommunicator &comm;
     CActivityBase &activity;
     mptag_t mpTag;
-    unsigned myNode, slaves;
+    unsigned myNode, nodes, mySlave, slaves;
     IBCastReceive *recvInterface;
     InterruptableSemaphore allDoneSem;
-    CriticalSection allDoneLock, bcastOtherCrit;
-    bool allDone, allDoneWaiting, allRequestStop, stopping, stopRecv;
+    CriticalSection allDoneLock, bcastOtherCrit, stopCrit;
+    bool allDone, allRequestStop, stopping, stopRecv;
+    unsigned allDoneWaiting;
     broadcast_flags stopFlag;
     Owned<IBitSet> slavesDone, slavesStopping;
 
@@ -237,11 +240,13 @@ class CBroadcaster : public CSimpleInterface
             allDone = true;
             if (allDoneWaiting)
             {
-                allDoneWaiting = false;
-                allDoneSem.signal();
+                allDoneSem.signal(allDoneWaiting);
+                allDoneWaiting = 0;
             }
+            receiver.abort(false);
+            recvInterface->bCastReceive(NULL);
         }
-        else if (which == (myNode-1))
+        else if (which == mySlave)
         {
             if (slavesDone->scan(which+1, false) == slaves)
                 return true; // all done except me
@@ -260,13 +265,13 @@ class CBroadcaster : public CSimpleInterface
             j++;
             n /= 2;
         }
-        return ((1<<(i+j))+node)+1;
+        return ((1<<(i+j))+node);
     }
     void broadcastToOthers(CSendItem *sendItem)
     {
-        mptag_t rt = activity.queryMPServer().createReplyTag();
+        mptag_t rt = ::createReplyTag();
         unsigned origin = sendItem->queryOrigin();
-        unsigned psuedoNode = (myNode<origin) ? slaves-origin+myNode : myNode-origin;
+        unsigned pseudoNode = (myNode<origin) ? nodes-origin+myNode : myNode-origin;
         CMessageBuffer replyMsg;
         // sends to all in 1st pass, then waits for ack from all
         CriticalBlock b(bcastOtherCrit);
@@ -275,17 +280,18 @@ class CBroadcaster : public CSimpleInterface
             unsigned i = 0;
             while (!activity.queryAbortSoon())
             {
-                unsigned t = target(i++, psuedoNode);
-                if (t>slaves)
+                unsigned t = target(i++, pseudoNode);
+                if (t>=nodes)
                     break;
-                t += (origin-1);
-                if (t>slaves)
-                    t -= slaves;
+                t += origin;
+                if (t>=nodes)
+                    t -= nodes;
+                t += 1; // adjust 0 based to 1 based, i.e. excluding master at 0
                 unsigned sendLen = sendItem->length();
                 if (0 == sendRecv) // send
                 {
 #ifdef _TRACEBROADCAST
-                    ActPrintLog(&activity, "Broadcast node %d Sending to node %d, origin %d, size %d, code=%d", myNode, t, origin, sendLen, (unsigned)sendItem->queryCode());
+                    ActPrintLog(&activity, "Broadcast node %d Sending to node %d, origin %d, size %d, code=%d", myNode+1, t, origin, sendLen, (unsigned)sendItem->queryCode());
 #endif
                     CMessageBuffer &msg = sendItem->queryMsg();
                     msg.setReplyTag(rt); // simulate sendRecv
@@ -294,10 +300,13 @@ class CBroadcaster : public CSimpleInterface
                 else // recv reply
                 {
 #ifdef _TRACEBROADCAST
-                    ActPrintLog(&activity, "Broadcast node %d Sent to node %d, origin %d, size %d, code=%d - received ack", myNode, t, origin, sendLen, (unsigned)sendItem->queryCode());
+                    ActPrintLog(&activity, "Broadcast node %d Waiting for reply from node %d, origin %d, size %d, code=%d, replyTag=%d", myNode+1, t, origin, sendLen, (unsigned)sendItem->queryCode(), (unsigned)rt);
 #endif
-                    if (!activity.receiveMsg(replyMsg, t, rt))
+                    if (!activity.receiveMsg(comm, replyMsg, t, rt))
                         break;
+#ifdef _TRACEBROADCAST
+                    ActPrintLog(&activity, "Broadcast node %d Sent to node %d, origin %d, size %d, code=%d - received ack", myNode+1, t, origin, sendLen, (unsigned)sendItem->queryCode());
+#endif
                 }
             }
         }
@@ -306,7 +315,7 @@ class CBroadcaster : public CSimpleInterface
     void cancelReceive()
     {
         stopRecv = true;
-        activity.cancelReceiveMsg(RANK_ALL, mpTag);
+        activity.cancelReceiveMsg(comm, RANK_ALL, mpTag);
     }
     void recvLoop()
     {
@@ -314,15 +323,18 @@ class CBroadcaster : public CSimpleInterface
         while (!stopRecv && !activity.queryAbortSoon())
         {
             rank_t sendRank;
-            if (!activity.receiveMsg(msg, RANK_ALL, mpTag, &sendRank))
+            if (!activity.receiveMsg(comm, msg, RANK_ALL, mpTag, &sendRank))
                 break;
             mptag_t replyTag = msg.getReplyTag();
             CMessageBuffer ackMsg;
             Owned<CSendItem> sendItem = new CSendItem(msg);
 #ifdef _TRACEBROADCAST
-            ActPrintLog(&activity, "Broadcast node %d received from node %d, origin node %d, size %d, code=%d", myNode, (unsigned)sendRank, sendItem->queryOrigin(), sendItem->length(), (unsigned)sendItem->queryCode());
+            ActPrintLog(&activity, "Broadcast node %d received from node %d, origin slave %d, size %d, code=%d", myNode+1, (unsigned)sendRank, sendItem->querySlave()+1, sendItem->length(), (unsigned)sendItem->queryCode());
 #endif
             comm.send(ackMsg, sendRank, replyTag); // send ack
+#ifdef _TRACEBROADCAST
+            ActPrintLog(&activity, "Broadcast node %d, sent ack to node %d, replyTag=%d", myNode+1, (unsigned)sendRank, (unsigned)replyTag);
+#endif
             sender.addBlock(sendItem.getLink());
             assertex(myNode != sendItem->queryOrigin());
             switch (sendItem->queryCode())
@@ -330,7 +342,7 @@ class CBroadcaster : public CSimpleInterface
                 case bcast_stop:
                 {
                     CriticalBlock b(allDoneLock);
-                    if (slaveStop(sendItem->queryOrigin()-1) || allDone)
+                    if (slaveStop(sendItem->querySlave()) || allDone)
                     {
                         recvInterface->bCastReceive(sendItem.getClear());
                         ActPrintLog(&activity, "recvLoop, received last slaveStop");
@@ -342,7 +354,7 @@ class CBroadcaster : public CSimpleInterface
                 }
                 case bcast_sendStopping:
                 {
-                    slavesStopping->set(sendItem->queryOrigin()-1, true);
+                    slavesStopping->set(sendItem->querySlave(), true);
                     // allRequestStop=true, if I'm stopping and all others have requested also
                     allRequestStop = slavesStopping->scan(0, false) == slaves;
                     // fall through
@@ -359,10 +371,13 @@ class CBroadcaster : public CSimpleInterface
         }
     }
 public:
-    CBroadcaster(CActivityBase &_activity) : activity(_activity), receiver(*this), sender(*this), comm(_activity.queryJobChannel().queryJobComm())
+    CBroadcaster(CActivityBase &_activity) : activity(_activity), receiver(*this), sender(*this), comm(_activity.queryJob().queryNodeComm())
     {
-        allDone = allDoneWaiting = allRequestStop = stopping = stopRecv = false;
-        myNode = activity.queryJobChannel().queryMyRank();
+        allDone = allRequestStop = stopping = stopRecv = false;
+        allDoneWaiting = 0;
+        myNode = activity.queryJob().queryMyNodeRank()-1; // 0 based
+        mySlave = activity.queryJobChannel().queryMyRank()-1; // 0 based
+        nodes = activity.queryJob().queryNodes();
         slaves = activity.queryJob().querySlaves();
         slavesDone.setown(createThreadSafeBitSet());
         slavesStopping.setown(createThreadSafeBitSet());
@@ -373,17 +388,19 @@ public:
     void start(IBCastReceive *_recvInterface, mptag_t _mpTag, bool _stopping)
     {
         stopping = _stopping;
-        if (stopping)
-            setStopping();
         recvInterface = _recvInterface;
         stopRecv = false;
         mpTag = _mpTag;
-        receiver.start();
-        sender.start();
+        if (recvInterface)
+        {
+            receiver.start();
+            sender.start();
+        }
     }
     void reset()
     {
-        allDone = allDoneWaiting = allRequestStop = stopping = false;
+        allDone = allRequestStop = stopping = false;
+        allDoneWaiting = 0;
         stopFlag = bcastflag_null;
         slavesDone->reset();
         slavesStopping->reset();
@@ -392,42 +409,45 @@ public:
     {
         if (stopping && (bcast_send==code))
             code = bcast_sendStopping;
-        return new CSendItem(code, myNode);
+        return new CSendItem(code, myNode, mySlave);
     }
     void resetSendItem(CSendItem *sendItem)
     {
         sendItem->reset();
     }
-    void waitReceiverDone()
+    void waitReceiverDone(unsigned slave)
     {
         {
             CriticalBlock b(allDoneLock);
-            slaveStop(myNode-1);
+            slaveStop(slave);
             if (allDone)
                 return;
-            allDoneWaiting = true;
+            allDoneWaiting++;
         }
         allDoneSem.wait();
     }
+    void waitReceiverDone()
+    {
+        waitReceiverDone(mySlave);
+    }
     void end()
     {
-        waitReceiverDone();
         receiver.wait(); // terminates when received stop from all others
         sender.wait(); // terminates when any remaining packets, including final stop packets have been re-broadcast
     }
     void cancel(IException *e=NULL)
     {
-        allDoneWaiting = false;
         allDone = true;
         receiver.abort(true);
         sender.abort(true);
         if (e)
         {
-            allDoneSem.interrupt(LINK(e));
+            allDoneSem.interrupt(LINK(e), allDoneWaiting);
             activity.fireException(e);
         }
         else
-            allDoneSem.signal();
+            allDoneSem.signal(allDoneWaiting);
+        allDoneWaiting = 0;
     }
     bool send(CSendItem *sendItem)
     {
@@ -436,7 +456,7 @@ public:
     }
     bool isStopping()
     {
-        return slavesStopping->test(myNode-1);
+        return slavesStopping->test(mySlave-1);
     }
     broadcast_flags queryStopFlag() { return stopFlag; }
     bool stopRequested()
@@ -445,13 +465,14 @@ public:
             return true;
         return allRequestStop; // if not, if all have request to stop
     }
-    void setStopping()
+    void setStopping(unsigned slave)
     {
-        slavesStopping->set(myNode-1, true);
+        slavesStopping->set(slave, true);
     }
-    void stop(broadcast_flags flag)
+    void stop(unsigned slave, broadcast_flags flag)
     {
-        setStopping();
+        CriticalBlock b(stopCrit); // multiple channels could call
+        setStopping(slave);
         stopFlag = flag;
     }
 };
@@ -667,6 +688,11 @@ public:
     }
 };
 
+#ifdef _TRACEBROADCAST
+#define InterChannelBarrier() interChannelBarrier(__LINE__)
+#else
+#define InterChannelBarrier() interChannelBarrier();
+#endif
 
 /*
  * Template class to minimize virtual calls
@@ -725,11 +751,20 @@ protected:
 
     using HELPERBASE::helper;
 
+//    static int sortBySize(CThorSpillableRowArray * const * i1, CThorSpillableRowArray * const * i2)
+//    static int sortBySize(const void **_i1, const void **_i2)
+    static int sortBySize(void * const *_i1, void * const *_i2)
+    {
+        CThorSpillableRowArray *i1 = (CThorSpillableRowArray *)*_i1;
+        CThorSpillableRowArray *i2 = (CThorSpillableRowArray *)*_i2;
+        return i2->numCommitted()-i1->numCommitted();
+    }
+
     /* Utility class, that is called from the broadcaster to queue up received blocks
      * It will block if it has > MAX_QUEUE_BLOCKS to process (on the queue)
      * Processing will decompress the incoming blocks and add them to a row array per slave
      */
-    class CRowProcessor : implements IThreaded
+    class CRowProcessor : public CSimpleInterfaceOf<IThreaded>
     {
         CThreadedPersistent threaded;
         CInMemJoinBase &owner;
@@ -801,7 +836,7 @@ protected:
                         break;
                     MemoryBuffer expandedMb;
                     ThorExpand(sendItem->queryMsg(), expandedMb);
-                    owner.processRHSRows(sendItem->queryOrigin(), expandedMb);
+                    owner.processRHSRows(sendItem->querySlave(), expandedMb);
                 }
             }
             catch (IException *e)
@@ -810,11 +845,13 @@ protected:
                 EXCLOG(e, "CRowProcessor");
             }
         }
-    } rowProcessor;
+    } *rowProcessor;
 
-    CBroadcaster broadcaster;
+    Owned<CBroadcaster> broadcaster;
+    CBroadcaster *channel0Broadcaster;
     rowidx_t rhsTableLen;
-    HTHELPER table;
+    HTHELPER table; // NB: only channel 0 uses table, unless failing over to local lookup join
+    HTHELPER *tableProxy; // Channels >1 will reference channel 0 table unless failed over
     OwnedConstThorRow leftRow;
 
     IThorDataLink *leftITDL, *rightITDL;
@@ -833,8 +870,10 @@ protected:
     const void *rhsNext;
     CThorExpandingRowArray rhs;
     Owned<IOutputMetaData> outputMeta;
-
     PointerArrayOf<CThorSpillableRowArray> rhsNodeRows;
+    CThorSpillableRowArray rhsChannelRows;
+    Owned<IThorRowCollector> channelCollector;
+    Owned<IRowWriter> channelCollectorWriter;
 
     rowidx_t nextRhsRow;
     unsigned keepLimit;
@@ -844,9 +883,51 @@ protected:
 
     bool leftMatch, grouped;
     bool fuzzyMatch, returnMany;
-    rank_t myNode;
-    unsigned numNodes;
+    rank_t myNodeNum, mySlaveNum;
+    unsigned numNodes, numSlaves;
+    OwnedMalloc<CInMemJoinBase *> channels;
 
+    atomic_t interChannelToNotifyCount; // only used on channel 0
+    InterruptableSemaphore interChannelBarrierSem;
+    bool channelActivitiesAssigned;
+
+    inline void signalInterChannelBarrier()
+    {
+        interChannelBarrierSem.signal();
+    }
+    inline bool incNotifyCountAndCheck()
+    {
+        if (atomic_add_and_read(&interChannelToNotifyCount, 1) == queryJob().queryJobChannels())
+        {
+            atomic_set(&interChannelToNotifyCount, 0); // reset for next barrier
+            return true;
+        }
+        return false;
+    }
+    inline void interChannelBarrier()
+    {
+        if (queryJob().queryJobChannels()>1)
+        {
+            if (channels[0]->incNotifyCountAndCheck())
+            {
+                for (unsigned ch=0; ch<queryJob().queryJobChannels(); ch++)
+                {
+                    if (channels[ch] != this)
+                        channels[ch]->signalInterChannelBarrier();
+                }
+            }
+            else
+                interChannelBarrierSem.wait();
+        }
+    }
+#ifdef _TRACEBROADCAST
+    void interChannelBarrier(unsigned lineNo)
+    {
+        ActPrintLog("waiting on interChannelBarrier, lineNo = %d", lineNo);
+        interChannelBarrier();
+        ActPrintLog("past interChannelBarrier, lineNo = %d", lineNo);
+    }
+#endif
     inline bool isGroupOp() const
     {
         switch (container.getKind())
@@ -899,6 +980,7 @@ protected:
     {
         rhsTableLen = 0;
         table.reset();
+        tableProxy = NULL;
     }
     void processRHSRows(unsigned slave, MemoryBuffer &mb)
     {
@@ -906,7 +988,7 @@ protected:
          * It also might be better to use hash the rows now and assign to rhsNodeRows arrays, it's a waste of hash() calls
          * if it never spills, but will make flushing non-locals simpler if spilling occurs.
          */
-        CThorSpillableRowArray &rows = *rhsNodeRows.item(slave-1);
+        CThorSpillableRowArray &rows = *rhsNodeRows.item(slave);
         RtlDynamicRowBuilder rowBuilder(rightAllocator);
         CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
         while (!memDeserializer.eos())
@@ -920,11 +1002,11 @@ protected:
     }
     void broadcastRHS() // broadcasting local rhs
     {
-        Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_send);
+        Owned<CSendItem> sendItem = broadcaster->newSendItem(bcast_send);
         MemoryBuffer mb;
         try
         {
-            CThorSpillableRowArray &localRhsRows = *rhsNodeRows.item(queryJobChannel().queryMyRank()-1);
+            CThorSpillableRowArray &localRhsRows = *rhsNodeRows.item(mySlaveNum);
             CMemoryRowSerializer mbser(mb);
             while (!abortSoon)
             {
@@ -934,24 +1016,32 @@ protected:
                     if (!row)
                         break;
 
-                    if (!addRHSRow(localRhsRows, row)) // may cause broadcaster to be told to stop (for isStopping() to become true)
-                        throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
-
+                    if (0 == queryJobChannelNumber())
+                    {
+                        if (!addRHSRow(localRhsRows, row)) // may cause broadcaster to be told to stop (for isStopping() to become true)
+                            throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
+                    }
+                    else
+                    {
+                        if (!channels[0]->addRHSRow(mySlaveNum, row))
+                            throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
+                    }
+                    // MB: serialization/compression buffer only used if >1 node. Could special case and avoid
                     rightSerializer->serialize(mbser, (const byte *)row.get());
-                    if (mb.length() >= MAX_SEND_SIZE || broadcaster.stopRequested())
+                    if (mb.length() >= MAX_SEND_SIZE || channel0Broadcaster->stopRequested())
                         break;
                 }
                 if (0 == mb.length())
                     break;
-                if (broadcaster.stopRequested())
-                    sendItem->setFlag(broadcaster.queryStopFlag());
+                if (channel0Broadcaster->stopRequested())
+                    sendItem->setFlag(channel0Broadcaster->queryStopFlag());
                 ThorCompress(mb, sendItem->queryMsg());
-                if (!broadcaster.send(sendItem))
+                if (!broadcaster->send(sendItem))
                     break;
-                if (broadcaster.stopRequested())
+                if (broadcaster->stopRequested())
                     break;
                 mb.clear();
-                broadcaster.resetSendItem(sendItem);
+                broadcaster->resetSendItem(sendItem);
             }
         }
         catch (IException *e)
@@ -960,11 +1050,11 @@ protected:
             throw;
         }
 
-        sendItem.setown(broadcaster.newSendItem(bcast_stop));
-        if (broadcaster.stopRequested())
-            sendItem->setFlag(broadcaster.queryStopFlag());
+        sendItem.setown(broadcaster->newSendItem(bcast_stop));
+        if (channel0Broadcaster->stopRequested())
+            sendItem->setFlag(channel0Broadcaster->queryStopFlag());
         ActPrintLog("Sending final RHS broadcast packet");
-        broadcaster.send(sendItem); // signals stop to others
+        broadcaster->send(sendItem); // signals stop to others
     }
     inline void resetRhsNext()
     {
@@ -995,7 +1085,7 @@ protected:
                 rhsNext = NULL;
                 break;
             }
-            rhsNext = table.getNextRHS();
+            rhsNext = tableProxy->getNextRHS();
         }
         if (filteredRhs.ordinality() || (!leftMatch && 0!=(flags & JFleftouter)))
         {
@@ -1055,7 +1145,7 @@ protected:
                         {
                             resetRhsNext();
                             const void *failRow = NULL;
-                            rhsNext = table.getFirstRHSMatch(leftRow, failRow); // also checks abortLimit/atMost
+                            rhsNext = tableProxy->getFirstRHSMatch(leftRow, failRow); // also checks abortLimit/atMost
                             if (failRow)
                                 return failRow;
                         }
@@ -1097,12 +1187,12 @@ protected:
                                     else if (!returnMany)
                                         rhsNext = NULL;
                                     else
-                                        rhsNext = table.getNextRHS();
+                                        rhsNext = tableProxy->getNextRHS();
                                     return row.getClear();
                                 }
                             }
                         }
-                        rhsNext = table.getNextRHS();
+                        rhsNext = tableProxy->getNextRHS();
                     }
                     if (!leftMatch && NULL == rhsNext && 0!=(flags & JFleftouter))
                     {
@@ -1124,15 +1214,18 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
     CInMemJoinBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this),
-        broadcaster(*this), rowProcessor(*this), HELPERBASE((HELPER *)queryHelper()), rhs(*this, NULL)
+        HELPERBASE((HELPER *)queryHelper()), rhs(*this, NULL), rhsChannelRows(*this, NULL)
     {
         gotRHS = false;
         nextRhsRow = 0;
         rhsNext = NULL;
-        myNode = queryJobChannel().queryMyRank();
-        numNodes = queryJob().querySlaves();
-        needGlobal = !container.queryLocal() && (container.queryJob().querySlaves() > 1);
-
+        myNodeNum = queryJob().queryMyNodeRank()-1; // 0 based
+        mySlaveNum = queryJobChannel().queryMyRank()-1; // 0 based
+        numNodes = queryJob().queryNodes();
+        numSlaves = queryJob().querySlaves();
+        needGlobal = !container.queryLocal() && (numSlaves > 1);
+        rowProcessor = NULL;
+        atomic_set(&interChannelToNotifyCount, 0);
         rhsTableLen = 0;
         leftITDL = rightITDL = NULL;
 
@@ -1154,9 +1247,12 @@ public:
             joinType = exclude ? JT_LeftOnly : JT_LeftOuter;
         else
             joinType = JT_Inner;
+        tableProxy = NULL;
+        channelActivitiesAssigned = false;
     }
     ~CInMemJoinBase()
     {
+        ::Release(rowProcessor);
         ForEachItemIn(a, rhsNodeRows)
         {
             CThorSpillableRowArray *rows = rhsNodeRows.item(a);
@@ -1164,6 +1260,8 @@ public:
                 delete rows;
         }
     }
+    HTHELPER &queryTable() { return table; }
+
 // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
@@ -1179,10 +1277,25 @@ public:
         rhsNodeRows.ensure(slaves);
         while (slaves--)
             rhsNodeRows.append(new CThorSpillableRowArray(*this, NULL));
+        channels.allocateN(queryJob().queryJobChannels());
+        broadcaster.setown(new CBroadcaster(*this));
+        if (0 == queryJobChannelNumber())
+            rowProcessor = new CRowProcessor(*this);
     }
     virtual void start()
     {
         assertex(inputs.ordinality() == 2);
+        // It is not until here, that it is guaranteed all channel slave activities have been initialized.
+        if (!channelActivitiesAssigned)
+        {
+            channelActivitiesAssigned = true;
+            for (unsigned c=0; c<queryJob().queryJobChannels(); c++)
+            {
+                CInMemJoinBase &channel = (CInMemJoinBase &)queryChannelActivity(c);
+                channels[c] = &channel;
+            }
+        }
+        channel0Broadcaster = channels[0]->broadcaster;
         gotRHS = false;
         nextRhsRow = 0;
         joined = 0;
@@ -1195,10 +1308,12 @@ public:
         allocator.set(queryRowAllocator());
         leftAllocator.set(::queryRowAllocator(leftITDL));
         outputMeta.set(leftITDL->queryFromActivity()->queryContainer().queryHelper()->queryOutputMeta());
-        for (unsigned s=0; s<container.queryJob().querySlaves(); s++)
+        for (unsigned s=0; s<container.queryJob().queryNodes(); s++)
             rhsNodeRows.item(s)->setup(queryRowInterfaces(rightITDL));
+        rhsChannelRows.setup(queryRowInterfaces(rightITDL));
 
         eos = eog = someSinceEog = false;
+        atomic_set(&interChannelToNotifyCount, 0);
 
         right.set(rightITDL);
         rightAllocator.set(::queryRowAllocator(rightITDL));
@@ -1238,9 +1353,11 @@ public:
     virtual void abort()
     {
         CSlaveActivity::abort();
-        cancelReceiveMsg(RANK_ALL, mpTag);
-        broadcaster.cancel();
-        rowProcessor.abort();
+        cancelReceiveMsg(queryJob().queryNodeComm(), RANK_ALL, mpTag);
+        interChannelBarrierSem.interrupt(NULL);
+        broadcaster->cancel();
+        if (rowProcessor)
+            rowProcessor->abort();
     }
     virtual void stop()
     {
@@ -1252,7 +1369,8 @@ public:
             stopInput(right, "(R)");
             right.clear();
         }
-        broadcaster.reset();
+        if (broadcaster)
+            broadcaster->reset();
         stopInput(left, "(L)");
         left.clear();
         dataLinkStop();
@@ -1263,22 +1381,37 @@ public:
         info.unknownRowsOutput = true;
         info.canStall = true;
     }
+    IRowStream *queryRight() { return right; }
+    CBroadcaster &queryBroadcaster() { return *broadcaster; }
     void doBroadcastRHS(bool stopping)
     {
-        rowProcessor.start();
-        broadcaster.start(this, mpTag, stopping);
-        broadcastRHS();
-        broadcaster.end();
-        rowProcessor.wait();
+        if (stopping)
+            channel0Broadcaster->setStopping(mySlaveNum);
+        if (0 == queryJobChannelNumber())
+        {
+            rowProcessor->start();
+            broadcaster->start(this, mpTag, stopping);
+            broadcastRHS();
+            broadcaster->waitReceiverDone();
+            broadcaster->end();
+            rowProcessor->wait();
+        }
+        else
+        {
+            broadcaster->start(NULL, mpTag, stopping); // pass NULL for IBCastReceive, since only channel 0 receives
+            broadcastRHS();
+            channel0Broadcaster->waitReceiverDone(mySlaveNum);
+        }
     }
     void doBroadcastStop(mptag_t tag, broadcast_flags flag)
     {
-        broadcaster.start(this, tag, false);
-        Owned<CSendItem> sendItem = broadcaster.newSendItem(bcast_stop);
+        broadcaster->reset();
+        broadcaster->start(this, tag, false);
+        Owned<CSendItem> sendItem = broadcaster->newSendItem(bcast_stop);
         if (flag)
             sendItem->setFlag(flag);
-        broadcaster.send(sendItem); // signals stop to others
-        broadcaster.end();
+        broadcaster->send(sendItem); // signals stop to others
+        broadcaster->end();
     }
     rowidx_t getGlobalRHSTotal()
     {
@@ -1292,6 +1425,11 @@ public:
                 throw MakeActivityException(this, 0, "Too many RHS rows: %" RCPF "d", rhsRows);
         }
         return (rowidx_t)rhsRows;
+    }
+    bool addRHSRow(unsigned slave, const void *row)
+    {
+        CThorSpillableRowArray &rows = *rhsNodeRows.item(slave);
+        return addRHSRow(rows, row);
     }
     virtual bool addRHSRow(CThorSpillableRowArray &rhsRows, const void *row)
     {
@@ -1317,6 +1455,16 @@ public:
     virtual void onInputFinished(rowcount_t count)
     {
         ActPrintLog("LHS input finished, %" RCPF "d rows read", count);
+    }
+    // IBCastReceive
+    virtual void bCastReceive(CSendItem *sendItem) // NB: only called on channel 0
+    {
+        if (sendItem && (bcast_stop == sendItem->queryCode()))
+        {
+            sendItem->Release();
+            sendItem = NULL; // NB: NULL indicates end
+        }
+        rowProcessor->addBlock(sendItem);
     }
 };
 
@@ -1349,9 +1497,12 @@ class CLookupJoinActivityBase : public CInMemJoinBase<HTHELPER, IHThorHashJoinAr
     typedef CInMemJoinBase<HTHELPER, IHThorHashJoinArg> PARENT;
 protected:
     using PARENT::container;
+    using PARENT::queryJob;
     using PARENT::queryJobChannel;
-    using PARENT::myNode;
+    using PARENT::queryJobChannelNumber;
+    using PARENT::myNodeNum;
     using PARENT::numNodes;
+    using PARENT::numSlaves;
     using PARENT::ActPrintLog;
     using PARENT::right;
     using PARENT::left;
@@ -1392,6 +1543,14 @@ protected:
     using PARENT::clearHT;
     using PARENT::rhs;
     using PARENT::queryRowManager;
+    using PARENT::channels;
+    using PARENT::interChannelBarrier;
+    using PARENT::channelCollectorWriter;
+    using PARENT::channelCollector;
+    using PARENT::sortBySize;
+    using PARENT::channel0Broadcaster;
+    using PARENT::mySlaveNum;
+    using PARENT::tableProxy;
 
     IHash *leftHash, *rightHash;
     ICompare *compareRight, *compareLeftRight;
@@ -1408,18 +1567,18 @@ protected:
     Owned<IHashDistributor> lhsDistributor, rhsDistributor;
     ICompare *compareLeft;
     UnsignedArray flushedRowMarkers;
-    CriticalSection overflowCrit;
-    Owned<CFileOwner> overflowWriteFile;
-    Owned<IRowWriter> overflowWriteStream;
-    rowcount_t overflowWriteCount;
     atomic_t localLookup, standardJoin;
     CriticalSection broadcastSpillingLock;
     Owned<IJoinHelper> joinHelper;
 
+    // NB: Only used by channel 0
+    CriticalSection overflowCrit;
+    Owned<CFileOwner> overflowWriteFile;
+    Owned<IRowWriter> overflowWriteStream;
+    rowcount_t overflowWriteCount;
+
     inline bool isSmart() const { return smart; }
-    inline bool isLocalLookup() const { return 0 != atomic_read(&localLookup); }
     inline void setLocalLookup(bool tf) { atomic_set(&localLookup, (int)tf); }
-    inline bool isStandardJoin() const { return 0 != atomic_read(&standardJoin); }
     inline void setStandardJoin(bool tf) { atomic_set(&standardJoin, (int)tf); }
     rowidx_t clearNonLocalRows(CThorSpillableRowArray &rows, rowidx_t startPos)
     {
@@ -1429,7 +1588,7 @@ protected:
         for (rowidx_t r=startPos; r<numRows; r++)
         {
             unsigned hv = rightHash->hash(rows.query(r));
-            if ((myNode-1) != (hv % numNodes))
+            if (myNodeNum != (hv % numNodes))
             {
                 OwnedConstThorRow row = rows.getClear(r); // dispose of
                 ++clearedRows;
@@ -1445,7 +1604,7 @@ protected:
         for (rowidx_t r=startPos; r<numRows; r++)
         {
             unsigned hv = rightHash->hash(rows.query(r));
-            if ((myNode-1) != (hv % numNodes))
+            if (myNodeNum != (hv % numNodes))
             {
                 OwnedConstThorRow row = rows.getClear(r); // dispose of
                 ++clearedRows;
@@ -1463,7 +1622,7 @@ protected:
         setLocalLookup(true);
         ActPrintLog("Clearing non-local rows - cause: %s", msg);
 
-        broadcaster.stop(bcastflag_spilt); // signals to broadcast to start stopping immediately and to signal spilt to others
+        channel0Broadcaster->stop(mySlaveNum, bcastflag_spilt); // signals to broadcast to start stopping immediately and to signal spilt to others
 
         rowidx_t clearedRows = 0;
         if (rhsCollated)
@@ -1491,6 +1650,19 @@ protected:
         ActPrintLog("handleLowMem: clearedRows = %" RIPF "d", clearedRows);
         return 0 != clearedRows;
     }
+    void checkSmartMemException(IException *e)
+    {
+        if (!isSmart())
+            throw e;
+        switch (e->errorCode())
+        {
+        case ROXIEMM_MEMORY_POOL_EXHAUSTED:
+        case ROXIEMM_MEMORY_LIMIT_EXCEEDED:
+            break;
+        default:
+            throw e;
+        }
+    }
     bool setupHT(rowidx_t size)
     {
         if (size < 10)
@@ -1508,162 +1680,188 @@ protected:
         }
         catch (IException *e)
         {
-            if (!isSmart())
-                throw;
-            switch (e->errorCode())
-            {
-            case ROXIEMM_MEMORY_POOL_EXHAUSTED:
-            case ROXIEMM_MEMORY_LIMIT_EXCEEDED:
-                e->Release();
-                return false;
-            default:
-                throw;
-            }
+            checkSmartMemException(e);
+            e->Release();
+            return false;
         }
         rhsTableLen = size;
         return true;
+    }
+    void addFinalRHSRow(const void *row)
+    {
+        channelCollectorWriter->putRow(row);
+    }
+    void flushFinalRHS()
+    {
+        channelCollectorWriter.clear();
+    }
+    bool spillFinalRHSRows()
+    {
+        setStandardJoin(true);
+        return channelCollector->spill();
+    }
+    bool anyChannelFlaggedStdJoin()
+    {
+        for (unsigned ch=0; ch<queryJob().queryJobChannels(); ch++)
+        {
+            CLookupJoinActivityBase *lkJoinCh = (CLookupJoinActivityBase *)channels[ch];
+            if (lkJoinCh->isStandardJoin())
+                return true;
+        }
+        return false;
     }
     void getRHS(bool stopping)
     {
         if (gotRHS)
             return;
         gotRHS = true;
-/*
- * Global LOOKUP:
- * 1) distributes RHS (using broadcaster)
- * 2) sizes the hash table
- * 3) If there is no OOM event, it is done and the RHS hash table is built.
- *    ELSE -
- * 4) If during 1) or 2) an OOM event occurs, all other slaves are notified.
- *    If in the middle of broadcasting, it will stop sending RHS
- *    The spill event will flush out all rows that do not hash to local slave
- * 5) Hash distributor streams are setup for the [remaining] RHS and unread LHS.
- * 6) The broadcast rows + the remaining RHS distributed stream are consumed into a single row array.
- * 7) When done if it has not spilt, the RHS hash table is sized.
- * 8) If there is no OOM event, the RHS is done and the RHS hash table is built
- *    The distributed LHS stream is used to perform a local lookup join.
- *    ELSE -
- * 9) If during 6) or 7) an OOM event occurs, the stream loader, will spill and sort as necessary.
- * 10) The LHS side is loaded and spilt and sorted if necessary
- * 11) A regular join helper is created to perform a local join against the two hash distributed sorted sides.
- */
+
+        /*
+         * Global LOOKUP:
+         * 1) distributes RHS (using broadcaster), all channels broadcast, but only channel 0 on each node receives/collates rows.
+         *    Whilst broadcasting, rows are kept in separate row arrays for each slave.
+         * 2) When done, channel 0 sizes the hash table and the separate row arrays are added to a single RHS table.
+         * 3) If there is no OOM event, it is done and the RHS hash table is built on channel 0 and other channels share it.
+         *    ELSE -
+         * 4) If during 1) or 2) an OOM event occurs, all other slaves are notified.
+         *    If in the middle of broadcasting, it will stop sending RHS.
+         *    The spill event will flush out all rows from each slave row array, that do not hash to local *node*.
+         * 5) Hash distributor streams are setup for the [remaining] RHS and unread LHS.
+         * 6) The local *node* rows are re-hashed to discover which channel they belong and filtered into channel row arrays.
+         * 7) The remaining RHS distributed stream are consumed into the channel row array.
+         * 8) When done if it has not spilt, the channel specific RHS hash table is sized.
+         * 9) If there is no OOM event, the RHS is done and the RHS hash table is built.
+         *    The distributed LHS stream is used to perform a local lookup join.
+         *    ELSE -
+         * 10) If during steps 6) ->  7) an OOM event occurs, the stream loader, will spill and sort as necessary.
+         * 11) The LHS side is loaded and spilt and sorted if necessary
+         * 12) A regular join helper is created to perform a local join against the two hash distributed sorted sides.
+         */
+
         bool rhsAlreadySorted = false;
         CMarker marker(*this);
         if (needGlobal)
         {
             rhsAlreadySorted = helper->isRightAlreadySorted();
             doBroadcastRHS(stopping);
-            rowidx_t rhsRows;
+            if (0 == queryJobChannelNumber()) // All channels broadcast, but only channel 0 receives
             {
-                CriticalBlock b(broadcastSpillingLock);
-                rhsRows = getGlobalRHSTotal(); // total count of flushed rows
-            }
-            overflowWriteStream.clear(); // if created, would imply already localLookup=true, there cannot be anymore after broadcast complete
-            if (!isLocalLookup())
-            {
-                if (stable && !rhsAlreadySorted)
-                    rhs.setup(NULL, false, stableSort_earlyAlloc);
-                bool success=false;
-                try
+                rowidx_t rhsRows;
                 {
-                    if (marker.init(rhsRows))
-                    {
-                        // NB: If this ensure returns false, it will have called the MM callbacks and have setup isLocalLookup() already
-                        success = rhs.resize(rhsRows, SPILL_PRIORITY_LOW); // NB: Could OOM, handled by exception handler
-                    }
+                    CriticalBlock b(broadcastSpillingLock);
+                    rhsRows = getGlobalRHSTotal(); // total count of flushed rows
                 }
-                catch (IException *e)
+                overflowWriteStream.clear(); // if created, would imply already localLookup=true, there cannot be anymore after broadcast complete
+                if (!isLocalLookup())
                 {
-                    if (!isSmart())
-                        throw;
-                    switch (e->errorCode())
+                    if (stable && !rhsAlreadySorted)
+                        rhs.setup(NULL, false, stableSort_earlyAlloc);
+                    bool success=false;
+                    try
                     {
-                    case ROXIEMM_MEMORY_POOL_EXHAUSTED:
-                    case ROXIEMM_MEMORY_LIMIT_EXCEEDED:
+                        if (marker.init(rhsRows))
+                        {
+                            // NB: If this ensure returns false, it will have called the MM callbacks and have setup isLocalLookup() already
+                            success = rhs.resize(rhsRows, SPILL_PRIORITY_LOW); // NB: Could OOM, handled by exception handler
+                        }
+                    }
+                    catch (IException *e)
+                    {
+                        checkSmartMemException(e);
                         e->Release();
-                        break;
-                    default:
-                        throw;
+                        success = false;
                     }
-                    success = false;
+                    if (!success)
+                    {
+                        ActPrintLog("Out of memory trying to size the global RHS row table for a SMART join, will now attempt a distributed local lookup join");
+                        if (!isLocalLookup())
+                        {
+                            clearAllNonLocalRows("OOM on sizing global row table"); // NB: someone else could have provoked callback already
+                            dbgassertex(isLocalLookup());
+                        }
+                    }
                 }
-                if (!success)
+
+                // NB: no more rows can be added to rhsNodeRows at this point, but they could still be flushed
+
+                // For testing purposes only
+                if (isSmart() && getOptBool(THOROPT_LKJOIN_LOCALFAILOVER, getOptBool(THOROPT_LKJOIN_HASHJOINFAILOVER)))
+                    clearAllNonLocalRows("testing");
+
+                rowidx_t uniqueKeys = 0;
                 {
-                    ActPrintLog("Out of memory trying to size the global RHS row table for a SMART join, will now attempt a distributed local lookup join");
+                    /* NB: This does not allocate/will not provoke spilling, but spilling callback still active
+                     * and need to protect rhsNodeRows access
+                     */
+                    CriticalBlock b(broadcastSpillingLock);
                     if (!isLocalLookup())
                     {
-                        clearAllNonLocalRows("OOM on sizing global row table"); // NB: someone else could have provoked callback already
+                        // If spilt, don't size ht table now, if local rhs fits, ht will be sized later
+                        ForEachItemIn(a, rhsNodeRows)
+                        {
+                            CThorSpillableRowArray &rows = *rhsNodeRows.item(a);
+                            rhs.appendRows(rows, true); // NB: This should not cause spilling, rhs is already sized and we are only copying ptrs in
+                            rows.kill(); // free up ptr table asap
+                        }
+                        // Have to keep broadcastSpillingLock locked until sort and calculate are done
+                        uniqueKeys = marker.calculate(rhs, compareRight, !rhsAlreadySorted);
+                        rhsCollated = true;
+                        ActPrintLog("Collated all RHS rows");
+
+                        if (stable && !rhsAlreadySorted)
+                        {
+                            ActPrintLog("Clearing rhs stable ptr table");
+                            rhs.setup(NULL, false, stableSort_none); // don't need stable ptr table anymore
+                        }
+                    }
+                }
+                if (!isLocalLookup()) // check again after processing above
+                {
+                    if (!setupHT(uniqueKeys)) // NB: Sizing can cause spilling callback to be triggered or OOM in case of !smart
+                    {
+                        ActPrintLog("Out of memory trying to size the global hash table for a SMART join, will now attempt a distributed local lookup join");
+                        clearAllNonLocalRows("OOM on sizing global hash table"); // NB: setupHT should have provoked callback already
                         dbgassertex(isLocalLookup());
                     }
                 }
-            }
-
-            // NB: no more rows can be added to rhsNodeRows at this point, but they could still be flushed
-
-            // For testing purposes only
-            if (isSmart() && getOptBool(THOROPT_LKJOIN_LOCALFAILOVER, getOptBool(THOROPT_LKJOIN_HASHJOINFAILOVER)))
-                clearAllNonLocalRows("testing");
-
-            rowidx_t uniqueKeys = 0;
-            {
-                /* NB: This does not allocate/will not provoke spilling, but spilling callback still active
-                 * and need to protect rhsNodeRows access
-                 */
-                CriticalBlock b(broadcastSpillingLock);
-                if (!isLocalLookup())
+                if (isSmart())
                 {
-                    // If spilt, don't size ht table now, if local rhs fits, ht will be sized later
-                    ForEachItemIn(a, rhsNodeRows)
-                    {
-                        CThorSpillableRowArray &rows = *rhsNodeRows.item(a);
-                        rhs.appendRows(rows, true); // NB: This should not cause spilling, rhs is already sized and we are only copying ptrs in
-                        rows.kill(); // free up ptr table asap
-                    }
-                    // Have to keep broadcastSpillingLock locked until sort and calculate are done
-                    uniqueKeys = marker.calculate(rhs, compareRight, !rhsAlreadySorted);
-                    rhsCollated = true;
-                    ActPrintLog("Collated all RHS rows");
+                    /* NB: Potentially one of the slaves spilt late after broadcast and rowprocessor finished
+                     * NB2: This is also to let others know of this slaves spill state.
+                     * Need to remove spill callback and broadcast one last message to know.
+                     */
 
-                    if (stable && !rhsAlreadySorted)
-                    {
-                        ActPrintLog("Clearing rhs stable ptr table");
-                        rhs.setup(NULL, false, stableSort_none); // don't need stable ptr table anymore
-                    }
+                    queryRowManager().removeRowBuffer(this);
+
+                    ActPrintLog("Broadcasting final split status");
+                    broadcaster->reset();
+                    // NB: Will cause other slaves to flush non-local if any have and localLookup will be set on all
+                    doBroadcastStop(broadcast2MpTag, isLocalLookup() ? bcastflag_spilt : bcastflag_null);
                 }
-            }
-            if (!isLocalLookup()) // check again after processing above
-            {
-                if (!setupHT(uniqueKeys)) // NB: Sizing can cause spilling callback to be triggered or OOM in case of !smart
+                if (rhsCompacted) // compacted whilst spillable, couldn't reallocate row pointer at that stage, can now.
+                    rhs.resize(rhs.ordinality(), SPILL_PRIORITY_LOW);
+
+                if (isLocalLookup())
                 {
-                    ActPrintLog("Out of memory trying to size the global hash table for a SMART join, will now attempt a distributed local lookup join");
-                    clearAllNonLocalRows("OOM on sizing global hash table"); // NB: setupHT should have provoked callback already
-                    dbgassertex(isLocalLookup());
+                    // If HT sized already and now spilt, too big clear and size when local size known
+                    clearHT();
+                    marker.reset();
                 }
-            }
-            if (isSmart())
-            {
-                /* NB: Potentially one of the slaves spilt late after broadcast and rowprocessor finished
-                 * NB2: This is also to let others know of this slaves spill state.
-                 * Need to remove spill callback and broadcast one last message to know.
-                 */
-
-                queryRowManager().removeRowBuffer(this);
-
-                ActPrintLog("Broadcasting final split status");
-                broadcaster.reset();
-                doBroadcastStop(broadcast2MpTag, isLocalLookup() ? bcastflag_spilt : bcastflag_null);
-            }
-
-            /* All slaves now know whether any one spilt or not, i.e. whether to perform local hash join or not
-             * If any have, still need to distribute rest of RHS..
-             */
-
-            if (!isLocalLookup())
-            {
-                if (stopping) // broadcast done and no-one spilt, this node can now stop
-                    return;
+                InterChannelBarrier();
             }
             else
+            {
+                InterChannelBarrier(); // wait for channel 0, which will have marked rhsCollated and broadcast spilt status to all others
+                CLookupJoinActivityBase *lkJoinCh0 = (CLookupJoinActivityBase *)channels[0];
+                if (lkJoinCh0->isLocalLookup())
+                    setLocalLookup(true);
+                rhsCollated = lkJoinCh0->isRhsCollated();
+            }
+
+            /* All slaves on all channels now know whether any one spilt or not, i.e. whether to perform local hash join or not
+             * If any have, still need to distribute rest of RHS..
+             */
+            if (isLocalLookup())
             {
                 ActPrintLog("Spilt whilst broadcasting, will attempt distribute local lookup join");
 
@@ -1673,20 +1871,11 @@ protected:
                 // NB: lhs ordering and grouping lost from here on..
                 if (grouped)
                     throw MakeActivityException(this, 0, "Degraded to distributed lookup join, LHS order cannot be preserved");
-
-                // If HT sized already and now spilt, too big clear and size when local size known
-                clearHT();
-                marker.reset();
-
-                if (stopping)
-                {
-                    ActPrintLog("getRHS stopped");
-                    /* NB: Can only stop now, after distributors are setup
-                     * since other slaves may not be stopping and are dependent on the distributors
-                     * The distributor will not actually stop until everyone else does.
-                     */
-                    return;
-                }
+            }
+            if (stopping)
+            {
+                ActPrintLog("getRHS stopped");
+                return;
             }
         }
         else
@@ -1700,7 +1889,7 @@ protected:
         if (isLocalLookup())
         {
             Owned<IThorRowLoader> rowLoader;
-            if (!needGlobal || !rhsCollated) // If global && rhsCollated, then no need for rowLoader
+            if (!needGlobal || (!rhsCollated && (0 == queryJob().queryJobChannels()))) // If global && rhsCollated, then no need for rowLoader
             {
                 ICompare *cmp = rhsAlreadySorted ? NULL : compareRight;
                 if (isSmart())
@@ -1720,88 +1909,196 @@ protected:
             Owned<IRowStream> rightStream;
             if (needGlobal)
             {
-                if (rhsCollated)
+                if (queryJob().queryJobChannels() > 1)
                 {
-                    if (rhsCompacted) // compacted whilst spillable, couldn't reallocate row pointer at that stage, can now.
-                        rhs.resize(rhs.ordinality(), SPILL_PRIORITY_LOW);
-                }
-                else // NB: If spilt after rhsCollated, callback will have cleared and compacted, rows will still be sorted
-                {
-                    /* NB: If cleared before rhsCollated, then need to clear non-locals that were added after spill
-                     * There should not be many, as broadcast starts to stop as soon as a slave notifies it is spilling
-                     * and ignores all non-locals.
+                    /* clearAllNonLocalRows will have cleared all rows that are not local to this *node*
+                     * Now need to size channel rhs and move rows into appropriate channel
                      */
+                    ICompare *cmp = rhsAlreadySorted ? NULL : compareRight;
+                    // NB: In isSmart() case, spilling handled by CChannelDistributor below
+                    channelCollector.setown(createThorRowCollector(*this, queryRowInterfaces(rightITDL), cmp, stableSort_none, rc_allMem, SPILL_PRIORITY_DISABLE));
+                    channelCollectorWriter.setown(channelCollector->getWriter());
+                }
 
-                    // First identify largest row set from nodes, clear (non-locals) and compact.
-                    rowidx_t largestRowCount = 0;
-                    CThorSpillableRowArray *largestRhsNodeRows = NULL;
-                    ForEachItemIn(a, rhsNodeRows)
+                class CChannelDistributor : implements roxiemem::IBufferedRowCallback
+                {
+                    CLookupJoinActivityBase &owner;
+                    bool oom;
+                public:
+                    CChannelDistributor(CLookupJoinActivityBase &_owner) : owner(_owner)
                     {
-                        CThorSpillableRowArray &rows = *rhsNodeRows.item(a);
-                        clearNonLocalRows(rows, flushedRowMarkers.item(a));
-
-                        ActPrintLog("Compacting rhsNodeRows[%d], has %" RIPF "d rows", a, rows.numCommitted());
-                        rows.compact();
-
-                        rowidx_t c = rows.numCommitted();
-                        if (c > largestRowCount)
+                        oom = false;
+                    }
+                    bool hitOOM() const { return oom; }
+                    void process(IRowStream *right)
+                    {
+                        loop
                         {
-                            largestRowCount = c;
-                            largestRhsNodeRows = &rows;
+                            OwnedConstThorRow row = right->nextRow();
+                            if (!row)
+                                break;
+                            unsigned hv = owner.rightHash->hash(row);
+                            unsigned slave = hv % owner.numSlaves;
+                            unsigned channelDst = owner.queryJob().queryJobSlaveChannelNum(slave+1);
+                            dbgassertex(NotFound != channelDst); // if 0, slave is not a slave of this process
+                            dbgassertex(channelDst < owner.queryJob().queryJobChannels());
+                            CLookupJoinActivityBase *lkChannel = (CLookupJoinActivityBase *)owner.channels[channelDst];
+                            lkChannel->addFinalRHSRow(row.getClear());
                         }
                     }
-                    /* NB: The collected broadcast rows thus far (in rhsNodeRows or rhs) were ordered/deterministic.
-                     * However, the rest of the rows received via the distributor are non-deterministic.
-                     * Therefore the order overall is non-deterministic from this point on.
-                     * For that reason, the rest of the RHS (distributed) rows will be processed ahead of the
-                     * collected [broadcast] rows in the code below for efficiency reasons.
-                     */
-                    IArrayOf<IRowStream> rightStreams;
-                    if (largestRhsNodeRows) // unlikely, but could happen if 0 local rhs rows left
+                    void processDistRight(IRowStream *right)
                     {
-                        // add largest directly into loader, so it can alleviate some memory immediately. NB: doesn't allocate
-                        rowLoader->transferRowsIn(*largestRhsNodeRows);
+                        while (!oom) // bail out on oom, since std join will take over
+                        {
+                            OwnedConstThorRow row = right->nextRow();
+                            if (!row)
+                                break;
+                            owner.addFinalRHSRow(row.getClear());
+                        }
+                    }
+                    void clear()
+                    {
+                        owner.flushFinalRHS();
+                    }
+                // IBufferedRowCallback implementation
+                    virtual unsigned getSpillCost() const
+                    {
+                        return SPILL_PRIORITY_LOOKUPJOIN;
+                    }
+                    virtual unsigned getActivityId() const
+                    {
+                        return owner.getActivityId();
+                    }
+                    virtual bool freeBufferedRows(bool critical)
+                    {
+                        // NB: Once any channel spills, implies failed over to full standard join
+                        oom = true;
+                        return owner.spillFinalRHSRows();
+                    }
+                } channelDistributor(*this);
 
-                        /* the others + the rest of the RHS (distributed) are streamed into loader
-                         * the streams have a lower spill priority than the loader, IOW, they will spill before the loader spills.
-                         * If the loader has to spill, then we have to failover to standard join
+                queryRowManager().addRowBuffer(&channelDistributor);
+                if (0 == queryJobChannelNumber())
+                {
+                    Owned<IRowStream> channelRightStream;
+                    if (rhsCollated)
+                    {
+                        if (rhs.ordinality())
+                        {
+                            CThorSpillableRowArray spillableRHS(*this, queryRowInterfaces(rightITDL));
+                            spillableRHS.transferFrom(rhs);
+                            channelRightStream.setown(spillableRHS.createRowStream(SPILL_PRIORITY_SPILLABLE_STREAM, compressSpills));
+                        }
+                    }
+                    else // NB: If spilt after rhsCollated, callback will have cleared and compacted, rows will still be sorted
+                    {
+                        rhsNodeRows.sort(sortBySize); // because want biggest compacted/consumed 1st
+
+                        /* NB: If cleared before rhsCollated, then need to clear non-locals that were added after spill
+                         * There should not be many, as broadcast starts to stop as soon as a slave notifies it is spilling
+                         * and ignores all non-locals.
                          */
+
                         ForEachItemIn(a, rhsNodeRows)
                         {
                             CThorSpillableRowArray &rows = *rhsNodeRows.item(a);
-                            if (&rows == largestRhsNodeRows)
-                                continue;
-                            /* NB: will kill array when stream exhausted or if spilt
-                             * Ensure spill priority of these spillable streams is lower than the stream in the loader in the next stage
-                             */
-                            rightStreams.append(*rows.createRowStream(SPILL_PRIORITY_SPILLABLE_STREAM, compressSpills)); // NB: default SPILL_PRIORITY_SPILLABLE_STREAM is lower than SPILL_PRIORITY_LOOKUPJOIN
+                            clearNonLocalRows(rows, flushedRowMarkers.item(a));
+
+                            ActPrintLog("Compacting rhsNodeRows[%d], has %" RIPF "d rows", a, rows.numCommitted());
+                            rows.compact();
                         }
+
+                        /* NB: The collected broadcast rows thus far (in rhsNodeRows or rhs) were ordered/deterministic.
+                         * However, the rest of the rows received via the distributor are non-deterministic.
+                         * Therefore the order overall is non-deterministic from this point on.
+                         * For that reason, the rest of the RHS (distributed) rows will be processed ahead of the
+                         * collected [broadcast] rows in the code below for efficiency reasons.
+                         */
+
+                        IArrayOf<IRowStream> rightNodeStreams;
+                        /* Add largest directly into loader, so it can alleviate some memory immediately. NB: doesn't allocate
+                         * the others + the rest of the RHS (distributed) are streamed into loader
+                         * the streams have a lower spill priority than the loader, IOW, they will spill before the loader spills.
+                         * If the loader has to spill, then we have to failover to standard join
+                         */
+                        if (rhsNodeRows.ordinality())
+                        {
+                            for (unsigned a=0; a<rhsNodeRows.ordinality(); a++)
+                            {
+                                CThorSpillableRowArray &rows = *rhsNodeRows.item(a);
+                                if (rows.numCommitted())
+                                {
+                                    /* NB: will kill array when stream exhausted or if spilt
+                                     * Ensure spill priority of these spillable streams is lower than the stream in the loader in the next stage
+                                     */
+                                    rightNodeStreams.append(* rows.createRowStream(SPILL_PRIORITY_SPILLABLE_STREAM, compressSpills)); // NB: default SPILL_PRIORITY_SPILLABLE_STREAM is lower than SPILL_PRIORITY_LOOKUPJOIN
+                                }
+                            }
+                        }
+                        if (overflowWriteFile)
+                        {
+                            unsigned rwFlags = DEFAULT_RWFLAGS;
+                            if (getOptBool(THOROPT_COMPRESS_SPILLS, true))
+                                rwFlags |= rw_compress;
+                            ActPrintLog("Reading overflow RHS broadcast rows : %" RCPF "d", overflowWriteCount);
+                            Owned<IRowStream> overflowStream = createRowStream(&overflowWriteFile->queryIFile(), queryRowInterfaces(rightITDL), rwFlags);
+                            rightNodeStreams.append(* overflowStream.getClear());
+                        }
+                        if (rightNodeStreams.ordinality())
+                            channelRightStream.setown(createConcatRowStream(rightNodeStreams.ordinality(), rightNodeStreams.getArray()));
                     }
-                    // NB: 'right' deliberately added after rhsNodeRow streams, so that rhsNodeRow can be consumed into loader 1st
-                    right.setown(rhsDistributor->connect(queryRowInterfaces(rightITDL), right.getClear(), rightHash, NULL));
-                    rightStreams.append(*right.getLink()); // what remains of 'right' will be read through distributor
-                    if (overflowWriteFile)
+                    if (channelRightStream)
+                        channelDistributor.process(channelRightStream);
+                }
+                InterChannelBarrier(); // wait for channel[0] to process in mem rows 1st
+                if (getOptBool(THOROPT_LKJOIN_HASHJOINFAILOVER)) // for testing only (force to disk, as if spilt)
+                {
+                    if (1 == queryJobChannelNumber())
                     {
-                        unsigned rwFlags = DEFAULT_RWFLAGS;
-                        if (getOptBool(THOROPT_COMPRESS_SPILLS, true))
-                            rwFlags |= rw_compress;
-                        ActPrintLog("Reading overflow RHS broadcast rows : %" RCPF "d", overflowWriteCount);
-                        Owned<IRowStream> overflowStream = createRowStream(&overflowWriteFile->queryIFile(), queryRowInterfaces(rightITDL), rwFlags);
-                        rightStreams.append(* overflowStream.getClear());
+                        channelDistributor.clear();
+                        channelDistributor.freeBufferedRows(false);
                     }
-                    if (rightStreams.ordinality()>1)
-                        right.setown(createConcatRowStream(rightStreams.ordinality(), rightStreams.getArray()));
+                }
+                bool channelDistributorOOMd = anyChannelFlaggedStdJoin(); // IOW have any split whilst processing RHS into channels
+                // NB: 'right' deliberately added after rhsNodeRow streams, so that rhsNodeRow can be consumed into loader 1st
+                Owned<IRowStream> distChannelStream;
+                if (!rhsCollated) // If rhsCollated == true, all rows were collected into 'rhs', so no need to deal with rhs distributor.
+                {
+                    distChannelStream.setown(rhsDistributor->connect(queryRowInterfaces(rightITDL), right.getClear(), rightHash, NULL));
+                    if (!channelDistributorOOMd) // if any channel spilt, no point in processing distributed RHS into channelCollector
+                        channelDistributor.processDistRight(distChannelStream); // bails out if oom's
+                }
+                channelDistributor.clear();
+                queryRowManager().removeRowBuffer(&channelDistributor);
+
+                InterChannelBarrier(); // wait for all channels to distribute rest of RHS
+                channelDistributorOOMd = anyChannelFlaggedStdJoin();
+
+                if (channelDistributorOOMd)
+                {
+                    // setting 'rightStream' set implicitly means failover to std. join
+                    if (!channelDistributor.hitOOM())
+                        rightStream.setown(channelCollector->getStream());
                     else
-                        right.set(&rightStreams.item(0));
-                    rightStream.setown(rowLoader->load(right, abortSoon, false, &rhs, NULL, false));
+                    {
+                        IArrayOf<IRowStream> streams;
+                        streams.append(* channelCollector->getStream());
+                        streams.append(* distChannelStream.getClear());
+                        rightStream.setown(createConcatRowStream(streams.ordinality(), streams.getArray()));
+                    }
+                }
+                else
+                {
+                    rightStream.setown(channelCollector->getStream(false, &rhs));
+                    assertex(!rightStream.get()); // when !channelDistributor.hitOOM(), should always succeed in filling 'rhs' and thus return a NULL stream here
                 }
             }
             else
                 rightStream.setown(rowLoader->load(right, abortSoon, false, &rhs));
 
-            if (!rightStream)
+            if (!rightStream) // NB: in global case, other channels could have spilt
             {
-                ActPrintLog("RHS local rows fitted in memory, count: %" RIPF "d", rhs.ordinality());
+                ActPrintLog("RHS local rows fitted in memory in this channel, count: %" RIPF "d", rhs.ordinality());
                 // all fitted in memory, rows were transferred out back into 'rhs' and sorted
 
                 /* Now need to size HT.
@@ -1819,17 +2116,8 @@ protected:
                 }
                 catch (IException *e)
                 {
-                    if (!isSmart())
-                        throw;
-                    switch (e->errorCode())
-                    {
-                    case ROXIEMM_MEMORY_POOL_EXHAUSTED:
-                    case ROXIEMM_MEMORY_LIMIT_EXCEEDED:
-                        e->Release();
-                        break;
-                    default:
-                        throw;
-                    }
+                    checkSmartMemException(e);
+                    e->Release();
                     success = false;
                 }
                 if (success)
@@ -1868,9 +2156,29 @@ protected:
             {
                 bool localRequiredStandardJoin = isStandardJoin();
                 ActPrintLog("Checking other slaves for local RHS lookup status, this slaves RHS %s", localRequiredStandardJoin?"did NOT fit" : "DID fit");
-                broadcaster.reset();
-                broadcast_flags flag = localRequiredStandardJoin ? bcastflag_standardjoin : bcastflag_null;
-                doBroadcastStop(broadcast3MpTag, flag);
+                if (0 == queryJobChannelNumber())
+                {
+                    broadcast_flags flag = bcastflag_null;
+                    for (unsigned ch=0; ch<queryJob().queryJobChannels(); ch++)
+                    {
+                        CLookupJoinActivityBase *lkJoinCh = (CLookupJoinActivityBase *)channels[ch];
+                        if (lkJoinCh->isStandardJoin())
+                        {
+                            flag = bcastflag_standardjoin;
+                            break;
+                        }
+                    }
+                    doBroadcastStop(broadcast3MpTag, flag);
+                    InterChannelBarrier();
+                }
+                else
+                {
+                    InterChannelBarrier();
+                    CLookupJoinActivityBase *lkJoinCh0 = (CLookupJoinActivityBase *)channels[0];
+                    if (lkJoinCh0->isStandardJoin())
+                        setStandardJoin(true);
+                }
+
                 if (!localRequiredStandardJoin && isStandardJoin())
                 {
                     ActPrintLog("Other slaves did NOT fit, consequently this slave must fail over to standard join as well");
@@ -1923,13 +2231,29 @@ protected:
             else
                 ActPrintLog("Local RHS loaded to memory, performing local lookup join");
             // If got this far, without turning into a standard fully distributed join, then all rows are in rhs
+
+            table.addRows(rhs, marker);
+            tableProxy = &table;
         }
-        table.addRows(rhs, marker);
+        else
+        {
+            if (0 == queryJobChannelNumber()) // only ch0 has table, ch>0 will share ch0's table.
+            {
+                table.addRows(rhs, marker);
+                tableProxy = &table;
+                InterChannelBarrier();
+            }
+            else
+            {
+                InterChannelBarrier();
+                tableProxy = &channels[0]->queryTable();
+                rhsTableLen = tableProxy->queryTableSize();
+            }
+        }
+
         ActPrintLog("rhs table: %d elements", rhsTableLen);
     }
 public:
-    using PARENT::queryJob;
-
     static bool needDedup(IHThorHashJoinArg *helper)
     {
         unsigned flags = helper->getJoinFlags();
@@ -2025,6 +2349,9 @@ public:
         }
         return false;
     }
+    inline bool isLocalLookup() const { return 0 != atomic_read(&localLookup); }
+    inline bool isStandardJoin() const { return 0 != atomic_read(&standardJoin); }
+    inline bool isRhsCollated() const { return rhsCollated; }
 // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
@@ -2032,10 +2359,10 @@ public:
 
         if (!container.queryLocal())
         {
-            broadcast2MpTag = container.queryJobChannel().deserializeMPTag(data);
-            broadcast3MpTag = container.queryJobChannel().deserializeMPTag(data);
-            lhsDistributeTag = container.queryJobChannel().deserializeMPTag(data);
-            rhsDistributeTag = container.queryJobChannel().deserializeMPTag(data);
+            broadcast2MpTag = queryJobChannel().deserializeMPTag(data);
+            broadcast3MpTag = queryJobChannel().deserializeMPTag(data);
+            lhsDistributeTag = queryJobChannel().deserializeMPTag(data);
+            rhsDistributeTag = queryJobChannel().deserializeMPTag(data);
             rhsDistributor.setown(createHashDistributor(this, queryJobChannel().queryJobComm(), rhsDistributeTag, false, NULL, "RHS"));
             lhsDistributor.setown(createHashDistributor(this, queryJobChannel().queryJobComm(), lhsDistributeTag, false, NULL, "LHS"));
         }
@@ -2051,7 +2378,7 @@ public:
             rhsCollated = rhsCompacted = false;
             flushedRowMarkers.kill();
 
-            if (needGlobal)
+            if (needGlobal && (0 == queryJobChannelNumber()))
             {
                 overflowWriteCount = 0;
                 overflowWriteFile.clear();
@@ -2129,25 +2456,22 @@ public:
     {
         return isSmart() ? false : inputs.item(0)->isGrouped();
     }
-// IBCastReceive
-    virtual void bCastReceive(CSendItem *sendItem)
+    virtual void bCastReceive(CSendItem *sendItem) // NB: only called on channel 0
     {
-        if (0 != (sendItem->queryFlags() & bcastflag_spilt))
+        if (sendItem)
         {
-            VStringBuffer msg("Notification that slave %d spilt", sendItem->queryOrigin());
-            clearAllNonLocalRows(msg.str());
+            if (0 != (sendItem->queryFlags() & bcastflag_spilt))
+            {
+                VStringBuffer msg("Notification that slave %d spilt", sendItem->queryOrigin());
+                clearAllNonLocalRows(msg.str());
+            }
+            else if (0 != (sendItem->queryFlags() & bcastflag_standardjoin))
+            {
+                VStringBuffer msg("Notification that slave %d required standard join", sendItem->queryOrigin());
+                setStandardJoin(true);
+            }
         }
-        else if (0 != (sendItem->queryFlags() & bcastflag_standardjoin))
-        {
-            VStringBuffer msg("Notification that slave %d required standard join", sendItem->queryOrigin());
-            setStandardJoin(true);
-        }
-        if (bcast_stop == sendItem->queryCode())
-        {
-            sendItem->Release();
-            sendItem = NULL; // NB: NULL indicates end
-        }
-        rowProcessor.addBlock(sendItem);
+        PARENT::bCastReceive(sendItem);
     }
 // IBufferedRowCallback
     virtual unsigned getSpillCost() const
@@ -2163,6 +2487,7 @@ public:
         // NB: only installed if lookup join and global
         return clearAllNonLocalRows("Out of memory callback");
     }
+    // NB: addRHSRow only called on channel 0
     virtual bool addRHSRow(CThorSpillableRowArray &rhsRows, const void *row)
     {
         /* NB: If PARENT::addRHSRow fails, it will cause clearAllNonLocalRows() to have been triggered and localLookup to be set
@@ -2175,7 +2500,7 @@ public:
             dbgassertex(isLocalLookup());
             // keep it only if it hashes to my node
             unsigned hv = rightHash->hash(row);
-            if ((myNode-1) != (hv % numNodes))
+            if (myNodeNum != (hv % numNodes))
                 return true; // throw away non-local row
             if (PARENT::addRHSRow(rhsRows, row))
                 return true;
@@ -2184,7 +2509,7 @@ public:
              * few rows being received. Unlikely since all local rows will have been cleared, but possible,
              * particularly if last rows end up causing row ptr table expansion here.
              *
-             * Need to stash away somewhere to allow it continue.
+             * Need to stash away somewhere to allow it to continue.
              */
             CriticalBlock b(overflowCrit); // could be coming from broadcaster or receiver
             if (!overflowWriteFile)
@@ -2208,14 +2533,24 @@ public:
     }
 };
 
+class CTableCommon
+{
+protected:
+    rowidx_t tableSize;
+public:
+    rowidx_t queryTableSize() const { return tableSize; }
+    void reset()
+    {
+        tableSize = 0;
+    }
+};
 
-class CHTBase
+class CHTBase : public CTableCommon
 {
 protected:
     OwnedConstThorRow htMemory;
     IHash *leftHash, *rightHash;
     ICompare *compareLeftRight;
-    rowidx_t htSize;
 
 public:
     CHTBase()
@@ -2231,15 +2566,15 @@ public:
         void *ht = activity->queryRowManager().allocate(sz, activity->queryContainer().queryId(), SPILL_PRIORITY_LOW);
         memset(ht, 0, sz);
         htMemory.setown(ht);
-        htSize = size;
+        tableSize = size;
         leftHash = _leftHash;
         rightHash = _rightHash;
         compareLeftRight = _compareLeftRight;
     }
     void reset()
     {
+        CTableCommon::reset();
         htMemory.clear();
-        htSize = 0;
         leftHash = rightHash = NULL;
         compareLeftRight = NULL;
     }
@@ -2252,7 +2587,7 @@ class CLookupHT : public CHTBase
 
     const void *findFirst(const void *left)
     {
-        unsigned h = leftHash->hash(left)%htSize;
+        unsigned h = leftHash->hash(left)%tableSize;
         loop
         {
             const void *right = ht[h];
@@ -2261,14 +2596,14 @@ class CLookupHT : public CHTBase
             if (0 == compareLeftRight->docompare(left, right))
                 return right;
             h++;
-            if (h>=htSize)
+            if (h>=tableSize)
                 h = 0;
         }
         return NULL;
     }
     void releaseHTRows()
     {
-        roxiemem::ReleaseRoxieRowArray(htSize, ht);
+        roxiemem::ReleaseRoxieRowArray(tableSize, ht);
     }
 public:
     CLookupHT()
@@ -2303,7 +2638,7 @@ public:
                 break;
             }
             hash++;
-            if (hash>=htSize)
+            if (hash>=tableSize)
                 hash = 0;
         }
     }
@@ -2326,7 +2661,7 @@ public:
             if (0 == nextPos)
                 break;
             const void *row = rows[pos];
-            unsigned h = rightHash->hash(row)%htSize;
+            unsigned h = rightHash->hash(row)%tableSize;
             addEntry(row, h);
             pos = nextPos;
         }
@@ -2356,7 +2691,7 @@ class CLookupManyHT : public CHTBase
     }
     const void *findFirst(const void *left)
     {
-        unsigned h = leftHash->hash(left)%htSize;
+        unsigned h = leftHash->hash(left)%tableSize;
         loop
         {
             HtEntry *e = lookup(h);
@@ -2369,7 +2704,7 @@ class CLookupManyHT : public CHTBase
                 return right;
             }
             h++;
-            if (h>=htSize)
+            if (h>=tableSize)
                 h = 0;
         }
         return NULL;
@@ -2397,7 +2732,7 @@ public:
                 break;
             }
             hash++;
-            if (hash>=htSize)
+            if (hash>=tableSize)
                 hash = 0;
         }
     }
@@ -2440,7 +2775,7 @@ public:
              * i.e. feels like LOOKUP without MANY should be deprecated..
             */
             const void *row = rows[pos];
-            unsigned h = rightHash->hash(row)%htSize;
+            unsigned h = rightHash->hash(row)%tableSize;
             // NB: 'pos' and 'count' won't be used if dedup variety
             addEntry(row, h, pos, count);
             pos = pos2;
@@ -2467,10 +2802,9 @@ public:
     }
 };
 
-class CAllTable
+class CAllTable : public CTableCommon
 {
     const void **rows;
-    rowidx_t htSize;
     rowidx_t nextRhsRow;
 
 public:
@@ -2480,13 +2814,13 @@ public:
     }
     void reset()
     {
-        htSize = 0;
+        CTableCommon::reset();
         rows = NULL;
         nextRhsRow = 0;
     }
     inline const void *getNextRHS()
     {
-        if (++nextRhsRow<htSize)
+        if (++nextRhsRow<tableSize)
             return rows[nextRhsRow];
         return NULL;
     }
@@ -2498,7 +2832,7 @@ public:
     }
     void addRows(CThorExpandingRowArray &_rows)
     {
-        htSize = _rows.ordinality();
+        tableSize = _rows.ordinality();
         rows = _rows.getRowArray();
         nextRhsRow = 0;
     }
@@ -2522,13 +2856,25 @@ protected:
             if (stopping) // broadcast done and no-one spilt, this node can now stop
                 return;
 
-            rhsTableLen = getGlobalRHSTotal();
-            rhs.resize(rhsTableLen);
-            ForEachItemIn(a, rhsNodeRows)
+            if (0 == queryJobChannelNumber()) // All channels broadcast, but only channel 0 receives
             {
-                CThorSpillableRowArray &rows = *rhsNodeRows.item(a);
-                rhs.appendRows(rows, true);
-                rows.kill(); // free up ptr table asap
+                rhsTableLen = getGlobalRHSTotal();
+                rhs.resize(rhsTableLen);
+                ForEachItemIn(a, rhsNodeRows)
+                {
+                    CThorSpillableRowArray &rows = *rhsNodeRows.item(a);
+                    rhs.appendRows(rows, true);
+                    rows.kill(); // free up ptr table asap
+                }
+                table.addRows(rhs);
+                tableProxy = &table;
+                InterChannelBarrier();
+            }
+            else
+            {
+                InterChannelBarrier();
+                tableProxy = &channels[0]->queryTable();
+                rhsTableLen = tableProxy->queryTableSize();
             }
         }
         else
@@ -2556,8 +2902,9 @@ protected:
             rhsTableLen = rhs.ordinality();
             if (rhsTotalCount != RCUNSET) // verify matches meta
                 assertex(rhsTableLen == rhsTotalCount);
+            table.addRows(rhs);
+            tableProxy = &table;
         }
-        table.addRows(rhs);
         ActPrintLog("rhs table: %d elements", rhsTableLen);
     }
 public:
@@ -2589,16 +2936,6 @@ public:
         PARENT::stop();
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
-// IBCastReceive
-    virtual void bCastReceive(CSendItem *sendItem)
-    {
-        if (bcast_stop == sendItem->queryCode())
-        {
-            sendItem->Release();
-            sendItem = NULL; // NB: NULL indicates end
-        }
-        rowProcessor.addBlock(sendItem);
-    }
 };
 
 
