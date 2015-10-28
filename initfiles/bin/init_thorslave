@@ -16,17 +16,19 @@
 ################################################################################
 
 cmd=$1
-slavespernode=$2
-slaveportinc=$3
-master=$4
-masterport=$5
-logpth=$6
-instancedir=$7
-deploydir=$8
-hpcc_compname=$9
-hpcc_setenv=${10}
+processnum=$2
+slavespernode=$3
+slaveport=$4
+slaveportinc=$5
+master=$6
+masterport=$7
+logpth=$8
+instancedir=$9
+deploydir=$10
+hpcc_compname=${11}
+hpcc_setenv=${12}
 
-export logfile="${logpth}/${hpcc_compname}/${11}"
+export logfile="${logpth}/${hpcc_compname}/${13}"
 
 source "$hpcc_setenv"
 source "$(dirname $hpcc_setenv)/../etc/init.d/hpcc_common"
@@ -85,10 +87,9 @@ start_slaves()
     # create symlink for easier identification of slaves by compName
     ln -s -f $deploydir/thorslave_lcr ${slavename}
 
-    slavenum=1
-    slaveport=${THORSLAVEPORT}
     for (( slave=1; slave<=${slavespernode}; slave++ ))
     do
+        slavenum=$((((${processnum}-1) * ${slavespernode}) + ${slave}))
         log "$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname"
         ./$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname 2>/dev/null 1>/dev/null &
         slavepid=$!

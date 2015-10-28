@@ -122,10 +122,10 @@ while [[ 1 ]]; do
 
     # Would be simpler, if there was simple way to test if ip is local and get rid of 'localthor' setting
     if [[ "$localthor" = "true" ]]; then
-        $deploydir/init_thorslave start $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
+        $deploydir/init_thorslave start 1 $slavespernode $THORSLAVEPORT $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
     else
         nslaves=$(cat $instancedir/slaves | wc -l)
-        $deploydir/frunssh $instancedir/slaves "/bin/sh -c '$deploydir/init_thorslave start $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
+        $deploydir/frunssh $instancedir/slaves "/bin/sh -c '$deploydir/init_thorslave start %n $slavespernode $THORSLAVEPORT $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
         FRUNSSH_RC=$?
         if [[ ${FRUNSSH_RC} -gt 0 ]]; then
             log "Error ${FRUNSSH_RC} in frunssh"
