@@ -24,7 +24,7 @@ master=$6
 masterport=$7
 logpth=$8
 instancedir=$9
-deploydir=$10
+deploydir=${10}
 hpcc_compname=${11}
 hpcc_setenv=${12}
 
@@ -87,9 +87,9 @@ start_slaves()
     # create symlink for easier identification of slaves by compName
     ln -s -f $deploydir/thorslave_lcr ${slavename}
 
+    slavenum=${processnum}
     for (( slave=1; slave<=${slavespernode}; slave++ ))
     do
-        slavenum=$((((${processnum}-1) * ${slavespernode}) + ${slave}))
         log "$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname"
         ./$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname 2>/dev/null 1>/dev/null &
         slavepid=$!
@@ -100,8 +100,8 @@ start_slaves()
             PID_NAME="$PID/${slavename}_${slavenum}.pid"
             echo $slavepid > $PID_NAME
         fi
-        slavenum=$(($slavenum + 1))
-        slaveport=$(($slaveport + $slaveportinc))
+        slavenum=$((${slavenum} + ${slavespernode}))
+        slaveport=$((${slaveport} + ${slaveportinc}))
     done
 }
 
