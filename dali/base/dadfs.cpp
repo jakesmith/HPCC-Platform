@@ -9233,7 +9233,7 @@ class CInitGroups
                 break;
             case grp_thorspares:
                 getClusterSpareGroupName(cluster, gname);
-                realCluster = false;
+                oldRealCluster = realCluster = false;
                 break;
             case grp_roxie:
                 gname.append(cluster.queryProp("@name"));
@@ -9268,13 +9268,15 @@ class CInitGroups
                 VStringBuffer msg("Forcing new group layout for %s [ matched active = %s, matched old environment = %s ]", gname.str(), matchExisting?"true":"false", matchOldEnv?"true":"false");
                 WARNLOG("%s", msg.str());
                 messages.append(msg).newline();
-                matchExisting = matchOldEnv = false;
+                matchOldEnv = false;
             }
             else
             {
                 VStringBuffer msg("Active cluster '%s' group layout does not match environment [matched old environment=%s]", gname.str(), matchOldEnv?"true":"false");
                 LOG(MCoperatorWarning, unknownJob, "%s", msg.str());                                                                        \
                 messages.append(msg).newline();
+                if (existingClusterGroup)
+                    existingClusterGroup->setPropBool("@mismatched", true);
             }
         }
         if (!existingClusterGroup || (!matchExisting && !matchOldEnv))

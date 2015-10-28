@@ -78,13 +78,13 @@ kill_slaves()
         $deploydir/init_thorslave stop $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
     else
         # we want to kill only slaves that have already been started in run_thor
-        if [[ -r $instancedir/uslaves.start ]]; then
-            nslaves=$(cat $instancedir/uslaves.start 2> /dev/null | wc -l)
-            $deploydir/frunssh $instancedir/uslaves.start "/bin/sh -c '$deploydir/init_thorslave stop $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
+        if [[ -r $instancedir/slaves ]]; then
+            nslaves=$(cat $instancedir/slaves 2> /dev/null | wc -l)
+            $deploydir/frunssh $instancedir/slaves "/bin/sh -c '$deploydir/init_thorslave stop $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
         fi
     fi
 
-    rm -f $instancedir/uslaves.start > /dev/null 2>&1
+    rm -f $instancedir/slaves > /dev/null 2>&1
 }
 
 killed()
@@ -97,8 +97,8 @@ killed()
         log "$component Stopped"
         unlock /var/lock/HPCCSystems/$component/${component}.lock
         kill_slaves
-        log "removing init.pid file and uslaves.start file"
-        rm -f $INIT_PID_NAME $instancedir/uslaves.start > /dev/null 2>&1
+        log "removing init.pid file and slaves file"
+        rm -f $INIT_PID_NAME $instancedir/slaves > /dev/null 2>&1
     fi
     exit 255
 }
@@ -110,10 +110,10 @@ thorpid=0
 
 while [[ 1 ]]; do
     # update slaves file in case state of environment has been altered since last run
-    daliadmin server=$DALISERVER clusternodes ${groupName} uslaves.start
+    daliadmin server=$DALISERVER clusternodes ${groupName} slaves
     errcode=$?
     if [[ 0 != ${errcode} ]]; then
-    log "failed to lookup dali group for $groupName"
+        log "failed to lookup dali group for $groupName"
         exit 1
     fi
 
@@ -130,14 +130,13 @@ while [[ 1 ]]; do
         fi
     done < $instancedir/configgen.out
 
-    sort $instancedir/hosts.resolve | uniq > $instancedir/hosts.uniq
-    diff $instancedir/uslaves.start $instancedir/hosts.uniq > /dev/null 2>&1
+    diff $instancedir/slaves $instancedir/hosts.resolve > /dev/null 2>&1
     DFSGROUP_CHECK=$?
-    rm -f $instancedir/hosts.resolve $instancedir/configgen.out $instancedir/hosts.uniq > /dev/null 2>&1
+    rm -f $instancedir/hosts.resolve $instancedir/configgen.out > /dev/null 2>&1
     if [[ $DFSGROUP_CHECK -ne 0 ]]; then
         log "ERROR:  Your environment has changed. dfsgroup $groupName does not match environmnent.xml file"
         log "If this was intentional, please run 'updtdalienv ${CONFIG_DIR}/${ENV_XML_FILE} -f'"
-        log "Stopping $groupName"
+        log "Stopping $component"
         exit 1
     fi
 
@@ -148,8 +147,8 @@ while [[ 1 ]]; do
     if [[ "$localthor" = "true" ]]; then
         $deploydir/init_thorslave start $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
     else
-        nslaves=$(cat $instancedir/uslaves.start | wc -l)
-        $deploydir/frunssh $instancedir/uslaves.start "/bin/sh -c '$deploydir/init_thorslave start $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
+        nslaves=$(cat $instancedir/slaves | wc -l)
+        $deploydir/frunssh $instancedir/slaves "/bin/sh -c '$deploydir/init_thorslave start $slavespernode $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$nslaves 2>&1
         FRUNSSH_RC=$?
         if [[ ${FRUNSSH_RC} -gt 0 ]]; then
             log "Error ${FRUNSSH_RC} in frunssh"
@@ -172,7 +171,7 @@ while [[ 1 ]]; do
         case $errcode in
         # TEC_Clean
         0)  log "Thormaster ($thorpid) Exited cleanly"
-            rm -f $instancedir/uslaves.start $PID_NAME $INIT_PID_NAME > /dev/null 2>&1
+            rm -f $instancedir/slaves $PID_NAME $INIT_PID_NAME > /dev/null 2>&1
             exit 0
             ;;
         # TEC_CtrlC
