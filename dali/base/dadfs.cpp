@@ -9538,14 +9538,32 @@ bool removeClusterSpares(const char *clusterName, const char *type, SocketEndpoi
     return init.removeSpares(clusterName, type, eps, response);
 }
 
-IGroup *getClusterGroup(const char *clusterName, const char *type, bool expand, unsigned timems)
+IGroup *getClusterNodeGroup(const char *clusterName, const char *type, unsigned timems)
 {
-    CInitGroups init(timems);
-    VStringBuffer cluster("/Environment/Software/%s[@name=\"%s\"]", type, clusterName);
-    Owned<IRemoteConnection> conn = querySDS().connect(cluster.str(), myProcessSession(), RTM_LOCK_READ, SDS_CONNECT_TIMEOUT);
+    VStringBuffer clusterPath("/Environment/Software/%s[@name=\"%s\"]", type, clusterName);
+    Owned<IRemoteConnection> conn = querySDS().connect(clusterPath.str(), myProcessSession(), RTM_LOCK_READ, SDS_CONNECT_TIMEOUT);
     if (!conn)
         return NULL;
-    return init.getGroupFromCluster(type, *conn->queryRoot(), expand);
+    IPropertyTree &cluster = *conn->queryRoot();
+    StringBuffer nodeGroupName;
+    getClusterGroupName(cluster, nodeGroupName);
+    if (0 == nodeGroupName.length())
+        throwUnexpected();
+
+    /* NB: nodeGroup will have originally been expanded form of clusterGroup
+     * But swapNode may have altered the IP's since.
+     * Need to return IP's used by active nodeGroup
+     */
+    Owned<IGroup> nodeGroup = queryNamedGroupStore().lookup(nodeGroupName);
+    CInitGroups init(timems);
+    Owned<IGroup> expandedClusterGroup = init.getGroupFromCluster(type, cluster, true);
+    if (nodeGroup->ordinality() != expandedClusterGroup->ordinality())
+        throwUnexpected();
+    Owned<IGroup> clusterGroup = init.getGroupFromCluster(type, cluster, false);
+    ICopyArrayOf<INode> nodes;
+    for (unsigned n=0; n<clusterGroup->ordinality(); n++)
+        nodes.append(nodeGroup->queryNode(n));
+    return createIGroup(nodes.ordinality(), nodes.getArray());
 }
 
 

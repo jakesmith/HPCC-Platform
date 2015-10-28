@@ -676,8 +676,10 @@ status_component() {
     log "${compName} ---> Stopped"
     printf "%-15s is stopped" "$compName"
   elif [[ ${compType} == "thor" ]]; then
-    if [[ -e ${runtime}/${compName}/slaves ]]; then
-      __slaveprocesses=$(cat ${runtime}/${compName}/slaves | wc -l)
+    if [[ -e ${runtime}/${compName}/slaves && -e ${runtime}/${compName}/setvars ]]; then
+      source ${runtime}/${compName}/setvars
+      __slaves=$(cat ${runtime}/${compName}/slaves | wc -l)
+      __slaveprocesses=$((${__slaves} * ${slavespernode}))
       log "${compName} ---> Running ( pid ${__pidValue} ) with {__slaveprocesses} slave process(es)"
       printf "%-15s ( pid %8s ) is running with %s slave process(es) ..." "${compName}" "${__pidValue}" "${__slaveprocesses}"
     else

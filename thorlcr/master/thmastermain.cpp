@@ -568,7 +568,7 @@ int main( int argc, char *argv[]  )
         unsigned channelsPerSlave = globals->getPropInt("@channelsPerSlave", 1);
         unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", DEFAULT_SLAVEPORTINC);
         unsigned slaveBasePort = globals->getPropInt("@slaveport", DEFAULT_THORSLAVEPORT);
-        Owned<IGroup> rawGroup = getClusterGroup(thorname, "ThorCluster", false);
+        Owned<IGroup> rawGroup = getClusterNodeGroup(thorname, "ThorCluster");
         setClusterGroup(queryMyNode(), rawGroup, slavesPerNode, channelsPerSlave, slaveBasePort, localThorPortInc);
         if (globals->getPropBool("@replicateOutputs")&&globals->getPropBool("@validateDAFS",true)&&!checkClusterRelicateDAFS(queryNodeGroup()))
         {
