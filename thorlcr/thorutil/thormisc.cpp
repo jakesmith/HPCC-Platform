@@ -799,7 +799,7 @@ void setClusterGroup(INode *_masterNode, IGroup *_rawGroup, unsigned slavesPerNo
         unsigned hostPos = epa.find(ep);
         if (NotFound == hostPos)
         {
-            hostPos = 0;
+            hostPos = epa.ordinality();
             epa.append(ep);
             hostStartPort[n] = portBase;
             hostNextStartPort[hostPos] = portBase + (slavesPerNode * channelsPerSlave * portInc);

@@ -17,20 +17,18 @@
 
 cmd=$1
 ip=$2
-clusternodenum=$3
-clusternodes=$4
-slavespernode=$5
-slaveport=$6
-slaveportinc=$7
-master=$8
-masterport=$9
-logpth=${10}
-instancedir=${11}
-deploydir=${12}
-hpcc_compname=${13}
-hpcc_setenv=${14}
+slavespernode=$3
+slaveport=$4
+slaveportinc=$5
+master=$6
+masterport=$7
+logpth=$8
+instancedir=$9
+deploydir=${10}
+hpcc_compname=${11}
+hpcc_setenv=${12}
 
-export logfile="${logpth}/${hpcc_compname}/${15}"
+export logfile="${logpth}/${hpcc_compname}/${13}"
 
 source "$hpcc_setenv"
 source "$(dirname $hpcc_setenv)/../etc/init.d/hpcc_common"
@@ -89,51 +87,39 @@ start_slaves()
     # create symlink for easier identification of slaves by compName
     ln -s -f $deploydir/thorslave_lcr ${slavename}
 
-
-    # This is a bit silly, have to get slave list from master + ${ip} to work out how many ${ip} matches there are in grou slave list,
-    # to know how many slave process to start.
-    # This is all to maintain backward compatability with clusters that list the same IP multiple times, in an unpredicatable order
-    # Would also have been better to calculate this at master and pass count to frunssh, unfortunately it can could from slave to slave
-
     # sync to current master slaves list
-    log "rsync -e ssh -o StrictHostKeyChecking=no ${master}:${instancedir}/slaves ${instancedir}/slaves.${clusternodenum}"
-    rsync -e "ssh -o StrictHostKeyChecking=no" $master:$instancedir/slaves $instancedir/slaves.${clusternodenum}
+    log "rsync -e ssh -o StrictHostKeyChecking=no ${master}:${instancedir}/slaves ${instancedir}/slaves.tmp"
+    rsync -e "ssh -o StrictHostKeyChecking=no" $master:$instancedir/slaves $instancedir/slaves.tmp
 
-    hostcount=0
-    for slaveip in $(cat $instancedir/slaves.${clusternodenum}); do
+    # NB: Would simply use slavesPerNode to create N slaves, but for backward compatilibty reasons, need to cater for clusters
+    # defined with arbitrary repeated IP's listed in their definitions.    
+    slavenum=1
+    for slaveip in $(cat $instancedir/slaves.tmp); do
         if [[ ${slaveip} = ${ip} ]]; then
-            hostcount=$(( ${hostcount}+1 ))
-        fi
-    done
-    rm -f $instancedir/slaves.${clusternodenum} > /dev/null 2>&1
-    if [[ 0 = ${hostcount} ]]; then
-        log "init_thorslave started for ${slaveip} but not in cluster slave group"
-        exit 1
-    fi
-    slavespernode=$(( ${slavespernode} * ${hostcount} ))
-
-
-    slavenum=${clusternodenum}
-    for (( slave=1; slave<=${slavespernode}; slave++ ))
-    do
-        log "$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname"
-        ./$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname 2>/dev/null 1>/dev/null &
-        slavepid=$!
-        if [[ "$slavepid" -eq "0" ]]; then
-            log "failed to start"
+            for (( slave=0; slave<${slavespernode}; slave++ )); do
+                log "$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname"
+                ./$slavename master=$master:$masterport slave=.:$slaveport slavenum=$slavenum logDir=$logpth/$hpcc_compname 2>/dev/null 1>/dev/null &
+                slavepid=$!
+                if [[ "$slavepid" -eq "0" ]]; then
+                    log "failed to start"
+                else
+                    log "slave pid $slavepid started"
+                    PID_NAME="$PID/${slavename}_${slavenum}.pid"
+                    echo $slavepid > $PID_NAME
+                fi
+                slaveport=$((${slaveport} + ${slaveportinc}))
+                slavenum=$(( $slavenum + 1 ))
+            done
         else
-            log "slave pid $slavepid started"
-            PID_NAME="$PID/${slavename}_${slavenum}.pid"
-            echo $slavepid > $PID_NAME
+            slavenum=$(( ${slavenum} + ${slavespernode} ))
         fi
-        slavenum=$((${slavenum} + ${clusternodes}))
-        slaveport=$((${slaveport} + ${slaveportinc}))
     done
+    rm -f $instancedir/slaves.tmp > /dev/null 2>&1
 }
 
 print_usage()
 {
-    log "usage: cmd ip clusternodenum clusternodes slavesPerNode slaveport slaveportinc master masterport logdir workingdir deploydir hpcc_compname hpcc_setenv logredirect"
+    log "usage: cmd ip slavespernode slaveport slaveportinc master masterport logdir workingdir deploydir hpcc_compname hpcc_setenv logredirect"
 }
 
 ##  Main

@@ -71,12 +71,12 @@ kill_slaves()
     log "Killing slaves"
     # NB: many of the parameters to init_thorslave not used by 'stop' command
     if [[ "$localthor" = "true" ]]; then
-        $deploydir/init_thorslave stop localhost 1 1 $slavespernode $THORSLAVEPORT $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
+        $deploydir/init_thorslave stop localhost $slavespernode $THORSLAVEPORT $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
     else
         # we want to kill only slaves that have already been started in run_thor
         if [[ -r $instancedir/uslaves ]]; then
-            clusterslaves=$(cat $instancedir/slaves 2> /dev/null | wc -l)
-            $deploydir/frunssh $instancedir/slaves "/bin/sh -c '$deploydir/init_thorslave stop localhost 1 ${clusterslaves} $slavespernode $THORSLAVEPORT $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$clusterslaves 2>&1
+            clusternodes=$(cat $instancedir/uslaves 2> /dev/null | wc -l)
+            $deploydir/frunssh $instancedir/slaves "/bin/sh -c '$deploydir/init_thorslave stop localhost $slavespernode $THORSLAVEPORT $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$clusternodes 2>&1
         fi
     fi
 
@@ -117,15 +117,14 @@ while [[ 1 ]]; do
     log "starting thorslaves ..."
 
     # Would be simpler, if there was simple way to test if ip is local and get rid of 'localthor' setting
-    clusterslaves=$(cat $instancedir/slaves | wc -l)
-    slaveport=${THORSLAVEPORT} # If cluster defines >1 ThorSlaveProcess on same node, need to offset
-
     sort $instancedir/slaves | uniq > $instancedir/uslaves
+
     if [[ "$localthor" = "true" ]]; then
         slaveip=$(head -n 1 $instancedir/uslaves)
-        $deploydir/init_thorslave start $slaveip 1 ${clusterslaves} $slavespernode $THORSLAVEPORT $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
+        $deploydir/init_thorslave start $slaveip $slavespernode $THORSLAVEPORT $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect
     else
-        $deploydir/frunssh $instancedir/uslaves "/bin/sh -c '$deploydir/init_thorslave start %a %n ${clusterslaves} $slavespernode $THORSLAVEPORT $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$clusterslaves 2>&1
+        clusternodes=$(cat $instancedir/uslaves | wc -l)
+        $deploydir/frunssh $instancedir/uslaves "/bin/sh -c '$deploydir/init_thorslave start %a $slavespernode $THORSLAVEPORT $slaveportinc $THORMASTER $THORMASTERPORT $LOG_DIR $instancedir $deploydir $THORNAME $PATH_PRE $logredirect'" -i:$SSHidentityfile -u:$SSHusername -pe:$SSHpassword -t:$SSHtimeout -a:$SSHretries -n:$clusternodes 2>&1
         FRUNSSH_RC=$?
         if [[ ${FRUNSSH_RC} -gt 0 ]]; then
             log "Error ${FRUNSSH_RC} in frunssh"
