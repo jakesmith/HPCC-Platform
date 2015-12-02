@@ -1726,7 +1726,7 @@ void TestExternal()
 
 #ifdef CREATEINITIAL
         {
-            Owned<IFile> ifile = createIFile("c:\\utils\\pkzipc.exe");
+            Owned<IFile> ifile = createIFile("/home/jsmith/git/cmake-cdt/f.xml");
             Owned<IFileIO> fileIO = ifile->open(IFOread);
             assertex(fileIO);
 
@@ -1892,10 +1892,11 @@ void TestSDS1()
     IRemoteConnection *conn;
     IPropertyTree *root;
 
+    PROGLOG("here");
 #if 1
     {
         unsigned scopeDepths = 10;
-        unsigned nFiles = 1000;
+        unsigned nFiles = 100;
         unsigned parts = 1;
         const char *initScope = "ascope";
 //        StringBuffer prefix("ascope::bscope::cscope::dscope::file");
@@ -1905,7 +1906,7 @@ void TestSDS1()
         SocketEndpointArray epa;
         for (unsigned i=0;i<parts;i++)
         {
-            StringBuffer ips("192.168.1.108");
+            StringBuffer ips("10.241.40.1");
             SocketEndpoint ep(ips.str());
             epa.append(ep);
         }
@@ -1945,7 +1946,9 @@ void TestSDS1()
                     t.setPropInt("@recordSize",1);
                     t.setProp("ECL","TESTECL();");
                 }
+                PROGLOG("Attaching");
                 dfile->attach(fname, UNKNOWN_USER);
+                PROGLOG("Created : %s", fname.str());
             }
             prefix.append("::");
             prefix.append((char)('a'+sd+1));

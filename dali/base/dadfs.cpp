@@ -447,7 +447,7 @@ void ensureFileScope(const CDfsLogicalFileName &dlfn, unsigned timeout)
                 break;
             }
 
-            // paranoid check, that didn't exist already, if it does rollback new
+            // paranoid, check that didn't exist already, if it does rollback new
             path.clear().append(head).append("/");
             getAttrQueryStr(path, queryDfsXmlBranchName(DXB_Scope), "@name", scope);
             if (INFINITE != timeout)

@@ -238,7 +238,7 @@ static void _export_(const char *path,const char *dst,bool safe=false)
         ERRLOG("Could not connect to %s",path);
         return;
     }
-    Owned<IPropertyTree> root = conn->getRoot();
+    Owned<IPropertyTree> root = conn->queryRoot()->getBranch(NULL);
     Owned<IFile> f = createIFile(dst);
     Owned<IFileIO> io = f->open(IFOcreate);
     Owned<IFileIOStream> fstream = createBufferedIOStream(io);
@@ -331,7 +331,7 @@ static void _delete_(const char *path,bool backup)
         ERRLOG("Could not connect to %s",path);
         return;
     }
-    Owned<IPropertyTree> root = conn->getRoot();
+    Owned<IPropertyTree> root = conn->queryRoot()->getBranch(NULL);
     Owned<IPropertyTree> child = root->getPropTree(tail);
     if (!child) {
         ERRLOG("Couldn't find %s/%s",head.str(),tail);
