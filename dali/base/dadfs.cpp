@@ -268,9 +268,7 @@ public:
 
 class CConnectLock
 {
-public:
-    Owned<IRemoteConnection> conn;
-    CConnectLock(const char *caller, const char *name, bool write, bool preload, bool hold, unsigned timeout)
+    void init(const char *caller, const char *name, unsigned mode, unsigned timeout)
     {
         unsigned start = msTick();
         bool first = true;
@@ -278,12 +276,9 @@ public:
         {
             try
             {
-                unsigned mode = write ? RTM_LOCK_WRITE : RTM_LOCK_READ;
-                if (preload) mode |= RTM_SUB;
-                if (hold) mode |= RTM_LOCK_HOLD;
                 conn.setown(querySDS().connect(name, queryCoven().inCoven() ? 0 : myProcessSession(), mode, (timeout==INFINITE)?1000*60*5:timeout));
 #ifdef TRACE_LOCKS
-                PROGLOG("%s: LOCKGOT(%x) %s %s",caller,(unsigned)(memsize_t)conn.get(),name,write?"WRITE":"");
+                PROGLOG("%s: LOCKGOT(%x) %s %s",caller,(unsigned)(memsize_t)conn.get(),name,(mode & RTM_LOCK_WRITE)?"WRITE":"");
                 LogRemoteConn(conn);
                 PrintStackReport();
 #endif
@@ -294,7 +289,7 @@ public:
                 if (SDSExcpt_LockTimeout == e->errorCode())
                 {
 #ifdef TRACE_LOCKS
-                    PROGLOG("%s: LOCKFAIL %s %s",caller,name,write?"WRITE":"");
+                    PROGLOG("%s: LOCKFAIL %s %s",caller,name,(mode & RTM_LOCK_WRITE)?"WRITE":"");
                     LogRemoteConn(conn);
 #endif
                     unsigned tt = msTick()-start;
@@ -325,6 +320,19 @@ public:
             }
         }
     }
+public:
+    Owned<IRemoteConnection> conn;
+    CConnectLock(const char *caller, const char *name, bool write, bool preload, bool hold, unsigned timeout)
+    {
+        unsigned mode = write ? RTM_LOCK_WRITE : RTM_LOCK_READ;
+        if (preload) mode |= RTM_SUB;
+        if (hold) mode |= RTM_LOCK_HOLD;
+        init(caller, name, mode, timeout);
+    }
+    CConnectLock(const char *caller, const char *name, unsigned mode, unsigned timeout)
+    {
+        init(caller, name, mode, timeout);
+    }
     IRemoteConnection *detach()
     {
 #ifdef TRACE_LOCKS
@@ -346,34 +354,149 @@ public:
 #endif
 };
 
-void ensureFileScope(const CDfsLogicalFileName &dlfn,unsigned timeout)
+// JCSMORE - perhaps should move into jlib
+static const char *strrstr(const char *s, size32_t sLen, const char *f, size32_t fLen)
 {
-    CConnectLock connlock("ensureFileScope",querySdsFilesRoot(),true,false,false,timeout);
-    StringBuffer query;
-    IPropertyTree *r = connlock.conn->getRoot();
-    StringBuffer scopes;
-    const char *s=dlfn.getScopes(scopes,true).str();
-    loop {
-        IPropertyTree *nr;
-        const char *e = strstr(s,"::");
-        query.clear();
-        if (e) 
-            query.append(e-s,s);
-        else
-            query.append(s);
-        nr = getNamedPropTree(r,queryDfsXmlBranchName(DXB_Scope),"@name",query.trim().toLowerCase().str(),false);
-        if (!nr)
-            nr = addNamedPropTree(r,queryDfsXmlBranchName(DXB_Scope),"@name",query.str());
-        r->Release();
-        if (!e) { 
-            ::Release(nr);
-            break;
+    if (!s || !*s || !f || !*f)
+        return NULL;
+    if (1 == fLen)
+        return strrchr(s, *f);
+    const char *pSearchLastChar = s + sLen - 1;
+    const char *pFindLastChar = f + fLen -1;
+    const char *pSearchChar = pSearchLastChar;
+    const char *pFindChar = pFindLastChar;
+    loop
+    {
+        while (*pSearchChar == *pFindChar)
+        {
+            if (pFindChar == f)    // match
+                return pSearchChar;
+            else if (pSearchChar == s)
+                return NULL;       // at start of search string and not found
+            --pSearchChar;
+            --pFindChar;
         }
-        r = nr;
-        s = e+2;
+        pFindChar = pFindLastChar; // reset
+        if (pSearchChar == s)
+            return NULL;           // at start of search string and not found
+        --pSearchChar;
     }
 }
 
+void ensureFileScope(const CDfsLogicalFileName &dlfn, unsigned timeout)
+{
+    CConnectLock rootLock("ensureFileScope", querySdsFilesRoot(), true, false, false, timeout); // prevents other clients updating for missing scopes at same time
+    StringBuffer query, scopes;
+    CDfsLogicalFileName scopeDlfn = dlfn;
+    CTimeMon tm(timeout);
+    loop
+    {
+        StringArray missingScopes, missingHeadPath;
+        scopeDlfn.set(dlfn);
+        dlfn.getScopes(scopes.clear(), true);
+        scopeDlfn.makeScopeQuery(query.clear(), true);
+
+        // 1st check which are missing, starting from the deepest scope
+        loop
+        {
+            if (INFINITE != timeout)
+                tm.timedout(&timeout);
+            CConnectLock connLock("ensureFileScope", query, false, false, false, timeout);
+            if (connLock.conn)
+                break;
+            const char *e = strrstr(scopes, scopes.length(), "::", 2);
+            if (e)
+            {
+                missingScopes.append(e+2);
+                scopeDlfn.set(scopes);
+                scopeDlfn.getScopes(scopes.clear(), true);
+                scopeDlfn.makeScopeQuery(query.clear(), true);
+                missingHeadPath.append(query);
+            }
+            else
+            {
+                missingScopes.append(scopes);
+                missingHeadPath.append(querySdsFilesRoot());
+                break;
+            }
+        }
+        bool done=true;
+        ForEachItemInRev(sn, missingScopes)
+        {
+            const char *scope = missingScopes.item(sn);
+            const char *head = missingHeadPath.item(sn);
+            if (INFINITE != timeout)
+                tm.timedout(&timeout);
+            VStringBuffer path("%s/Scope", head);
+            Owned<IRemoteConnection> newScopeConnection;
+            try
+            {
+                CConnectLock newScopeConnLock("ensureFileScope", path, RTM_CREATE_ADD | RTM_LOCK_WRITE, timeout);
+                newScopeConnection.setown(newScopeConnLock.detach());
+            }
+            catch (IException *e)
+            {
+                EXCLOG(e, NULL);
+                e->Release();
+            }
+            if (!newScopeConnection)
+            {
+                // It shouldn't happen, but something in theory could have deleted an intermediate scope behind my back, warn, loop and retry if so.
+                WARNLOG("Scope '%s', went missing whilst establishing missing scopes, loop and retry", head);
+                done = false;
+                break;
+            }
+
+            // paranoid check, that didn't exist already, if it does rollback new
+            path.clear().append(head).append("/");
+            getAttrQueryStr(path, queryDfsXmlBranchName(DXB_Scope), "@name", scope);
+            if (INFINITE != timeout)
+                tm.timedout(&timeout);
+            CConnectLock checkExistingConnLock("ensureFileScope", path, false, false, false, timeout);
+            if (checkExistingConnLock.conn) // unexpected, missing Scope now exists.
+            {
+                WARNLOG("Scope '%s' already exists whilst trying to add", path.str());
+                newScopeConnection->close(true);
+            }
+            else
+            {
+                IPropertyTree *r = newScopeConnection->queryRoot();
+                r->setProp("@name", scope);
+            }
+        }
+        if (done)
+            break;
+    }
+}
+
+#if 1
+void removeFileEmptyScope(const CDfsLogicalFileName &dlfn,unsigned timeout)
+{
+    CConnectLock rootLock("removeFileEmptyScope", querySdsFilesRoot(), true, false, false, timeout); // prevents other clients updating for missing scopes at same time
+    if (!rootLock.conn)
+        return;
+    StringBuffer query;
+    dlfn.makeScopeQuery(query, false);
+    StringBuffer head;
+    loop
+    {
+        if (0 == query.length())
+            break;
+        VStringBuffer path("%s/%s", querySdsFilesRoot(), query.str());
+        Owned<IRemoteConnection> scopeConn;
+        CConnectLock scopeLock("removeFileEmptyScope", path, true, false, false, timeout);
+        if (scopeLock.conn)
+        {
+            if (0 == scopeLock.conn->queryRoot()->hasChildren())
+                scopeLock.conn->close(true);
+        }
+        const char *tail = splitXPath(query.str(), head.clear());
+        if (!tail||!*tail)
+            break;
+        query.set(head);
+    }
+}
+#else
 void removeFileEmptyScope(const CDfsLogicalFileName &dlfn,unsigned timeout)
 {
     CConnectLock connlock("removeFileEmptyScope",querySdsFilesRoot(),true,false,false,timeout); //*1
@@ -383,20 +506,24 @@ void removeFileEmptyScope(const CDfsLogicalFileName &dlfn,unsigned timeout)
     StringBuffer query;
     dlfn.makeScopeQuery(query.clear(),false);
     StringBuffer head;
-    loop {
-        if (query.length()) {
+    loop
+    {
+        if (query.length())
+        {
             const char *tail = splitXPath(query.str(),head.clear());
             if (!tail||!*tail)
                 break;
             IPropertyTree *pt;
-            if (head.length()) {
+            if (head.length())
+            {
                 query.set(head);
                 pt = root->queryPropTree(query.str());
             }
             else 
                 pt = root;
             IPropertyTree *t = pt?pt->queryPropTree(tail):NULL;
-            if (t) {
+            if (t)
+            {
                 if (t->hasChildren()) 
                     break;
                 pt->removeTree(t);  
@@ -410,6 +537,7 @@ void removeFileEmptyScope(const CDfsLogicalFileName &dlfn,unsigned timeout)
             break;
     }
 }
+#endif
 
 class CFileLockBase
 {

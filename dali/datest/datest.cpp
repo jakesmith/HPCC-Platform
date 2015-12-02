@@ -1892,6 +1892,92 @@ void TestSDS1()
     IRemoteConnection *conn;
     IPropertyTree *root;
 
+#if 1
+    {
+        unsigned scopeDepths = 10;
+        unsigned nFiles = 1000;
+        unsigned parts = 1;
+        const char *initScope = "ascope";
+//        StringBuffer prefix("ascope::bscope::cscope::dscope::file");
+        StringBuffer prefix(initScope);
+
+
+        SocketEndpointArray epa;
+        for (unsigned i=0;i<parts;i++)
+        {
+            StringBuffer ips("192.168.1.108");
+            SocketEndpoint ep(ips.str());
+            epa.append(ep);
+        }
+        Owned<IGroup> group = createIGroup(epa);
+
+        CCycleTimer timer;
+        for (unsigned sd=0; sd<scopeDepths; sd++)
+        {
+            for (unsigned f=0; f<nFiles; f++)
+            {
+                StringBuffer fname(prefix);
+                fname.append("::");
+                fname.append("file");
+                fname.append(f);
+
+                Owned<IPropertyTree> fileInfo = createPTree();
+                Owned<IFileDescriptor> fileDesc = createFileDescriptor();
+                StringBuffer dir;
+                makePhysicalPartName(fname, 0, 0, dir, false, DFD_OSdefault);
+                StringBuffer partmask;
+                getPartMask(partmask, fname, parts);
+                StringBuffer path;
+                for (unsigned m=0; m<parts; m++)
+                {
+                    RemoteFilename rfn;
+                    constructPartFilename(group,m+1,parts,NULL,partmask.str(),dir.str(),false,1,rfn);
+                    rfn.getLocalPath(path.clear());
+                    Owned<IPropertyTree> pp = createPTree("Part");
+                    pp->setPropInt64("@size",1234*(m+1));
+                    fileDesc->setPart(m,&group->queryNode(m), path.str(), pp);
+                }
+                Owned<IDistributedFile> dfile =  queryDistributedFileDirectory().createNew(fileDesc);
+                {
+                    DistributedFilePropertyLock lock(dfile);
+                    IPropertyTree &t = lock.queryAttributes();
+                    t.setProp("@owned","nigel");
+                    t.setPropInt("@recordSize",1);
+                    t.setProp("ECL","TESTECL();");
+                }
+                dfile->attach(fname, UNKNOWN_USER);
+            }
+            prefix.append("::");
+            prefix.append((char)('a'+sd+1));
+            prefix.append("scope");
+        }
+        unsigned createTimeMs = timer.elapsedMs();
+
+        PROGLOG("Deleting files");
+        timer.reset();
+        prefix.clear().append(initScope);
+        for (unsigned sd=0; sd<scopeDepths; sd++)
+        {
+            for (unsigned f=0; f<nFiles; f++)
+            {
+                StringBuffer fname(prefix);
+                fname.append("::");
+                fname.append("file");
+                fname.append(f);
+
+                bool res = queryDistributedFileDirectory().removeEntry(fname, UNKNOWN_USER);
+                PROGLOG("fname = %s, deleted = %s", fname.str(), res?"true":"false");
+            }
+            prefix.append("::");
+            prefix.append((char)('a'+sd+1));
+            prefix.append("scope");
+        }
+        unsigned deleteTimeMs = timer.elapsedMs();
+        PROGLOG("Creation took: %d", createTimeMs);
+        PROGLOG("Deletion took: %d", deleteTimeMs);
+        return;
+    }
+#endif
 #ifdef TSUB
     Owned<TestSubscription> ts = new TestSubscription();
     SubscriptionId id = querySDS().subscribe("/subtest", *ts, false, true);
