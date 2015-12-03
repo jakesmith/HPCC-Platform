@@ -1895,8 +1895,8 @@ void TestSDS1()
     PROGLOG("here");
 #if 1
     {
-        unsigned scopeDepths = 10;
-        unsigned nFiles = 100;
+        unsigned scopeDepths = 3;
+        unsigned nFiles = 30000;
         unsigned parts = 1;
         const char *initScope = "ascope";
 //        StringBuffer prefix("ascope::bscope::cscope::dscope::file");
