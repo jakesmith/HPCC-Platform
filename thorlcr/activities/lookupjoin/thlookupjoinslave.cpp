@@ -99,7 +99,7 @@ class CBroadcaster : public CSimpleInterface
     InterruptableSemaphore allDoneSem;
     CriticalSection allDoneLock, bcastOtherCrit, stopCrit;
     bool allDone, allRequestStop, stopping, stopRecv;
-    unsigned allDoneWaiting;
+    unsigned waitingAtAllDoneCount;
     broadcast_flags stopFlag;
     Owned<IBitSet> slavesDone, slavesStopping;
 
@@ -238,10 +238,10 @@ class CBroadcaster : public CSimpleInterface
         if (which == slaves) // i.e. got all
         {
             allDone = true;
-            if (allDoneWaiting)
+            if (waitingAtAllDoneCount)
             {
-                allDoneSem.signal(allDoneWaiting);
-                allDoneWaiting = 0;
+                allDoneSem.signal(waitingAtAllDoneCount);
+                waitingAtAllDoneCount = 0;
             }
             receiver.abort(false);
             recvInterface->bCastReceive(NULL);
@@ -257,7 +257,7 @@ class CBroadcaster : public CSimpleInterface
     {
         // For a tree broadcast, calculate the next node to send the data to. i represents the ith copy sent from this node.
         // node is a 0 based node number.
-        // It returns a 1 based node number of the next node to send the data to.
+        // It returns a 0 based node number of the next node to send the data to.
         unsigned n = node;
         unsigned j=0;
         while (n)
@@ -370,11 +370,15 @@ class CBroadcaster : public CSimpleInterface
             }
         }
     }
+    inline void _setStopping(unsigned slave)
+    {
+        slavesStopping->set(slave, true);
+    }
 public:
     CBroadcaster(CActivityBase &_activity) : activity(_activity), receiver(*this), sender(*this), comm(_activity.queryJob().queryNodeComm())
     {
         allDone = allRequestStop = stopping = stopRecv = false;
-        allDoneWaiting = 0;
+        waitingAtAllDoneCount = 0;
         myNode = activity.queryJob().queryMyNodeRank()-1; // 0 based
         mySlave = activity.queryJobChannel().queryMyRank()-1; // 0 based
         nodes = activity.queryJob().queryNodes();
@@ -400,7 +404,7 @@ public:
     void reset()
     {
         allDone = allRequestStop = stopping = false;
-        allDoneWaiting = 0;
+        waitingAtAllDoneCount = 0;
         stopFlag = bcastflag_null;
         slavesDone->reset();
         slavesStopping->reset();
@@ -422,7 +426,7 @@ public:
             slaveStop(slave);
             if (allDone)
                 return;
-            allDoneWaiting++;
+            waitingAtAllDoneCount++;
         }
         allDoneSem.wait();
     }
@@ -442,12 +446,12 @@ public:
         sender.abort(true);
         if (e)
         {
-            allDoneSem.interrupt(LINK(e), allDoneWaiting);
+            allDoneSem.interrupt(LINK(e), waitingAtAllDoneCount);
             activity.fireException(e);
         }
         else
-            allDoneSem.signal(allDoneWaiting);
-        allDoneWaiting = 0;
+            allDoneSem.signal(waitingAtAllDoneCount);
+        waitingAtAllDoneCount = 0;
     }
     bool send(CSendItem *sendItem)
     {
@@ -467,12 +471,13 @@ public:
     }
     void setStopping(unsigned slave)
     {
-        slavesStopping->set(slave, true);
+        CriticalBlock b(stopCrit); // multiple channels could call
+        _setStopping(slave);
     }
     void stop(unsigned slave, broadcast_flags flag)
     {
         CriticalBlock b(stopCrit); // multiple channels could call
-        setStopping(slave);
+        _setStopping(slave);
         stopFlag = flag;
     }
 };
@@ -721,6 +726,7 @@ public:
 };
 
 
+struct HtEntry { rowidx_t index, count; };
 
 /* 
     These activities load the RHS into a table, therefore
@@ -852,6 +858,7 @@ protected:
     rowidx_t rhsTableLen;
     HTHELPER table; // NB: only channel 0 uses table, unless failing over to local lookup join
     HTHELPER *tableProxy; // Channels >1 will reference channel 0 table unless failed over
+    HtEntry currentHashEntry; // Used for lookup,many only
     OwnedConstThorRow leftRow;
 
     IThorDataLink *leftITDL, *rightITDL;
@@ -1085,7 +1092,7 @@ protected:
                 rhsNext = NULL;
                 break;
             }
-            rhsNext = tableProxy->getNextRHS();
+            rhsNext = tableProxy->getNextRHS(currentHashEntry); // NB: currentHashEntry only used for Lookup,Many case
         }
         if (filteredRhs.ordinality() || (!leftMatch && 0!=(flags & JFleftouter)))
         {
@@ -1145,7 +1152,8 @@ protected:
                         {
                             resetRhsNext();
                             const void *failRow = NULL;
-                            rhsNext = tableProxy->getFirstRHSMatch(leftRow, failRow); // also checks abortLimit/atMost
+                            // NB: currentHashEntry only used for Lookup,Many case
+                            rhsNext = tableProxy->getFirstRHSMatch(leftRow, failRow, currentHashEntry); // also checks abortLimit/atMost
                             if (failRow)
                                 return failRow;
                         }
@@ -1187,12 +1195,12 @@ protected:
                                     else if (!returnMany)
                                         rhsNext = NULL;
                                     else
-                                        rhsNext = tableProxy->getNextRHS();
+                                        rhsNext = tableProxy->getNextRHS(currentHashEntry); // NB: currentHashEntry only used for Lookup,Many case
                                     return row.getClear();
                                 }
                             }
                         }
-                        rhsNext = tableProxy->getNextRHS();
+                        rhsNext = tableProxy->getNextRHS(currentHashEntry); // NB: currentHashEntry only used for Lookup,Many case
                     }
                     if (!leftMatch && NULL == rhsNext && 0!=(flags & JFleftouter))
                     {
@@ -1314,6 +1322,8 @@ public:
 
         eos = eog = someSinceEog = false;
         atomic_set(&interChannelToNotifyCount, 0);
+        currentHashEntry.index = 0;
+        currentHashEntry.count = 0;
 
         right.set(rightITDL);
         rightAllocator.set(::queryRowAllocator(rightITDL));
@@ -1889,7 +1899,7 @@ protected:
         if (isLocalLookup())
         {
             Owned<IThorRowLoader> rowLoader;
-            if (!needGlobal || (!rhsCollated && (0 == queryJob().queryJobChannels()))) // If global && rhsCollated, then no need for rowLoader
+            if (!needGlobal || (!rhsCollated && (1 == queryJob().queryJobChannels()))) // If global && rhsCollated, then no need for rowLoader
             {
                 ICompare *cmp = rhsAlreadySorted ? NULL : compareRight;
                 if (isSmart())
@@ -2642,11 +2652,11 @@ public:
                 hash = 0;
         }
     }
-    inline const void *getNextRHS()
+    inline const void *getNextRHS(HtEntry &currentHashEntry __attribute__((unused)))
     {
         return NULL; // no next in LOOKUP without MANY
     }
-    inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow)
+    inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry __attribute__((unused)))
     {
         failRow = NULL;
         return findFirst(leftRow);
@@ -2671,15 +2681,10 @@ public:
     }
 };
 
-struct HtEntry { rowidx_t index, count; };
 class CLookupManyHT : public CHTBase
 {
     CLookupJoinActivityBase<CLookupManyHT> *activity;
     HtEntry *ht;
-    /* To be multithreaded, will need to avoid having 'curren't member.
-     * Will need to pass into getNextRHS instead
-     */
-    HtEntry currentHashEntry;
     const void **rows;
 
     inline HtEntry *lookup(unsigned hash)
@@ -2689,7 +2694,7 @@ class CLookupManyHT : public CHTBase
             return NULL;
         return e;
     }
-    const void *findFirst(const void *left)
+    const void *findFirst(const void *left, HtEntry &currentHashEntry)
     {
         unsigned h = leftHash->hash(left)%tableSize;
         loop
@@ -2742,16 +2747,16 @@ public:
         ht = NULL;
         rows = NULL;
     }
-    inline const void *getNextRHS()
+    inline const void *getNextRHS(HtEntry &currentHashEntry)
     {
         if (1 == currentHashEntry.count)
             return NULL;
         --currentHashEntry.count;
         return rows[++currentHashEntry.index];
     }
-    inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow)
+    inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry)
     {
-        const void *right = findFirst(leftRow);
+        const void *right = findFirst(leftRow, currentHashEntry);
         if (right)
         {
             if (activity->exceedsLimit(currentHashEntry.count, leftRow, right, failRow))
@@ -2818,13 +2823,13 @@ public:
         rows = NULL;
         nextRhsRow = 0;
     }
-    inline const void *getNextRHS()
+    inline const void *getNextRHS(HtEntry &currentHashEntry __attribute__((unused)))
     {
         if (++nextRhsRow<tableSize)
             return rows[nextRhsRow];
         return NULL;
     }
-    inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow)
+    inline const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry __attribute__((unused)))
     {
         nextRhsRow = 0;
         failRow = NULL;

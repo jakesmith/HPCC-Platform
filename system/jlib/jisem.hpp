@@ -53,10 +53,7 @@ public:
             if (!_error)
                 _error = new InterruptedSemaphoreException;
             error.setown(_error);
-            if (1 == count)
-                signal();
-            else
-                signal(count);
+            signal(count);
         }
     }
 
