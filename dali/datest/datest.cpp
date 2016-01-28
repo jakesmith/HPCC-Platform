@@ -3040,6 +3040,13 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
+#if 1
+    Owned<IFile> iFile = createIFile("somefile");
+    OwnedIFileIO iFileIO = iFile->open(IFOcreate);
+
+    return 0;
+#endif
+
     try {
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
