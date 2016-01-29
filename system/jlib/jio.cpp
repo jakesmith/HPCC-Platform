@@ -1319,6 +1319,8 @@ extern jlib_decl IReadSeq *createChainedReadSeq(IReadSeqAllocator *irsa)
 
 IRowStream *createConcatRowStream(unsigned numstreams,IRowStream** streams,bool grouped)
 {
+    if (1 == numstreams)
+        return LINK(streams[0]);
     return new CConcatRowStream(numstreams,streams,grouped);
 }
 
