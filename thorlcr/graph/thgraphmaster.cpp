@@ -1284,7 +1284,8 @@ CJobMaster::CJobMaster(IConstWorkUnit &_workunit, const char *graphName, const c
     user.set(workunit->queryUser());
     token.append(_token.str());
     scope.append(_scope.str());
-    globalMemorySize = globals->getPropInt("@masterMemorySize", globals->getPropInt("@globalMemorySize")); // in MB
+    globalMemoryMB = globals->getPropInt("@masterMemorySize", globals->getPropInt("@globalMemorySize")); // in MB
+    numChannels = 1;
     init();
 
     resumed = WUActionResume == workunit->getAction();

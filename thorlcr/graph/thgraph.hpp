@@ -758,7 +758,8 @@ protected:
     Owned<IPropertyTree> xgmml;
     Owned<IGraphTempHandler> tmpHandler;
     bool timeActivities;
-    unsigned maxActivityCores, globalMemorySize;
+    unsigned numChannels;
+    unsigned maxActivityCores, globalMemoryMB, sharedMemoryMB;
     unsigned forceLogGraphIdMin, forceLogGraphIdMax;
     Owned<IContextLogger> logctx;
     Owned<IPerfMonHook> perfmonhook;
@@ -768,8 +769,10 @@ protected:
     OwnedMalloc<unsigned> jobSlaveChannelNum;
     bool crcChecking;
     bool usePackedAllocator;
-    unsigned memorySpillAt;
     rank_t myNodeRank;
+    unsigned memorySpillAtPercentage, sharedMemoryLimitPercentage;
+    CriticalSection sharedAllocatorCrit;
+    Owned<IThorAllocator> sharedAllocator;
 
 
     class CThorPluginCtx : public SimplePluginCtx
@@ -859,7 +862,8 @@ public:
     unsigned getOptUInt(const char *opt, unsigned dft=0) { return (unsigned)getOptInt(opt, dft); }
     __int64 getOptInt64(const char *opt, __int64 dft=0);
     unsigned __int64 getOptUInt64(const char *opt, unsigned __int64 dft=0) { return (unsigned __int64)getOptInt64(opt, dft); }
-    virtual IThorAllocator *createThorAllocator();
+    virtual IThorAllocator *getThorAllocator(unsigned channel);
+    virtual IThorAllocator &querySharedAllocator() const { return *sharedAllocator; }
 
     virtual void abort(IException *e);
     virtual void debugRequest(CMessageBuffer &msg, const char *request) const { }

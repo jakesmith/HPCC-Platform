@@ -861,11 +861,6 @@ void CThorExpandingRowArray::clearUnused()
         memset(rows+numRows, 0, (maxRows-numRows) * sizeof(void *));
 }
 
-bool CThorExpandingRowArray::resize(rowidx_t requiredRows)
-{
-    return _resize(requiredRows, defaultMaxSpillCost);
-}
-
 bool CThorExpandingRowArray::resize(rowidx_t requiredRows, unsigned maxSpillCost)
 {
     return _resize(requiredRows, maxSpillCost);
@@ -1231,6 +1226,7 @@ CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity, IRowInte
 {
     commitRows = 0;
     firstRow = 0;
+    atomic_set(&resizing, 0);
 }
 
 CThorSpillableRowArray::~CThorSpillableRowArray()
@@ -1371,20 +1367,53 @@ const void **CThorSpillableRowArray::getBlock(rowidx_t readRows)
     return rows + firstRow;
 }
 
-void CThorSpillableRowArray::flush()
+void CThorSpillableRowArray::doFlush()
 {
-    CThorArrayLockBlock block(*this);
+    //A block of rows was removed - copy these rows to the start of the block.
+    memmove(rows, rows+firstRow, (numRows-firstRow) * sizeof(void *));
+    numRows -= firstRow;
+    firstRow = 0;
+    commitRows = numRows;
+}
+
+bool CThorSpillableRowArray::_flush(bool force)
+{
     dbgassertex(numRows >= commitRows);
     // if firstRow over 50% of commitRows, meaning over half of row array is empty, then reduce
-    if (firstRow != 0 && (firstRow >= commitRows/2))
+    if (needFlush(force))
     {
-        //A block of rows was removed - copy these rows to the start of the block.
-        memmove(rows, rows+firstRow, (numRows-firstRow) * sizeof(void *));
-        numRows -= firstRow;
-        firstRow = 0;
+        doFlush();
+        return true;
     }
+    else
+    {
+        commitRows = numRows;
+        return false;
+    }
+}
 
-    commitRows = numRows;
+bool CThorSpillableRowArray::shrink() // NB: if read active should be protected inside a CThorArrayLockBlock
+{
+    CToggleResizingState toggle(resizing);
+    if (!toggle.tryState(resize_shrinking)) // resize() may be in progress, in which case give up this attempt
+        return false;
+    _flush(true);
+    rowidx_t prevMaxRows = maxRows;
+    {
+        /* NB: This method may be called via the roxiemem OOM callback.
+         * As this is shrinking the table, it will not itself invoke an OOM callback.
+         * The CS prevents another thread resizing (see resize()) until this is done.
+         */
+        CriticalBlock b(shrinkingCrit); // can block resize(), but should never be blocked by resize() as have checked/toggled resizing state to get here
+        shrink(numRows);
+    }
+    return maxRows != prevMaxRows;
+}
+
+bool CThorSpillableRowArray::flush()
+{
+    CThorArrayLockBlock block(*this);
+    return _flush(false);
 }
 
 bool CThorSpillableRowArray::appendRows(CThorExpandingRowArray &inRows, bool takeOwnership)
@@ -1446,6 +1475,30 @@ void CThorSpillableRowArray::readBlock(const void **outRows, rowidx_t readRows)
     firstRow += readRows;
 }
 
+bool CThorSpillableRowArray::shrink(rowidx_t requiredRows)
+{
+    dbgassertex(requiredRows <= numRows);
+    return CThorExpandingRowArray::resize(requiredRows);
+}
+
+bool CThorSpillableRowArray::resize(rowidx_t requiredRows, unsigned maxSpillCost)
+{
+    CToggleResizingState toggle(resizing);
+    loop
+    {
+        if (toggle.tryState(resize_resizing)) // prevent shrink callback clashing
+            break;
+        shrinkingCrit.enter(); // will block if shrinking
+        shrinkingCrit.leave();
+    }
+    if (needFlush(false))
+    {
+        CThorArrayLockBlock block(*this);
+        doFlush();
+    }
+    return CThorExpandingRowArray::resize(requiredRows, maxSpillCost);
+}
+
 void CThorSpillableRowArray::transferRowsCopy(const void **outRows, bool takeOwnership)
 {
     CThorArrayLockBlock block(*this);
@@ -1502,12 +1555,19 @@ protected:
     __uint64 spillCycles;
     __uint64 sortCycles;
 
-    bool spillRows()
+    bool spillRows(bool critical)
     {
-        //This must only be called while a lock is held on spillableRows()
+        //This must only be called while a lock is held on spillableRows
         rowidx_t numRows = spillableRows.numCommitted();
         if (numRows == 0)
+        {
+            if (!critical)
+                return false;
+            bool res = spillableRows.shrink();
+            if (res)
+                return true;
             return false;
+        }
 
         CCycleTimer spillTimer;
         totalRows += numRows;
@@ -1537,9 +1597,17 @@ protected:
         preserveGrouping = _preserveGrouping;
         spillableRows.setAllowNulls(preserveGrouping);
     }
-    void flush()
+    bool flush()
     {
-        spillableRows.flush();
+        return spillableRows.flush();
+    }
+    bool shrink(StringBuffer *traceInfo)
+    {
+        rowidx_t maxRows = spillableRows.queryMaxRows();
+        bool ret = spillableRows.shrink();
+        if (traceInfo)
+            traceInfo->append("shink() - previous maxRows=").append(maxRows).append(", new maxRows=").append(spillableRows.queryMaxRows());
+        return ret;
     }
     void putRow(const void *row)
     {
@@ -1554,12 +1622,12 @@ protected:
                 //rows first).
                 if (spillableRows.numCommitted() != 0)
                 {
-                    spillableRows.flush();
-                    spillRows();
+                    flush();
+                    spillRows(false);
                 }
                 //Ensure new rows are written to the head of the array.  It needs to be a separate call because
                 //spillRows() cannot shift active row pointer since it can be called from any thread
-                spillableRows.flush();
+                flush();
                 if (!spillableRows.append(row))
                     oom = true;
             }
@@ -1577,7 +1645,7 @@ protected:
         CriticalBlock b(readerLock);
         if (0 == outStreams)
         {
-            spillableRows.flush();
+            flush();
             if (spillingEnabled())
             {
                 // i.e. all disk OR (some on disk already AND allDiskOrAllMem)
@@ -1586,7 +1654,7 @@ protected:
                     CThorArrayLockBlock block(spillableRows);
                     if (spillableRows.numCommitted())
                     {
-                        spillRows();
+                        spillRows(false);
                         spillableRows.kill();
                     }
                 }
@@ -1737,7 +1805,7 @@ public:
     void transferRowsOut(CThorExpandingRowArray &out, bool sort)
     {
         CThorArrayLockBlock block(spillableRows);
-        spillableRows.flush();
+        flush();
         totalRows += spillableRows.numCommitted();
         if (sort && iCompare)
         {
@@ -1818,7 +1886,7 @@ public:
         if (!spillingEnabled())
             return false;
         CThorArrayLockBlock block(spillableRows);
-        return spillRows();
+        return spillRows(critical);
     }
     virtual unsigned __int64 getStatistic(StatisticKind kind)
     {
@@ -1982,11 +2050,13 @@ public:
     {
         return CThorRowCollectorBase::getStream(allMemRows, NULL, shared);
     }
-    virtual bool spill()
+    virtual bool spill(bool critical)
     {
         CThorArrayLockBlock block(spillableRows);
-        return spillRows();
+        return spillRows(critical);
     }
+    virtual bool flush() { return CThorRowCollectorBase::flush(); }
+    virtual bool shrink(StringBuffer *traceInfo) { return CThorRowCollectorBase::shrink(traceInfo); }
 };
 
 IThorRowCollector *createThorRowCollector(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix, unsigned spillPriority, bool preserveGrouping)
@@ -2168,15 +2238,24 @@ protected:
     mutable Owned<IRowAllocatorMetaActIdCache> allocatorMetaCache;
     Owned<roxiemem::IRowManager> rowManager;
     roxiemem::RoxieHeapFlags defaultFlags;
-    IContextLogger &logctx;
+    IContextLogger *logctx;
+    unsigned numChannels;
+
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CThorAllocator(memsize_t memSize, unsigned memorySpillAt, IContextLogger &_logctx, roxiemem::RoxieHeapFlags _defaultFlags) : logctx(_logctx), defaultFlags(_defaultFlags)
+    CThorAllocator(unsigned memLimitMB, unsigned sharedMemLimitMB, unsigned _numChannels, unsigned memorySpillAtPercentage, IContextLogger &_logctx, roxiemem::RoxieHeapFlags _defaultFlags)
+        : numChannels(_numChannels), logctx(&_logctx), defaultFlags(_defaultFlags)
     {
+        memsize_t memLimit = ((memsize_t)memLimitMB)*0x100000;
+        memsize_t sharedMemLimit = ((memsize_t)sharedMemLimitMB)*0x100000;
         allocatorMetaCache.setown(createRowAllocatorCache(this));
-        rowManager.setown(roxiemem::createRowManager(memSize, NULL, logctx, allocatorMetaCache, false, true));
-        rowManager->setMemoryLimit(memSize, 0==memorySpillAt ? 0 : memSize/100*memorySpillAt);
+        if (numChannels>1)
+            rowManager.setown(roxiemem::createGlobalRowManager(memLimit, sharedMemLimit, numChannels, NULL, *logctx, allocatorMetaCache, false, true));
+        else
+            rowManager.setown(roxiemem::createRowManager(memLimit, NULL, *logctx, allocatorMetaCache, false, true));
+
+        rowManager->setMemoryLimit(memLimit, 0==memorySpillAtPercentage ? 0 : memLimit/100*memorySpillAtPercentage);
         const bool paranoid = false;
         if (paranoid)
         {
@@ -2186,6 +2265,14 @@ public:
             rowManager->setMinimizeFootprint(true, true);
             rowManager->setReleaseWhenModifyCallback(true, true);
         }
+    }
+    CThorAllocator(IThorAllocator &sharedAllocator, unsigned channel)
+    {
+        allocatorMetaCache.setown(createRowAllocatorCache(this));
+        rowManager.set(sharedAllocator.queryRowManager().querySlaveRowManager(channel));
+        defaultFlags = sharedAllocator.queryFlags();
+        logctx = sharedAllocator.queryLoggingContext();
+        numChannels = 0;
     }
     ~CThorAllocator()
     {
@@ -2211,18 +2298,33 @@ public:
         return *rowManager;
     }
     virtual roxiemem::RoxieHeapFlags queryFlags() const { return defaultFlags; }
+    virtual IContextLogger *queryLoggingContext() const { return logctx; }
     virtual bool queryCrc() const { return false; }
+    virtual IThorAllocator *getSlaveAllocator(unsigned channel)
+    {
+        assertex(numChannels>1);
+        return new CThorAllocator(*this, channel);
+    }
 };
 
 // derived to avoid a 'crcChecking' check per getRowAllocator only
 class CThorCrcCheckingAllocator : public CThorAllocator
 {
 public:
-    CThorCrcCheckingAllocator(memsize_t memSize, unsigned memorySpillAt, IContextLogger &logctx, roxiemem::RoxieHeapFlags flags) : CThorAllocator(memSize, memorySpillAt, logctx, flags)
+    CThorCrcCheckingAllocator(unsigned memLimitMB, unsigned sharedMemLimitMB, unsigned numChannels, unsigned memorySpillAtPercentage, IContextLogger &logctx, roxiemem::RoxieHeapFlags flags)
+        : CThorAllocator(memLimitMB, sharedMemLimitMB, numChannels, memorySpillAtPercentage, logctx, flags)
+    {
+    }
+    CThorCrcCheckingAllocator(IThorAllocator &sharedAllocator, unsigned channel) : CThorAllocator(sharedAllocator, channel)
     {
     }
 // IThorAllocator
     virtual bool queryCrc() const { return true; }
+    virtual IThorAllocator *getSlaveAllocator(unsigned channel)
+    {
+        assertex(numChannels>1);
+        return new CThorCrcCheckingAllocator(*this, channel);
+    }
 // roxiemem::IRowAllocatorMetaActIdCacheCallback
     virtual IEngineRowAllocator *createAllocator(IRowAllocatorMetaActIdCache * cache, IOutputMetaData *meta, unsigned activityId, unsigned cacheId, roxiemem::RoxieHeapFlags flags) const
     {
@@ -2231,20 +2333,21 @@ public:
 };
 
 
-IThorAllocator *createThorAllocator(memsize_t memSize, unsigned memorySpillAt, IContextLogger &logctx, bool crcChecking, bool usePacked)
+IThorAllocator *createThorAllocator(unsigned memLimitMB, unsigned sharedMemLimitMB, unsigned numChannels, unsigned memorySpillAtPercentage, IContextLogger &logctx, bool crcChecking, bool usePacked)
 {
-    PROGLOG("Thor allocator: Size=%d (MB), CRC=%s, Packed=%s", (unsigned)(memSize/0x100000), crcChecking?"ON":"OFF", usePacked?"ON":"OFF");
+    PROGLOG("Thor allocator: Size=%d (MB), sharedLimit=%d (MB), CRC=%s, Packed=%s", memLimitMB, sharedMemLimitMB, crcChecking?"ON":"OFF", usePacked?"ON":"OFF");
     roxiemem::RoxieHeapFlags flags;
     if (usePacked)
         flags = roxiemem::RHFpacked;
     else
         flags = roxiemem::RHFnone;
+    dbgassertex(numChannels);
+    dbgassertex((1==numChannels) || sharedMemLimitMB);
     if (crcChecking)
-        return new CThorCrcCheckingAllocator(memSize, memorySpillAt, logctx, flags);
+        return new CThorCrcCheckingAllocator(memLimitMB, sharedMemLimitMB, numChannels, memorySpillAtPercentage, logctx, flags);
     else
-        return new CThorAllocator(memSize, memorySpillAt, logctx, flags);
+        return new CThorAllocator(memLimitMB, sharedMemLimitMB, numChannels, memorySpillAtPercentage, logctx, flags);
 }
-
 
 #define OUTPUTMETACHILDROW_VERSION 2 // for now, it's only significant that non-zero
 class COutputMetaWithChildRow : public CSimpleInterface, implements IOutputMetaData
