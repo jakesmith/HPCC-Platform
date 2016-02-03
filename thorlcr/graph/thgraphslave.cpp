@@ -1148,7 +1148,6 @@ CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, co
 #endif
     querySo.setown(createDllEntry(_querySo, false, NULL));
     tmpHandler.setown(createTempHandler(true));
-    channelMemorySize = globalMemorySize / globals->getPropInt("@channelsPerSlave", 1);
 }
 
 void CJobSlave::addChannel(IMPServer *mpServer)
@@ -1220,10 +1219,19 @@ mptag_t CJobSlave::deserializeMPTag(MemoryBuffer &mb)
     return tag;
 }
 
-IThorAllocator *CJobSlave::createThorAllocator()
+IThorAllocator *CJobSlave::getThorAllocator(unsigned channel)
 {
-    return ::createThorAllocator(((memsize_t)channelMemorySize)*0x100000, memorySpillAt, *logctx, crcChecking, usePackedAllocator);
+    if (1 == numChannels)
+        return CJobBase::getThorAllocator(channel);
+    else
+    {
+        CriticalBlock b(sharedAllocatorCrit);
+        if (!sharedAllocator)
+            sharedAllocator.setown(::createThorAllocator(globalMemoryMB, sharedMemoryMB, numChannels, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
+        return sharedAllocator->getSlaveAllocator(channel);
+    }
 }
+
 
 // IGraphCallback
 CJobSlaveChannel::CJobSlaveChannel(CJobBase &_job, IMPServer *mpServer, unsigned channel) : CJobChannel(_job, mpServer, channel)

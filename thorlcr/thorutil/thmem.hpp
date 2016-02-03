@@ -154,10 +154,12 @@ interface IThorAllocator : extends IInterface
     virtual IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, activity_id activityId) const = 0;
     virtual roxiemem::IRowManager &queryRowManager() const = 0;
     virtual roxiemem::RoxieHeapFlags queryFlags() const = 0;
+    virtual IContextLogger *queryLoggingContext() const = 0;
     virtual bool queryCrc() const = 0;
+    virtual IThorAllocator *getSlaveAllocator(unsigned channel) = 0;
 };
 
-extern graph_decl IThorAllocator *createThorAllocator(memsize_t memSize, unsigned memorySpillAt, IContextLogger &logctx, bool crcChecking, bool usePacked);
+extern graph_decl IThorAllocator *createThorAllocator(unsigned memLimitMB, unsigned sharedMemLimitMB, unsigned numChannels, unsigned memorySpillAtPercentage, IContextLogger &logctx, bool crcChecking, bool usePacked);
 
 extern graph_decl IOutputMetaData *createOutputMetaDataWithExtra(IOutputMetaData *meta, size32_t sz);
 extern graph_decl IOutputMetaData *createOutputMetaDataWithChildRow(IEngineRowAllocator *childAllocator, size32_t extraSz);
@@ -188,7 +190,8 @@ extern graph_decl void setMultiThorMemoryNotify(size32_t size,ILargeMemLimitNoti
 /////////////
 
 // JCSMORE
-enum {
+enum
+{
     InitialSortElements = 0,
     //The number of rows that can be added without entering a critical section, and therefore also the number
     //of rows that might not get freed when memory gets tight.
@@ -380,8 +383,8 @@ public:
     void deserializeRow(IRowDeserializerSource &in); // NB single row not NULL
     void deserialize(size32_t sz, const void *buf);
     void deserializeExpand(size32_t sz, const void *data);
-    bool resize(rowidx_t requiredRows);
     bool resize(rowidx_t requiredRows, unsigned maxSpillCost);
+    inline bool resize(rowidx_t requiredRows) { return resize(requiredRows, defaultMaxSpillCost); }
     void compact();
     virtual IThorArrayLock &queryLock() { return dummyLock; }
 
@@ -401,6 +404,36 @@ class graph_decl CThorSpillableRowArray : private CThorExpandingRowArray, implem
     rowidx_t commitRows;  // can only be updated by writing thread within a critical section
     mutable CriticalSection cs;
     ICopyArrayOf<IWritePosCallback> writeCallbacks;
+    CriticalSection shrinkingCrit;
+    atomic_t resizing;
+    enum ResizeState { resize_nop, resize_shrinking, resize_resizing };
+
+    class CToggleResizingState
+    {
+        ResizeState state;
+        atomic_t &resizing;
+    public:
+        CToggleResizingState(atomic_t &_resizing) : resizing(_resizing)
+        {
+            state = resize_nop;
+        }
+        ~CToggleResizingState()
+        {
+            if (state != resize_nop)
+                verify(atomic_cas(&resizing, resize_nop, state));
+        }
+        bool tryState(ResizeState newState)
+        {
+            if (!atomic_cas(&resizing, newState, resize_nop))
+                return false;
+            state = newState;
+            return true;
+        }
+    };
+    bool _flush(bool force);
+    void doFlush();
+    inline bool needFlush(bool force) { return (firstRow != 0 && (force || (firstRow >= commitRows/2))); }
+
 public:
 
     CThorSpillableRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool allowNulls=false, StableSortFlag stableSort=stableSort_none, rowidx_t initialSize=InitialSortElements, size32_t commitDelta=CommitStep);
@@ -417,9 +450,11 @@ public:
     inline void setAllowNulls(bool b) { CThorExpandingRowArray::setAllowNulls(b); }
     inline void setDefaultMaxSpillCost(unsigned defaultMaxSpillCost) { CThorExpandingRowArray::setDefaultMaxSpillCost(defaultMaxSpillCost); }
     inline unsigned queryDefaultMaxSpillCost() const { return CThorExpandingRowArray::queryDefaultMaxSpillCost(); }
+    inline rowidx_t queryMaxRows() const { return CThorExpandingRowArray::queryMaxRows(); }
     void kill();
     void compact();
-    void flush();
+    bool flush();
+    bool shrink();
     inline bool isFlushed() const { return numRows == numCommitted(); }
     inline bool append(const void *row) __attribute__((warn_unused_result))
     {
@@ -489,7 +524,9 @@ public:
     }
     void deserialize(size32_t sz, const void *buf, bool hasNulls){ CThorExpandingRowArray::deserialize(sz, buf); }
     void deserializeRow(IRowDeserializerSource &in) { CThorExpandingRowArray::deserializeRow(in); }
-    bool resize(rowidx_t requiredRows) { return CThorExpandingRowArray::resize(requiredRows); }
+    bool resize(rowidx_t requiredRows, unsigned maxSpillCost);
+    inline bool resize(rowidx_t requiredRows) { return resize(requiredRows, defaultMaxSpillCost); }
+    bool shrink(rowidx_t requiredRows);
     void transferRowsCopy(const void **outRows, bool takeOwnership);
     void readBlock(const void **outRows, rowidx_t readRows);
 
@@ -533,7 +570,9 @@ interface IThorRowCollector : extends IThorRowCollectorCommon
     virtual IRowWriter *getWriter() = 0;
     virtual void reset() = 0;
     virtual IRowStream *getStream(bool shared=false, CThorExpandingRowArray *allMemRows=NULL) = 0;
-    virtual bool spill() = 0; // manual spill. Returns true if anything spilt
+    virtual bool spill(bool critical) = 0; // manual spill. Returns true if anything spilt
+    virtual bool flush() = 0; // manual flush (free array space and potentially ptr table)
+    virtual bool shrink(StringBuffer *traceInfo=NULL) = 0; // manual flush + shrink table array
 };
 
 extern graph_decl IThorRowLoader *createThorRowLoader(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare=NULL, StableSortFlag stableSort=stableSort_none, RowCollectorSpillFlags diskMemMix=rc_mixed, unsigned spillPriority=SPILL_PRIORITY_DEFAULT);

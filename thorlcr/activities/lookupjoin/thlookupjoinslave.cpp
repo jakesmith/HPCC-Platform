@@ -597,7 +597,7 @@ public:
         if (0 == threadCount)
             threadCount = getAffinityCpus();
     }
-    bool init(rowidx_t rowCount)
+    bool init(rowidx_t rowCount, roxiemem::IRowManager *rowManager)
     {
         bool threadSafeBitSet = activity.getOptBool("threadSafeBitSet", false); // for testing only
         if (threadSafeBitSet)
@@ -608,7 +608,7 @@ public:
         else
         {
             size32_t bitSetMemSz = getBitSetMemoryRequirement(rowCount);
-            void *pBitSetMem = activity.queryRowManager().allocate(bitSetMemSz, activity.queryContainer().queryId(), SPILL_PRIORITY_LOW);
+            void *pBitSetMem = rowManager->allocate(bitSetMemSz, activity.queryContainer().queryId(), SPILL_PRIORITY_LOW);
             if (!pBitSetMem)
                 return false;
 
@@ -873,9 +873,12 @@ protected:
 
     IThorDataLink *leftITDL, *rightITDL;
     Owned<IRowStream> left, right;
+    IThorAllocator *rightThorAllocator;
+    roxiemem::IRowManager *rightRowManager;
+    Owned<IRowInterfaces> sharedRightRowInterfaces;
     Owned<IEngineRowAllocator> rightAllocator;
     Owned<IEngineRowAllocator> leftAllocator;
-    Owned<IEngineRowAllocator> allocator;
+    Owned<IEngineRowAllocator> allocator; // allocator for output transform
     Owned<IOutputRowSerializer> rightSerializer;
     Owned<IOutputRowDeserializer> rightDeserializer;
     bool gotRHS;
@@ -887,6 +890,7 @@ protected:
     const void *rhsNext;
     CThorExpandingRowArray rhs;
     Owned<IOutputMetaData> outputMeta;
+    IOutputMetaData *rightOutputMeta;
     PointerArrayOf<CThorRowArrayWithFlushMarker> rhsSlaveRows;
     IArrayOf<IRowStream> gatheredRHSNodeStreams;
 
@@ -1006,7 +1010,7 @@ protected:
          * if it never spills, but will make flushing non-locals simpler if spilling occurs.
          */
         CThorSpillableRowArray &rows = *rhsSlaveRows.item(slave);
-        RtlDynamicRowBuilder rowBuilder(rightAllocator);
+        RtlDynamicRowBuilder rowBuilder(rightAllocator); // NB: rightAllocator is the shared allocator
         CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
         while (!memDeserializer.eos())
         {
@@ -1033,7 +1037,9 @@ protected:
                     if (!row)
                         break;
 
-                    // Add all locally read right rows to channel0 directly
+                    /* Add all locally read right rows to channel0 directly
+                     * NB: these rows remain on their channel allocator.
+                     */
                     if (0 == queryJobChannelNumber())
                     {
                         if (!addRHSRow(localRhsRows, row)) // may cause broadcaster to be told to stop (for isStopping() to become true)
@@ -1273,6 +1279,15 @@ public:
         channel0Broadcaster = NULL;
         channelActivitiesAssigned = false;
         table.setown(new HTHELPER);
+        rightOutputMeta = NULL;
+        if (getOptBool("lkjoinUseSharedAllocator", true))
+        {
+            ActPrintLog("Using shared row manager for RHS");
+            rightThorAllocator = &queryJob().querySharedAllocator();
+        }
+        else
+            rightThorAllocator = &queryJobChannel().queryThorAllocator();
+        rightRowManager = &rightThorAllocator->queryRowManager();
     }
     ~CInMemJoinBase()
     {
@@ -1314,8 +1329,50 @@ public:
     virtual void start()
     {
         assertex(inputs.ordinality() == 2);
+
+        gotRHS = false;
+        nextRhsRow = 0;
+        joined = 0;
+        joinCounter = 0;
+        leftMatch = false;
+        rhsNext = NULL;
+        rhsTableLen = 0;
+        leftITDL = inputs.item(0);
+        rightITDL = inputs.item(1);
+        rightOutputMeta = rightITDL->queryFromActivity()->queryContainer().queryHelper()->queryOutputMeta();
+        rightAllocator.setown(rightThorAllocator->getRowAllocator(rightOutputMeta, container.queryId()));
+
         if (isGlobal())
         {
+            // wrapper IRowInterface impl. for rhs interfaces, that returns sharedAllocator
+            class CSharedRightRowInterfaces : public CSimpleInterfaceOf<IRowInterfaces>
+            {
+                IEngineRowAllocator *allocator;
+                IOutputRowSerializer *serializer;
+                IOutputRowDeserializer *deserializer;
+                IOutputMetaData *outputMeta;
+                unsigned actId;
+                ICodeContext *codeCtx;
+            public:
+                CSharedRightRowInterfaces(IRowInterfaces *rowIf, IEngineRowAllocator *sharedAllocator)
+                {
+                    allocator = sharedAllocator;
+                    serializer = rowIf->queryRowSerializer();
+                    deserializer = rowIf->queryRowDeserializer();
+                    outputMeta = rowIf->queryRowMetaData();
+                    actId = rowIf->queryActivityId();
+                    codeCtx = rowIf->queryCodeContext();
+                }
+            // IRowInterfaces impl.
+                virtual IEngineRowAllocator * queryRowAllocator() { return allocator; }
+                virtual IOutputRowSerializer * queryRowSerializer(){ return serializer; }
+                virtual IOutputRowDeserializer * queryRowDeserializer() { return deserializer; }
+                virtual IOutputMetaData *queryRowMetaData() { return outputMeta; }
+                virtual unsigned queryActivityId() const { return actId; }
+                virtual ICodeContext *queryCodeContext() { return codeCtx; }
+            };
+            sharedRightRowInterfaces.setown(new CSharedRightRowInterfaces(queryRowInterfaces(rightITDL), rightAllocator));
+
             // It is not until here, that it is guaranteed all channel slave activities have been initialized.
             if (!channelActivitiesAssigned)
             {
@@ -1327,18 +1384,11 @@ public:
                 }
             }
             channel0Broadcaster = channels[0]->broadcaster;
+
+            // NB: use sharedRightRowInterfaces, so that expanding ptr array is using shared allocator
             for (unsigned s=0; s<container.queryJob().querySlaves(); s++)
-                rhsSlaveRows.item(s)->setup(queryRowInterfaces(rightITDL), false, stableSort_none, true);
+                rhsSlaveRows.item(s)->setup(sharedRightRowInterfaces, false, stableSort_none, true);
         }
-        gotRHS = false;
-        nextRhsRow = 0;
-        joined = 0;
-        joinCounter = 0;
-        leftMatch = false;
-        rhsNext = NULL;
-        rhsTableLen = 0;
-        leftITDL = inputs.item(0);
-        rightITDL = inputs.item(1);
         allocator.set(queryRowAllocator());
         leftAllocator.set(::queryRowAllocator(leftITDL));
         outputMeta.set(leftITDL->queryFromActivity()->queryContainer().queryHelper()->queryOutputMeta());
@@ -1349,7 +1399,6 @@ public:
         currentHashEntry.count = 0;
 
         right.set(rightITDL);
-        rightAllocator.set(::queryRowAllocator(rightITDL));
         rightSerializer.set(::queryRowSerializer(rightITDL));
         rightDeserializer.set(::queryRowDeserializer(rightITDL));
 
@@ -1530,7 +1579,7 @@ public:
 interface IChannelDistributor
 {
     virtual void putRow(const void *row) = 0;
-    virtual bool spill() = 0;
+    virtual bool spill(bool critical) = 0;
     virtual roxiemem::IBufferedRowCallback *queryCallback() = 0;
 };
 
@@ -1565,8 +1614,10 @@ protected:
     using PARENT::defaultRight;
     using PARENT::grouped;
     using PARENT::abortSoon;
-    using PARENT::leftAllocator;
+    using PARENT::rightRowManager;
     using PARENT::rightAllocator;
+    using PARENT::sharedRightRowInterfaces;
+    using PARENT::leftAllocator;
     using PARENT::returnMany;
     using PARENT::fuzzyMatch;
     using PARENT::keepLimit;
@@ -1752,7 +1803,7 @@ protected:
         }
         try
         {
-            table->setup(this, size, leftHash, rightHash, compareLeftRight);
+            table->setup(this, rightRowManager, size, leftHash, rightHash, compareLeftRight);
         }
         catch (IException *e)
         {
@@ -1833,7 +1884,7 @@ protected:
     {
         try
         {
-            if (!marker.init(rhs.ordinality()))
+            if (!marker.init(rhs.ordinality(), rightRowManager))
                 return false;
         }
         catch (IException *e)
@@ -1867,7 +1918,7 @@ protected:
                 overflowWriteCount = 0;
                 overflowWriteFile.clear();
                 overflowWriteStream.clear();
-                queryRowManager().addRowBuffer(this);
+                rightRowManager->addRowBuffer(this);
             }
             doBroadcastRHS(stopping);
 
@@ -1885,7 +1936,7 @@ protected:
                 bool success=false;
                 try
                 {
-                    if (marker.init(rhsRows)) // May fail if insufficient memory available
+                    if (marker.init(rhsRows, rightRowManager)) // May fail if insufficient memory available
                     {
                         // NB: If marker.init() returned false, it will have called the MM callbacks and have setup hasFailedOverToLocal() already
                         success = rhs.resize(rhsRows, SPILL_PRIORITY_LOW); // NB: Could OOM, handled by exception handler
@@ -1955,7 +2006,7 @@ protected:
                  * Need to remove spill callback and broadcast one last message to know.
                  */
 
-                queryRowManager().removeRowBuffer(this);
+                rightRowManager->removeRowBuffer(this);
 
                 ActPrintLog("Broadcasting final split status");
                 broadcaster->reset();
@@ -1963,6 +2014,9 @@ protected:
                 doBroadcastStop(broadcast2MpTag, hasFailedOverToLocal() ? bcastflag_spilt : bcastflag_null);
             }
             InterChannelBarrier();
+            ActPrintLog("Shared memory manager memory report");
+            rightRowManager->reportMemoryUsage(false);
+            ActPrintLog("End of shared manager memory report");
         }
         else
         {
@@ -1970,19 +2024,21 @@ protected:
             if (isSmart())
             {
                 /* Add IBufferedRowCallback to all channels, because memory pressure can come on any IRowManager
-                 * However, all invoked callbacks are handled by ch0
+                 * However, all invoked callbacks need to be handled by ch0
                  */
-                queryRowManager().addRowBuffer(lkJoinCh0);
+                rightRowManager->addRowBuffer(lkJoinCh0);
             }
             doBroadcastRHS(stopping);
             InterChannelBarrier(); // wait for channel 0, which will have marked rhsCollated and broadcast spilt status to all others
             if (isSmart())
-                queryRowManager().removeRowBuffer(lkJoinCh0);
+                rightRowManager->removeRowBuffer(lkJoinCh0);
             if (lkJoinCh0->hasFailedOverToLocal())
                 setFailoverToLocal(true);
             rhsCollated = lkJoinCh0->isRhsCollated();
-
         }
+        ActPrintLog("Channel memory manager report");
+        queryRowManager().reportMemoryUsage(false);
+        ActPrintLog("End of channel memory manager report");
         return !hasFailedOverToLocal();
     }
     /*
@@ -2020,6 +2076,7 @@ protected:
             IChannelDistributor **channelDistributors;
             unsigned nextSpillChannel;
             CriticalSection crit;
+            atomic_t spilt;
         public:
             CChannelDistributor(CLookupJoinActivityBase &_owner, ICompare *cmp) : owner(_owner)
             {
@@ -2028,6 +2085,7 @@ protected:
                 channelDistributors = ((CLookupJoinActivityBase *)owner.channels[0])->channelDistributors;
                 channelDistributors[owner.queryJobChannelNumber()] = this;
                 nextSpillChannel = 0;
+                atomic_set(&spilt, 0);
                 //NB: all channels will have done this, before rows are added
             }
             void process(IRowStream *right)
@@ -2052,7 +2110,7 @@ protected:
                     OwnedConstThorRow row = right->nextRow();
                     if (!row)
                         break;
-                    channelCollectorWriter->putRow(row.getClear());
+                    putRow(row.getClear());
                 }
             }
             IRowStream *getStream(CThorExpandingRowArray *rhs=NULL)
@@ -2067,7 +2125,7 @@ protected:
                 unsigned startSpillChannel = nextSpillChannel;
                 loop
                 {
-                    bool res = channelDistributors[nextSpillChannel]->spill();
+                    bool res = channelDistributors[nextSpillChannel]->spill(critical);
                     ++nextSpillChannel;
                     if (nextSpillChannel == owner.queryJob().queryJobChannels())
                         nextSpillChannel = 0;
@@ -2089,11 +2147,18 @@ protected:
         // IChannelDistributor impl.
             virtual void putRow(const void *row)
             {
+                if (atomic_cas(&spilt, 0, 1))
+                {
+                    StringBuffer traceInfo;
+                    if (channelCollector->shrink(&traceInfo)) // grab back some valuable table array space
+                        owner.ActPrintLog("CChannelDistributor %s", traceInfo.str());
+                }
                 channelCollectorWriter->putRow(row);
             }
-            virtual bool spill()
+            virtual bool spill(bool critical) // called from OOM callback
             {
-                return channelCollector->spill();
+                atomic_set(&spilt, 1);
+                return channelCollector->spill(critical);
             }
             virtual roxiemem::IBufferedRowCallback *queryCallback() { return this; }
         } channelDistributor(*this, cmp);
@@ -2122,7 +2187,7 @@ protected:
             InterChannelBarrier(); // wait for channel[0] to process in mem rows 1st
 
             if (getOptBool(THOROPT_LKJOIN_HASHJOINFAILOVER)) // for testing only (force to disk, as if spilt)
-                channelDistributor.spill();
+                channelDistributor.spill(false);
 
             Owned<IRowStream> distChannelStream;
             if (!rhsCollated) // there may be some more undistributed rows
@@ -2457,7 +2522,7 @@ public:
             if (isGlobal())
             {
                 for (unsigned s=0; s<container.queryJob().querySlaves(); s++)
-                    rhsSlaveRows.item(s)->setup(queryRowInterfaces(rightITDL), false, stableSort_none, false);
+                    rhsSlaveRows.item(s)->setup(sharedRightRowInterfaces, false, stableSort_none, false);
                 setFailoverToLocal(false);
                 rhsCollated = rhsCompacted = false;
             }
@@ -2468,7 +2533,6 @@ public:
             bool inputGrouped = leftITDL->isGrouped();
             dbgassertex(inputGrouped == grouped); // std. lookup join expects these to match
         }
-
     }
     CATCH_NEXTROW()
     {
@@ -2643,13 +2707,13 @@ public:
     {
         reset();
     }
-    void setup(CSlaveActivity *activity, rowidx_t size, IHash *_leftHash, IHash *_rightHash, ICompare *_compareLeftRight)
+    void setup(CSlaveActivity *activity, roxiemem::IRowManager *rowManager, rowidx_t size, IHash *_leftHash, IHash *_rightHash, ICompare *_compareLeftRight)
     {
         unsigned __int64 _sz = sizeof(const void *) * ((unsigned __int64)size);
         memsize_t sz = (memsize_t)_sz;
         if (sz != _sz) // treat as OOM exception for handling purposes.
             throw MakeStringException(ROXIEMM_MEMORY_LIMIT_EXCEEDED, "Unsigned overflow, trying to allocate hash table of size: %" I64F "d ", _sz);
-        void *ht = activity->queryRowManager().allocate(sz, activity->queryContainer().queryId(), SPILL_PRIORITY_LOW);
+        void *ht = rowManager->allocate(sz, activity->queryContainer().queryId(), SPILL_PRIORITY_LOW);
         memset(ht, 0, sz);
         htMemory.setown(ht);
         tableSize = size;
@@ -2700,10 +2764,10 @@ public:
     {
         releaseHTRows();
     }
-    void setup(CLookupJoinActivityBase<CLookupHT> *_activity, rowidx_t size, IHash *leftHash, IHash *rightHash, ICompare *compareLeftRight)
+    void setup(CLookupJoinActivityBase<CLookupHT> *_activity, roxiemem::IRowManager *rowManager, rowidx_t size, IHash *leftHash, IHash *rightHash, ICompare *compareLeftRight)
     {
         activity = _activity;
-        CHTBase::setup(activity, size, leftHash, rightHash, compareLeftRight);
+        CHTBase::setup(activity, rowManager, size, leftHash, rightHash, compareLeftRight);
         ht = (const void **)htMemory.get();
     }
     void reset()
@@ -2795,10 +2859,10 @@ public:
     {
         reset();
     }
-    void setup(CLookupJoinActivityBase<CLookupManyHT> *_activity, rowidx_t size, IHash *leftHash, IHash *rightHash, ICompare *compareLeftRight)
+    void setup(CLookupJoinActivityBase<CLookupManyHT> *_activity, roxiemem::IRowManager *rowManager, rowidx_t size, IHash *leftHash, IHash *rightHash, ICompare *compareLeftRight)
     {
         activity = _activity;
-        CHTBase::setup(activity, size, leftHash, rightHash, compareLeftRight);
+        CHTBase::setup(activity, rowManager, size, leftHash, rightHash, compareLeftRight);
         ht = (HtEntry *)htMemory.get();
     }
     inline void addEntry(const void *row, unsigned hash, rowidx_t index, rowidx_t count)

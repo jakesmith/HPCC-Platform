@@ -1124,10 +1124,10 @@ public:
                 throw recvException.getClear();
         }
         rowIf.clear();
-        allocator = NULL;;
-        meta = NULL;;
-        serializer = NULL;;
-        deserializer = NULL;;
+        allocator = NULL;
+        meta = NULL;
+        serializer = NULL;
+        deserializer = NULL;
         fixedEstSize = 0;
         input.clear();
         piperd.clear();
