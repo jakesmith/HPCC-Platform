@@ -726,6 +726,18 @@ public:
 };
 
 
+class CThorRowArrayWithFlushMarker : public CThorSpillableRowArray
+{
+public:
+    CThorRowArrayWithFlushMarker(CActivityBase &activity, IRowInterfaces *rowIf, bool allowNulls=false, StableSortFlag stableSort=stableSort_none, rowidx_t initialSize=InitialSortElements, size32_t commitDelta=CommitStep)
+        : CThorSpillableRowArray(activity, rowIf, allowNulls, stableSort, initialSize, commitDelta)
+    {
+        flushMarker = 0;
+    }
+    rowidx_t flushMarker;
+};
+
+
 struct HtEntry { rowidx_t index, count; };
 
 /* 
@@ -875,7 +887,7 @@ protected:
     const void *rhsNext;
     CThorExpandingRowArray rhs;
     Owned<IOutputMetaData> outputMeta;
-    PointerArrayOf<CThorSpillableRowArray> rhsSlaveRows;
+    PointerArrayOf<CThorRowArrayWithFlushMarker> rhsSlaveRows;
 
     rowidx_t nextRhsRow;
     unsigned keepLimit;
@@ -1020,6 +1032,7 @@ protected:
                     if (!row)
                         break;
 
+                    // Add all locally read right rows to channel0 directly
                     if (0 == queryJobChannelNumber())
                     {
                         if (!addRHSRow(localRhsRows, row)) // may cause broadcaster to be told to stop (for isStopping() to become true)
@@ -1286,7 +1299,7 @@ public:
             unsigned slaves = container.queryJob().querySlaves();
             rhsSlaveRows.ensure(slaves);
             for (unsigned s=0; s<container.queryJob().querySlaves(); s++)
-                rhsSlaveRows.append(new CThorSpillableRowArray(*this, NULL));
+                rhsSlaveRows.append(new CThorRowArrayWithFlushMarker(*this, NULL));
             channels.allocateN(queryJob().queryJobChannels());
             broadcaster.setown(new CBroadcaster(*this));
             if (0 == queryJobChannelNumber())
@@ -1583,7 +1596,6 @@ protected:
     bool compressSpills;
     Owned<IHashDistributor> lhsDistributor, rhsDistributor;
     ICompare *compareLeft;
-    UnsignedArray flushedRowMarkers;
     atomic_t failedOverToLocal, failedOverToStandard;
     CriticalSection broadcastSpillingLock;
     Owned<IJoinHelper> joinHelper;
@@ -1601,12 +1613,12 @@ protected:
     inline bool hasFailedOverToLocal() const { return 0 != atomic_read(&failedOverToLocal); }
     inline bool hasFailedOverToStandard() const { return 0 != atomic_read(&failedOverToStandard); }
     inline bool isRhsCollated() const { return rhsCollated; }
-    rowidx_t clearNonLocalRows(CThorSpillableRowArray &rows, rowidx_t startPos)
+    rowidx_t clearNonLocalRows(CThorRowArrayWithFlushMarker &rows)
     {
         CThorArrayLockBlock block(rows);
         rowidx_t clearedRows = 0;
         rowidx_t numRows = rows.numCommitted();
-        for (rowidx_t r=startPos; r<numRows; r++)
+        for (rowidx_t r=rows.flushMarker; r<numRows; r++)
         {
             unsigned hv = rightHash->hash(rows.query(r));
             if (myNodeNum != (hv % numNodes))
@@ -1615,14 +1627,15 @@ protected:
                 ++clearedRows;
             }
         }
+        rows.flushMarker = numRows;
         return clearedRows;
     }
     // Annoyingly similar to above, used post broadcast when rhsSlaveRows collated into 'rhs'
-    rowidx_t clearNonLocalRows(CThorExpandingRowArray &rows, rowidx_t startPos)
+    rowidx_t clearNonLocalRows(CThorExpandingRowArray &rows)
     {
         rowidx_t clearedRows = 0;
         rowidx_t numRows = rows.ordinality();
-        for (rowidx_t r=startPos; r<numRows; r++)
+        for (rowidx_t r=0; r<numRows; r++)
         {
             unsigned hv = rightHash->hash(rows.query(r));
             if (myNodeNum != (hv % numNodes))
@@ -1643,13 +1656,13 @@ protected:
         setFailoverToLocal(true);
         ActPrintLog("Clearing non-local rows - cause: %s", msg);
 
-        channel0Broadcaster->stop(mySlaveNum, bcastflag_spilt); // signals to broadcast to start stopping immediately and to signal spilt to others
+        broadcaster->stop(mySlaveNum, bcastflag_spilt); // signals to broadcast to start stopping immediately and to signal spilt to others
 
         rowidx_t clearedRows = 0;
         if (rhsCollated)
         {
             // This only needs to be done once, no rows will be added after collated
-            clearedRows += clearNonLocalRows(rhs, 0);
+            clearedRows += clearNonLocalRows(rhs);
             rhs.compact();
             rhsCompacted = true;
         }
@@ -1660,12 +1673,11 @@ protected:
              */
             ForEachItemIn(a, rhsSlaveRows)
             {
-                CThorSpillableRowArray &rows = *rhsSlaveRows.item(a);
+                CThorRowArrayWithFlushMarker &rows = *rhsSlaveRows.item(a);
                 /* Record point to which clearNonLocalRows will reach
                  * so that can resume from that point, when done adding/flushing
                  */
-                flushedRowMarkers.append(rows.numCommitted());
-                clearedRows += clearNonLocalRows(rows, 0);
+                clearedRows += clearNonLocalRows(rows);
             }
         }
         ActPrintLog("handleLowMem: clearedRows = %" RIPF "d", clearedRows);
@@ -1721,7 +1733,12 @@ protected:
             {
                 CThorSpillableRowArray spillableRHS(*this, queryRowInterfaces(rightITDL));
                 spillableRHS.transferFrom(rhs);
-                return spillableRHS.createRowStream(SPILL_PRIORITY_SPILLABLE_STREAM, compressSpills);
+                /* Set priority higher than std. lookup, because we do not want this
+                 * to spill ahead of the channel distributor channels this is feeding.
+                 * They spill indicating failover to standard join, we don't want this spilling
+                 * feeding another spilling container if we can a
+                 */
+                return spillableRHS.createRowStream(SPILL_PRIORITY_LOOKUPJOIN+10, compressSpills);
             }
         }
         else
@@ -1734,8 +1751,8 @@ protected:
             rhsSlaveRows.sort(sortBySize); // because want biggest compacted/consumed 1st
             ForEachItemIn(a, rhsSlaveRows)
             {
-                CThorSpillableRowArray &rows = *rhsSlaveRows.item(a);
-                clearNonLocalRows(rows, flushedRowMarkers.item(a));
+                CThorRowArrayWithFlushMarker &rows = *rhsSlaveRows.item(a);
+                clearNonLocalRows(rows);
 
                 ActPrintLog("Compacting rhsSlaveRows[%d], has %" RIPF "d rows", a, rows.numCommitted());
                 rows.compact();
@@ -1939,28 +1956,20 @@ protected:
      */
     IRowStream *handleFailoverToLocalRHS(CThorExpandingRowArray &rhs, ICompare *cmp)
     {
-        if (0 == queryJobChannelNumber())
-        {
-            /* Allocate 'channelWriterArray' on channel 0, used by all channels to write channel partitioned
-             * local rows to, in handleFailoverToLocalRHS()
-             */
-            channelWriterArray.allocateN(queryJob().queryJobChannels(), true);
-        }
-        InterChannelBarrier(); // wait for channel 0 to have initialized channelWriterArray
-
-        class CChannelDistributor
+        class CChannelDistributor : public CSimpleInterfaceOf<IRowWriter>
         {
             CLookupJoinActivityBase &owner;
             Owned<IThorRowCollector> channelCollector;
             Owned<IRowWriter> channelCollectorWriter;
             IRowWriter **writers;
         public:
-            CChannelDistributor(CLookupJoinActivityBase &_owner, ICompare *cmp, IRowWriter **_writers) : owner(_owner), writers(_writers)
+            CChannelDistributor(CLookupJoinActivityBase &_owner, ICompare *cmp) : owner(_owner)
             {
                 channelCollector.setown(createThorRowCollector(owner, queryRowInterfaces(owner.rightITDL), cmp, stableSort_none, rc_mixed, SPILL_PRIORITY_LOOKUPJOIN));
                 channelCollectorWriter.setown(channelCollector->getWriter());
-                unsigned ch = owner.queryJobChannelNumber();
-                writers[ch] = channelCollectorWriter;
+                writers = ((CLookupJoinActivityBase *)owner.channels[0])->channelWriterArray;
+                writers[owner.queryJobChannelNumber()] = this;
+                //NB: all channels will have done this, before rows are added
             }
             void spill()
             {
@@ -1992,15 +2001,23 @@ protected:
                     channelCollectorWriter->putRow(row.getClear());
                 }
             }
-            void flush()
-            {
-                channelCollectorWriter->flush();
-            }
             IRowStream *getStream(CThorExpandingRowArray *rhs=NULL)
             {
                 return channelCollector->getStream(false, rhs);
             }
-        } channelDistributor(*this, cmp, ((CLookupJoinActivityBase *)channels[0])->channelWriterArray);
+        // IRowWriter impl.
+            virtual void putRow(const void *row)
+            {
+                channelCollectorWriter->putRow(row);
+            }
+            virtual void flush()
+            {
+                channelCollectorWriter->flush();
+            }
+        } channelDistributor(*this, cmp);
+
+        // Wait for channelDistributor on all channels to have initialized channelWriterArray on channel 0, before beginning process()
+        InterChannelBarrier();
 
         // NB: clearAllNonLocalRows (called on channel 0) will have already cleared all rows that are not local to this *node*
 
@@ -2318,8 +2335,10 @@ public:
     {
         PARENT::init(data, slaveData);
 
-        if (!container.queryLocal())
+        if (isGlobal())
         {
+            if (0 == queryJobChannelNumber())
+                channelWriterArray.allocateN(queryJob().queryJobChannels(), true);
             broadcast2MpTag = queryJobChannel().deserializeMPTag(data);
             broadcast3MpTag = queryJobChannel().deserializeMPTag(data);
             lhsDistributeTag = queryJobChannel().deserializeMPTag(data);
@@ -2339,7 +2358,6 @@ public:
                 for (unsigned s=0; s<container.queryJob().querySlaves(); s++)
                     rhsSlaveRows.item(s)->setup(queryRowInterfaces(rightITDL), false, stableSort_none, false);
                 setFailoverToLocal(false);
-                flushedRowMarkers.kill();
                 rhsCollated = rhsCompacted = false;
             }
             setFailoverToStandard(false);
