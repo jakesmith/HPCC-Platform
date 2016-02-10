@@ -1688,7 +1688,7 @@ private:
 #endif
         if ((header->allocatorId & ~ACTIVITY_MASK) != ACTIVITY_MAGIC)
         {
-            DBGLOG("%s: Invalid pointer %p %x", reason, ptr, *(unsigned *) baseptr);
+            DBGLOG("%s: Invalid pointer(base=%p) %p %x", reason, baseptr, ptr, *(unsigned *) baseptr);
             PrintStackReport();
             PrintMemoryReport();
             HEAPERROR("Invalid pointer");
@@ -4228,7 +4228,17 @@ protected:
             const void * row = rows[i];
             if (row)
             {
-                const void * packed = HeapletBase::compactRow(row, state);
+                const void * packed;
+                try
+                {
+                    packed = HeapletBase::compactRow(row, state);
+                }
+                catch (IException *e)
+                {
+                    VStringBuffer s("compartRows error @ pos = %u", (unsigned)i);
+                    EXCLOG(e, s.str());
+                    throw;
+                }
                 rows[i] = packed;  // better to always assign
             }
         }

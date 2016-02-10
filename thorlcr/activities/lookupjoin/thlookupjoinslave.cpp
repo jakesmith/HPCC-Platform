@@ -27,9 +27,11 @@
 #include "../hashdistrib/thhashdistribslave.ipp"
 #include "thsortu.hpp"
 
+#define _TRACECHANNELBARRIERS
 #ifdef _DEBUG
 #define _TRACEBROADCAST
 #endif
+
 
 
 enum join_t { JT_Undefined, JT_Inner, JT_LeftOuter, JT_RightOuter, JT_LeftOnly, JT_RightOnly, JT_LeftOnlyTransform };
@@ -693,7 +695,7 @@ public:
     }
 };
 
-#ifdef _TRACEBROADCAST
+#ifdef _TRACECHANNELBARRIERS
 #define InterChannelBarrier() interChannelBarrier(__LINE__)
 #else
 #define InterChannelBarrier() interChannelBarrier();
@@ -733,8 +735,10 @@ public:
         : CThorSpillableRowArray(activity, rowIf, allowNulls, stableSort, initialSize, commitDelta)
     {
         flushMarker = 0;
+        slaveNum = 0;
     }
     rowidx_t flushMarker;
+    unsigned slaveNum;
 };
 
 
@@ -888,6 +892,7 @@ protected:
     CThorExpandingRowArray rhs;
     Owned<IOutputMetaData> outputMeta;
     PointerArrayOf<CThorRowArrayWithFlushMarker> rhsSlaveRows;
+    PointerArrayOf<UnsignedArray> flushEventArr;
 
     rowidx_t nextRhsRow;
     unsigned keepLimit;
@@ -936,7 +941,7 @@ protected:
                 interChannelBarrierSem.wait();
         }
     }
-#ifdef _TRACEBROADCAST
+#ifdef _TRACECHANNELBARRIERS
     void interChannelBarrier(unsigned lineNo)
     {
         ActPrintLog("waiting on interChannelBarrier, lineNo = %d", lineNo);
@@ -1298,8 +1303,14 @@ public:
 
             unsigned slaves = container.queryJob().querySlaves();
             rhsSlaveRows.ensure(slaves);
+            flushEventArr.ensure(slaves);
             for (unsigned s=0; s<container.queryJob().querySlaves(); s++)
-                rhsSlaveRows.append(new CThorRowArrayWithFlushMarker(*this, NULL));
+            {
+                CThorRowArrayWithFlushMarker *rows = new CThorRowArrayWithFlushMarker(*this, NULL);
+                rows->slaveNum = s;
+                rhsSlaveRows.append(rows);
+                flushEventArr.append(new UnsignedArray);
+            }
             channels.allocateN(queryJob().queryJobChannels());
             broadcaster.setown(new CBroadcaster(*this));
             if (0 == queryJobChannelNumber())
@@ -1581,6 +1592,8 @@ protected:
     using PARENT::channel0Broadcaster;
     using PARENT::mySlaveNum;
     using PARENT::tableProxy;
+    using PARENT::flushEventArr;
+
 
     IHash *leftHash, *rightHash;
     ICompare *compareRight, *compareLeftRight;
@@ -1613,7 +1626,7 @@ protected:
     inline bool hasFailedOverToLocal() const { return 0 != atomic_read(&failedOverToLocal); }
     inline bool hasFailedOverToStandard() const { return 0 != atomic_read(&failedOverToStandard); }
     inline bool isRhsCollated() const { return rhsCollated; }
-    rowidx_t clearNonLocalRows(CThorRowArrayWithFlushMarker &rows)
+    rowidx_t clearNonLocalRows(CThorRowArrayWithFlushMarker &rows, UnsignedArray *arr = NULL)
     {
         CThorArrayLockBlock block(rows);
         rowidx_t clearedRows = 0;
@@ -1624,9 +1637,12 @@ protected:
             if (myNodeNum != (hv % numNodes))
             {
                 OwnedConstThorRow row = rows.getClear(r); // dispose of
+                if (arr)
+                    arr->append(r);
                 ++clearedRows;
             }
         }
+        ActPrintLog("clearNonLocalRows(CThorRowArrayWithFlushMarker &rows) started at %" RIPF "u, flushMarker now set to %" RIPF "u, clearRows = %" RIPF "u", rows.flushMarker, numRows, clearedRows);
         rows.flushMarker = numRows;
         return clearedRows;
     }
@@ -1644,6 +1660,7 @@ protected:
                 ++clearedRows;
             }
         }
+        ActPrintLog("clearNonLocalRows(CThorExpandingRowArray &rows) , numRows = %" RIPF "u", numRows);
         return clearedRows;
     }
     bool clearAllNonLocalRows(const char *msg)
@@ -1677,7 +1694,8 @@ protected:
                 /* Record point to which clearNonLocalRows will reach
                  * so that can resume from that point, when done adding/flushing
                  */
-                clearedRows += clearNonLocalRows(rows);
+                UnsignedArray *arr = flushEventArr.item(rows.slaveNum);
+                clearedRows += clearNonLocalRows(rows, arr);
             }
         }
         ActPrintLog("handleLowMem: clearedRows = %" RIPF "d", clearedRows);
@@ -1748,14 +1766,44 @@ protected:
              * and ignores all non-locals.
              */
 
+            ForEachItemIn(i1, rhsSlaveRows)
+            {
+                CThorRowArrayWithFlushMarker &rows = *rhsSlaveRows.item(i1);
+                ActPrintLog("rhsSlaveRows[%u] - flushMarker = %" RIPF "u", i1, rows.flushMarker);
+            }
             rhsSlaveRows.sort(sortBySize); // because want biggest compacted/consumed 1st
+            ForEachItemIn(i2, rhsSlaveRows)
+            {
+                CThorRowArrayWithFlushMarker &rows = *rhsSlaveRows.item(i2);
+                ActPrintLog("rhsSlaveRows[%u] - flushMarker = %" RIPF "u", i2, rows.flushMarker);
+            }
             ForEachItemIn(a, rhsSlaveRows)
             {
+                UnsignedArray arr;
                 CThorRowArrayWithFlushMarker &rows = *rhsSlaveRows.item(a);
-                clearNonLocalRows(rows);
+                clearNonLocalRows(rows, &arr);
 
                 ActPrintLog("Compacting rhsSlaveRows[%d], has %" RIPF "d rows", a, rows.numCommitted());
-                rows.compact();
+                try
+                {
+                    rows.compact();
+                }
+                catch (IException *e)
+                {
+                    EXCLOG(e, "Exception during rows.compact()");
+                    ForEachItemIn(a1, arr)
+                    {
+                        unsigned x = arr.item(a1);
+                        PROGLOG("Freed item = %u", x);
+                    }
+                    PROGLOG("Spill event array items released:");
+                    UnsignedArray *spillEventArr = flushEventArr.item(rows.slaveNum);
+                    ForEachItemIn(a2, *spillEventArr)
+                    {
+                        PROGLOG("Freed item = %u", spillEventArr->item(a2));
+                    }
+                    throw;
+                }
             }
 
             IArrayOf<IRowStream> rightNodeStreams;

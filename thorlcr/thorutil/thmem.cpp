@@ -685,6 +685,7 @@ void CThorExpandingRowArray::compact()
         }
     }
     numRows = freeFinger-rows;
+    PROGLOG("calling compactRows (numRows=%" RIPF "d, rows=%p", numRows, rows);
     memsize_t numEmptiedPages = rowManager->compactRows(numRows, rows);
 
 #ifdef _DEBUG
