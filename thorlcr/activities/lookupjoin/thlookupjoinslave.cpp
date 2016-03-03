@@ -97,7 +97,8 @@ class CBroadcaster : public CSimpleInterface
     unsigned myNode, nodes, mySlave, slaves;
     IBCastReceive *recvInterface;
     InterruptableSemaphore allDoneSem;
-    CriticalSection allDoneLock, bcastOtherCrit, stopCrit;
+    CriticalSection allDoneLock, stopCrit;
+    CriticalSection *broadcastLock;
     bool allDone, allRequestStop, stopping, stopRecv;
     unsigned waitingAtAllDoneCount;
     broadcast_flags stopFlag;
@@ -269,12 +270,13 @@ class CBroadcaster : public CSimpleInterface
     }
     void broadcastToOthers(CSendItem *sendItem)
     {
+        dbgassertex(broadcastLock);
         mptag_t rt = ::createReplyTag();
         unsigned origin = sendItem->queryNode();
         unsigned pseudoNode = (myNode<origin) ? nodes-origin+myNode : myNode-origin;
         CMessageBuffer replyMsg;
         // sends to all in 1st pass, then waits for ack from all
-        CriticalBlock b(bcastOtherCrit);
+        CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
         for (unsigned sendRecv=0; sendRecv<2 && !activity.queryAbortSoon(); sendRecv++)
         {
             unsigned i = 0;
@@ -388,6 +390,7 @@ public:
         mpTag = TAG_NULL;
         recvInterface = NULL;
         stopFlag = bcastflag_null;
+        broadcastLock = NULL;
     }
     void start(IBCastReceive *_recvInterface, mptag_t _mpTag, bool _stopping)
     {
@@ -414,6 +417,10 @@ public:
         if (stopping && (bcast_send==code))
             code = bcast_sendStopping;
         return new CSendItem(code, myNode, mySlave);
+    }
+    void setBroadcastLock(CriticalSection *_broadcastLock)
+    {
+        broadcastLock = _broadcastLock;
     }
     void resetSendItem(CSendItem *sendItem)
     {
@@ -865,6 +872,7 @@ protected:
 
     Owned<CBroadcaster> broadcaster;
     CBroadcaster *channel0Broadcaster;
+    CriticalSection *broadcastLock;
     rowidx_t rhsTableLen;
     Owned<HTHELPER> table; // NB: only channel 0 uses table, unless failing over to local lookup join
     Linked<HTHELPER> tableProxy; // Channels >1 will reference channel 0 table unless failed over
@@ -1288,6 +1296,7 @@ public:
         else
             rightThorAllocator = &queryJobChannel().queryThorAllocator();
         rightRowManager = &rightThorAllocator->queryRowManager();
+        broadcastLock = NULL;
     }
     ~CInMemJoinBase()
     {
@@ -1300,6 +1309,8 @@ public:
                 if (rows)
                     delete rows;
             }
+            if (broadcastLock)
+                delete broadcastLock;
         }
     }
     HTHELPER *queryTable() { return table; }
@@ -1323,7 +1334,10 @@ public:
             channels.allocateN(queryJob().queryJobChannels());
             broadcaster.setown(new CBroadcaster(*this));
             if (0 == queryJobChannelNumber())
+            {
                 rowProcessor = new CRowProcessor(*this);
+                broadcastLock = new CriticalSection;
+            }
         }
     }
     virtual void start()
@@ -1384,7 +1398,14 @@ public:
                 }
             }
             channel0Broadcaster = channels[0]->broadcaster;
-
+            if (0 == queryJobChannelNumber())
+            {
+                for (unsigned c=0; c<queryJob().queryJobChannels(); c++)
+                {
+                    CInMemJoinBase &channel = (CInMemJoinBase &)queryChannelActivity(c);
+                    channel.broadcaster->setBroadcastLock(broadcastLock);
+                }
+            }
             // NB: use sharedRightRowInterfaces, so that expanding ptr array is using shared allocator
             for (unsigned s=0; s<container.queryJob().querySlaves(); s++)
                 rhsSlaveRows.item(s)->setup(sharedRightRowInterfaces, false, stableSort_none, true);
@@ -2370,13 +2391,14 @@ protected:
             }
             if (rightStream)
             {
-                ActPrintLog("Performing standard join");
+                ActPrintLog("Performing STANDARD JOIN: %" RIPF "u elements", rhsTableLen);
                 setupStandardJoin(rightStream); // NB: rightStream is sorted
             }
             else
             {
                 if (isLocal() || hasFailedOverToLocal())
                 {
+                    ActPrintLog("Performing LOCAL LOOKUP JOIN: %" RIPF "u elements", rhsTableLen);
                     table->addRows(rhs, marker);
                     tableProxy.set(table);
                 }
@@ -2384,6 +2406,7 @@ protected:
                 {
                     if (0 == queryJobChannelNumber()) // only ch0 has table, ch>0 will share ch0's table.
                     {
+                        ActPrintLog("Performing GLOBAL LOOKUP JOIN: %" RIPF "u elements", rhsTableLen);
                         table->addRows(rhs, marker);
                         tableProxy.set(table);
                         InterChannelBarrier();
@@ -2395,7 +2418,6 @@ protected:
                         rhsTableLen = tableProxy->queryTableSize();
                     }
                 }
-                ActPrintLog("rhs table: %d elements", rhsTableLen);
             }
         }
         catch (IException *e)
