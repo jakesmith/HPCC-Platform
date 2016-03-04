@@ -91,7 +91,6 @@ interface IBCastReceive
  */
 class CBroadcaster : public CSimpleInterface
 {
-protected:
     ICommunicator &comm;
     CActivityBase &activity;
     mptag_t mpTag;
@@ -231,9 +230,8 @@ protected:
     } sender;
 
     // NB: returns true if all done. Sets allDoneExceptSelf if all except this sender are done
-    bool senderStop(CSendItem &sendItem, bool *allDoneExceptSelf=NULL)
+    bool senderStop(unsigned sender, bool *allDoneExceptSelf=NULL)
     {
-        unsigned sender = nodeBroadcast?sendItem.queryNode():sendItem.querySlave();
         bool done = sendersDone->testSet(sender, true);
         assertex(false == done);
         unsigned which = sendersDone->scan(0, false);
@@ -258,6 +256,11 @@ protected:
             }
         }
         return false;
+    }
+    bool senderStop(CSendItem &sendItem, bool *allDoneExceptSelf=NULL)
+    {
+        unsigned sender = nodeBroadcast?sendItem.queryNode():sendItem.querySlave();
+        return senderStop(sender, allDoneExceptSelf);
     }
     unsigned target(unsigned i, unsigned node)
     {
@@ -372,10 +375,10 @@ protected:
                 {
                     CriticalBlock b(allDoneLock);
                     ActPrintLog(&activity, "recvLoop - received bcast_stop, from : %u", sendItem->querySlave());
-                    bool allDoneExceptSelf; // senderStop() will flag if my slave is only one not done.
+                    bool allDoneExceptSelf; // senderStop() will flag if my sender is only one not done.
                     if (senderStop(*sendItem, &allDoneExceptSelf) || allDoneExceptSelf)
                     {
-                        ActPrintLog(&activity, "recvLoop, received last senderStop, slave=%u", sendItem->querySlave());
+                        ActPrintLog(&activity, "recvLoop, received last senderStop, node=%u, slave=%u", sendItem->queryNode(), sendItem->querySlave());
                         recvInterface->bCastReceive(sendItem.getClear());
                         // NB: this slave has nothing more to receive.
                         // However the sender will still be re-broadcasting some packets, including these stop packets
@@ -471,11 +474,11 @@ public:
     {
         sendItem->reset();
     }
-    void waitReceiverDone(unsigned slave)
+    void waitReceiverDone(unsigned sender)
     {
         {
             CriticalBlock b(allDoneLock);
-            if (senderStop(slave))
+            if (senderStop(sender))
             {
                 receiver.abort(false);
                 recvInterface->bCastReceive(NULL);
@@ -487,7 +490,7 @@ public:
     }
     void waitReceiverDone()
     {
-        waitReceiverDone(mySlave);
+        waitReceiverDone(mySender);
     }
     void end()
     {
@@ -533,44 +536,6 @@ public:
         CriticalBlock b(stopCrit); // multiple channels could call
         _setStopping(node);
         stopFlag = flag;
-    }
-};
-
-class CSlaveBroadcaster : public CBroadcaster
-{
-    unsigned myNode, nodes, mySlave, slaves, senders, mySender;
-    CriticalSection *broadcastLock;
-public:
-    CSlaveBroadcaster(CActivityBase &activity) : CBroadcaster(activity)
-    {
-        mySender = mySlave;
-        senders = slaves;
-    }
-    void start(IBCastReceive *recvInterface, mptag_t mpTag, bool stopping)
-    {
-        CBroadcast::start(recvInterface, mpTag, stopping);
-    }
-    void setBroadcastLock(CriticalSection *_broadcastLock)
-    {
-        broadcastLock = _broadcastLock;
-    }
-    void waitReceiverDone(unsigned slave)
-    {
-        {
-            CriticalBlock b(allDoneLock);
-            if (senderStop(slave))
-            {
-                receiver.abort(false);
-                recvInterface->bCastReceive(NULL);
-                return;
-            }
-            waitingAtAllDoneCount++;
-        }
-        allDoneSem.wait();
-    }
-    void waitReceiverDone()
-    {
-        waitReceiverDone(mySlave);
     }
 };
 
@@ -1589,12 +1554,12 @@ public:
         }
         else
         {
-            broadcaster->start(NULL, mpTag, stopping); // pass NULL for IBCastReceive, since only channel 0 receives
+            broadcaster->start(NULL, mpTag, stopping, false); // pass NULL for IBCastReceive, since only channel 0 receives
             broadcastRHS();
             channel0Broadcaster->waitReceiverDone(mySlaveNum);
         }
     }
-    void doBroadcastStop(mptag_t tag, broadcast_flags flag) // onl called on channel 0
+    void doBroadcastStop(mptag_t tag, broadcast_flags flag) // only called on channel 0
     {
         broadcaster->reset();
         broadcaster->start(this, tag, false, true); // nodes broadcasting
