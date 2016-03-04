@@ -3136,6 +3136,9 @@ bool CActivityBase::receiveMsg(ICommunicator &comm, CMessageBuffer &mb, const ra
     {
         if (comm.recv(mb, rank, mpTag, sender, remaining>10000?10000:remaining))
             return true;
+        ActPrintLog("receiveMsg timeout: rank=%u, mpTag=%u", (unsigned)rank, (unsigned)mpTag);
+        int x = 0;
+        ++x;
     }
     return false;
 }
@@ -3148,6 +3151,7 @@ bool CActivityBase::receiveMsg(CMessageBuffer &mb, const rank_t rank, const mpta
 void CActivityBase::cancelReceiveMsg(ICommunicator &comm, const rank_t rank, const mptag_t mpTag)
 {
     cancelledReceive = true;
+    ActPrintLog("cancelReceiveMsg(receiving=%s): rank=%u, mpTag=%u", receiving?"true":"false", (unsigned)rank, (unsigned)mpTag);
     if (receiving)
         comm.cancel(rank, mpTag);
 }

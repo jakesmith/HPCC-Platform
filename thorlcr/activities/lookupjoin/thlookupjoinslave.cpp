@@ -99,7 +99,7 @@ class CBroadcaster : public CSimpleInterface
     InterruptableSemaphore allDoneSem;
     CriticalSection allDoneLock, stopCrit;
     CriticalSection *broadcastLock;
-    bool allDone, allRequestStop, stopping, stopRecv;
+    bool allRequestStop, stopping, stopRecv, receiving;
     unsigned waitingAtAllDoneCount;
     broadcast_flags stopFlag;
     Owned<IBitSet> slavesDone, broadcastersStopping;
@@ -229,28 +229,31 @@ class CBroadcaster : public CSimpleInterface
         }
     } sender;
 
-    // NB: returns true if all except me(myNode) are done
-    bool slaveStop(unsigned slave)
+    // NB: returns true if all done. Sets allDoneExceptSelf if all except me(mySlave) are done
+    bool slaveStop(unsigned slave, bool *allDoneExceptSelf=NULL)
     {
-        CriticalBlock b(allDoneLock);
         bool done = slavesDone->testSet(slave, true);
         assertex(false == done);
         unsigned which = slavesDone->scan(0, false);
+        if (allDoneExceptSelf)
+            *allDoneExceptSelf = false;
         if (which == slaves) // i.e. got all
         {
-            allDone = true;
+            activity.ActPrintLog("CBroadcaster::slaveStop() all done - waitingAtAllDoneCount=%u", waitingAtAllDoneCount);
             if (waitingAtAllDoneCount)
             {
                 allDoneSem.signal(waitingAtAllDoneCount);
                 waitingAtAllDoneCount = 0;
             }
-            receiver.abort(false);
-            recvInterface->bCastReceive(NULL);
+            return true;
         }
-        else if (which == mySlave)
+        else if (allDoneExceptSelf && (which == mySlave))
         {
             if (slavesDone->scan(which+1, false) == slaves)
-                return true; // all done except me
+            {
+                activity.ActPrintLog("CBroadcaster::slaveStop() set allDoneExceptSelf = true");
+                *allDoneExceptSelf = true;
+            }
         }
         return false;
     }
@@ -313,20 +316,42 @@ class CBroadcaster : public CSimpleInterface
             }
         }
     }
-    // called by CRecv thread
     void cancelReceive()
     {
         stopRecv = true;
-        activity.cancelReceiveMsg(comm, RANK_ALL, mpTag);
+        if (receiving)
+        {
+            ActPrintLog(&activity, "cancelReceive(receiving=%s): mpTag=%u", receiving?"true":"false", (unsigned)mpTag);
+            if (receiving)
+                comm.cancel(RANK_ALL, mpTag);
+        }
+    }
+    bool receiveMsg(CMessageBuffer &mb, rank_t *sender)
+    {
+        BooleanOnOff onOff(receiving);
+        // check 'cancelledReceive' every 10 secs
+        while (!stopRecv)
+        {
+            if (comm.recv(mb, RANK_ALL, mpTag, sender, 10000))
+                return true;
+            ActPrintLog(&activity, "receiveMsg() mpTag=%u", (unsigned)mpTag);
+            int x = 0;
+            ++x;
+        }
+        return false;
     }
     void recvLoop()
     {
+        ActPrintLog(&activity, "Start of recvLoop()");
         CMessageBuffer msg;
         while (!stopRecv && !activity.queryAbortSoon())
         {
             rank_t sendRank;
-            if (!activity.receiveMsg(comm, msg, RANK_ALL, mpTag, &sendRank))
+            if (!receiveMsg(msg, &sendRank))
+            {
+                ActPrintLog(&activity, "recvLoop() - receiveMsg cancelled");
                 break;
+            }
             mptag_t replyTag = msg.getReplyTag();
             CMessageBuffer ackMsg;
             Owned<CSendItem> sendItem = new CSendItem(msg);
@@ -344,10 +369,12 @@ class CBroadcaster : public CSimpleInterface
                 case bcast_stop:
                 {
                     CriticalBlock b(allDoneLock);
-                    if (slaveStop(sendItem->querySlave()) || allDone)
+                    ActPrintLog(&activity, "recvLoop - received bcast_stop, from : %u", sendItem->querySlave());
+                    bool allDoneExceptSelf; // slaveStop() will flag if my slave is only one not done.
+                    if (slaveStop(sendItem->querySlave(), &allDoneExceptSelf) || allDoneExceptSelf)
                     {
+                        ActPrintLog(&activity, "recvLoop, received last slaveStop, slave=%u", sendItem->querySlave());
                         recvInterface->bCastReceive(sendItem.getClear());
-                        ActPrintLog(&activity, "recvLoop, received last slaveStop");
                         // NB: this slave has nothing more to receive.
                         // However the sender will still be re-broadcasting some packets, including these stop packets
                         return;
@@ -369,6 +396,7 @@ class CBroadcaster : public CSimpleInterface
                     throwUnexpected();
             }
         }
+        ActPrintLog(&activity, "End of recvLoop()");
     }
     inline void _setStopping(unsigned node)
     {
@@ -379,7 +407,7 @@ class CBroadcaster : public CSimpleInterface
 public:
     CBroadcaster(CActivityBase &_activity) : activity(_activity), receiver(*this), sender(*this), comm(_activity.queryJob().queryNodeComm())
     {
-        allDone = allRequestStop = stopping = stopRecv = false;
+        allRequestStop = stopping = stopRecv = false;
         waitingAtAllDoneCount = 0;
         myNode = activity.queryJob().queryMyNodeRank()-1; // 0 based
         mySlave = activity.queryJobChannel().queryMyRank()-1; // 0 based
@@ -391,6 +419,7 @@ public:
         recvInterface = NULL;
         stopFlag = bcastflag_null;
         broadcastLock = NULL;
+        receiving = false;
     }
     void start(IBCastReceive *_recvInterface, mptag_t _mpTag, bool _stopping)
     {
@@ -406,7 +435,7 @@ public:
     }
     void reset()
     {
-        allDone = allRequestStop = stopping = false;
+        allRequestStop = stopping = false;
         waitingAtAllDoneCount = 0;
         stopFlag = bcastflag_null;
         slavesDone->reset();
@@ -430,9 +459,12 @@ public:
     {
         {
             CriticalBlock b(allDoneLock);
-            slaveStop(slave);
-            if (allDone)
+            if (slaveStop(slave))
+            {
+                receiver.abort(false);
+                recvInterface->bCastReceive(NULL);
                 return;
+            }
             waitingAtAllDoneCount++;
         }
         allDoneSem.wait();
@@ -448,7 +480,6 @@ public:
     }
     void cancel(IException *e=NULL)
     {
-        allDone = true;
         receiver.abort(true);
         sender.abort(true);
         if (e)
@@ -2036,8 +2067,7 @@ protected:
 
                 rightRowManager->removeRowBuffer(this);
 
-                ActPrintLog("Broadcasting final split status");
-                broadcaster->reset();
+                ActPrintLog("Broadcasting final spilt status");
                 // NB: Will cause other slaves to flush non-local if any have and failedOverToLocal will be set on all
                 doBroadcastStop(broadcast2MpTag, hasFailedOverToLocal() ? bcastflag_spilt : bcastflag_null);
             }
