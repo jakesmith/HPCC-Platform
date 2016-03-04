@@ -2379,7 +2379,9 @@ protected:
                     ActPrintLog("Global getRHS stopped");
                     return;
                 }
-                if (!ok)
+                if (ok)
+                    ActPrintLog("RHS global rows fitted in memory in this channel, count: %" RIPF "d", rhs.ordinality());
+                else
                 {
                     ActPrintLog("Spilt whilst broadcasting, will attempt distributed local lookup join");
 
@@ -2422,32 +2424,36 @@ protected:
                     ActPrintLog("Local SMART JOIN spilt to disk. Failing over to regular local join");
                     setFailoverToStandard(true);
                 }
+                else
+                    ActPrintLog("RHS local rows fitted in memory in this channel, count: %" RIPF "d", rhs.ordinality());
             }
             if (!rightStream)
             {
                 // All RHS rows fitted in memory, rows were transferred out back into 'rhs' and sorted
 
-                ActPrintLog("RHS local rows fitted in memory in this channel, count: %" RIPF "d", rhs.ordinality());
-                if (hasFailedOverToLocal())
-                    marker.reset();
-                if (!prepareLocalHT(marker))
+                if (isLocal() || hasFailedOverToLocal())
                 {
-                    ActPrintLog("Out of memory trying to prepare [LOCAL] hashtable for a SMART join (%" RIPF "d rows), will now failover to a std hash join", rhs.ordinality());
-                    Owned<IThorRowCollector> collector = createThorRowCollector(*this, queryRowInterfaces(rightITDL), NULL, stableSort_none, rc_mixed, SPILL_PRIORITY_LOOKUPJOIN);
-                    collector->transferRowsIn(rhs); // can spill after this
-                    rightStream.setown(collector->getStream());
+                    if (hasFailedOverToLocal())
+                        marker.reset();
+                    if (!prepareLocalHT(marker))
+                    {
+                        ActPrintLog("Out of memory trying to prepare [LOCAL] hashtable for a SMART join (%" RIPF "d rows), will now failover to a std hash join", rhs.ordinality());
+                        Owned<IThorRowCollector> collector = createThorRowCollector(*this, queryRowInterfaces(rightITDL), NULL, stableSort_none, rc_mixed, SPILL_PRIORITY_LOOKUPJOIN);
+                        collector->transferRowsIn(rhs); // can spill after this
+                        rightStream.setown(collector->getStream());
+                    }
                 }
             }
             if (rightStream)
             {
-                ActPrintLog("Performing STANDARD JOIN: %" RIPF "u elements", rhsTableLen);
+                ActPrintLog("Performing STANDARD JOIN");
                 setupStandardJoin(rightStream); // NB: rightStream is sorted
             }
             else
             {
                 if (isLocal() || hasFailedOverToLocal())
                 {
-                    ActPrintLog("Performing LOCAL LOOKUP JOIN: %" RIPF "u elements", rhsTableLen);
+                    ActPrintLog("Performing LOCAL LOOKUP JOIN: rhs size=%u, lookup table size = %" RIPF "u", rhs.ordinality(), rhsTableLen);
                     table->addRows(rhs, marker);
                     tableProxy.set(table);
                 }
@@ -2455,7 +2461,7 @@ protected:
                 {
                     if (0 == queryJobChannelNumber()) // only ch0 has table, ch>0 will share ch0's table.
                     {
-                        ActPrintLog("Performing GLOBAL LOOKUP JOIN: %" RIPF "u elements", rhsTableLen);
+                        ActPrintLog("Performing GLOBAL LOOKUP JOIN: rhs size=%u, lookup table size = %" RIPF "u", rhs.ordinality(), rhsTableLen);
                         table->addRows(rhs, marker);
                         tableProxy.set(table);
                         InterChannelBarrier();
