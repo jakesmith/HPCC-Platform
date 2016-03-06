@@ -1301,7 +1301,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
     CInMemJoinBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this),
-        HELPERBASE((HELPER *)queryHelper()), rhs(*this, NULL)
+        HELPERBASE((HELPER *)queryHelper()), rhs(*this)
     {
         gotRHS = false;
         nextRhsRow = 0;
@@ -1380,7 +1380,7 @@ public:
             unsigned slaves = container.queryJob().querySlaves();
             rhsSlaveRows.ensure(slaves);
             for (unsigned s=0; s<container.queryJob().querySlaves(); s++)
-                rhsSlaveRows.append(new CThorRowArrayWithFlushMarker(*this, NULL));
+                rhsSlaveRows.append(new CThorRowArrayWithFlushMarker(*this, 0));
             channels.allocateN(queryJob().queryJobChannels());
             broadcaster.setown(new CBroadcaster(*this));
             if (0 == queryJobChannelNumber())
@@ -1408,34 +1408,9 @@ public:
 
         if (isGlobal())
         {
-            // wrapper IRowInterface impl. for rhs interfaces, that returns sharedAllocator
-            class CSharedRightRowInterfaces : public CSimpleInterfaceOf<IRowInterfaces>
-            {
-                IEngineRowAllocator *allocator;
-                IOutputRowSerializer *serializer;
-                IOutputRowDeserializer *deserializer;
-                IOutputMetaData *outputMeta;
-                unsigned actId;
-                ICodeContext *codeCtx;
-            public:
-                CSharedRightRowInterfaces(IRowInterfaces *rowIf, IEngineRowAllocator *sharedAllocator)
-                {
-                    allocator = sharedAllocator;
-                    serializer = rowIf->queryRowSerializer();
-                    deserializer = rowIf->queryRowDeserializer();
-                    outputMeta = rowIf->queryRowMetaData();
-                    actId = rowIf->queryActivityId();
-                    codeCtx = rowIf->queryCodeContext();
-                }
-            // IRowInterfaces impl.
-                virtual IEngineRowAllocator * queryRowAllocator() { return allocator; }
-                virtual IOutputRowSerializer * queryRowSerializer(){ return serializer; }
-                virtual IOutputRowDeserializer * queryRowDeserializer() { return deserializer; }
-                virtual IOutputMetaData *queryRowMetaData() { return outputMeta; }
-                virtual unsigned queryActivityId() const { return actId; }
-                virtual ICodeContext *queryCodeContext() { return codeCtx; }
-            };
-            sharedRightRowInterfaces.setown(new CSharedRightRowInterfaces(queryRowInterfaces(rightITDL), rightAllocator));
+            sharedRightRowInterfaces.setown(createThorRowInterfaces(rightRowManager, rightITDL, queryId(), queryShareMemCodeContext())
+
+            rhs.setup(sharedRightRowInterfaces);
 
             // It is not until here, that it is guaranteed all channel slave activities have been initialized.
             if (!channelActivitiesAssigned)
@@ -1458,7 +1433,10 @@ public:
             }
             // NB: use sharedRightRowInterfaces, so that expanding ptr array is using shared allocator
             for (unsigned s=0; s<container.queryJob().querySlaves(); s++)
+            {
                 rhsSlaveRows.item(s)->setup(sharedRightRowInterfaces, false, stableSort_none, true);
+                rhsSlaveRows.item(s)->setRowManager(rightRowManager);
+            }
         }
         allocator.set(queryRowAllocator());
         leftAllocator.set(::queryRowAllocator(leftITDL));
@@ -1962,7 +1940,7 @@ protected:
     {
         try
         {
-            if (!marker.init(rhs.ordinality(), rightRowManager))
+            if (!marker.init(rhs.ordinality(), &queryRowManager()))
                 return false;
         }
         catch (IException *e)
@@ -2612,7 +2590,10 @@ public:
             if (isGlobal())
             {
                 for (unsigned s=0; s<container.queryJob().querySlaves(); s++)
+                {
                     rhsSlaveRows.item(s)->setup(sharedRightRowInterfaces, false, stableSort_none, false);
+                    rhsSlaveRows.item(s)->setRowManager(rightRowManager);
+                }
                 setFailoverToLocal(false);
                 rhsCollated = rhsCompacted = false;
             }

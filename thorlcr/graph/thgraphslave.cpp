@@ -1076,6 +1076,20 @@ public:
     }
 };
 
+class CThorCodeContextSlaveSharedMem : public CThorCodeContextSlave
+{
+    IThorAllocator *sharedAllocator;
+public:
+    CThorCodeContextSlaveSharedMem(IThorAllocator *_sharedAllocator, CJobChannel &jobChannel, ILoadedDllEntry &querySo, IUserDescriptor &userDesc, mptag_t _mptag) : CThorCodeContextSlave(jobChannel, querySo, userDesc)
+    {
+        sharedAllocator = _sharedAllocator;
+    }
+    virtual IEngineRowAllocator * CThorCodeContextBase::getRowAllocator(IOutputMetaData * meta, unsigned activityId) const
+    {
+        return sharedAllocator->getRowAllocator(meta, activityId);
+    }
+};
+
 class CSlaveGraphTempHandler : public CGraphTempHandler
 {
 public:
@@ -1148,6 +1162,7 @@ CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, co
 #endif
     querySo.setown(createDllEntry(_querySo, false, NULL));
     tmpHandler.setown(createTempHandler(true));
+    sharedAllocator.setown(::createThorAllocator(globalMemoryMB, sharedMemoryMB, numChannels, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
 }
 
 void CJobSlave::addChannel(IMPServer *mpServer)
@@ -1224,19 +1239,15 @@ IThorAllocator *CJobSlave::getThorAllocator(unsigned channel)
     if (1 == numChannels)
         return CJobBase::getThorAllocator(channel);
     else
-    {
-        CriticalBlock b(sharedAllocatorCrit);
-        if (!sharedAllocator)
-            sharedAllocator.setown(::createThorAllocator(globalMemoryMB, sharedMemoryMB, numChannels, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
         return sharedAllocator->getSlaveAllocator(channel);
-    }
 }
 
 
 // IGraphCallback
 CJobSlaveChannel::CJobSlaveChannel(CJobBase &_job, IMPServer *mpServer, unsigned channel) : CJobChannel(_job, mpServer, channel)
 {
-    codeCtx = new CThorCodeContextSlave(*this, job.queryDllEntry(), *job.queryUserDescriptor(), job.querySlaveMpTag());
+    codeCtx.setown(new CThorCodeContextSlave(*this, job.queryDllEntry(), *job.queryUserDescriptor(), job.querySlaveMpTag()));
+    sharedMemCodeCtx.setown(new CThorCodeContextSlaveSharedMem(*this, job.querySharedAllocator(), job.queryDllEntry(), *job.queryUserDescriptor(), job.querySlaveMpTag()));
 }
 
 IBarrier *CJobSlaveChannel::createBarrier(mptag_t tag)

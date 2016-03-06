@@ -2711,9 +2711,6 @@ __int64 CJobBase::getOptInt64(const char *opt, __int64 dft)
 
 IThorAllocator *CJobBase::getThorAllocator(unsigned channel)
 {
-    CriticalBlock b(sharedAllocatorCrit);
-    if (!sharedAllocator)
-        sharedAllocator.setown(::createThorAllocator(globalMemoryMB, 0, 1, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
     return sharedAllocator.getLink();
 }
 
@@ -2723,7 +2720,6 @@ CJobChannel::CJobChannel(CJobBase &_job, IMPServer *_mpServer, unsigned _channel
     : job(_job), mpServer(_mpServer), channel(_channel)
 {
     aborted = false;
-    codeCtx = NULL;
     thorAllocator.setown(job.getThorAllocator(channel));
     timeReporter = createStdTimeReporter();
     jobComm.setown(mpServer->createCommunicator(&job.queryJobGroup()));
@@ -2738,7 +2734,7 @@ CJobChannel::~CJobChannel()
     thorAllocator.clear();
     wait();
     clean();
-    ::Release(codeCtx);
+    codeCtx.clear();
     timeReporter->Release();
 }
 
@@ -2756,6 +2752,11 @@ void CJobChannel::wait()
 ICodeContext &CJobChannel::queryCodeContext() const
 {
     return *codeCtx;
+}
+
+ICodeContext &CJobChannel::queryShareMemCodeContext() const
+{
+    return *sharedMemCodeCtx;
 }
 
 mptag_t CJobChannel::deserializeMPTag(MemoryBuffer &mb)

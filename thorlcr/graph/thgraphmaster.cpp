@@ -1259,6 +1259,21 @@ public:
     }
 };
 
+class CThorCodeContextMasterSharedMem : public CThorCodeContextMaster
+{
+    IThorAllocator *sharedAllocator;
+public:
+    CThorCodeContextMasterSharedMem(IThorAllocator *_sharedAllocator, CJobChannel &jobChannel, IConstWorkUnit &_workunit, ILoadedDllEntry &querySo, IUserDescriptor &userDesc)
+        : CThorCodeContextMaster(jobChannel, _workunit, querySo, userDesc)
+    {
+        sharedAllocator = _sharedAllocator;
+    }
+    virtual IEngineRowAllocator * CThorCodeContextBase::getRowAllocator(IOutputMetaData * meta, unsigned activityId) const
+    {
+        return sharedAllocator->getRowAllocator(meta, activityId);
+    }
+};
+
 
 /////////////
 
@@ -1312,6 +1327,7 @@ CJobMaster::CJobMaster(IConstWorkUnit &_workunit, const char *graphName, const c
     slavemptag = allocateMPTag();
     slaveMsgHandler = new CSlaveMessageHandler(*this, slavemptag);
     tmpHandler.setown(createTempHandler(true));
+    sharedAllocator.setown(::createThorAllocator(globalMemoryMB, 0, 1, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
 }
 
 CJobMaster::~CJobMaster()
@@ -1905,7 +1921,8 @@ bool CJobMaster::fireException(IException *e)
 
 CJobMasterChannel::CJobMasterChannel(CJobBase &job, IMPServer *mpServer, unsigned channel) : CJobChannel(job, mpServer, channel)
 {
-    codeCtx = new CThorCodeContextMaster(*this, job.queryWorkUnit(), job.queryDllEntry(), *job.queryUserDescriptor());
+    codeCtx.setown(new CThorCodeContextMaster(*this, job.queryWorkUnit(), job.queryDllEntry(), *job.queryUserDescriptor()));
+    sharedMemCodeCtx.setown(new CThorCodeContextMasterSharedMem(*this, job.querySharedAllocator(), job.queryDllEntry(), *job.queryUserDescriptor(), job.querySlaveMpTag()));
 }
 
 CGraphBase *CJobMasterChannel::createGraph()

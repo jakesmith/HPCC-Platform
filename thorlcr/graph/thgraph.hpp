@@ -774,7 +774,6 @@ protected:
     CriticalSection sharedAllocatorCrit;
     Owned<IThorAllocator> sharedAllocator;
 
-
     class CThorPluginCtx : public SimplePluginCtx
     {
     public:
@@ -862,8 +861,9 @@ public:
     unsigned getOptUInt(const char *opt, unsigned dft=0) { return (unsigned)getOptInt(opt, dft); }
     __int64 getOptInt64(const char *opt, __int64 dft=0);
     unsigned __int64 getOptUInt64(const char *opt, unsigned __int64 dft=0) { return (unsigned __int64)getOptInt64(opt, dft); }
+    IThorAllocator &querySharedAllocator() const { return *sharedAllocator; }
+    ICodeContextExt &querySharedCodeContext() const { return *sharedMemCodeContext; }
     virtual IThorAllocator *getThorAllocator(unsigned channel);
-    virtual IThorAllocator &querySharedAllocator() const { return *sharedAllocator; }
 
     virtual void abort(IException *e);
     virtual void debugRequest(CMessageBuffer &msg, const char *request) const { }
@@ -907,7 +907,8 @@ protected:
     rank_t myrank;
     Linked<IMPServer> mpServer;
     bool aborted;
-    CThorCodeContextBase *codeCtx;
+    Owned<ICodeContextExt> codeCtx;
+    Owned<ICodeContextExt> sharedMemCodeCtx;
     unsigned channel;
 
     void removeAssociates(CGraphBase &graph)
@@ -963,6 +964,7 @@ public:
     }
 
     ICodeContext &queryCodeContext() const;
+    ICodeContext &queryShareMemCodeContext() const;
     IThorResult *getOwnedResult(graph_id gid, activity_id ownerId, unsigned resultId);
     IThorAllocator &queryThorAllocator() const { return *thorAllocator; }
     ICommunicator &queryJobComm() const { return *jobComm; }
@@ -983,7 +985,7 @@ public:
 
 interface IOutputMetaData;
 
-class graph_decl CActivityBase : public CInterface, implements IExceptionHandler, implements IRowInterfaces
+class graph_decl CActivityBase : public CInterface, implements IExceptionHandler, implements IThorRowInterfaces
 {
     Owned<IEngineRowAllocator> rowAllocator;
     Owned<IOutputRowSerializer> rowSerializer;
@@ -1058,12 +1060,14 @@ public:
     bool fireException(IException *e);
     __declspec(noreturn) void processAndThrowOwnedException(IException * e) __attribute__((noreturn));
 
+// IThorRowInterfaces
     virtual IEngineRowAllocator * queryRowAllocator();  
     virtual IOutputRowSerializer * queryRowSerializer(); 
     virtual IOutputRowDeserializer * queryRowDeserializer(); 
     virtual IOutputMetaData *queryRowMetaData() { return baseHelper->queryOutputMeta(); }
     virtual unsigned queryActivityId() const { return (unsigned)queryId(); }
     virtual ICodeContext *queryCodeContext() { return container.queryCodeContext(); }
+    virtual roxiemem::IRowManager *queryRowManager() { return queryJobChannel().queryRowManager(); }
 
     StringBuffer &getOpt(const char *prop, StringBuffer &out) const { return container.getOpt(prop, out); }
     bool getOptBool(const char *prop, bool defVal=false) const { return container.getOptBool(prop, defVal); }

@@ -162,7 +162,7 @@ class CSpillableStreamBase : public CSimpleInterface, implements roxiemem::IBuff
 {
 protected:
     CActivityBase &activity;
-    IRowInterfaces *rowIf;
+    IThorRowInterfaces *rowIf;
     bool preserveNulls, ownsRows;
     unsigned spillPriority;
     unsigned spillCompInfo;
@@ -192,7 +192,7 @@ protected:
         if (!mmRegistered)
         {
             mmRegistered = true;
-            activity.queryRowManager().addRowBuffer(this);
+            rowManager->addRowBuffer(this);
         }
     }
     inline void clearSpillingCallback()
@@ -200,20 +200,21 @@ protected:
         if (mmRegistered)
         {
             mmRegistered = false;
-            activity.queryRowManager().removeRowBuffer(this);
+            rowManager->removeRowBuffer(this);
         }
     }
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CSpillableStreamBase(CActivityBase &_activity, CThorSpillableRowArray &inRows, IRowInterfaces *_rowIf, bool _preserveNulls, unsigned _spillPriority)
-        : activity(_activity), rowIf(_rowIf), rows(_activity, _rowIf, _preserveNulls), preserveNulls(_preserveNulls), spillPriority(_spillPriority)
+    CSpillableStreamBase(CActivityBase &_activity, CThorSpillableRowArray &inRows, IThorRowInterfaces *_rowIf, bool _preserveNulls, unsigned _spillPriority)
+        : activity(_activity), rowIf(_rowIf), rows(_activity), preserveNulls(_preserveNulls), spillPriority(_spillPriority)
     {
         assertex(inRows.isFlushed());
         rows.swap(inRows);
         mmRegistered = false;
         ownsRows = false;
         spillCompInfo = 0x0;
+        rows.setup(rowIf, _preserveNulls);
     }
     ~CSpillableStreamBase()
     {
@@ -327,7 +328,7 @@ class CSharedSpillableRowSet : public CSpillableStreamBase, implements IInterfac
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CSharedSpillableRowSet(CActivityBase &_activity, CThorSpillableRowArray &inRows, IRowInterfaces *_rowIf, bool _preserveNulls, unsigned _spillPriority)
+    CSharedSpillableRowSet(CActivityBase &_activity, CThorSpillableRowArray &inRows, IThorRowInterfaces *_rowIf, bool _preserveNulls, unsigned _spillPriority)
         : CSpillableStreamBase(_activity, inRows, _rowIf, _preserveNulls, _spillPriority)
     {
         addSpillingCallback();
@@ -357,7 +358,7 @@ class CSpillableStream : public CSpillableStreamBase, implements IRowStream
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CSpillableStream(CActivityBase &_activity, CThorSpillableRowArray &inRows, IRowInterfaces *_rowIf, bool _preserveNulls, unsigned _spillPriority, unsigned _spillCompInfo)
+    CSpillableStream(CActivityBase &_activity, CThorSpillableRowArray &inRows, IThorRowInterfaces *_rowIf, bool _preserveNulls, unsigned _spillPriority, unsigned _spillCompInfo)
         : CSpillableStreamBase(_activity, inRows, _rowIf, _preserveNulls, _spillPriority)
     {
         spillCompInfo = _spillCompInfo;
@@ -365,7 +366,7 @@ public:
         granularity = 500; // JCSMORE - rows
 
         // a small amount of rows to read from swappable rows
-        readRows = static_cast<const void * *>(activity.queryRowManager().allocate(granularity * sizeof(void*), activity.queryContainer().queryId(), inRows.queryDefaultMaxSpillCost()));
+        readRows = static_cast<const void * *>(rowIf->queryRowManager()->allocate(granularity * sizeof(void*), activity.queryContainer().queryId(), inRows.queryDefaultMaxSpillCost()));
         addSpillingCallback();
     }
     ~CSpillableStream()
@@ -611,17 +612,17 @@ inline bool CThorExpandingRowArray::_resize(rowidx_t requiredRows, unsigned maxS
     return true;
 }
 
-CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IRowInterfaces *_rowIf, bool _allowNulls, StableSortFlag _stableSort, bool _throwOnOom, rowidx_t initialSize)
+CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity)
     : activity(_activity)
 {
-    stableTable = NULL;
-    rows = NULL;
-    maxRows = 0;
-    numRows = 0;
-    rowManager = &activity.queryRowManager();
-    throwOnOom = false;
-    setup(_rowIf, _allowNulls, _stableSort, _throwOnOom);
-    setDefaultMaxSpillCost(roxiemem::SpillAllCost);
+    initCommon();
+    setup(NULL, false, stableSort_none, true);
+}
+
+CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IThorRowInterfaces *_rowIf, bool _allowNulls, StableSortFlag _stableSort, bool _throwOnOom, rowidx_t initialSize)
+    : activity(_activity)
+{
+    initCommon();
     if (initialSize)
     {
         rows = static_cast<const void * *>(rowManager->allocate(initialSize * sizeof(void*), activity.queryContainer().queryId(), defaultMaxSpillCost));
@@ -630,6 +631,7 @@ CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IRowInt
         if (stableSort_earlyAlloc == stableSort)
             stableTable = static_cast<void **>(rowManager->allocate(maxRows * sizeof(void*), activity.queryContainer().queryId(), defaultMaxSpillCost));
     }
+    setup(_rowIf, _allowNulls, _stableSort, _throwOnOom);
 }
 
 CThorExpandingRowArray::~CThorExpandingRowArray()
@@ -639,7 +641,16 @@ CThorExpandingRowArray::~CThorExpandingRowArray()
     ReleaseThorRow(stableTable);
 }
 
-void CThorExpandingRowArray::setup(IRowInterfaces *_rowIf, bool _allowNulls, StableSortFlag _stableSort, bool _throwOnOom)
+void CThorExpandingRowArray::initCommon()
+{
+    stableTable = NULL;
+    rows = NULL;
+    maxRows = 0;
+    numRows = 0;
+    rowManager = &activity.queryRowManager();
+}
+
+void CThorExpandingRowArray::setup(IThorRowInterfaces *_rowIf, bool _allowNulls, StableSortFlag _stableSort, bool _throwOnOom)
 {
     rowIf = _rowIf;
     allowNulls = _allowNulls;
@@ -713,7 +724,7 @@ void CThorExpandingRowArray::kill()
 void CThorExpandingRowArray::swap(CThorExpandingRowArray &other)
 {
     roxiemem::IRowManager *otherRowManager = other.rowManager;
-    IRowInterfaces *otherRowIf = other.rowIf;
+    IThorRowInterfaces *otherRowIf = other.rowIf;
     const void **otherRows = other.rows;
     void **otherStableTable = other.stableTable;
     bool otherAllowNulls = other.allowNulls;
@@ -926,7 +937,7 @@ IRowStream *CThorExpandingRowArray::createRowStream(rowidx_t start, rowidx_t num
         IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
         CRowOwningStream(CThorExpandingRowArray &_rows, rowidx_t firstRow, rowidx_t _lastRow)
-            : pos(firstRow), lastRow(_lastRow), rows(_rows.queryActivity(), NULL)
+            : pos(firstRow), lastRow(_lastRow), rows(_rows.queryActivity())
         {
             rows.swap(_rows);
         }
@@ -1041,25 +1052,24 @@ offset_t CThorExpandingRowArray::serializedSize()
 
 memsize_t CThorExpandingRowArray::getMemUsage()
 {
-    roxiemem::IRowManager &rM = activity.queryRowManager();
     IOutputMetaData *meta = rowIf->queryRowMetaData();
     IOutputMetaData *diskMeta = meta->querySerializedDiskMeta(); // GH->JCS - really I want a internalMeta here.
     rowidx_t c = ordinality();
     memsize_t total = 0;
     if (diskMeta->isFixedSize())
-        total = c * rM.getExpectedFootprint(diskMeta->getFixedSize(), 0);
+        total = c * rowManager->getExpectedFootprint(diskMeta->getFixedSize(), 0);
     else
     {
         CSizingSerializer ssz;
         for (rowidx_t i=0; i<c; i++)
         {
             serializer->serialize(ssz, (const byte *)rows[i]);
-            total += rM.getExpectedFootprint(ssz.size(), 0);
+            total += rowManager->getExpectedFootprint(ssz.size(), 0);
             ssz.reset();
         }
     }
     // NB: worst case, when expanding (see resize method)
-    memsize_t sz = rM.getExpectedFootprint(maxRows * sizeof(void *), 0);
+    memsize_t sz = rowManager->getExpectedFootprint(maxRows * sizeof(void *), 0);
     memsize_t szE = sz / 100 * 125; // don't care if sz v. small
     if (stableSort_none == stableSort)
         total += sz + szE;
@@ -1221,17 +1231,27 @@ void CThorSpillableRowArray::safeUnregisterWriteCallback(IWritePosCallback &cb)
     writeCallbacks.zap(cb);
 }
 
-CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity, IRowInterfaces *rowIf, bool allowNulls, StableSortFlag stableSort, rowidx_t initialSize, size32_t _commitDelta)
+CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity)
+    : CThorExpandingRowArray(activity)
+{
+    initCommon();
+}
+CThorSpillableRowArray::CThorSpillableRowArray(CActivityBase &activity, IThorRowInterfaces *rowIf, bool allowNulls, StableSortFlag stableSort, rowidx_t initialSize, size32_t _commitDelta)
     : CThorExpandingRowArray(activity, rowIf, false, stableSort, false, initialSize), commitDelta(_commitDelta)
 {
-    commitRows = 0;
-    firstRow = 0;
-    atomic_set(&resizing, 0);
+    initCommon();
 }
 
 CThorSpillableRowArray::~CThorSpillableRowArray()
 {
     clearRows();
+}
+
+void CThorSpillableRowArray::initCommon()
+{
+    commitRows = 0;
+    firstRow = 0;
+    atomic_set(&resizing, 0);
 }
 
 void CThorSpillableRowArray::clearRows()
@@ -1546,7 +1566,7 @@ protected:
     ICompare *iCompare;
     StableSortFlag stableSort;
     bool preserveGrouping;
-    IRowInterfaces *rowIf;
+    IThorRowInterfaces *rowIf;
     CriticalSection readerLock;
     bool mmRegistered;
     Owned<CSharedSpillableRowSet> spillableRowSet;
@@ -1554,6 +1574,7 @@ protected:
     unsigned spillCompInfo;
     __uint64 spillCycles;
     __uint64 sortCycles;
+    roxiemem::IRowManager *rowManager;
 
     bool spillRows(bool critical)
     {
@@ -1758,7 +1779,7 @@ protected:
     {
         if (mmRegistered)
         {
-            activity.queryRowManager().removeRowBuffer(this);
+            rowManager->removeRowBuffer(this);
             mmRegistered = false;
         }
     }
@@ -1766,12 +1787,12 @@ protected:
     {
         if (!mmRegistered && spillingEnabled())
         {
-            activity.queryRowManager().addRowBuffer(this);
+            rowManager->addRowBuffer(this);
             mmRegistered = true;
         }
     }
 public:
-    CThorRowCollectorBase(CActivityBase &_activity, IRowInterfaces *_rowIf, ICompare *_iCompare, StableSortFlag _stableSort, RowCollectorSpillFlags _diskMemMix, unsigned _spillPriority)
+    CThorRowCollectorBase(CActivityBase &_activity, IThorRowInterfaces *_rowIf, ICompare *_iCompare, StableSortFlag _stableSort, RowCollectorSpillFlags _diskMemMix, unsigned _spillPriority)
         : activity(_activity),
           rowIf(_rowIf), iCompare(_iCompare), stableSort(_stableSort), diskMemMix(_diskMemMix), spillPriority(_spillPriority),
           spillableRows(_activity, _rowIf)
@@ -1864,6 +1885,10 @@ public:
         }
         spillableRows.setup(rowIf, false, stableSort);
     }
+    virtual void setRowManager(roxiemem::IRowManager *_rowManager)
+    {
+        rowManager = _rowManager;
+    }
     virtual void resize(rowidx_t max)
     {
         spillableRows.resize(max);
@@ -1942,7 +1967,7 @@ class CThorRowLoader : public CThorRowCollectorBase, implements IThorRowLoader
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CThorRowLoader(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix, unsigned spillPriority)
+    CThorRowLoader(CActivityBase &activity, IThorRowInterfaces *rowIf, ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix, unsigned spillPriority)
         : CThorRowCollectorBase(activity, rowIf, iCompare, stableSort, diskMemMix, spillPriority)
     {
     }
@@ -1957,6 +1982,10 @@ public:
     virtual void setup(ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix=rc_mixed, unsigned spillPriority=50)
     {
         CThorRowCollectorBase::setup(iCompare, stableSort, diskMemMix, spillPriority);
+    }
+    virtual void setRowManager(roxiemem::IRowManager *rowManager)
+    {
+        CThorRowCollectorBase::setRowManager(rowManager);
     }
     virtual void resize(rowidx_t max) { CThorRowCollectorBase::resize(max); }
     virtual void setOptions(unsigned options)  { CThorRowCollectorBase::setOptions(options); }
@@ -1973,7 +2002,7 @@ public:
     }
 };
 
-IThorRowLoader *createThorRowLoader(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix, unsigned spillPriority)
+IThorRowLoader *createThorRowLoader(CActivityBase &activity, IThorRowInterfaces *rowIf, ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix, unsigned spillPriority)
 {
     return new CThorRowLoader(activity, rowIf, iCompare, stableSort, diskMemMix, spillPriority);
 }
@@ -1990,7 +2019,7 @@ class CThorRowCollector : public CThorRowCollectorBase, implements IThorRowColle
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CThorRowCollector(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix, unsigned spillPriority)
+    CThorRowCollector(CActivityBase &activity, IThorRowInterfaces *rowIf, ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix, unsigned spillPriority)
         : CThorRowCollectorBase(activity, rowIf, iCompare, stableSort, diskMemMix, spillPriority)
     {
     }
@@ -2010,6 +2039,10 @@ public:
     virtual void setup(ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix=rc_mixed, unsigned spillPriority=50)
     {
         CThorRowCollectorBase::setup(iCompare, stableSort, diskMemMix, spillPriority);
+    }
+    virtual void setRowManager(roxiemem::IRowManager *rowManager)
+    {
+        CThorRowCollectorBase::setRowManager(rowManager);
     }
     virtual void resize(rowidx_t max) { CThorRowCollectorBase::resize(max); }
     virtual void setOptions(unsigned options) { CThorRowCollectorBase::setOptions(options); }
@@ -2059,7 +2092,7 @@ public:
     virtual bool shrink(StringBuffer *traceInfo) { return CThorRowCollectorBase::shrink(traceInfo); }
 };
 
-IThorRowCollector *createThorRowCollector(CActivityBase &activity, IRowInterfaces *rowIf, ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix, unsigned spillPriority, bool preserveGrouping)
+IThorRowCollector *createThorRowCollector(CActivityBase &activity, IThorRowInterfaces *rowIf, ICompare *iCompare, StableSortFlag stableSort, RowCollectorSpillFlags diskMemMix, unsigned spillPriority, bool preserveGrouping)
 {
     Owned<IThorRowCollector> collector = new CThorRowCollector(activity, rowIf, iCompare, stableSort, diskMemMix, spillPriority);
     collector->setPreserveGrouping(preserveGrouping);
@@ -2230,6 +2263,30 @@ ILargeMemLimitNotify *createMultiThorResourceMutex(const char *grpname,CSDSServe
 {
     return new cMultiThorResourceMutex(grpname,_status);
 }
+
+
+IThorRowInterfaces *createThorRowInterfaces(roxiemem::IRowManager *rowManager, IOutputMetaData *meta, unsigned actId, ICodeContext *context)
+{
+    class CThorRowInterfaces : public CSimpleInterfaceOf<IThorRowInterfaces>
+    {
+        roxiemem::IRowManager *rowManager;
+        Owned<IRowInterfaces> baseRowIf;
+    public:
+        CThorRowInterfaces(roxiemem::IRowManager *_rowManager, IOutputMetaData *meta, unsigned actid, ICodeContext *context)
+            : rowManager(_rowManager)
+        {
+            baseRowIf.setown(createRowInterfaces(meta, actId, context));
+        }
+        virtual IEngineRowAllocator * queryRowAllocator() { return baseRowIf->queryRowAllocator(); }
+        virtual IOutputRowSerializer * queryRowSerializer() { return baseRowIf->queryRowSerializer(); }
+        virtual IOutputRowDeserializer * queryRowDeserializer() { return baseRowIf->queryRowDeserializer(); }
+        virtual IOutputMetaData *queryRowMetaData() { return baseRowIf->queryRowMetaData(); }
+        virtual unsigned queryActivityId() const { return baseRowIf->queryActivityId(); }
+        virtual ICodeContext *queryCodeContext() { return baseRowIf->queryCodeContext(); }
+        virtual roxiemem::IRowManager *queryRowManager() const { return rowManager; }
+    };
+    return new CThorRowInterfaces(rowManager, meta, actId, context);
+};
 
 
 class CThorAllocator : public CSimpleInterface, implements IThorAllocator, implements IRowAllocatorMetaActIdCacheCallback
