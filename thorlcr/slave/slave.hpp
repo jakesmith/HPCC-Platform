@@ -74,6 +74,28 @@ struct ThorDataLinkMetaInfo
 #endif
 class CActivityBase;
 
+interface IThorStrand : extends IEngineRowStream
+{
+    virtual bool isGrouped() { return false; }
+    virtual IInputSteppingMeta *querySteppingMeta() { return NULL; }
+    virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
+    virtual void reset() { }
+    virtual void start() = 0;
+};
+
+interface IThorDataLink2 : extends IInterface
+{
+// information routines
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
+    virtual CActivityBase *queryFromActivity() = 0; // activity that has this as an output
+    virtual void dataLinkSerialize(MemoryBuffer &mb)=0;
+    virtual unsigned __int64 queryTotalCycles() const=0;
+    virtual unsigned __int64 queryEndCycles() const=0;
+    virtual void debugRequest(MemoryBuffer &mb) = 0;
+
+    virtual IStrandJunction *getOutputStreams(unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const StrandOptions * consumerOptions, bool consumerOrdered) = 0;  // Use StrandFlags values for flags
+};
+
 interface IThorDataLink : extends IEngineRowStream
 {
     virtual void start() = 0;

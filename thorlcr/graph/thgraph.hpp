@@ -303,7 +303,7 @@ public:
     virtual bool checkUpdate() { return false; }
     virtual void reset();
     void onStart(size32_t parentExtractSz, const byte *parentExtract);
-    void onCreate();
+    void onCreate(unsigned numParallel=1); // TODO
     void abort(IException *e);
     virtual void preStart(size32_t parentExtractSz, const byte *parentExtract);
     bool isOnCreated() const { return onCreateCalled; }

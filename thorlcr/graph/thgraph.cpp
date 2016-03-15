@@ -510,7 +510,9 @@ void CGraphElementBase::doconnect()
     {
         CIOConnection *io = connectedInputs.item(i);
         if (io)
+        {
             io->connect(i, queryActivity());
+        }
     }
 }
 
@@ -578,7 +580,7 @@ void CGraphElementBase::deserializeStartContext(MemoryBuffer &mb)
     onStartCalled = false; // allow to be called again
 }
 
-void CGraphElementBase::onCreate()
+void CGraphElementBase::onCreate(unsigned numParallel)
 {
     CriticalBlock b(crit);
     if (onCreateCalled)

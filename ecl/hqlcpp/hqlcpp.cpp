@@ -2883,7 +2883,7 @@ void HqlCppTranslator::buildExpr(BuildCtx & ctx, IHqlExpression * expr, CHqlBoun
     case no_thor:
         throwUnexpectedX("THOR() annotation created in a scalar context");
 //      assertex(expr->queryType()->isScalar());
-//      buildExpr(ctx, expr->queryChild(0), tgt);
+//      buildExpr(ctx, expr->queryChild(0c), tgt);
         return;
     case no_count:
         if (!(expr->isPure() && ctx.getMatchExpr(expr, tgt)))
