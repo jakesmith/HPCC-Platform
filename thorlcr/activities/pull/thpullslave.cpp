@@ -21,17 +21,14 @@
 #include "thbufdef.hpp"
 #include "thpullslave.ipp"
 
-class PullSlaveActivity : public CSlaveActivity, public CThorDataLink
+class PullSlaveActivity : public CSlaveActivity
 {
-    Owned<IThorDataLink> input;
+    typedef CSlaveActivity PARENT;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    PullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
-    {
-    }
-    ~PullSlaveActivity() 
+    PullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
     }
 
@@ -42,30 +39,34 @@ public:
     }
 
 // IThorDataLink methods
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+        PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+        setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), PULL_SMART_BUFFER_SIZE, true, false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
+    }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input.setown(createDataLinkSmartBuffer(this,inputs.item(0),PULL_SMART_BUFFER_SIZE,true,false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage()));
-        startInput(input);
+        PARENT::start();
         dataLinkStart();
     }
     virtual void stop()
     {
-        stopInput(input);
+        PARENT::stop();
         dataLinkStop();
     }
 
     const void * nextRow()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow row = input->nextRow();
+        OwnedConstThorRow row = inputStream->nextRow();
         if (!row)
             return NULL;
         dataLinkIncrement();
         return row.getClear();
     }
 
-    virtual bool isGrouped() { return false; } // or input->isGrouped?
+    virtual bool isGrouped() const override { return false; } // or input->isGrouped?
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);

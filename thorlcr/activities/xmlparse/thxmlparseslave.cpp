@@ -22,8 +22,10 @@
 #include "thactivityutil.ipp"
 #include "eclrtl.hpp"
 
-class CXmlParseSlaveActivity : public CSlaveActivity, public CThorDataLink, implements IXMLSelect
+class CXmlParseSlaveActivity : public CSlaveActivity, implements IXMLSelect
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorXmlParseArg *helper;
     bool eogNext;
     bool anyThisGroup;
@@ -31,16 +33,14 @@ class CXmlParseSlaveActivity : public CSlaveActivity, public CThorDataLink, impl
     char *searchStr;
     Owned<IXMLParse> xmlParser;
     OwnedConstThorRow nxt;
-    IThorDataLink *input;
     Owned<IEngineRowAllocator> allocator;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CXmlParseSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CXmlParseSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         searchStr = NULL;
-        input = NULL;
     }
 
 // IXMLSelect
@@ -64,18 +64,17 @@ public:
             rtlFree(searchStr);
     }
 // IThorDataLink methods
-    virtual void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         anyThisGroup = false;
         eogNext = false;
-        input = inputs.item(0);
-        startInput(input);
         dataLinkStart();
     }
-    virtual void stop()
+    virtual void stop() override
     {
-        stopInput(inputs.item(0));
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -127,9 +126,9 @@ public:
                         }
                     }
                 }
-                nxt.setown(input->nextRow());
+                nxt.setown(inputStream->nextRow());
                 if (!nxt && !anyThisGroup)
-                    nxt.setown(input->nextRow());
+                    nxt.setown(inputStream->nextRow());
                 if (!nxt)
                     break;
                 unsigned len;
@@ -160,8 +159,8 @@ public:
         anyThisGroup = false;
         return NULL;
     }
-    virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual bool isGrouped() const override { return inputs.item(0)->isGrouped(); }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.fastThrough = true; // ish

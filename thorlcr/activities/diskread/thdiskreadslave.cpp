@@ -272,7 +272,7 @@ void CDiskRecordPartHandler::close(CRC32 &fileCRC)
 
 /////////////////////////////////////////////////
 
-class CDiskReadSlaveActivity : public CDiskReadSlaveActivityRecord, public CThorDataLink
+class CDiskReadSlaveActivity : public CDiskReadSlaveActivityRecord
 {
     class CDiskPartHandler : public CDiskRecordPartHandler
     {
@@ -399,7 +399,7 @@ public:
 
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CDiskReadSlaveActivity(CGraphElementBase *_container, IHThorArg *_helper) : CDiskReadSlaveActivityRecord(_container, _helper), CThorDataLink(this)
+    CDiskReadSlaveActivity(CGraphElementBase *_container, IHThorArg *_helper) : CDiskReadSlaveActivityRecord(_container, _helper)
     {
         helper = (IHThorDiskReadArg *)queryHelper();
         unsorted = 0 != (TDRunsorted & helper->getFlags());
@@ -465,7 +465,7 @@ public:
             gotMeta = true;
             initMetaInfo(cachedMetaInfo);
             cachedMetaInfo.isSource = true;
-            getPartsMetaInfo(cachedMetaInfo, *this, partDescs.ordinality(), partDescs.getArray(), partHandler);
+            getPartsMetaInfo(cachedMetaInfo, partDescs.ordinality(), partDescs.getArray(), partHandler);
         }
         info = cachedMetaInfo;
         if (info.totalRowsMin==info.totalRowsMax)
@@ -480,7 +480,7 @@ public:
         out = createSequentialPartHandler(partHandler, partDescs, grouped); // **
         dataLinkStart();
     }
-    virtual bool isGrouped() { return grouped; }
+    virtual bool isGrouped() const override { return grouped; }
 
 // IRowStream
     virtual void stop()
@@ -526,7 +526,7 @@ CActivityBase *createDiskReadSlave(CGraphElementBase *container, IHThorArg *help
 // CDiskNormalizeSlave
 //
 
-class CDiskNormalizeSlave : public CDiskReadSlaveActivityRecord, public CThorDataLink
+class CDiskNormalizeSlave : public CDiskReadSlaveActivityRecord
 {
     class CNormalizePartHandler : public CDiskRecordPartHandler
     {
@@ -593,7 +593,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CDiskNormalizeSlave(CGraphElementBase *_container) 
-        : CDiskReadSlaveActivityRecord(_container), CThorDataLink(this)
+        : CDiskReadSlaveActivityRecord(_container)
     {
         helper = (IHThorDiskNormalizeArg *)queryHelper();
         if (helper->getFlags() & TDRlimitskips)
@@ -624,7 +624,7 @@ public:
             gotMeta = true;
             initMetaInfo(cachedMetaInfo);
             cachedMetaInfo.isSource = true;
-            getPartsMetaInfo(cachedMetaInfo, *this, partDescs.ordinality(), partDescs.getArray(), partHandler);
+            getPartsMetaInfo(cachedMetaInfo, partDescs.ordinality(), partDescs.getArray(), partHandler);
             cachedMetaInfo.unknownRowsOutput = true; // JCSMORE
         }
         info = cachedMetaInfo;
@@ -636,7 +636,7 @@ public:
         out = createSequentialPartHandler(partHandler, partDescs, false);
         dataLinkStart();
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
 
 // IRowStream
     virtual void stop()
@@ -713,7 +713,7 @@ public:
     }
 };
 
-class CDiskAggregateSlave : public CDiskReadSlaveActivityRecord, public CThorDataLink
+class CDiskAggregateSlave : public CDiskReadSlaveActivityRecord
 {
     IHThorDiskAggregateArg *helper;
     Owned<IEngineRowAllocator> allocator;
@@ -724,7 +724,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CDiskAggregateSlave(CGraphElementBase *_container) 
-        : CDiskReadSlaveActivityRecord(_container), aggregator(*this), CThorDataLink(this)
+        : CDiskReadSlaveActivityRecord(_container), aggregator(*this)
     {
         helper = (IHThorDiskAggregateArg *)queryHelper();
         eoi = false;
@@ -756,7 +756,7 @@ public:
         info.totalRowsMax = 1;
         // MORE TBD
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
@@ -832,7 +832,7 @@ CActivityBase *createDiskAggregateSlave(CGraphElementBase *container)
 }
 
 
-class CDiskCountSlave : public CDiskReadSlaveActivityRecord, public CThorDataLink
+class CDiskCountSlave : public CDiskReadSlaveActivityRecord
 {
     IHThorDiskCountArg *helper;
     rowcount_t stopAfter, preknownTotalCount;
@@ -841,7 +841,7 @@ class CDiskCountSlave : public CDiskReadSlaveActivityRecord, public CThorDataLin
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CDiskCountSlave(CGraphElementBase *_container) : CDiskReadSlaveActivityRecord(_container), CThorDataLink(this)
+    CDiskCountSlave(CGraphElementBase *_container) : CDiskReadSlaveActivityRecord(_container)
     {
         helper = (IHThorDiskCountArg *)queryHelper();
         totalCountKnown = eoi = false;
@@ -876,7 +876,7 @@ public:
         info.isSource = true;
         // MORE TBD
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
@@ -954,7 +954,7 @@ CActivityBase *createDiskCountSlave(CGraphElementBase *container)
 }
 
 class CDiskGroupAggregateSlave 
-  : public CDiskReadSlaveActivityRecord, public CThorDataLink, implements IHThorGroupAggregateCallback
+  : public CDiskReadSlaveActivityRecord, implements IHThorGroupAggregateCallback
 {
     IHThorDiskGroupAggregateArg *helper;
     bool gathered, eoi;
@@ -967,7 +967,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CDiskReadSlaveActivityRecord);
 
     CDiskGroupAggregateSlave(CGraphElementBase *_container) 
-        : CDiskReadSlaveActivityRecord(_container), CThorDataLink(this)
+        : CDiskReadSlaveActivityRecord(_container)
     {
         helper = (IHThorDiskGroupAggregateArg *)queryHelper();
         merging = false;
@@ -1009,7 +1009,7 @@ public:
         info.isSource = true;
         // MORE TBD
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
 // IRowStream
     virtual void stop()
     {

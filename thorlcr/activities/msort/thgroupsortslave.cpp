@@ -30,9 +30,10 @@
 #include "thactivityutil.ipp"
 
 
-class CLocalSortSlaveActivity : public CSlaveActivity, public CThorDataLink 
+class CLocalSortSlaveActivity : public CSlaveActivity 
 {
-    IThorDataLink *input;
+    typedef CSlaveActivity PARENT;
+
     IHThorSortArg *helper;
     ICompare *iCompare;
     Owned<IThorRowLoader> iLoader;
@@ -45,10 +46,10 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CLocalSortSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this), spillStats(spillStatistics)
+        : CSlaveActivity(_container), spillStats(spillStatistics)
     {
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         helper = (IHThorSortArg *)queryHelper();
         iCompare = helper->queryCompare();
@@ -56,19 +57,18 @@ public:
         unstable = (algo&&(algo->getAlgorithmFlags()&TAFunstable));
         appendOutputLinked(this);
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         dataLinkStart();
-        input = inputs.item(0);
         unsigned spillPriority = container.queryGrouped() ? SPILL_PRIORITY_GROUPSORT : SPILL_PRIORITY_LARGESORT;
         iLoader.setown(createThorRowLoader(*this, queryRowInterfaces(input), iCompare, unstable ? stableSort_none : stableSort_earlyAlloc, rc_mixed, spillPriority));
-        startInput(input);
         eoi = false;
         if (container.queryGrouped())
-            out.setown(iLoader->loadGroup(input, abortSoon));
+            out.setown(iLoader->loadGroup(inputStream, abortSoon));
         else
-            out.setown(iLoader->load(input, abortSoon));
+            out.setown(iLoader->load(inputStream, abortSoon));
         if (0 == iLoader->numRows())
             eoi = true;
     }
@@ -82,10 +82,10 @@ public:
         mergedStats.serialize(mb);
     }
 
-    void stop()
+    virtual void stop()
     {
         out.clear();
-        stopInput(input);
+        PARENT::stop();
         dataLinkStop();
 
         //Critical block
@@ -108,7 +108,7 @@ public:
                 eoi = true;
                 return NULL;
             }
-            out.setown(iLoader->loadGroup(input, abortSoon));
+            out.setown(iLoader->loadGroup(inputStream, abortSoon));
             if (0 == iLoader->numRows())
                 eoi = true;
             return NULL; // eog marker
@@ -116,8 +116,8 @@ public:
         dataLinkIncrement();
         return row.getClear();
     }
-    virtual bool isGrouped() { return container.queryGrouped(); }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual bool isGrouped() const override { return container.queryGrouped(); }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.buffersInput = true;
@@ -127,9 +127,10 @@ public:
 
 // Sorted 
 
-class CSortedSlaveActivity : public CSlaveActivity, public CThorDataLink, public CThorSteppable
+class CSortedSlaveActivity : public CSlaveActivity, public CThorSteppable
 {
-    IThorDataLink *input;
+    typedef CSlaveActivity PARENT;
+
     IHThorSortedArg *helper;
     ICompare *icompare;
     OwnedConstThorRow prev; 
@@ -138,33 +139,32 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CSortedSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this), CThorSteppable(this)
+        : CSlaveActivity(_container), CThorSteppable(this)
     {
         helper = (IHThorSortedArg *)queryHelper();
         icompare = helper->queryCompare();
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         helper = (IHThorSortedArg *)queryHelper();
         icompare = helper->queryCompare();
         appendOutputLinked(this);
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         dataLinkStart();
-        input = inputs.item(0);
-        startInput(input);
     }
-    void stop()
+    virtual void stop()
     {
-        stopInput(input);
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow ret = input->nextRow();
+        OwnedConstThorRow ret = inputStream->nextRow();
         if (ret && prev && icompare->docompare(prev, ret) > 0)
         {
             // MORE - better to give mismatching rows than indexes?
@@ -175,15 +175,15 @@ public:
             dataLinkIncrement();
         return ret.getClear();
     }
-    const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
+    virtual const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         try { return nextRowGENoCatch(seek, numFields, wasCompleteMatch, stepExtra); }
         CATCH_NEXTROWX_CATCH;
     }
-    const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
+    virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
+        OwnedConstThorRow ret = inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
         if (ret && prev && stepCompare->docompare(prev, ret, numFields) > 0)
         {
             // MORE - better to give mismatching rows than indexes?
@@ -194,25 +194,25 @@ public:
             dataLinkIncrement();
         return ret.getClear();
     }
-    bool gatherConjunctions(ISteppedConjunctionCollector &collector)
+    virtual bool gatherConjunctions(ISteppedConjunctionCollector &collector)
     { 
         return input->gatherConjunctions(collector);
     }
-    void resetEOF() 
+    virtual void resetEOF()
     { 
-        input->resetEOF(); 
+        inputStream->resetEOF();
     }
-    bool isGrouped() { return false; }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual bool isGrouped() const override { return false; }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         calcMetaInfoSize(info,inputs.item(0));
     }
 // steppable
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CSlaveActivity::setInput(index, inputActivity, inputOutIdx);
-        CThorSteppable::setInput(index, inputActivity, inputOutIdx);
+        CSlaveActivity::setInputStream(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInputStream(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };

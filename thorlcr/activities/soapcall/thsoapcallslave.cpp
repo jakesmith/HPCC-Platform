@@ -32,7 +32,7 @@ static StringBuffer &buildAuthToken(IUserDescriptor *userDesc, StringBuffer &aut
     return authToken;
 }
 
-class CWscRowCallSlaveActivity : public CSlaveActivity, public CThorDataLink, implements IWSCRowProvider
+class CWscRowCallSlaveActivity : public CSlaveActivity, implements IWSCRowProvider
 {
     bool eof;
     Owned<IWSCHelper> wscHelper;
@@ -41,7 +41,7 @@ class CWscRowCallSlaveActivity : public CSlaveActivity, public CThorDataLink, im
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CWscRowCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this) { }
+    CWscRowCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container) { }
 
     // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -95,7 +95,7 @@ public:
         eof = true;
         return NULL;
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
     virtual void abort()
     {
         CSlaveActivity::abort();
@@ -123,17 +123,18 @@ public:
 
 //---------------------------------------------------------------------------
 
-class SoapDatasetCallSlaveActivity : public CSlaveActivity, public CThorDataLink, implements IWSCRowProvider
+class SoapDatasetCallSlaveActivity : public CSlaveActivity, implements IWSCRowProvider
 {
+    typedef CSlaveActivity PARENT;
+
     bool eof;
     Owned<IWSCHelper> wscHelper;
     CriticalSection crit;
-    IThorDataLink *input;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    SoapDatasetCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this) { }
+    SoapDatasetCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container) { }
 
     // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -144,19 +145,18 @@ public:
         wscHelper.setown(createSoapCallHelper(this, queryRowAllocator(), authToken.str(), SCdataset, NULL, queryDummyContextLogger(),NULL));
     }
     // IThorDataLink methods
-    virtual void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         eof = false;
-        input = inputs.item(0);
-        startInput(input);
         dataLinkStart();
         wscHelper->start();
     }
-    virtual void stop()
+    virtual void stop() override
     {
+        PARENT::stop();
         eof = true;
-        stopInput(input);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -171,16 +171,16 @@ public:
         eof = true;
         return NULL;
     }
-    virtual bool isGrouped()
+    virtual bool isGrouped() const override
     {
         return inputs.item(0)->isGrouped();
     }
-    virtual void abort()
+    virtual void abort() override
     {
         CSlaveActivity::abort();
         wscHelper->abort();
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.unknownRowsOutput = true;
@@ -200,7 +200,7 @@ public:
         CriticalBlock b(crit);
         if (eof)
             return NULL;
-        return input->nextRow();
+        return inputStream->nextRow();
     }
     virtual void releaseRow(const void *r)
     {
@@ -264,7 +264,6 @@ class SoapDatasetActionSlaveActivity : public ProcessSlaveActivity, implements I
 {
     Owned<IWSCHelper> wscHelper;
     CriticalSection crit;
-    IThorDataLink *input;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
@@ -282,10 +281,9 @@ public:
     // IThorSlaveProcess overloaded methods
     virtual void process()
     {
+        start();
         processed = 0;
 
-        input = inputs.item(0);
-        startInput(input);
         processed = THORDATALINK_STARTED;
 
         wscHelper->start();
@@ -298,7 +296,7 @@ public:
     {
         if (processed & THORDATALINK_STARTED)
         {
-            stopInput(input);
+            stop();
             processed |= THORDATALINK_STOPPED;
         }
     }
@@ -322,7 +320,7 @@ public:
         if (abortSoon)
             return NULL;
 
-        const void *row = input->nextRow();
+        const void *row = inputStream->nextRow();
         if (!row) return NULL;
         processed++;
         return row;

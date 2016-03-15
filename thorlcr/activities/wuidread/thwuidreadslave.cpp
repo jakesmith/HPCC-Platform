@@ -25,7 +25,7 @@
 
 #include "thwuidreadslave.ipp"
 
-class CWuidReadSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CWuidReadSlaveActivity : public CSlaveActivity
 {
     Owned<ISerialStream> replyStream;
     CThorStreamDeserializerSource rowSource;
@@ -39,19 +39,19 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CWuidReadSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container)
     {
         replyTag = queryMPServer().createReplyTag();
         replyStream.setown(createMemoryBufferSerialStream(masterReplyMsg));
         rowSource.setStream(replyStream);
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         appendOutputLinked(this);
         helper = (IHThorWorkunitReadArg *)queryHelper();
         grouped = helper->queryOutputMeta()->isGrouped();
     } 
-    void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         dataLinkStart();
@@ -71,7 +71,7 @@ public:
             masterReplyMsg.swapWith(reqMsg);
         }
     }
-    void stop() { dataLinkStop(); }
+    virtual void stop()  override{ dataLinkStop(); }
 
     CATCH_NEXTROW()
     {
@@ -92,8 +92,8 @@ public:
         dataLinkIncrement();
         return rowBuilder.finalizeRowClear(sz);
     }
-    bool isGrouped() { return grouped; }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual bool isGrouped() const override { return grouped; }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.isSource = true;

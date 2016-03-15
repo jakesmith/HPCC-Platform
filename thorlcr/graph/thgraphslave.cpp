@@ -121,9 +121,17 @@ CSlaveActivity::CSlaveActivity(CGraphElementBase *_container) : CActivityBase(_c
 CSlaveActivity::~CSlaveActivity()
 {
     inputs.kill();
+    inputStreams.kill();
     outputs.kill();
     if (data) delete [] data;
     ActPrintLog("DESTROYED");
+}
+
+void CSlaveActivity::setOutputStream(unsigned index, IEngineRowStream *stream)
+{
+    while (outputStreams.ordinality()<=index)
+        outputStreams.append(NULL);
+    outputStreams.replace(stream, index);
 }
 
 void CSlaveActivity::setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
@@ -141,20 +149,93 @@ void CSlaveActivity::setInput(unsigned index, CActivityBase *inputActivity, unsi
         outLink.set(((CSlaveActivity *)inputActivity)->queryOutput(inputOutIdx));
     assertex(outLink);
 
-    while (inputs.ordinality()<=index) inputs.append(NULL);
+    while (inputs.ordinality()<=index)
+    {
+        // JCSMORE should use struct/class
+    	inputs.append(NULL);
+    	inputSourceIdxs.append(NotFound);
+        inputStreams.append(NULL);
+        inputJunctions.append(NULL);
+        inputsStopped.append(false);
+        tracingStreams.append(NULL);
+        lookAheads.append(NULL);
+    }
+    inputs.replace(outLink.getLink(), index);
+    if (!input)
+    {
+    	input = outLink;
+    	inputSourceIdx = inputOutIdx;
+    }
+    inputSourceIdxs.replace(inputOutIdx, index);
+}
 
-    inputs.replace(outLink.getClear(), index);
+void CSlaveActivity::connectInputStreams(bool consumerOrdered)
+{
+    ForEachItemIn(index, inputs)
+    {
+		IThorDataLink *_input = inputs.item(index);
+		if (_input)
+		{
+			unsigned inputOutIdx = inputSourceIdxs.item(index);
+			setInputStream(index, _input, inputOutIdx, consumerOrdered);
+		}
+    }
+}
+
+void CSlaveActivity::setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered)
+{
+	if (input) // will be none if source act.
+	{
+	    Owned<IStrandJunction> junction;
+		IEngineRowStream *_inputStream = connectSingleStream(*this, _input, inputOutIdx, junction, _input->isInputOrdered(consumerOrdered));
+		inputStreams.replace(LINK(_inputStream), index);
+		inputJunctions.replace(junction.getLink(), index);
+
+		if (0 == index)
+		{
+		    inputStream = _inputStream;
+		    junction.setown(junction.getClear());
+		}
+
+        if (queryJob().getOptBool("TRACEROWS"))
+        {
+            const unsigned numTraceRows = queryJob().getOptInt("numTraceRows", 10);
+            CTracingStream *tracingStream = new CTracingStream(_input, inputStream, queryHelper(), numTraceRows);
+            tracingStreams.replace(tracingStream, index);
+            inputStream = tracingStream;
+        }
+        _input->setOutputStream(inputOutIdx, LINK(inputStream));
+    }
+}
+
+void CSlaveActivity::setLookAhead(unsigned index, IStartableEngineRowStream *lookAhead)
+{
+    lookAheads.replace(lookAhead, index);
+    inputStreams.replace(LINK(lookAhead), index);
+    if (0 == index)
+        inputStream = lookAhead;
+}
+
+IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
+{
+    // Default non-stranded implementation, expects activity to have 1 output.
+    assertex(!idx);
+    // By default, activities are assumed NOT to support streams
+    bool inputOrdered = isInputOrdered(consumerOrdered);
+    connectInputStreams(inputOrdered);
+    // Return a single stream
+    // Default activity impl. adds single output as stream
+    streams.append(this);
+    return NULL;
 }
 
 void CSlaveActivity::appendOutput(IThorDataLink *itdl)
 {
-    if (queryJob().getOptBool("TRACEROWS"))
-    {
-        const unsigned numTraceRows = queryJob().getOptInt("numTraceRows", 10);
-        outputs.append(new CTracingThorDataLink(itdl, queryHelper(), numTraceRows));
-    }
-    else
-        outputs.append(itdl);
+    IThorDataLinkExt *itdlExt = QUERYINTERFACE(itdl, IThorDataLinkExt);
+    dbgassertex(itdlExt);
+    unsigned outputNum = outputs.ordinality();
+    itdlExt->setOutputIdx(outputNum);
+    outputs.append(itdl);
 }
 
 void CSlaveActivity::appendOutputLinked(IThorDataLink *itdl)
@@ -163,60 +244,133 @@ void CSlaveActivity::appendOutputLinked(IThorDataLink *itdl)
     appendOutput(itdl);
 }
 
-IThorDataLink *CSlaveActivity::queryOutput(unsigned index)
+IThorDataLink *CSlaveActivity::queryOutput(unsigned index) const
 {
     if (index>=outputs.ordinality()) return NULL;
     return outputs.item(index);
 }
 
-IThorDataLink *CSlaveActivity::queryInput(unsigned index)
+IThorDataLink *CSlaveActivity::queryInput(unsigned index) const
 {
     if (index>=inputs.ordinality()) return NULL;
     return inputs.item(index);
 }
 
-void CSlaveActivity::startInput(IThorDataLink *itdl, const char *extra)
+IEngineRowStream *CSlaveActivity::queryInputStream(unsigned index) const
+{
+    if (index>=inputStreams.ordinality()) return NULL;
+    return inputStreams.item(index);
+}
+
+IEngineRowStream *CSlaveActivity::queryOutputStream(unsigned index) const
+{
+    if (index>=outputStreams.ordinality()) return NULL;
+    return outputStreams.item(index);
+}
+
+void CSlaveActivity::start()
+{
+    if (inputs.ordinality()>1)
+        throwUnexpected();
+    if (input)
+        startInput(0);
+}
+
+void CSlaveActivity::startAllInputs()
+{
+    ForEachItemIn(i, inputs)
+    {
+        startInput(i);
+    }
+}
+
+void CSlaveActivity::startInput(unsigned index, const char *extra)
 {
     StringBuffer s("Starting input");
     if (extra)
         s.append(" ").append(extra);
     ActPrintLog("%s", s.str());
 
+    IThorDataLink *itdl = inputs.item(index);
+    IStrandJunction *inputJunction = inputJunctions.item(index);
 #ifdef TRACE_STARTSTOP_EXCEPTIONS
     try
     {
+#endif
         itdl->start();
+        startJunction(inputJunction);
+        IStartableEngineRowStream *lookAhead = lookAheads.item(index);
+        if (lookAhead)
+            lookAhead->start();
+        inputsStopped.replace(false, index);
+        if (0 == index)
+            inputStopped = false;
+#ifdef TRACE_STARTSTOP_EXCEPTIONS
     }
     catch(IException *e)
     {
         ActPrintLog(e, "%s", s.str());
         throw;
     }
-#else
-    itdl->start();
 #endif
 }
 
-void CSlaveActivity::stopInput(IRowStream *itdl, const char *extra)
+void CSlaveActivity::stop()
 {
+    if (input)
+        stopInput(0);
+}
+
+void CSlaveActivity::stopInput(unsigned index, const char *extra)
+{
+    if (inputsStopped.item(index))
+        return;
     StringBuffer s("Stopping input for");
     if (extra)
         s.append(" ").append(extra);
     ActPrintLog("%s", s.str());
 
+    IEngineRowStream *inputStream = inputStreams.item(index);
+    IThorDataLink *itdl = inputs.item(index);
+    IStrandJunction *inputJunction = inputJunctions.item(index);
 #ifdef TRACE_STARTSTOP_EXCEPTIONS
     try
     {
-        itdl->stop();
+#endif
+        inputStream->stop();
+        inputsStopped.replace(true, index);
+        if (0 == index)
+            inputStopped = true;
+
+#ifdef TRACE_STARTSTOP_EXCEPTIONS
     }
     catch(IException * e)
     {
         ActPrintLog(e, "%s", s.str());
         throw;
     }
-#else
-    itdl->stop();
 #endif
+}
+
+void CSlaveActivity::stopAllInputs()
+{
+    ForEachItemIn(i, inputs)
+    {
+        stopInput(i);
+    }
+}
+
+void CSlaveActivity::reset()
+{
+    CActivityBase::reset();
+    ForEachItemIn(j, inputJunctions)
+    {
+        IStrandJunction *junction = inputJunctions.item(j);
+        resetJunction(junction);
+    }
+    input = NULL;
+    inputStream = NULL;
+    inputStopped = true;
 }
 
 void CSlaveActivity::abort()
@@ -246,6 +400,7 @@ void CSlaveActivity::releaseIOs()
 void CSlaveActivity::clearConnections()
 {
     inputs.kill();
+    inputStreams.kill();
 }
 
 MemoryBuffer &CSlaveActivity::queryInitializationData(unsigned slave) const
@@ -324,12 +479,185 @@ void CSlaveActivity::serializeStats(MemoryBuffer &mb)
         outputs.item(i)->dataLinkSerialize(mb);
 }
 
-void CSlaveActivity::debugRequest(unsigned edgeIdx, CMessageBuffer &msg)
+void CSlaveActivity::debugRequest(unsigned edgeIdx, MemoryBuffer &msg)
 {
-    IThorDataLink *link = queryOutput(edgeIdx);
-    if (link) link->debugRequest(msg);
+    IEngineRowStream *outputStream = queryOutputStream(edgeIdx);
+    IThorDebug *debug = QUERYINTERFACE(outputStream, IThorDebug); // should probably use an extended IEngineRowStream, or store in separate array instead
+    if (debug) debug->debugRequest(msg);
 }
+
+bool CSlaveActivity::isGrouped() const
+{
+    if (!input) return false; // should possible be an error if query and not set
+    return input->isGrouped();
+}
+
+IOutputMetaData *CSlaveActivity::queryOutputMeta() const
+{
+    return queryHelper()->queryOutputMeta();
+}
+
+void CSlaveActivity::dataLinkSerialize(MemoryBuffer &mb) const
+{
+    mb.append(count);
+}
+
+void CSlaveActivity::debugRequest(MemoryBuffer &msg)
+{
+}
+
+
 ///
+
+/// CThorStrandedActivity
+
+void CThorStrandedActivity::onStartStrands()
+{
+    ForEachItemIn(idx, strands)
+        strands.item(idx).start();
+}
+
+//This function is pure (But also implemented out of line) to force the derived classes to implement it.
+//After calling the base class start method, and initialising any values from the helper they must call onStartStrands(),
+//this must also happen before any rows are read from the strands (e.g., by a source junction)
+//    virtual void start(unsigned parentExtractSize, const byte *parentExtract, bool paused) = 0;
+
+//For some reason gcc doesn't let you specify a function as pure virtual and define it at the same time.
+void CThorStrandedActivity::start()
+{
+    CSlaveActivity::start();
+    startJunction(splitter);
+}
+
+void CThorStrandedActivity::reset()
+{
+    assertex(active==0);
+    ForEachItemIn(idx, strands)
+        strands.item(idx).reset();
+    strands.kill();
+    resetJunction(splitter);
+    CSlaveActivity::reset();
+    resetJunction(sourceJunction);
+}
+
+void CThorStrandedActivity::stop()
+{
+    // Called from the strands... which should ensure that stop is not called more than once per strand
+    //The first strand to call
+    if (active)
+        --active;
+    if (!active)
+        CSlaveActivity::stop();
+}
+
+IStrandJunction *CThorStrandedActivity::getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
+{
+    assertex(idx == 0);
+    assertex(strands.empty());
+
+    // JCSMORE these may be wrong if this is a source activity
+    bool inputOrdered = input ? input->isInputOrdered(consumerOrdered) : isInputOrdered(consumerOrdered);
+    //Note, numStrands == 1 is an explicit request to disable threading
+    if (consumerOptions && (consumerOptions->numStrands != 1) && (strandOptions.numStrands != 1))
+    {
+        //Check to see if the consumer's settings should override
+        if (strandOptions.numStrands == 0)
+        {
+            strandOptions.numStrands = consumerOptions->numStrands;
+            strandOptions.blockSize = consumerOptions->blockSize;
+        }
+        else if (consumerOptions->numStrands > strandOptions.numStrands)
+        {
+            strandOptions.numStrands = consumerOptions->numStrands;
+        }
+    }
+
+    Owned <IStrandJunction> recombiner;
+    if (input)
+    {
+        if (strandOptions.numStrands == 1)
+        {
+            // 1 means explicitly requested single-strand.
+            Owned<IStrandJunction> junction;
+            IEngineRowStream *instream = connectSingleStream(activity, input, inputSourceIdx, junction, inputOrdered);
+            inputJunctions.replace(junction.getClear(), inputSourceIdx);
+            strands.append(*createStrandProcessor(instream));
+        }
+        else
+        {
+            PointerArrayOf<IEngineRowStream> instreams;
+            recombiner.setown(input->getOutputStreams(activity, inputSourceIdx, instreams, &strandOptions, inputOrdered));
+            if ((instreams.length() == 1) && (strandOptions.numStrands != 0))  // 0 means did not specify - we should use the strands that our upstream provides
+            {
+                assertex(recombiner == NULL);
+                // Create a splitter to split the input into n... and a recombiner if need to preserve sorting
+                if (inputOrdered)
+                {
+                    branch.setown(createStrandBranch(activity.queryRowManager(), strandOptions.numStrands, strandOptions.blockSize, true, input->queryOutputMeta()->isGrouped(), false));
+                    splitter.set(branch->queryInputJunction());
+                    recombiner.set(branch->queryOutputJunction());
+                }
+                else
+                {
+                    splitter.setown(createStrandJunction(activity.queryRowManager(), 1, strandOptions.numStrands, strandOptions.blockSize, false));
+                }
+                splitter->setInput(0, instreams.item(0));
+                for (unsigned strandNo = 0; strandNo < strandOptions.numStrands; strandNo++)
+                    strands.append(*createStrandProcessor(splitter->queryOutput(strandNo)));
+            }
+            else
+            {
+                // Ignore my hint and just use the width already split into...
+                ForEachItemIn(strandNo, instreams)
+                    strands.append(*createStrandProcessor(instreams.item(strandNo)));
+            }
+        }
+    }
+    else
+    {
+        unsigned numStrands = strandOptions.numStrands ? strandOptions.numStrands : 1;
+        for (unsigned i=0; i < numStrands; i++)
+            strands.append(*createStrandSourceProcessor(inputOrdered));
+
+        if (inputOrdered && (numStrands > 1))
+        {
+            if (consumerOptions)
+            {
+                //If the output activities are also stranded then need to create a version of the branch
+                bool isGrouped = queryOutputMeta()->isGrouped();
+                branch.setown(createStrandBranch(activity.queryRowManager(), strandOptions.numStrands, strandOptions.blockSize, true, isGrouped, true));
+                sourceJunction.set(branch->queryInputJunction());
+                recombiner.set(branch->queryOutputJunction());
+
+                //This is different from the branch above.  The first "junction" has the source activity as the input, and the outputs as the result of the activity
+                for (unsigned strandNo = 0; strandNo < strandOptions.numStrands; strandNo++)
+                {
+                    sourceJunction->setInput(strandNo, &strands.item(strandNo));
+                    streams.append(sourceJunction->queryOutput(strandNo));
+                }
+#ifdef TRACE_STRANDS
+                if (traceLevel > 2)
+                    DBGLOG("Executing activity %u with %u strands", activityId, strands.ordinality());
+#endif
+                return recombiner.getClear();
+            }
+            else
+                recombiner.setown(createStrandJunction(activity.queryRowManager(), numStrands, 1, strandOptions.blockSize, inputOrdered));
+        }
+    }
+    ForEachItemIn(i, strands)
+        streams.append(&strands.item(i));
+#ifdef TRACE_STRANDS
+    if (traceLevel > 2)
+        DBGLOG("Executing activity %u with %u strands", activityId, strands.ordinality());
+#endif
+
+    return recombiner.getClear();
+}
+
+
+
+
 
 // CSlaveGraph
 
@@ -574,6 +902,13 @@ void CSlaveGraph::connect()
     Owned<IThorActivityIterator> iter = getConnectedIterator();
     ForEach(*iter)
         iter->query().doconnect();
+    iter.setown(getSinkIterator());
+    ForEach(*iter)
+    {
+        CGraphElementBase &container = iter->query();
+        CSlaveActivity *sinkAct = (CSlaveActivity *)container.queryActivity();
+        sinkAct->connectInputStreams(true);
+    }
 }
 
 void CSlaveGraph::executeSubGraph(size32_t parentExtractSz, const byte *parentExtract)
@@ -1183,7 +1518,7 @@ bool CJobSlave::getWorkUnitValueBool(const char *prop, bool defVal) const
     return workUnitInfo->queryPropTree("Debug")->getPropBool(propName.toLowerCase().str(), defVal);
 }
 
-void CJobSlave::debugRequest(CMessageBuffer &msg, const char *request) const
+void CJobSlave::debugRequest(MemoryBuffer &msg, const char *request) const
 {
     if (watchdog) watchdog->debugRequest(msg, request);
 }
@@ -1579,3 +1914,42 @@ IThorFileCache *createFileCache(unsigned limit)
 {
     return new CFileCache(limit);
 }
+
+/*
+ * strand stuff
+ */
+
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered)
+{
+    if (input)
+    {
+        PointerArrayOf<IEngineRowStream> instreams;
+        junction.setown(input->getOutputStreams(activity, idx, instreams, NULL, consumerOrdered));
+        if (instreams.length() != 1)
+        {
+            assertex(instreams.length());
+            if (!junction)
+                junction.setown(createStrandJunction(activity.queryRowManager(), instreams.length(), 1, activity.getOptInt("strandBlockSize"), false));
+            ForEachItemIn(stream, instreams)
+            {
+                junction->setInput(stream, instreams.item(stream));
+            }
+            return junction->queryOutput(0);
+        }
+        else
+            return instreams.item(0);
+    }
+    else
+        return NULL;
+}
+
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, bool consumerOrdered)
+{
+    Owned<IStrandJunction> junction;
+    IEngineRowStream * result = connectSingleStream(activity, input, idx, junction, consumerOrdered);
+    assertex(!junction);
+    return result;
+}
+
+
+

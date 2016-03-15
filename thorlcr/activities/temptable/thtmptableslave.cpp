@@ -28,7 +28,7 @@
  * up consuming a lot of rows.
  *
  */
-class CInlineTableSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CInlineTableSlaveActivity : public CSlaveActivity
 {
 private:
     IHThorInlineTableArg * helper;
@@ -40,20 +40,20 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CInlineTableSlaveActivity(CGraphElementBase *_container)
-    : CSlaveActivity(_container), CThorDataLink(this)
+    : CSlaveActivity(_container)
     {
         helper = NULL;
         startRow = 0;
         currentRow = 0;
         maxRow = 0;
     }
-    virtual bool isGrouped() { return false; }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual bool isGrouped() const override { return false; }
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         appendOutputLinked(this);
         helper = static_cast <IHThorInlineTableArg *> (queryHelper());
     }
-    void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         dataLinkStart();
@@ -81,7 +81,7 @@ public:
         }
         currentRow = startRow;
     }
-    void stop()
+    virtual void stop() override
     {
         dataLinkStop();
     }
@@ -101,7 +101,7 @@ public:
         }
         return NULL;
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.isSource = true;

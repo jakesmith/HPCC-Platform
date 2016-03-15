@@ -30,55 +30,51 @@ public:
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
     {       
     }
-    virtual void process()
+    virtual void process() override
     {
-        startInput(inputs.item(0));
-        stopInput(inputs.item(0));
+        start();
+        stop();
     }
-    virtual void endProcess()
+    virtual void endProcess() override
     {
     }
 };
 
 
-class CNullSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CNullSlaveActivity : public CSlaveActivity
 {
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CNullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CNullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         appendOutputLinked(this);
     }
 // IThorSlaveActivity
-    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData) override
     {       
     }
 
 // IThorDataLink
-    virtual void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         dataLinkStart();
     }
-
-    virtual void stop()
+    virtual void stop() override
     {
         dataLinkStop();
     }
-
-    const void * nextRow() 
+    const void * nextRow() override
     {
         ActivityTimer t(totalCycles, timeActivities);
         return NULL;
     }
-
-    virtual bool isGrouped()
+    virtual bool isGrouped() const override
     {
         return queryHelper()->queryOutputMeta()->isGrouped();
     }
-
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.canReduceNumRows = true; // to 0 in fact
@@ -87,12 +83,14 @@ public:
 };
 
 
-class CThroughSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CThroughSlaveActivity : public CSlaveActivity
 {
+    typedef CSlaveActivity PARENT;
+
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CThroughSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CThroughSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         appendOutputLinked(this);
     }
@@ -102,27 +100,27 @@ public:
     }
 
 // IThorDataLink
-    virtual void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
-        startInput(inputs.item(0));
+        PARENT::start();
         dataLinkStart();
     }
-    virtual void stop()
+    virtual void stop() override
     {
-        stopInput(inputs.item(0));
+        PARENT::stop();
         dataLinkStop();
     }
-    const void * nextRow() 
+    const void * nextRow() override
     {
         ActivityTimer t(totalCycles, timeActivities);
-        return inputs.item(0)->nextRow();
+        return inputStream->nextRow();
     }
-    virtual bool isGrouped()
+    virtual bool isGrouped() const override
     {
         return inputs.item(0)->isGrouped();
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         inputs.item(0)->getMetaInfo(info);
     }

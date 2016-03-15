@@ -176,7 +176,7 @@ public:
 
 //---------------------------------------------------------------------------
 
-class CPipeReadSlaveActivity : public CPipeSlaveBase, public CThorDataLink
+class CPipeReadSlaveActivity : public CPipeSlaveBase
 {
 protected:
     IHThorPipeReadArg *helper;
@@ -189,7 +189,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CPipeSlaveBase);
 
     CPipeReadSlaveActivity(CGraphElementBase *_container) 
-        : CPipeSlaveBase(_container), CThorDataLink(this)
+        : CPipeSlaveBase(_container)
     {
     }
     CATCH_NEXTROW()
@@ -266,7 +266,7 @@ public:
         CPipeSlaveBase::abort();
         abortPipe();
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
@@ -305,16 +305,18 @@ public:
     }
 
 protected:
-    CPipeThroughSlaveActivity &     activity;
-    IThorDataLink *                 input;
-    Owned<IException>               exc;
+    CPipeThroughSlaveActivity &activity;
+    IEngineRowStream *inputStream;
+    Owned<IException> exc;
 };
 
 
 //---------------------------------------------------------------------------
 
-class CPipeThroughSlaveActivity : public CPipeSlaveBase, public CThorDataLink
+class CPipeThroughSlaveActivity : public CPipeSlaveBase
 {
+    typedef CPipeSlaveBase PARENT;
+
     friend class PipeWriterThread;
 
     IHThorPipeThroughArg *helper;
@@ -342,7 +344,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CPipeSlaveBase);
 
     CPipeThroughSlaveActivity(CGraphElementBase *_container)
-        : CPipeSlaveBase(_container), CThorDataLink(this)
+        : CPipeSlaveBase(_container)
     {
         pipeWriter = NULL;
         grouped = false;
@@ -367,6 +369,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         eof = anyThisGroup = inputExhausted = false;
         firstRead = true;
 
@@ -380,7 +383,6 @@ public:
             OwnedRoxieString pipeProgram(helper->getPipeProgram());
             openPipe(pipeProgram, "PIPETHROUGH");
         }
-        startInput(inputs.item(0));
         dataLinkStart();
         pipeWriter = new PipeWriterThread(*this);
         pipeWriter->start();
@@ -458,7 +460,7 @@ public:
         if (recreate)
             pipeVerified.signal();
         Owned<IException> wrexc = pipeWriter->joinExc();
-        stopInput(inputs.item(0));
+        PARENT::stop();
         verifyPipe();
         dataLinkStop();
         if (wrexc)
@@ -488,7 +490,7 @@ public:
         pipeOpened.signal();
         abortPipe();
     }
-    virtual bool isGrouped() { return grouped; }
+    virtual bool isGrouped() const override { return grouped; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
@@ -502,7 +504,7 @@ public:
 PipeWriterThread::PipeWriterThread(CPipeThroughSlaveActivity & _activity)
    : Thread("PipeWriterThread"), activity(_activity)
 {
-    input = activity.inputs.item(0);
+    inputStream = activity.inputStream;
 }
 
 int PipeWriterThread::run()
@@ -518,7 +520,7 @@ int PipeWriterThread::run()
         {
             if (eos||activity.abortSoon)
                 break;
-            OwnedConstThorRow row = input->ungroupedNextRow();
+            OwnedConstThorRow row = inputStream->ungroupedNextRow();
             if (!row.get())
                 break;
             if (activity.recreate)

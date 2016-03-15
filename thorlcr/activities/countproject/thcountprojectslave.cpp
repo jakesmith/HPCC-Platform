@@ -19,45 +19,43 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class BaseCountProjectActivity : public CSlaveActivity,  public CThorDataLink, implements ISmartBufferNotify
+class BaseCountProjectActivity : public CSlaveActivity
 {
+    typedef CSlaveActivity PARENT;
+
 protected:
     IHThorCountProjectArg *helper;
     rowcount_t count;
-    Owned<IThorDataLink> input;
 
-    void start()
+    virtual void start() override
     {
+        PARENT::start();
         count = 0;
         dataLinkStart();
     }
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    BaseCountProjectActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    BaseCountProjectActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = NULL;
     }
-    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData) override
     {
         appendOutputLinked(this);
         helper = static_cast <IHThorCountProjectArg *> (queryHelper());
     }
-    virtual void stop()
+    virtual void stop() override
     {
-        stopInput(input);
+        PARENT::stop();
         dataLinkStop();
     }
-    virtual void onInputStarted(IException *)
-    {
-        // not needed
-    }
-    virtual bool startAsync() { return false; }
 };
 
 
 class LocalCountProjectActivity : public BaseCountProjectActivity
 {
+	typedef BaseCountProjectActivity PARENT;
     bool anyThisGroup;
 
 public:
@@ -68,22 +66,20 @@ public:
     {
         ActivityTimer s(totalCycles, timeActivities);
         ActPrintLog("COUNTPROJECT: Is Local");
-        input.set(inputs.item(0));
         anyThisGroup = false;
-        startInput(input);
-        BaseCountProjectActivity::start();
+        PARENT::start();
     }
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
         while (!abortSoon)
         {
-            OwnedConstThorRow row(input->nextRow());
+            OwnedConstThorRow row(inputStream->nextRow());
             if (!row)
             {
                 if (anyThisGroup) 
                     break;
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if (!row)
                     break;
                 count = 0;
@@ -101,7 +97,7 @@ public:
         anyThisGroup = false;
         return NULL;        
     }
-    virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
+    virtual bool isGrouped() const override { return inputs.item(0)->isGrouped(); }
     void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
@@ -115,9 +111,9 @@ public:
 };
 
 
-class CountProjectActivity : public BaseCountProjectActivity
+class CountProjectActivity : public BaseCountProjectActivity, implements ILookAheadStopNotify
 {
-private:
+	typedef BaseCountProjectActivity PARENT;
     bool first;
     Semaphore prevRecCountSem;
     rowcount_t prevRecCount, localRecCount;
@@ -162,8 +158,13 @@ public:
     }   
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
     {
-        BaseCountProjectActivity::init(data, slaveData);
+    	PARENT::init(data, slaveData);
         mpTag = container.queryJobChannel().deserializeMPTag(data);
+    }
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+    	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+    	setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), COUNTPROJECT_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage())); // could spot disk write output here?
     }
     virtual void start()
     {
@@ -171,17 +172,14 @@ public:
         ActPrintLog( "COUNTPROJECT: Is Global");
         first = true;
         prevRecCount = 0;
-        startInput(inputs.item(0));
         ThorDataLinkMetaInfo info;
-        inputs.item(0)->getMetaInfo(info);
+        input->getMetaInfo(info);
         localRecCount = (info.totalRowsMin == info.totalRowsMax) ? (rowcount_t)info.totalRowsMax : RCUNSET;
-        input.setown(createDataLinkSmartBuffer(this, inputs.item(0), COUNTPROJECT_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, true, &container.queryJob().queryIDiskUsage())); // could spot disk write output here?
-        input->start();
-        BaseCountProjectActivity::start();
+        PARENT::start();
     }
     virtual void stop()
     {
-        BaseCountProjectActivity::stop();
+    	PARENT::stop();
         if (first) // nextRow, therefore getPrevCount()/sendCount() never called
         {
             prevRecCount = count = getPrevCount();
@@ -206,7 +204,7 @@ public:
         }
         while (!abortSoon)
         {
-            OwnedConstThorRow row(input->nextRow()); // NB: lookahead ensures ungrouped
+            OwnedConstThorRow row(inputStream->nextRow()); // NB: lookahead ensures ungrouped
             if (!row) 
                 break;
             RtlDynamicRowBuilder ret(queryRowAllocator());
@@ -219,7 +217,7 @@ public:
         }
         return NULL;
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
     virtual void onInputFinished(rowcount_t localRecCount)
     {
         if (!haveLocalCount())

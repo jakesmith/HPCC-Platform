@@ -286,7 +286,7 @@ interface IRowStreamStepping : extends IRowStream
     virtual const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra) = 0;
 };
 
-class CIndexReadSlaveActivity : public CIndexReadSlaveBase, public CThorDataLink
+class CIndexReadSlaveActivity : public CIndexReadSlaveBase
 {
     IHThorIndexReadArg *helper;
     rowcount_t rowLimit, stopAfter;
@@ -551,7 +551,7 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CIndexReadSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container), CThorDataLink(this)
+    CIndexReadSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container)
     {
         keyedLimitSkips = false;
         first = true;
@@ -654,7 +654,7 @@ public:
         info.isSource = true;
         // MORE TBD
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
 
 // IRowStream
     virtual void stop()
@@ -759,7 +759,7 @@ CActivityBase *createIndexReadSlave(CGraphElementBase *container)
 
 /////////////////////////////////////////////////////////////
 
-class CIndexGroupAggregateSlaveActivity : public CIndexReadSlaveBase, public CThorDataLink, implements IHThorGroupAggregateCallback
+class CIndexGroupAggregateSlaveActivity : public CIndexReadSlaveBase, implements IHThorGroupAggregateCallback
 {
     IHThorIndexGroupAggregateArg *helper;
     bool gathered, eoi, merging;
@@ -770,7 +770,7 @@ class CIndexGroupAggregateSlaveActivity : public CIndexReadSlaveBase, public CTh
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CIndexGroupAggregateSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container), CThorDataLink(this)
+    CIndexGroupAggregateSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container)
     {
         helper = (IHThorIndexGroupAggregateArg *)container.queryHelper();
         merging = false;
@@ -781,20 +781,20 @@ public:
         localAggTable->addRow(next);
     }
 // IThorSlaveActivity
-    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         CIndexReadSlaveBase::init(data, slaveData);
         appendOutputLinked(this);
     }
 // IThorDataLink
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.isSource = true;
         // MORE TBD
     }
-    virtual bool isGrouped() { return false; }
-    virtual void start()
+    virtual bool isGrouped() const override { return false; }
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         localAggTable.setown(new RowAggregator(*helper, *helper));
@@ -803,7 +803,7 @@ public:
         dataLinkStart();
     }
 // IRowStream
-    virtual void stop()
+    virtual void stop() override
     {
         dataLinkStop();
     }
@@ -870,7 +870,7 @@ CActivityBase *createIndexGroupAggregateSlave(CGraphElementBase *container) { re
 /////////////////////////////////////////////////////////////
 
 
-class CIndexCountSlaveActivity : public CIndexReadSlaveBase, public CThorDataLink
+class CIndexCountSlaveActivity : public CIndexReadSlaveBase
 {
     bool eoi;
     IHThorIndexCountArg *helper;
@@ -881,7 +881,7 @@ class CIndexCountSlaveActivity : public CIndexReadSlaveBase, public CThorDataLin
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CIndexCountSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container), CThorDataLink(this)
+    CIndexCountSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container)
     {
         helper = static_cast <IHThorIndexCountArg *> (container.queryHelper());
         preknownTotalCount = 0;
@@ -890,7 +890,7 @@ public:
     }
 
 // IThorSlaveActivity
-    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         CIndexReadSlaveBase::init(data, slaveData);
         choosenLimit = (rowcount_t)helper->getChooseNLimit();
@@ -898,14 +898,14 @@ public:
     }
 
 // IThorDataLink
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.isSource = true;
         // MORE TBD
     }
-    virtual bool isGrouped() { return false; }
-    virtual void start()
+    virtual bool isGrouped() const override { return false; }
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         eoi = false;
@@ -918,7 +918,7 @@ public:
     }
 
 // IRowStream
-    virtual void stop()
+    virtual void stop() override
     {
         dataLinkStop();
     }
@@ -1008,7 +1008,7 @@ CActivityBase *createIndexCountSlave(CGraphElementBase *container)
 }
 
 
-class CIndexNormalizeSlaveActivity : public CIndexReadSlaveBase, public CThorDataLink
+class CIndexNormalizeSlaveActivity : public CIndexReadSlaveBase
 {
     bool eoi, expanding;
     IHThorIndexNormalizeArg *helper;
@@ -1034,7 +1034,7 @@ class CIndexNormalizeSlaveActivity : public CIndexReadSlaveBase, public CThorDat
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CIndexNormalizeSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container), CThorDataLink(this), partHelper(*this)
+    CIndexNormalizeSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container), partHelper(*this)
     {
         helper = (IHThorIndexNormalizeArg *)container.queryHelper();
     }
@@ -1067,8 +1067,8 @@ public:
         info.isSource = true;
         // MORE TBD
     }
-    virtual bool isGrouped() { return false; }
-    virtual void start()
+    virtual bool isGrouped() const override { return false; }
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         keyedLimit = (rowcount_t)helper->getKeyedLimit();
@@ -1101,7 +1101,7 @@ public:
     }
 
 // IRowStream
-    virtual void stop()
+    virtual void stop() override
     {
         if (RCMAX != keyedLimit)
         {
@@ -1201,7 +1201,7 @@ public:
 
 CActivityBase *createIndexNormalizeSlave(CGraphElementBase *container) { return new CIndexNormalizeSlaveActivity(container); }
 
-class CIndexAggregateSlaveActivity : public CIndexReadSlaveBase, public CThorDataLink
+class CIndexAggregateSlaveActivity : public CIndexReadSlaveBase
 {
     bool eoi, hadElement;
     IHThorIndexAggregateArg *helper;
@@ -1232,20 +1232,20 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CIndexAggregateSlaveActivity(CGraphElementBase *_container) 
-        : CIndexReadSlaveBase(_container), CThorDataLink(this), partHelper(*this), aggregator(*this)
+        : CIndexReadSlaveBase(_container), partHelper(*this), aggregator(*this)
     {
         helper = (IHThorIndexAggregateArg *)container.queryHelper();
     }
 
 // IThorSlaveActivity
-    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         CIndexReadSlaveBase::init(data, slaveData);
         appendOutputLinked(this);
     }
 
 // IThorDataLink
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.isSource = true;
@@ -1253,8 +1253,8 @@ public:
         info.totalRowsMax = 1;
         // MORE TBD
     }
-    virtual bool isGrouped() { return false; }
-    virtual void start()
+    virtual bool isGrouped() const override { return false; }
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         eoi = hadElement = false;
@@ -1263,7 +1263,7 @@ public:
     }
 
 // IRowStream
-    virtual void stop()
+    virtual void stop() override
     {
         dataLinkStop();
     }

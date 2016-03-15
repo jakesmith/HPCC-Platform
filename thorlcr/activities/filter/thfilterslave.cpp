@@ -17,50 +17,53 @@
 
 #include "thfilterslave.ipp"
 
-class CFilterSlaveActivityBase : public CSlaveActivity, public CThorDataLink
+class CFilterSlaveActivityBase : public CSlaveActivity
 {
+    typedef CSlaveActivity PARENT;
+
 protected:
     bool anyThisGroup;
-    IThorDataLink * input;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CFilterSlaveActivityBase(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this)
+    explicit CFilterSlaveActivityBase(CGraphElementBase *_container)
+        : CSlaveActivity(_container)
     {
-        input = NULL;
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         appendOutputLinked(this);
     }
-    void start()
-    {   
-        input = inputs.item(0);
+    virtual void start() override
+    {
+        PARENT::start();
         anyThisGroup = false;
-        startInput(input);
         dataLinkStart();
     }
-    void stop()
+    virtual void stop() override
     {
-        stopInput(input);
+        PARENT::stop();
         dataLinkStop();
     }
-    virtual const void *nextRow()=0;
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual const void *nextRow() override =0;
+
+// IThorDataLink
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.fastThrough = true;
         info.canReduceNumRows = true;
-        calcMetaInfoSize(info,inputs.item(0));
+        calcMetaInfoSize(info, inputs.item(0));
     }
-    virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
+    virtual bool isGrouped() const override { return inputs.item(0)->isGrouped(); }
 };
 
 
 class CFilterSlaveActivity : public CFilterSlaveActivityBase, public CThorSteppable
 {
+    typedef CFilterSlaveActivityBase PARENT;
+
     IHThorFilterArg *helper;
     unsigned matched;
 public:
@@ -70,7 +73,7 @@ public:
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
-        CFilterSlaveActivityBase::init(data,slaveData);
+        PARENT::init(data,slaveData);
         helper = static_cast <IHThorFilterArg *> (queryHelper());
     }
     void start()
@@ -78,14 +81,14 @@ public:
         ActivityTimer s(totalCycles, timeActivities);
         matched = 0;
         abortSoon = !helper->canMatchAny();
-        CFilterSlaveActivityBase::start();
+        PARENT::start();
     }
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
         while(!abortSoon)
         {
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if (!row)
             {
                 if(anyThisGroup)
@@ -93,7 +96,7 @@ public:
                     anyThisGroup = false;
                     break;
                 }
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if (!row)
                     break;
             }
@@ -117,7 +120,7 @@ public:
         ActivityTimer t(totalCycles, timeActivities);
         while (!abortSoon)
         {
-            OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
+            OwnedConstThorRow ret = inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
             if (!ret)
             {
                 abortSoon = true;
@@ -153,19 +156,21 @@ public:
     { 
         abortSoon = !helper->canMatchAny();
         anyThisGroup = false;
-        input->resetEOF(); 
+        inputStream->resetEOF();
     }
 // steppable
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CFilterSlaveActivityBase::setInput(index, inputActivity, inputOutIdx);
-        CThorSteppable::setInput(index, inputActivity, inputOutIdx);
+        PARENT::setInputStream(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInputStream(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };
 
 class CFilterProjectSlaveActivity : public CFilterSlaveActivityBase
 {
+    typedef CFilterSlaveActivityBase PARENT;
+
     IHThorFilterProjectArg *helper;
     rowcount_t recordCount;  // NB local (not really used for global)
     Owned<IEngineRowAllocator> allocator;
@@ -176,7 +181,7 @@ public:
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
-        CFilterSlaveActivityBase::init(data,slaveData);
+        PARENT::init(data,slaveData);
         helper = static_cast <IHThorFilterProjectArg *> (queryHelper());
         allocator.set(queryRowAllocator());
     }
@@ -185,19 +190,19 @@ public:
         ActivityTimer s(totalCycles, timeActivities);
         abortSoon = !helper->canMatchAny();
         recordCount = 0;
-        CFilterSlaveActivityBase::start();
+        PARENT::start();
     }
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
         while (!abortSoon)
         {
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if (!row) {
                 recordCount = 0;
                 if (!anyThisGroup)
                 {
-                    row.setown(input->nextRow());
+                    row.setown(inputStream->nextRow());
                     if (!row)
                     {
                         abortSoon = true;
@@ -235,6 +240,8 @@ public:
 
 class CFilterGroupSlaveActivity : public CFilterSlaveActivityBase, public CThorSteppable
 {
+    typedef CFilterSlaveActivityBase PARENT;
+
     IHThorFilterGroupArg *helper;
     Owned<IThorRowLoader> groupLoader;
     Owned<IRowStream> groupStream;
@@ -255,14 +262,14 @@ public:
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
-        CFilterSlaveActivityBase::init(data,slaveData);
+        PARENT::init(data,slaveData);
         helper = (IHThorFilterGroupArg *)queryHelper();
     }
     void start()
     {   
         ActivityTimer s(totalCycles, timeActivities);
         abortSoon = !helper->canMatchAny();
-        CFilterSlaveActivityBase::start();
+        PARENT::start();
     }
     CATCH_NEXTROW()
     {
@@ -283,7 +290,7 @@ public:
             CThorExpandingRowArray rows(*this, this);
             try
             {
-                groupLoader->loadGroup(input, abortSoon, &rows);
+                groupLoader->loadGroup(inputStream, abortSoon, &rows);
             }
             catch (IException *e)
             {
@@ -349,18 +356,18 @@ public:
             if (stepExtra.returnMismatches())
             {
                 bool matchedCompletely = true;
-                ret.setown(input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra));
+                ret.setown(inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra));
                 if (!wasCompleteMatch)
                     return ret.getClear();
             }
             else
-                ret.setown(input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra));
+                ret.setown(inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra));
 #endif
 
         CThorExpandingRowArray rows(*this, this);
         try
         {
-            groupStream.setown(groupLoader->loadGroup(input, abortSoon, &rows));
+            groupStream.setown(groupLoader->loadGroup(inputStream, abortSoon, &rows));
         }
         catch (IException *e)
         {
@@ -388,19 +395,19 @@ public:
     { 
         abortSoon = false;
         groupStream.clear();
-        input->resetEOF(); 
+        inputStream->resetEOF();
     }
     void stop()
     {
+        PARENT::stop();
         groupStream.clear();
-        stopInput(input);
         dataLinkStop();
     }
 // steppable
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CFilterSlaveActivityBase::setInput(index, inputActivity, inputOutIdx);
-        CThorSteppable::setInput(index, inputActivity, inputOutIdx);
+        PARENT::setInputStream(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInputStream(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };

@@ -32,7 +32,7 @@
 #include "thorxmlread.hpp"
 #include "thdiskbaseslave.ipp"
 
-class CXmlReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDataLink
+class CXmlReadSlaveActivity : public CDiskReadSlaveActivityBase
 {
     IHThorXmlReadArg *helper;
     IRowStream *out;
@@ -195,7 +195,7 @@ class CXmlReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CXmlReadSlaveActivity(CGraphElementBase *_container) : CDiskReadSlaveActivityBase(_container), CThorDataLink(this)
+    CXmlReadSlaveActivity(CGraphElementBase *_container) : CDiskReadSlaveActivityBase(_container)
     {
         out = NULL;
         helper = (IHThorXmlReadArg *)queryHelper();
@@ -209,7 +209,7 @@ public:
     {
         ::Release(out);
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         CDiskReadSlaveActivityBase::init(data, slaveData);
         partHandler.setown(new CXmlPartHandler(*this,queryRowAllocator()));
@@ -226,14 +226,14 @@ public:
     }
     
 // IThorDataLink
-    virtual void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         CDiskReadSlaveActivityBase::start();
         out = createSequentialPartHandler(partHandler, partDescs, false);
         dataLinkStart();
     }
-    virtual void stop()
+    virtual void stop() override
     {
         if (out)
         {
@@ -261,7 +261,7 @@ public:
         return row.getClear();
     }
     
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         if (!gotMeta)
@@ -269,7 +269,7 @@ public:
             gotMeta = true;
             initMetaInfo(cachedMetaInfo);
             cachedMetaInfo.isSource = true;
-            getPartsMetaInfo(cachedMetaInfo, *this, partDescs.ordinality(), partDescs.getArray(), partHandler);
+            getPartsMetaInfo(cachedMetaInfo, partDescs.ordinality(), partDescs.getArray(), partHandler);
             cachedMetaInfo.unknownRowsOutput = true; // at least I don't think we know
         }
         info = cachedMetaInfo;

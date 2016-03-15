@@ -33,7 +33,7 @@
 #include "csvsplitter.hpp"
 #include "thdiskbaseslave.ipp"
 
-class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDataLink
+class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase
 {
     IHThorCsvReadArg *helper;
     StringAttr csvQuote, csvSeparate, csvTerminate, csvEscape;
@@ -305,7 +305,7 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
 public:
     IMPLEMENT_IINTERFACE_USING(CDiskReadSlaveActivityBase);
 
-    CCsvReadSlaveActivity(CGraphElementBase *_container) : CDiskReadSlaveActivityBase(_container), CThorDataLink(this)
+    CCsvReadSlaveActivity(CGraphElementBase *_container) : CDiskReadSlaveActivityBase(_container)
     {
         helper = static_cast <IHThorCsvReadArg *> (queryHelper());
         stopAfter = (rowcount_t)helper->getChooseNLimit();
@@ -376,7 +376,7 @@ public:
             gotMeta = true;
             initMetaInfo(cachedMetaInfo);
             cachedMetaInfo.isSource = true;
-            getPartsMetaInfo(cachedMetaInfo, *this, partDescs.ordinality(), partDescs.getArray(), partHandler);
+            getPartsMetaInfo(cachedMetaInfo, partDescs.ordinality(), partDescs.getArray(), partHandler);
             cachedMetaInfo.unknownRowsOutput = true; // at least I don't think we know
         }
         info = cachedMetaInfo;
@@ -435,7 +435,7 @@ public:
         CDiskReadSlaveActivityBase::abort();
         cancelReceiveMsg(queryJobChannel().queryMyRank()-1, mpTag);
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
 
 friend class CCsvPartHandler;
 };

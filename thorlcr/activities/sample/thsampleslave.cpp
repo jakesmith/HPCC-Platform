@@ -18,33 +18,29 @@
 
 #include "thsampleslave.ipp"
 
-class SampleSlaveActivity : public CSlaveActivity, public CThorDataLink
+class SampleSlaveActivity : public CSlaveActivity
 {
+    typedef CSlaveActivity PARENT;
 
     IHThorSampleArg * helper;
     unsigned numSamples, whichSample, numToSkip;
     bool anyThisGroup;
     bool eogNext;
-    IThorDataLink *input;
-
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    SampleSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this) { }
+    SampleSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container) { }
 
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         appendOutputLinked(this);
         helper = static_cast <IHThorSampleArg *> (queryHelper());
     }
-
-
-    void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
-        startInput(input);
+        PARENT::start();
         eogNext = false;
         anyThisGroup = false;
         numSamples = helper->getProportion();
@@ -52,28 +48,24 @@ public:
         numToSkip = whichSample ? whichSample - 1 : 0;
         dataLinkStart();
     }
-
-
-    void stop()
+    virtual void stop() override
     {
+        PARENT::stop();
         dataLinkStop();
-        stopInput(input);
     }
-
-
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
         while(!abortSoon)
         {
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if(!row)    {
                 numToSkip = whichSample ? whichSample - 1 : 0;
                 if(anyThisGroup) {
                     anyThisGroup = false;           
                     break;
                 }
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if(!row) 
                     break;
             }
@@ -87,17 +79,14 @@ public:
         }
         return NULL;
     }
-
-
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.canReduceNumRows = true;
         info.fastThrough = true;
         calcMetaInfoSize(info,inputs.item(0));
     }
-
-    virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
+    virtual bool isGrouped() const override { return inputs.item(0)->isGrouped(); }
 };
 
 CActivityBase *createSampleSlave(CGraphElementBase *container)

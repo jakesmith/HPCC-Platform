@@ -19,65 +19,48 @@
 #include "thprojectslave.ipp"
 #include "eclrtl_imp.hpp"
 
-//  IThorDataLink needs only be implemented once, since there is only one output,
-//  therefore may as well implement it here.
 
-class CProjectSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CProjecStrandProcessor : public CThorStrandProcessor
 {
-    IHThorProjectArg * helper;
-    bool anyThisGroup;
-    IThorDataLink *input;
+    IHThorProjectArg *helper;
+    bool anyThisGroup = false;
     Owned<IEngineRowAllocator> allocator;
 
 public:
-    IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
-
-    CProjectSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this) { }
-
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    explicit CProjecStrandProcessor(CSlaveActivity &parent, IEngineRowStream *inputStream, unsigned outputId)
+        : CThorStrandProcessor(parent, inputStream, outputId)
     {
-        appendOutputLinked(this);
         helper = static_cast <IHThorProjectArg *> (queryHelper());
-        anyThisGroup = false;
-        allocator.set(queryRowAllocator());
+        allocator.set(parent.queryRowAllocator());
     }
-    void start()
-    {
-        ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
-        startInput(input);
-        dataLinkStart();
-    }
-    void stop()
-    {
-        stopInput(input);
-        dataLinkStop();
-    }
-    CATCH_NEXTROW()
+    STRAND_CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        loop {
-            OwnedConstThorRow row = input->nextRow();
+        loop
+        {
+            OwnedConstThorRow row = inputStream->nextRow();
             if (!row && !anyThisGroup)
-                row.setown(input->nextRow());
-            if (!row||abortSoon)
+                row.setown(inputStream->nextRow());
+            if (!row||parent.queryAbortSoon())
                 break;
             RtlDynamicRowBuilder ret(allocator);
             size32_t sz;
-            try {
+            try
+            {
                 sz = helper->transform(ret, row);
             }
-            catch (IException *e) 
-            { 
-                ActPrintLog(e, "In helper->transform()");
-                throw; 
-            }
-            catch (CATCHALL)
-            { 
-                ActPrintLog("PROJECT: Unknown exception in helper->transform()"); 
+            catch (IException *e)
+            {
+                parent.ActPrintLog(e, "In helper->transform()");
                 throw;
             }
-            if (sz) {
+            catch (CATCHALL)
+            {
+                parent.ActPrintLog("PROJECT: Unknown exception in helper->transform()");
+                throw;
+            }
+            if (sz)
+            {
                 dataLinkIncrement();
                 anyThisGroup = true;
                 return ret.finalizeRowClear(sz);
@@ -86,25 +69,60 @@ public:
         anyThisGroup = false;
         return NULL;
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+};
+
+
+//  IThorDataLink needs only be implemented once, since there is only one output,
+//  therefore may as well implement it here.
+
+class CProjectSlaveActivity : public CThorStrandedActivity
+{
+    IHThorProjectArg *helper = NULL;
+
+public:
+    IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
+
+    explicit CProjectSlaveActivity(CGraphElementBase *_container) : CThorStrandedActivity(_container)
+    {
+        appendOutputLinked(this);
+    }
+
+    virtual CThorStrandProcessor *createStrandProcessor(IEngineRowStream *instream) override
+    {
+        return new CProjecStrandProcessor(*this, instream, 0);
+    }
+    virtual CThorStrandProcessor *createStrandSourceProcessor(bool inputOrdered) override { throwUnexpected(); }
+
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
+    {
+        helper = static_cast <IHThorProjectArg *> (queryHelper());
+    }
+    virtual void start() // JCSMORE - perhaps could move to Stranded base class
+    {
+        CThorStrandedActivity::start();
+        onStartStrands();
+    }
+
+// IThorDataLink
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.fastThrough = true; // ish
         if (helper->canFilter())
             info.canReduceNumRows = true;
-        calcMetaInfoSize(info,inputs.item(0));
+        calcMetaInfoSize(info, inputs.item(0));
     }
-
-    virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
+    virtual bool isGrouped() const override { return inputs.item(0)->isGrouped(); }
 };
 
 
-class CPrefetchProjectSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CPrefetchProjectSlaveActivity : public CSlaveActivity
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorPrefetchProjectArg *helper;
     rowcount_t numProcessedLastGroup;
     bool eof;
-    IThorDataLink *input;
     Owned<IEngineRowAllocator> allocator;
     IThorChildGraph *child;
     bool parallel;
@@ -144,7 +162,7 @@ class CPrefetchProjectSlaveActivity : public CSlaveActivity, public CThorDataLin
         ~CPrefetcher() { stop(); }
         PrefetchInfo *pullRecord()
         {
-            OwnedConstThorRow row = parent.input->nextRow();
+            OwnedConstThorRow row = parent.inputStream->nextRow();
             if (row)
             {
                 eog = false;
@@ -238,7 +256,7 @@ class CPrefetchProjectSlaveActivity : public CSlaveActivity, public CThorDataLin
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CPrefetchProjectSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this), prefetcher(*this)
+    CPrefetchProjectSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), prefetcher(*this)
     {
         helper = (IHThorPrefetchProjectArg *) queryHelper();
         parallel = 0 != (helper->getFlags() & PPFparallel);
@@ -255,8 +273,7 @@ public:
     void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
-        startInput(input);
+        PARENT::start();
 
         numProcessedLastGroup = getDataLinkGlobalCount();
         eof = !helper->canMatchAny();
@@ -268,7 +285,7 @@ public:
     {
         if (parallel)
             prefetcher.stop();
-        stopInput(input);
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -317,7 +334,7 @@ public:
             info.canReduceNumRows = true;
         calcMetaInfoSize(info,inputs.item(0));
     }
-    virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
+    virtual bool isGrouped() const override { return inputs.item(0)->isGrouped(); }
 };
 
 
@@ -325,7 +342,6 @@ CActivityBase *createPrefetchProjectSlave(CGraphElementBase *container)
 {
     return new CPrefetchProjectSlaveActivity(container);
 }
-
 
 CActivityBase *createProjectSlave(CGraphElementBase *container)
 {

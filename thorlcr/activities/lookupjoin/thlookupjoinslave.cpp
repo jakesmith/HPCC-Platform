@@ -756,9 +756,10 @@ struct HtEntry { rowidx_t index, count; };
  * and base common functionality for all and lookup varieties
  */
 template <class HTHELPER, class HELPER>
-class CInMemJoinBase : public CSlaveActivity, public CThorDataLink, public CAllOrLookupHelper<HELPER>, implements ISmartBufferNotify, implements IBCastReceive
+class CInMemJoinBase : public CSlaveActivity, public CAllOrLookupHelper<HELPER>, implements ILookAheadStopNotify, implements IBCastReceive
 {
-    Semaphore leftstartsem;
+    typedef CSlaveActivity PARENT;
+
     Owned<IException> leftexception;
 
     bool eos, eog, someSinceEog;
@@ -1236,7 +1237,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CInMemJoinBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this),
+    CInMemJoinBase(CGraphElementBase *_container) : CSlaveActivity(_container),
         HELPERBASE((HELPER *)queryHelper()), rhs(*this, NULL)
     {
         gotRHS = false;
@@ -1288,6 +1289,17 @@ public:
         }
     }
     HTHELPER *queryTable() { return table; }
+    void startLeftInput()
+    {
+        try
+        {
+            startInput(0);
+        }
+        catch(IException *e)
+        {
+            leftexception.setown(e);
+        }
+    }
 
 // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -1311,7 +1323,13 @@ public:
                 rowProcessor = new CRowProcessor(*this);
         }
     }
-    virtual void start()
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+        PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+        if (0 == index)
+            setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), LOOKUPJOINL_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(input->queryFromActivity()), grouped, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
+    }
+    virtual void start() override
     {
         assertex(inputs.ordinality() == 2);
         if (isGlobal())
@@ -1348,7 +1366,6 @@ public:
         currentHashEntry.index = 0;
         currentHashEntry.count = 0;
 
-        right.set(rightITDL);
         rightAllocator.set(::queryRowAllocator(rightITDL));
         rightSerializer.set(::queryRowSerializer(rightITDL));
         rightDeserializer.set(::queryRowDeserializer(rightITDL));
@@ -1361,26 +1378,38 @@ public:
             defaultRight.setown(rr.finalizeRowClear(rrsz));
         }
 
-        leftITDL = createDataLinkSmartBuffer(this,leftITDL,LOOKUPJOINL_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(leftITDL->queryFromActivity()),grouped,RCUNBOUND,this,false,&container.queryJob().queryIDiskUsage());
-        left.setown(leftITDL);
-        startInput(leftITDL);
+        class CASyncCall : implements IThreaded
+        {
+            CThreaded threaded;
+            CInMemJoinBase &activity;
+        public:
+            CASyncCall(CInMemJoinBase &_activity) : activity(_activity), threaded("CAsyncCall", this) { }
+            void start() { threaded.start(); }
+            void wait() { threaded.join(); }
+        // IThreaded
+            virtual void main() { activity.startLeftInput(); }
+        } asyncLeftStart(*this);
+
+        asyncLeftStart.start();
 
         try
         {
-            startInput(rightITDL);
+            startInput(1);
         }
         catch (CATCHALL)
         {
-            leftstartsem.wait();
+            asyncLeftStart.wait();
             left->stop();
             throw;
         }
-        leftstartsem.wait();
+        asyncLeftStart.wait();
+        left.set(inputStream);
         if (leftexception)
         {
             right->stop();
             throw leftexception.getClear();
         }
+        right.set(inputStreams.item(1));
         dataLinkStart();
     }
     virtual void abort()
@@ -1402,12 +1431,12 @@ public:
         clearHT();
         if (right)
         {
-            stopInput(right, "(R)");
+            stopInput(1, "(R)");
             right.clear();
         }
         if (broadcaster)
             broadcaster->reset();
-        stopInput(left, "(L)");
+        stopInput(0, "(L)");
         left.clear();
         dataLinkStop();
     }
@@ -1488,16 +1517,6 @@ public:
             sendItem = NULL; // NB: NULL indicates end
         }
         rowProcessor->addBlock(sendItem);
-    }
-// ISmartBufferNotify
-    virtual void onInputStarted(IException *except)
-    {
-        leftexception.set(except);
-        leftstartsem.signal();
-    }
-    virtual bool startAsync()
-    {
-        return true;
     }
     virtual void onInputFinished(rowcount_t count)
     {
@@ -2445,7 +2464,7 @@ public:
         return false;
     }
 // IThorSlaveActivity overloaded methods
-    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         PARENT::init(data, slaveData);
 
@@ -2461,7 +2480,7 @@ public:
             lhsDistributor.setown(createHashDistributor(this, queryJobChannel().queryJobComm(), lhsDistributeTag, false, NULL, "LHS"));
         }
     }
-    virtual void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         PARENT::start();
@@ -2514,7 +2533,7 @@ public:
         dataLinkIncrement();
         return row.getClear();
     }
-    virtual void abort()
+    virtual void abort() override
     {
         PARENT::abort();
         if (rhsDistributor)
@@ -2524,7 +2543,7 @@ public:
         if (joinHelper)
             joinHelper->stop();
     }
-    virtual void stop()
+    virtual void stop() override
     {
         if (isGlobal())
         {
@@ -2551,7 +2570,7 @@ public:
         joinHelper.clear();
         PARENT::stop();
     }
-    virtual bool isGrouped()
+    virtual bool isGrouped() const override
     {
         return isSmart() ? false : inputs.item(0)->isGrouped();
     }
@@ -3053,7 +3072,7 @@ public:
         }
         PARENT::stop();
     }
-    virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
+    virtual bool isGrouped() const override { return inputs.item(0)->isGrouped(); }
 };
 
 

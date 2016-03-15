@@ -33,7 +33,7 @@
 
 #define _STABLE_MERGE
 
-class GlobalMergeSlaveActivity : public CSlaveActivity, public CThorDataLink
+class GlobalMergeSlaveActivity : public CSlaveActivity
 {
 public:
     IArrayOf<IRowStream> streams; 
@@ -243,7 +243,7 @@ public:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    GlobalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    GlobalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         partitionpos = NULL;
         linkcounter.setown(new CThorRowLinkCounter);
@@ -283,21 +283,24 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        ForEachItemIn(i, inputs) {
+        ForEachItemIn(i, inputs)
+        {
             IThorDataLink * input = inputs.item(i);
-            try {
-                startInput(input); 
+            try
+            {
+                startInput(i);
             }
-            catch (CATCHALL) {
+            catch (CATCHALL)
+            {
                 ActPrintLog("MERGE(%" ACTPF "d): Error starting input %d", container.queryId(), i);
                 ForEachItemIn(s, streams)
                     streams.item(s).stop();
                 throw;
             }
             if (input->isGrouped())
-                streams.append(*createUngroupStream(input));
+                streams.append(*createUngroupStream(inputStreams.item(i)));
             else
-                streams.append(*LINK(input));
+                streams.append(*LINK(inputStreams.item(i)));
         }
 #ifndef _STABLE_MERGE
         // shuffle streams otherwise will all be reading in order initially
@@ -398,7 +401,7 @@ public:
         return NULL;
     }
 
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
@@ -408,7 +411,7 @@ public:
 
 
 
-class LocalMergeSlaveActivity : public CSlaveActivity, public CThorDataLink
+class LocalMergeSlaveActivity : public CSlaveActivity
 {
     IArrayOf<IRowStream> streams; 
     Owned<IRowStream> out;
@@ -416,7 +419,7 @@ class LocalMergeSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    LocalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this) { }
+    LocalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container) { }
 
 // IThorSlaveActivity overloaded methods
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -436,10 +439,12 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        ForEachItemIn(i, inputs) {
-            IThorDataLink * input = inputs.item(i);
-            try { 
-                startInput(input); 
+        ForEachItemIn(i, inputs)
+        {
+            IThorDataLink *input = inputs.item(i);
+            try
+            {
+                startInput(i);
             }
             catch (CATCHALL) {
                 ActPrintLog("MERGE(%" ACTPF "d): Error starting input %d", container.queryId(), i);
@@ -448,9 +453,9 @@ public:
                 throw;
             }
             if (input->isGrouped())
-                streams.append(*createUngroupStream(input));
+                streams.append(*createUngroupStream(inputStreams.item(i)));
             else
-                streams.append(*LINK(input));
+                streams.append(*LINK(inputStreams.item(i)));
         }
         Owned<IRowLinkCounter> linkcounter = new CThorRowLinkCounter;
         out.setown(createRowStreamMerger(streams.ordinality(), streams.getArray(), helper->queryCompare(), helper->dedup(), linkcounter));
@@ -483,7 +488,7 @@ public:
         return NULL;
     }
 
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
@@ -494,11 +499,11 @@ public:
 
 class CThorStreamMerger : public CStreamMerger
 {
-    IThorDataLink **inputArray;
+    IEngineRowStream **inputArray;
 public:
     CThorStreamMerger() : CStreamMerger(true) {}
 
-    void initInputs(unsigned _numInputs, IThorDataLink ** _inputArray)
+    void initInputs(unsigned _numInputs, IEngineRowStream ** _inputArray)
     {
         CStreamMerger::initInputs(_numInputs);
         inputArray = _inputArray;
@@ -522,17 +527,19 @@ public:
 };
 
 
-class CNWayMergeActivity : public CThorNarySlaveActivity, public CThorDataLink, public CThorSteppable
+class CNWayMergeActivity : public CThorNarySlaveActivity, public CThorSteppable
 {
     IHThorNWayMergeArg *helper;
     CThorStreamMerger merger;
     CSteppingMeta meta;
     bool initializedMeta;
 
+    PointerArrayOf<IEngineRowStream> expandedInputStreams;
+
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CNWayMergeActivity(CGraphElementBase *container) : CThorNarySlaveActivity(container), CThorDataLink(this), CThorSteppable(this)
+    CNWayMergeActivity(CGraphElementBase *container) : CThorNarySlaveActivity(container), CThorSteppable(this)
     {
         helper = (IHThorNWayMergeArg *)queryHelper();
         merger.init(helper->queryCompare(), helper->dedup(), helper->querySteppingMeta()->queryCompare());
@@ -542,23 +549,23 @@ public:
     {
         merger.cleanup();
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
     }
-    void start()
+    virtual void start()
     {
         CThorNarySlaveActivity::start();
-        merger.initInputs(expandedInputs.length(), expandedInputs.getArray());
+        merger.initInputs(expandedStreams.length(), expandedStreams.getArray());
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         merger.done();
         CThorNarySlaveActivity::stop();
         dataLinkStop();
     }
-    void reset()
+    virtual void reset()
     {
         CThorNarySlaveActivity::reset();
         initializedMeta = false;
@@ -574,12 +581,12 @@ public:
         }
         return NULL;
     }
-    const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
+    virtual const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         try { return nextRowGENoCatch(seek, numFields, wasCompleteMatch, stepExtra); }
         CATCH_NEXTROWX_CATCH;
     }
-    const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
+    virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         ActivityTimer t(totalCycles, timeActivities);
         OwnedConstThorRow ret = merger.nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
@@ -590,16 +597,16 @@ public:
         }
         return NULL;
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         calcMetaInfoSize(info,inputs.getArray(),inputs.ordinality());
     }
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CThorNarySlaveActivity::setInput(index, inputActivity, inputOutIdx);
-        CThorSteppable::setInput(index, inputActivity, inputOutIdx);
+        CThorNarySlaveActivity::setInputStream(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInputStream(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta()
     {

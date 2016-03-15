@@ -19,12 +19,13 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class CSelectNthSlaveActivity : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify
+class CSelectNthSlaveActivity : public CSlaveActivity, implements ILookAheadStopNotify
 {
+    typedef CSlaveActivity PARENT;
+
     bool first, isLocal, seenNth;
     rowcount_t lookaheadN, N, startN;
     bool createDefaultIfFail;
-    Owned<IThorDataLink> input;
     IHThorSelectNArg *helper;
     SpinLock spin;
 
@@ -64,13 +65,10 @@ class CSelectNthSlaveActivity : public CSlaveActivity, public CThorDataLink, imp
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CSelectNthSlaveActivity(CGraphElementBase *_container, bool _isLocal) : CSlaveActivity(_container), CThorDataLink(this)
+    CSelectNthSlaveActivity(CGraphElementBase *_container, bool _isLocal) : CSlaveActivity(_container)
     {
         isLocal = _isLocal;
         createDefaultIfFail = isLocal || lastNode();
-    }
-    ~CSelectNthSlaveActivity()
-    {
     }
 
 // IThorSlaveActivity overloaded methods
@@ -81,20 +79,22 @@ public:
         appendOutputLinked(this);
         helper = static_cast <IHThorSelectNArg *> (queryHelper());
     }
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+        PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+        rowcount_t rowN = (rowcount_t)helper->getRowToSelect();
+        if (!isLocal && rowN)
+            setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), SELECTN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, rowN, this, &container.queryJob().queryIDiskUsage()));
+    }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
 
         lookaheadN = RCMAX;
         startN = 0; // set by initN()
-        rowcount_t rowN = (rowcount_t)helper->getRowToSelect();
-        if (!isLocal && rowN)
-            input.setown(createDataLinkSmartBuffer(this, inputs.item(0), SELECTN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, rowN, this, false, &container.queryJob().queryIDiskUsage()));
-        else
-            input.set(inputs.item(0));
         try
         {
-            startInput(input);
+            PARENT::start();
         }
         catch (IException *e)
         {
@@ -111,8 +111,8 @@ public:
             ThorDataLinkMetaInfo info;
             inputs.item(0)->getMetaInfo(info);
             StringBuffer meta;
-            meta.appendf("META(totalRowsMin=%" I64F "d,totalRowsMax=%" I64F "d,rowsOutput=%" RCPF "d,spilled=%" I64F "d,byteTotal=%" I64F "d)",
-                info.totalRowsMin,info.totalRowsMax,info.rowsOutput,info.spilled,info.byteTotal);
+            meta.appendf("META(totalRowsMin=%" I64F "d,totalRowsMax=%" I64F "d, spilled=%" I64F "d,byteTotal=%" I64F "d)",
+                info.totalRowsMin,info.totalRowsMax,info.spilled,info.byteTotal);
 #if 0                 
             Owned<IThorException> e = MakeActivityWarning(this, -1, "%s", meta.str());
             fireException(e);
@@ -124,7 +124,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        PARENT::stop();
         dataLinkStop();
     }
     virtual void abort()
@@ -155,7 +155,7 @@ public:
                 {
                     while (!abortSoon)
                     {
-                        ret.setown(input->ungroupedNextRow());
+                        ret.setown(inputStream->ungroupedNextRow());
                         if (!ret)
                             break;
                         N--;
@@ -195,7 +195,7 @@ public:
             dataLinkIncrement();
         return ret.getClear();
     }
-    virtual bool isGrouped() { return false; }
+    virtual bool isGrouped() const override { return false; }
     void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
@@ -203,9 +203,7 @@ public:
         info.canReduceNumRows = true; // not sure what selectNth is doing
         calcMetaInfoSize(info,inputs.item(0));
     }
-// ISmartBufferNotify methods used for global selectn only
-    virtual void onInputStarted(IException *) { } // not needed
-    virtual bool startAsync() { return false; }
+// IStartableEngineRowStream methods used for global selectn only
     virtual void onInputFinished(rowcount_t count)
     {
         SpinBlock b(spin);
