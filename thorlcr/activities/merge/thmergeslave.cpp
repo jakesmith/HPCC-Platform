@@ -542,23 +542,23 @@ public:
     {
         merger.cleanup();
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
     }
-    void start()
+    virtual void start()
     {
         CThorNarySlaveActivity::start();
         merger.initInputs(expandedInputs.length(), expandedInputs.getArray());
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         merger.done();
         CThorNarySlaveActivity::stop();
         dataLinkStop();
     }
-    void reset()
+    virtual void reset()
     {
         CThorNarySlaveActivity::reset();
         initializedMeta = false;
@@ -574,12 +574,12 @@ public:
         }
         return NULL;
     }
-    const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
+    virtual const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         try { return nextRowGENoCatch(seek, numFields, wasCompleteMatch, stepExtra); }
         CATCH_NEXTROWX_CATCH;
     }
-    const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
+    virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         ActivityTimer t(totalCycles, timeActivities);
         OwnedConstThorRow ret = merger.nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
@@ -596,10 +596,10 @@ public:
         initMetaInfo(info);
         calcMetaInfoSize(info,inputs.getArray(),inputs.ordinality());
     }
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CThorNarySlaveActivity::setInput(index, inputActivity, inputOutIdx);
-        CThorSteppable::setInput(index, inputActivity, inputOutIdx);
+        CThorNarySlaveActivity::addInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta()
     {

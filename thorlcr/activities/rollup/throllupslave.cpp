@@ -190,7 +190,7 @@ public:
             input.clear();
         }
     }
-    void start()
+    virtual void start()
     {
         needFirstRow = true;
         input.set(inputs.item(0));
@@ -201,11 +201,11 @@ public:
             input.setown(createDataLinkSmartBuffer(this, input,rollup?ROLLUP_SMART_BUFFER_SIZE:DEDUP_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(this),false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage())); // only allow spill if input can stall
         startInput(input); 
     }   
-    void stop()
+    virtual void stop()
     {
         stopInput();
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         if (global) {
             info.canBufferInput = true;
@@ -214,7 +214,7 @@ public:
         info.canReduceNumRows = true;
     }
 
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         if (global)
             mpTag = container.queryJobChannel().deserializeMPTag(data); // only used for global acts

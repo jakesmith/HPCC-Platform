@@ -20,13 +20,11 @@
 
 class SampleSlaveActivity : public CSlaveActivity, public CThorDataLink
 {
-
     IHThorSampleArg * helper;
     unsigned numSamples, whichSample, numToSkip;
     bool anyThisGroup;
     bool eogNext;
     IThorDataLink *input;
-
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
@@ -38,9 +36,7 @@ public:
         appendOutputLinked(this);
         helper = static_cast <IHThorSampleArg *> (queryHelper());
     }
-
-
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         input = inputs.item(0);
@@ -52,15 +48,11 @@ public:
         numToSkip = whichSample ? whichSample - 1 : 0;
         dataLinkStart();
     }
-
-
-    void stop()
+    virtual void stop()
     {
         dataLinkStop();
         stopInput(input);
     }
-
-
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
@@ -87,16 +79,13 @@ public:
         }
         return NULL;
     }
-
-
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.canReduceNumRows = true;
         info.fastThrough = true;
         calcMetaInfoSize(info,inputs.item(0));
     }
-
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
 };
 

@@ -508,11 +508,11 @@ public:
         helper = (IHThorCombineArg *) queryHelper();
         appendOutputLinked(this);
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         init();
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         eogNext = false;
@@ -528,7 +528,7 @@ public:
         }
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         for (unsigned i=0;i<inputs.ordinality(); i++)
             stopInput(inputs.item(i));
@@ -577,11 +577,11 @@ public:
         rows.kill();
         return NULL;
     }
-    bool isGrouped()
+    virtual bool isGrouped()
     {
         return inputs.item(0)->isGrouped();
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         // TBD I think this should say max out = lhs set.
@@ -610,11 +610,11 @@ public:
         helper = (IHThorRegroupArg *) queryHelper();
         appendOutputLinked(this);
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         init();
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         curinput = 0;
@@ -631,7 +631,7 @@ public:
         }
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         for (unsigned i=0;i<inputs.ordinality(); i++)
             stopInput(inputs.item(i));
@@ -656,7 +656,7 @@ public:
         return NULL;
     }
 
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         calcMetaInfoSize(info, inputs.getArray(), inputs.ordinality());
@@ -811,11 +811,11 @@ public:
         helper = (IHThorNWaySelectArg *)queryHelper();
         selectedInput = NULL;
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
 
@@ -854,7 +854,7 @@ public:
             selectedInput->start();
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         stopInput(inputs.item(0));
         if (selectedInput)
@@ -871,30 +871,30 @@ public:
             dataLinkIncrement();
         return ret.getClear();
     }
-    bool gatherConjunctions(ISteppedConjunctionCollector &collector)
+    virtual bool gatherConjunctions(ISteppedConjunctionCollector &collector)
     { 
         if (!selectedInput)
             return false;
         return selectedInput->gatherConjunctions(collector);
     }
-    void resetEOF() 
+    virtual void resetEOF()
     { 
         if (selectedInput)
             selectedInput->resetEOF(); 
     }
-    const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
+    virtual const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         try { return nextRowGENoCatch(seek, numFields, wasCompleteMatch, stepExtra); }
         CATCH_NEXTROWX_CATCH;
     }
-    const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
+    virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         ActivityTimer t(totalCycles, timeActivities);
         if (!selectedInput)
             return NULL;
         return selectedInput->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         if (selectedInput)
@@ -904,10 +904,10 @@ public:
     }
     virtual bool isGrouped() { return selectedInput ? selectedInput->isGrouped() : false; }
 // steppable
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CSlaveActivity::setInput(index, inputActivity, inputOutIdx);
-        CThorSteppable::setInput(index, inputActivity, inputOutIdx);
+        CSlaveActivity::addInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta()
     {
@@ -932,11 +932,11 @@ public:
         helper = (IHThorNWayInputArg *)queryHelper();
         grouped = helper->queryOutputMeta()->isGrouped(); // JCSMORE should match graph info, i.e. container.queryGrouped()
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         bool selectionIsAll;
@@ -971,7 +971,7 @@ public:
         // NB: Whatever pulls this IThorNWayInput, starts and stops the selectedInputs
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         // NB: Whatever pulls this IThorNWayInput, starts and stops the selectedInputs
         dataLinkStop();
@@ -980,7 +980,7 @@ public:
     {
         throwUnexpected();
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         calcMetaInfoSize(info,inputs.item(0));

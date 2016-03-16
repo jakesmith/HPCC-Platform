@@ -76,29 +76,36 @@ public:
 //  IThorDataLink needs only be implemented once, since there is only one output,
 //  therefore may as well implement it here.
 
-class CProjectSlaveActivity : public CThorStrandedActivity, public CThorDataLinkNew
+class CProjectSlaveActivity : public CThorStrandedActivity
 {
     IHThorProjectArg *helper = NULL;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CProjectSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLinkNew(*this) { }
+    explicit CProjectSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
+    {
+        appendOutputLinked(this);
+    }
 
-    virtual CThorStrandProcessor *createStrandProcessor(IEngineRowStream *instream)
+    virtual CThorStrandProcessor *createStrandProcessor(IEngineRowStream *instream) override
     {
         return new CProjecStrandProcessor(*this, instream, 0);
     }
-    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual CThorStrandProcessor *createStrandSourceProcessor(bool inputOrdered) override { throwUnexpected(); }
+
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         helper = static_cast <IHThorProjectArg *> (queryHelper());
     }
-    virtual void start()
+    virtual void start() // JCSMORE - perhaps could move to Stranded base class
     {
+        CThorStrandedActivity::start();
+        onStartStrands();
     }
 
-// IThorDataLinkNew
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
+// IThorDataLink
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.fastThrough = true; // ish
@@ -106,7 +113,7 @@ public:
             info.canReduceNumRows = true;
         calcMetaInfoSize(info, inputs.item(0));
     }
-    virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
+    virtual bool isGrouped() override { return inputs.item(0)->isGrouped(); }
 };
 
 
@@ -336,7 +343,6 @@ CActivityBase *createPrefetchProjectSlave(CGraphElementBase *container)
 {
     return new CPrefetchProjectSlaveActivity(container);
 }
-
 
 CActivityBase *createProjectSlave(CGraphElementBase *container)
 {

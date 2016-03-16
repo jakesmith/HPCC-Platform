@@ -48,12 +48,12 @@ public:
         maxRow = 0;
     }
     virtual bool isGrouped() { return false; }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
         helper = static_cast <IHThorInlineTableArg *> (queryHelper());
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         dataLinkStart();
@@ -81,7 +81,7 @@ public:
         }
         currentRow = startRow;
     }
-    void stop()
+    virtual void stop()
     {
         dataLinkStop();
     }
@@ -101,7 +101,7 @@ public:
         }
         return NULL;
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.isSource = true;

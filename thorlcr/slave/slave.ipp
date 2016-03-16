@@ -64,22 +64,18 @@ protected:
     IRangeCompare *stepCompare;
 public:
     IInputSteppingMeta *inputStepping;
-    
+
     CThorSteppable(CSlaveActivity *_activity) { stepCompare = NULL; inputStepping = NULL; }
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered)
     {
-        if (0 == index)
+        if (0 == index && input)
         {
-            IThorDataLink *input = inputActivity ? ((CSlaveActivity *)inputActivity)->queryInput(inputOutIdx) : NULL;
-            if (input)
-            {
-                inputStepping = input->querySteppingMeta();
-                if (inputStepping)
-                    stepCompare = inputStepping->queryCompare();
-            }
+            inputStepping = input->querySteppingMeta();
+            if (inputStepping)
+                stepCompare = inputStepping->queryCompare();
         }
     }
-    virtual IInputSteppingMeta *querySteppingMeta() { return inputStepping; }    
+    virtual IInputSteppingMeta *querySteppingMeta() { return inputStepping; }
 };
 
 

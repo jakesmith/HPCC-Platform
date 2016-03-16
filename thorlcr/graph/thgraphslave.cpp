@@ -135,7 +135,7 @@ void CSlaveActivity::connectInputStreams(bool consumerOrdered)
         {
             CSlaveActivity *inputActivity = io->activity->queryActivity(true);
             unsigned inputOutIdx = io->index;
-            Linked<IThorDataLinkNew> outLink;
+            Linked<IThorDataLink> outLink;
             if (!inputActivity)
             {
                 Owned<CActivityBase> nullAct = container.factory(TAKnull);
@@ -145,53 +145,57 @@ void CSlaveActivity::connectInputStreams(bool consumerOrdered)
             else
                 outLink.set(inputActivity->queryOutput(inputOutIdx));
 
-            inputs.append(outLink);
-            inputStream.setown(connectSingleStream(*this, outLink, inputOutIdx, junction, isInputOrdered(consumerOrdered, 0)));
+            addInput(index, outLink, inputOutIdx, consumerOrdered);
         }
     }
 }
 
-IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const StrandOptions * consumerOptions, bool consumerOrdered)
+void CSlaveActivity::addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered)
 {
+    inputs.append(input);
+    inputStreams.append(connectSingleStream(*this, input, inputOutIdx, junction, input->isInputOrdered(consumerOrdered)));
+    if (!inputStream)
+    {
+        dbgassertex(1 == inputStreams.ordinality());
+        inputStream = inputStreams.item(0);
+    }
+}
+
+IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
+{
+    // Default non-stranded implementation, expects activity to have added a legacy output.
     assertex(!idx);
     // By default, activities are assumed NOT to support streams
     bool inputOrdered = isInputOrdered(consumerOrdered, 0);
     connectInputStreams(inputOrdered);
     // Return a single stream
-    streams.append(this);
+    // Default activity impl. adds single output as stream
+    streams.append(&legacyOutputStreams.item(0));
     return NULL;
-}
-
-void CSlaveActivity::setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
-{
-    CActivityBase::setInput(index, inputActivity, inputOutIdx);
-    Linked<IThorDataLink> outLink;
-    if (!inputActivity)
-    {
-        Owned<CActivityBase> nullAct = container.factory(TAKnull);
-
-        outLink.set(((CSlaveActivity *)(nullAct.get()))->queryOutput(0)); // NB inputOutIdx irrelevant, null has single 'fake' output
-        nullAct->releaseIOs(); // normally done as graph winds up, clear now to avoid circular dependencies with outputs
-    }
-    else
-        outLink.set(((CSlaveActivity *)inputActivity)->queryOutput(inputOutIdx));
-    assertex(outLink);
-
-    while (inputs.ordinality()<=index) inputs.append(NULL);
-
-    inputs.replace(outLink.getClear(), index);
 }
 
 void CSlaveActivity::appendOutput(IThorDataLink *itdl)
 {
+#if 0
     if (queryJob().getOptBool("TRACEROWS"))
     {
         const unsigned numTraceRows = queryJob().getOptInt("numTraceRows", 10);
-//        outputs.append(new CTracingThorDataLink(itdl, queryHelper(), numTraceRows));
+        outputs.append(new CTracingThorDataLink(itdl, queryHelper(), numTraceRows));
         outputs.append(itdl);
     }
     else
         outputs.append(itdl);
+#else
+    IEngineRowStream *stream = itdl->queryStream();
+    if (stream)
+        legacyOutputStreams.append(*stream);
+    IThorDataLinkExt *itdlExt = QUERYINTERFACE(itdl, IThorDataLinkExt);
+    dbgassertex(itdlExt);
+    unsigned outputNum = outputs.ordinality();
+    itdlExt->setOutputIdx(outputNum);
+    outputs.append(itdl);
+    dbgassertex(outputs.ordinality() == legacyOutputStreams.ordinality()); // all or none
+#endif
 }
 
 void CSlaveActivity::appendOutputLinked(IThorDataLink *itdl)
@@ -200,28 +204,16 @@ void CSlaveActivity::appendOutputLinked(IThorDataLink *itdl)
     appendOutput(itdl);
 }
 
-void CSlaveActivity::appendOutput(IThorDataLinkNew *itdl)
-{
-    if (queryJob().getOptBool("TRACEROWS"))
-    {
-        const unsigned numTraceRows = queryJob().getOptInt("numTraceRows", 10);
-//        outputs.append(new CTracingThorDataLink(itdl, queryHelper(), numTraceRows));
-        outputs.append(itdl);
-    }
-    else
-        outputs.append(itdl);
-}
-
-void CSlaveActivity::appendOutputLinked(IThorDataLinkNew *itdl)
-{
-    itdl->Link();
-    appendOutput(itdl);
-}
-
-IThorDataLinkNew *CSlaveActivity::queryOutput(unsigned index)
+IThorDataLink *CSlaveActivity::queryOutput(unsigned index)
 {
     if (index>=outputs.ordinality()) return NULL;
     return outputs.item(index);
+}
+
+IEngineRowStream *CSlaveActivity::queryLegacyOutput(unsigned index)
+{
+    if (index>=outputs.ordinality()) return NULL;
+    return legacyOutputStreams.item(index);
 }
 
 IThorDataLink *CSlaveActivity::queryInput(unsigned index)
@@ -384,7 +376,174 @@ void CSlaveActivity::debugRequest(unsigned edgeIdx, CMessageBuffer &msg)
     IThorDataLink *link = queryOutput(edgeIdx);
     if (link) link->debugRequest(msg);
 }
+
+virtual IOutputMetaData *CSlaveActivity::queryOutputMeta() const
+{
+    return queryHelper()->queryOutputMeta();
+}
+
+
+
 ///
+
+/// CThorStrandedActivity
+
+void CThorStrandedActivity::onStartStrands()
+{
+    ForEachItemIn(idx, strands)
+        strands.item(idx).start();
+}
+
+void CThorStrandedActivity::onCreate()
+{
+    CSlaveActivity::onCreateN(strands.ordinality());
+}
+
+//This function is pure (But also implemented out of line) to force the derived classes to implement it.
+//After calling the base class start method, and initialising any values from the helper they must call onStartStrands(),
+//this must also happen before any rows are read from the strands (e.g., by a source junction)
+//    virtual void start(unsigned parentExtractSize, const byte *parentExtract, bool paused) = 0;
+
+/* JCS - Don't really understand the above pure + defined approach.
+ * If defined then, isn't pure meaningless, i.e. derived class does *not* need to define it as there is a definition available
+ * in base class
+ */
+//For some reason gcc doesn't let you specify a function as pure virtual and define it at the same time.
+void CThorStrandedActivity::start()
+{
+    CSlaveActivity::start();
+    startJunction(splitter);
+}
+
+void CThorStrandedActivity::reset()
+{
+    assertex(active==0);
+    ForEachItemIn(idx, strands)
+        strands.item(idx).reset();
+    resetJunction(splitter);
+    CSlaveActivity::reset();
+    resetJunction(sourceJunction);
+}
+
+void CThorStrandedActivity::stop()
+{
+    // Called from the strands... which should ensure that stop is not called more than once per strand
+    //The first strand to call
+    if (active)
+        --active;
+    if (!active)
+        CSlaveActivity::stop();
+}
+
+IStrandJunction *CThorStrandedActivity::getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
+{
+    assertex(idx == 0);
+    assertex(strands.empty());
+    //CSlaveActivity::connectDependencies();
+
+    IThorDataLink *input = queryInput(0); // Any activity that has >1 input, will have to overload getOutputStreams to handle
+    unsigned sourceIdx = input->queryOutputIdx();
+
+    bool inputOrdered = isInputOrdered(consumerOrdered, idx);
+    //Note, numStrands == 1 is an explicit request to disable threading
+    if (consumerOptions && (consumerOptions->numStrands != 1) && (strandOptions.numStrands != 1))
+    {
+        //Check to see if the consumer's settings should override
+        if (strandOptions.numStrands == 0)
+        {
+            strandOptions.numStrands = consumerOptions->numStrands;
+            strandOptions.blockSize = consumerOptions->blockSize;
+        }
+        else if (consumerOptions->numStrands > strandOptions.numStrands)
+        {
+            strandOptions.numStrands = consumerOptions->numStrands;
+        }
+    }
+
+    Owned <IStrandJunction> recombiner;
+    if (input)
+    {
+        if (strandOptions.numStrands == 1)
+        {
+            // 1 means explicitly requested single-strand.
+            IEngineRowStream *instream = connectSingleStream(activity, input, sourceIdx, junction, inputOrdered);
+            strands.append(*createStrandProcessor(instream));
+        }
+        else
+        {
+            PointerArrayOf<IEngineRowStream> instreams;
+            recombiner.setown(input->getOutputStreams(activity, sourceIdx, instreams, &strandOptions, inputOrdered));
+            if ((instreams.length() == 1) && (strandOptions.numStrands != 0))  // 0 means did not specify - we should use the strands that our upstream provides
+            {
+                assertex(recombiner == NULL);
+                // Create a splitter to split the input into n... and a recombiner if need to preserve sorting
+                if (inputOrdered)
+                {
+                    branch.setown(createStrandBranch(activity.queryRowManager(), strandOptions.numStrands, strandOptions.blockSize, true, input->queryOutputMeta()->isGrouped(), false));
+                    splitter.set(branch->queryInputJunction());
+                    recombiner.set(branch->queryOutputJunction());
+                }
+                else
+                {
+                    splitter.setown(createStrandJunction(activity.queryRowManager(), 1, strandOptions.numStrands, strandOptions.blockSize, false));
+                }
+                splitter->setInput(0, instreams.item(0));
+                for (unsigned strandNo = 0; strandNo < strandOptions.numStrands; strandNo++)
+                    strands.append(*createStrandProcessor(splitter->queryOutput(strandNo)));
+            }
+            else
+            {
+                // Ignore my hint and just use the width already split into...
+                ForEachItemIn(strandNo, instreams)
+                    strands.append(*createStrandProcessor(instreams.item(strandNo)));
+            }
+        }
+    }
+    else
+    {
+        unsigned numStrands = strandOptions.numStrands ? strandOptions.numStrands : 1;
+        for (unsigned i=0; i < numStrands; i++)
+            strands.append(*createStrandSourceProcessor(inputOrdered));
+
+        if (inputOrdered && (numStrands > 1))
+        {
+            if (consumerOptions)
+            {
+                //If the output activities are also stranded then need to create a version of the branch
+                bool isGrouped = queryOutputMeta()->isGrouped();
+                branch.setown(createStrandBranch(activity.queryRowManager(), strandOptions.numStrands, strandOptions.blockSize, true, isGrouped, true));
+                sourceJunction.set(branch->queryInputJunction());
+                recombiner.set(branch->queryOutputJunction());
+
+                //This is different from the branch above.  The first "junction" has the source activity as the input, and the outputs as the result of the activity
+                for (unsigned strandNo = 0; strandNo < strandOptions.numStrands; strandNo++)
+                {
+                    sourceJunction->setInput(strandNo, &strands.item(strandNo));
+                    streams.append(sourceJunction->queryOutput(strandNo));
+                }
+#ifdef TRACE_STRANDS
+                if (traceLevel > 2)
+                    DBGLOG("Executing activity %u with %u strands", activityId, strands.ordinality());
+#endif
+                return recombiner.getClear();
+            }
+            else
+                recombiner.setown(createStrandJunction(activity.queryRowManager(), numStrands, 1, strandOptions.blockSize, inputOrdered));
+        }
+    }
+    ForEachItemIn(i, strands)
+        streams.append(&strands.item(i));
+#ifdef TRACE_STRANDS
+    if (traceLevel > 2)
+        DBGLOG("Executing activity %u with %u strands", activityId, strands.ordinality());
+#endif
+
+    return recombiner.getClear();
+}
+
+
+
+
 
 // CSlaveGraph
 
@@ -626,11 +785,13 @@ void CSlaveGraph::start()
 void CSlaveGraph::connect()
 {
     CriticalBlock b(progressCrit);
-/*
     Owned<IThorActivityIterator> iter = getConnectedIterator();
     ForEach(*iter)
-        iter->query().doconnect();
-*/
+    {
+        CGraphElementBase &container = iter->query();
+        CSlaveActivity *act = (CSlaveActivity *)container.queryActivity();
+        act->
+    }
     Owned<IThorActivityIterator> iter = getSinkIterator();
     ForEach(*iter)
     {

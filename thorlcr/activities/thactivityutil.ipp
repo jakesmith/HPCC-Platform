@@ -58,7 +58,7 @@ IRowStream *createSequentialPartHandler(CPartHandler *partHandler, IArrayOf<IPar
         }
 
 #define CATCH_NEXTROW() \
-    virtual const void *nextRow() \
+    virtual const void *nextRow() override \
     { \
         try \
         { \
@@ -68,18 +68,22 @@ IRowStream *createSequentialPartHandler(CPartHandler *partHandler, IArrayOf<IPar
     } \
     inline const void *nextRowNoCatch() __attribute__((always_inline))
 
-class CThorDataLink : implements IThorDataLink
+class CThorDataLink : implements IThorDataLink, implements IEngineRowStream
 {
-    CActivityBase *owner;
+    CSlaveActivity *owner;
     rowcount_t count = 0, icount = 0;
     unsigned outputId = 0;
+    unsigned outputIdx = 0;
+    bool optStableInput = true; // is the input forced to ordered?
+    bool optUnstableInput = false;  // is the input forced to unordered?
+    bool optUnordered = false; // is the output specified as unordered?
 
 protected:
-    inline void dataLinkStart(unsigned _outputId = 0)
+    inline void dataLinkStart(unsigned _outputIdx = 0)
     {
-        outputId = _outputId;
+        dbgassertex(outputIdx == _outputIdx);
 #ifdef _TESTING
-        ActPrintLog(owner, "ITDL starting for output %d", outputId);
+        ActPrintLog(owner, "ITDL starting for output %d", outputIdx);
 #endif
 #ifdef _TESTING
         assertex(!started() || stopped());      // ITDL started twice
@@ -97,7 +101,7 @@ protected:
 #endif
         count |= THORDATALINK_STOPPED;
 #ifdef _TESTING
-        ActPrintLog(owner, "ITDL output %d stopped, count was %" RCPF "d", outputId, getDataLinkCount());
+        ActPrintLog(owner, "ITDL output %d stopped, count was %" RCPF "d", outputIdx, getDataLinkCount());
 #endif
     }
 
@@ -142,7 +146,7 @@ public:
             ActPrintLog(owner, "ERROR: ITDL was not stopped before destruction");
             dataLinkStop(); // get some info (even though failed)       
         }
-    }           
+    }
 #endif
 
     void dataLinkSerialize(MemoryBuffer &mb)
@@ -156,46 +160,43 @@ public:
     inline rowcount_t getDataLinkGlobalCount()
     {
         return (count & THORDATALINK_COUNT_MASK); 
-    } 
+    }
     inline rowcount_t getDataLinkCount()
     {
         return icount; 
-    } 
-    virtual void debugRequest(MemoryBuffer &msg) { }
-    CActivityBase *queryFromActivity() { return owner; }
-
-    void initMetaInfo(ThorDataLinkMetaInfo &info); // for derived children to call from getMetaInfo
-    static void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink *input); // for derived children to call from getMetaInfo
-    static void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink **link,unsigned ninputs);
-    static void calcMetaInfoSize(ThorDataLinkMetaInfo &info, ThorDataLinkMetaInfo *infos,unsigned num);
-};
-
-IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLinkNew *input, unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered);
-IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLinkNew *input, unsigned idx, bool consumerOrdered)
-
-class CThorDataLinkNew : implements IThorDataLinkNew
-{
-    CSlaveActivity &owner;
-    Owned<IEngineRowStream> outputStream;
-    Owned<IStrandJunction> junction;
-public:
-    CThorDataLinkNew(CSlaveActivity &_owner) : owner(_owner) { }
-    void initMetaInfo(ThorDataLinkMetaInfo &info); // for derived children to call from getMetaInfo
-    static void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink *input); // for derived children to call from getMetaInfo
-    static void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink **link,unsigned ninputs);
-    static void calcMetaInfoSize(ThorDataLinkMetaInfo &info, ThorDataLinkMetaInfo *infos,unsigned num);
-
-    virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const StrandOptions * consumerOptions, bool consumerOrdered) override
-    {
-        assertex(!idx);
-        // By default, activities are assumed NOT to support streams
-        bool inputOrdered = owner.isInputOrdered(consumerOrdered, 0);
-        owner.connectInputStreams(inputOrdered);
-        // Return a single stream
-        streams.append(this);
-        return NULL;
     }
+    virtual void debugRequest(MemoryBuffer &msg) { }
+
+// IEngineRowStream
+    virtual void resetEOF() override { throwUnexpected(); }
+
+// IThorDataLink
+    virtual CActivityBase *queryFromActivity() const override { return owner; }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { }
+    virtual IOutputMetaData * queryOutputMeta() const override { return owner->queryHelper()->queryOutputMeta(); }
+    virtual unsigned queryOutputIdx() const override { return outputIdx; }
+    virtual bool isInputOrdered(bool consumerOrdered, unsigned idx) const
+    {
+        if (optStableInput)
+            return true;
+        if (optUnstableInput)
+            return false;
+        if (optUnordered)
+            return false;
+        return consumerOrdered;
+    }
+    virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
+    {
+        return owner->getOutputStreams(activity, idx, streams, consumerOptions, consumerOrdered);
+    }
+    virtual IEngineRowStream *queryStream() const override { return this; }
+// IThorDataLinkExt
+    virtual void setOutputIdx(unsigned idx) { outputIdx = idx; }
 };
+
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered);
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, bool consumerOrdered)
+
 
 interface ISmartBufferNotify
 {

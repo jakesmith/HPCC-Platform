@@ -45,13 +45,13 @@ public:
         replyStream.setown(createMemoryBufferSerialStream(masterReplyMsg));
         rowSource.setStream(replyStream);
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
         helper = (IHThorWorkunitReadArg *)queryHelper();
         grouped = helper->queryOutputMeta()->isGrouped();
     } 
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         dataLinkStart();
@@ -71,7 +71,7 @@ public:
             masterReplyMsg.swapWith(reqMsg);
         }
     }
-    void stop() { dataLinkStop(); }
+    virtual void stop() { dataLinkStop(); }
 
     CATCH_NEXTROW()
     {
@@ -92,8 +92,8 @@ public:
         dataLinkIncrement();
         return rowBuilder.finalizeRowClear(sz);
     }
-    bool isGrouped() { return grouped; }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual bool isGrouped() { return grouped; }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.isSource = true;

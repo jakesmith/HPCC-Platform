@@ -92,7 +92,7 @@ public:
     CDiskReadSlaveActivityBase(CGraphElementBase *_container);
     const char *queryLogicalFilename(unsigned index);
     IRowInterfaces * queryDiskRowInterfaces();
-    void start();
+    virtual void start();
 
     
 // IThorSlaveActivity

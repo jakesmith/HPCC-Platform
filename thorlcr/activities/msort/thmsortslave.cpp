@@ -70,7 +70,7 @@ public:
         if (portbase) 
             freePort(portbase,NUMSLAVEPORTS);
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         mpTagRPC = container.queryJobChannel().deserializeMPTag(data);
         mptag_t barrierTag = container.queryJobChannel().deserializeMPTag(data);
@@ -83,7 +83,7 @@ public:
         appendOutputLinked(this);
         server.serialize(slaveData);
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         input = inputs.item(0);
@@ -150,7 +150,7 @@ public:
         ActPrintLog("SORT barrier.1 raised");
         output.setown(sorter->startMerge(totalrows));
     }
-    void stop()
+    virtual void stop()
     {
         if (output) {
             output->stop();
@@ -165,7 +165,7 @@ public:
         ActPrintLog("SORT waiting for merge");
         dataLinkStop();
     }
-    void reset()
+    virtual void reset()
     {
         if (sorter) return; // JCSMORE loop - shouldn't have to recreate sorter between loop iterations
         sorter.setown(CreateThorSorter(this, server,&container.queryJob().queryIDiskUsage(),&queryJobChannel().queryJobComm(),mpTagRPC));

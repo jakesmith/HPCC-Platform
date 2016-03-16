@@ -26,34 +26,36 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CFilterSlaveActivityBase(CGraphElementBase *_container) 
+    explicit CFilterSlaveActivityBase(CGraphElementBase *_container)
         : CSlaveActivity(_container), CThorDataLink(this)
     {
         input = NULL;
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         appendOutputLinked(this);
     }
-    void start()
+    virtual void start() override
     {   
         input = inputs.item(0);
         anyThisGroup = false;
         startInput(input);
         dataLinkStart();
     }
-    void stop()
+    virtual void stop() override
     {
         stopInput(input);
         dataLinkStop();
     }
-    virtual const void *nextRow()=0;
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual const void *nextRow() override =0;
+
+// IThorDataLink
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.fastThrough = true;
         info.canReduceNumRows = true;
-        calcMetaInfoSize(info,inputs.item(0));
+        calcMetaInfoSize(info, inputs.item(0));
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
 };
@@ -156,10 +158,10 @@ public:
         input->resetEOF(); 
     }
 // steppable
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CFilterSlaveActivityBase::setInput(index, inputActivity, inputOutIdx);
-        CThorSteppable::setInput(index, inputActivity, inputOutIdx);
+        CFilterSlaveActivityBase::addInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };
@@ -397,10 +399,10 @@ public:
         dataLinkStop();
     }
 // steppable
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CFilterSlaveActivityBase::setInput(index, inputActivity, inputOutIdx);
-        CThorSteppable::setInput(index, inputActivity, inputOutIdx);
+        CFilterSlaveActivityBase::addInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };

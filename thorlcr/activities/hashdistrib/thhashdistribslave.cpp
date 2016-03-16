@@ -2018,12 +2018,12 @@ public:
         }
         dataLinkStart();
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         start(false);
     }
-    void stop()
+    virtual void stop()
     {
         ActPrintLog("HASHDISTRIB: stopping");
         if (out)
@@ -2045,7 +2045,7 @@ public:
         ActPrintLog("HASHDISTRIB: kill");
         CSlaveActivity::kill();
     }
-    void abort()
+    virtual void abort()
     {
         CSlaveActivity::abort();
         if (distributor)
@@ -2067,7 +2067,7 @@ public:
         return row.getClear();
     }
     virtual bool isGrouped() { return false; }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.canStall = true; // currently
@@ -2344,7 +2344,7 @@ public:
         ihash = partitioner;
     }
 
-    void start()
+    virtual void start()
     {
         bool passthrough;
         {
@@ -2354,7 +2354,7 @@ public:
         HashDistributeSlaveBase::start(passthrough);
     }
 
-    void stop()
+    virtual void stop()
     {
         HashDistributeSlaveBase::stop();
         if (instrm) {
@@ -2888,7 +2888,7 @@ public:
         }
         grouped = container.queryGrouped();
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         inputstopped = false;
@@ -3496,13 +3496,13 @@ public:
         CriticalBlock block(stopsect);  // can be called async by distribute
         HashDedupSlaveActivityBase::stopInput();
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         HashDedupSlaveActivityBase::init(data, slaveData);
         mptag = container.queryJobChannel().deserializeMPTag(data);
         distributor = createHashDistributor(this, queryJobChannel().queryJobComm(), mptag, true, this);
     }
-    void start()
+    virtual void start()
     {
         HashDedupSlaveActivityBase::start();
         ActivityTimer s(totalCycles, timeActivities);
@@ -3510,7 +3510,7 @@ public:
         instrm.setown(distributor->connect(myRowIf, input, iHash, iCompare));
         input = instrm.get();
     }
-    void stop()
+    virtual void stop()
     {
         ActPrintLog("stopping");
         if (instrm)
@@ -3523,13 +3523,13 @@ public:
         stopInput();
         dataLinkStop();
     }
-    void abort()
+    virtual void abort()
     {
         HashDedupSlaveActivityBase::abort();
         if (distributor)
             distributor->abort();
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.canStall = true;
@@ -3578,7 +3578,7 @@ public:
         strmR.clear();
         joinhelper.clear();
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         joinargs = (IHThorHashJoinArg *)queryHelper();
         appendOutputLinked(this);
@@ -3586,7 +3586,7 @@ public:
         mptag2 = container.queryJobChannel().deserializeMPTag(data);
         ActPrintLog("HASHJOIN: init tags %d,%d",(int)mptag,(int)mptag2);
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         inputLstopped = true;
@@ -3669,7 +3669,7 @@ public:
             inputRstopped = true;
         }
     }
-    void stop()
+    virtual void stop()
     {
         ActPrintLog("HASHJOIN: stopping");
         stopInputL();
@@ -3908,7 +3908,7 @@ public:
         mptag = TAG_NULL;
         eos = true;
     }
-    void init(MemoryBuffer & data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
     {
         helper = static_cast <IHThorHashAggregateArg *> (queryHelper());
         appendOutputLinked(this);
@@ -3920,7 +3920,7 @@ public:
         }
         localAggTable.setown(new RowAggregator(*helper, *helper));
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         input = inputs.item(0);
@@ -3937,14 +3937,14 @@ public:
         eos = false;
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         ActPrintLog("HASHAGGREGATE: stopping");
         localAggTable->reset();
         stopInput(input);
         dataLinkStop();
     }
-    void abort()
+    virtual void abort()
     {
         CSlaveActivity::abort();
         if (distributor)
@@ -3970,8 +3970,8 @@ public:
             eos = true;
         return NULL;
     }
-    bool isGrouped() { return false; }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual bool isGrouped() { return false; }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.canStall = true;

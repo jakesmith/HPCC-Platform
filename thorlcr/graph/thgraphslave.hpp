@@ -39,21 +39,23 @@
 class CSlaveActivity;
 
 class CSlaveGraphElement;
-class graphslave_decl CSlaveActivity : public CActivityBase
+class graphslave_decl CSlaveActivity : public CActivityBase, implements IThorDataLinkExt, implements IThorSlave
 {
     mutable MemoryBuffer *data;
     mutable CriticalSection crit;
 
 protected:
-    IPointerArrayOf<IThorDataLinkNew> inputs, outputs;
-    IArrayOf<IEngineRowStream> outputStreams;
+    IPointerArrayOf<IThorDataLink> inputs, outputs;
+    IPointerArrayOf<IEngineRowStream> inputStreams;
+    IArrayOf<IEngineRowStream> legacyOutputStreams;
+    IEngineRowStream *inputStream = NULL;
     ActivityTimeAccumulator totalCycles;
     MemoryBuffer startCtx;
     bool optStableInput = true; // is the input forced to ordered?
     bool optUnstableInput = false;  // is the input forced to unordered?
     bool optUnordered = false; // is the output specified as unordered?
-    Owned<IEngineRowStream> inputStream;
     Owned<IStrandJunction> junction;
+    unsigned outputIdx = 0; // for IThorDataLinkExt
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -70,16 +72,11 @@ public:
     virtual void connectInputStreams(bool consumerOrdered);
     virtual void onCreate();
     virtual void onCreateN(unsigned num);
-    virtual IStrandJunction *getOutputStreams(CActivityBase &ctx, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const StrandOptions * consumerOptions, bool consumerOrdered);
 
-
-    IThorDataLinkNew *queryOutput(unsigned index);
-    IThorDataLinkNew *queryInput(unsigned index);
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx);
+    IThorDataLink *queryOutput(unsigned index);
+    IThorDataLink *queryInput(unsigned index);
     void appendOutput(IThorDataLink *itdl);
     void appendOutputLinked(IThorDataLink *itdl);
-    void appendOutput(IThorDataLinkNew *itdl);
-    void appendOutputLinked(IThorDataLinkNew *itdl);
     void startInput(IThorDataLink *itdl, const char *extra=NULL);
     void stopInput(IThorDataLink *itdl, const char *extra=NULL);
 
@@ -89,6 +86,150 @@ public:
     virtual unsigned __int64 queryEndCycles() const;
     virtual void serializeStats(MemoryBuffer &mb);
     void debugRequest(unsigned edgeIdx, CMessageBuffer &msg);
+    void initMetaInfo(ThorDataLinkMetaInfo &info)
+    {
+        ::initMetaInfo(info);
+    }
+    void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink *link)
+    {
+        if (!info.unknownRowsOutput&&link&&((info.totalRowsMin<=0)||(info.totalRowsMax<0)))
+        {
+            ThorDataLinkMetaInfo prev;
+            link->getMetaInfo(prev);
+            if (info.totalRowsMin<=0)
+            {
+                if (!info.canReduceNumRows)
+                    info.totalRowsMin = prev.totalRowsMin;
+                else
+                    info.totalRowsMin = 0;
+            }
+            if (info.totalRowsMax<0)
+            {
+                if (!info.canIncreaseNumRows)
+                {
+                    info.totalRowsMax = prev.totalRowsMax;
+                    if (info.totalRowsMin>info.totalRowsMax)
+                        info.totalRowsMax = -1;
+                }
+            }
+            if (((offset_t)-1 != prev.byteTotal) && info.totalRowsMin == info.totalRowsMax)
+                info.byteTotal = prev.byteTotal;
+        }
+        else if (info.totalRowsMin<0)
+            info.totalRowsMin = 0; // a good bet
+
+    }
+    void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink **link,unsigned ninputs)
+    {
+        if (!link||(ninputs<=1))
+        {
+            calcMetaInfoSize(info,link&&(ninputs==1)?link[0]:NULL);
+            return ;
+        }
+        if (!info.unknownRowsOutput)
+        {
+            __int64 min=0;
+            __int64 max=0;
+            for (unsigned i=0;i<ninputs;i++ )
+            {
+                if (link[i])
+                {
+                    ThorDataLinkMetaInfo prev;
+                    link[i]->getMetaInfo(prev);
+                    if (min>=0)
+                    {
+                        if (prev.totalRowsMin>=0)
+                            min += prev.totalRowsMin;
+                        else
+                            min = -1;
+                    }
+                    if (max>=0)
+                    {
+                        if (prev.totalRowsMax>=0)
+                            max += prev.totalRowsMax;
+                        else
+                            max = -1;
+                    }
+                }
+            }
+            if (info.totalRowsMin<=0)
+            {
+                if (!info.canReduceNumRows)
+                    info.totalRowsMin = min;
+                else
+                    info.totalRowsMin = 0;
+            }
+            if (info.totalRowsMax<0)
+            {
+                if (!info.canIncreaseNumRows)
+                {
+                    info.totalRowsMax = max;
+                    if (info.totalRowsMin>info.totalRowsMax)
+                        info.totalRowsMax = -1;
+                }
+            }
+        }
+        else if (info.totalRowsMin<0)
+            info.totalRowsMin = 0; // a good bet
+    }
+    void calcMetaInfoSize(ThorDataLinkMetaInfo &info, ThorDataLinkMetaInfo *infos, unsigned num)
+    {
+        if (!infos||(num<=1))
+        {
+            if (1 == num)
+                info = infos[0];
+            return;
+        }
+        if (!info.unknownRowsOutput)
+        {
+            __int64 min=0;
+            __int64 max=0;
+            for (unsigned i=0;i<num;i++ )
+            {
+                ThorDataLinkMetaInfo &prev = infos[i];
+                if (min>=0)
+                {
+                    if (prev.totalRowsMin>=0)
+                        min += prev.totalRowsMin;
+                    else
+                        min = -1;
+                }
+                if (max>=0)
+                {
+                    if (prev.totalRowsMax>=0)
+                        max += prev.totalRowsMax;
+                    else
+                        max = -1;
+                }
+            }
+            if (info.totalRowsMin<=0)
+            {
+                if (!info.canReduceNumRows)
+                    info.totalRowsMin = min;
+                else
+                    info.totalRowsMin = 0;
+            }
+            if (info.totalRowsMax<0)
+            {
+                if (!info.canIncreaseNumRows)
+                {
+                    info.totalRowsMax = max;
+                    if (info.totalRowsMin>info.totalRowsMax)
+                        info.totalRowsMax = -1;
+                }
+            }
+        }
+        else if (info.totalRowsMin<0)
+            info.totalRowsMin = 0; // a good bet
+    }
+
+// IThorDataLink
+    virtual CActivityBase *queryFromActivity() const override { return this; }
+    virtual IStrandJunction *getOutputStreams(CActivityBase &ctx, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered);
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { }
+    virtual bool isGrouped() override { return false; }
+    virtual IOutputMetaData * queryOutputMeta() const;
+    virtual unsigned queryOutputIdx() const override { return outputIdx; }
     virtual bool isInputOrdered(bool consumerOrdered, unsigned idx) const
     {
         if (optStableInput)
@@ -99,6 +240,24 @@ public:
             return false;
         return consumerOrdered;
     }
+// IThorDataLinkExt
+    virtual void setOutputIdx(unsigned idx) override { outputIdx = idx; }
+
+// IThorSlave
+    virtual void start() override
+    {
+        startJunction(junction);
+    }
+    virtual void stop() override
+    {
+        if (inputStream)
+            inputStream->stop();
+    }
+    virtual void reset() override
+    {
+        inputStream = NULL;
+    }
+    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override;
 };
 
 
@@ -138,7 +297,7 @@ public:
         }
 
 #define STRAND_CATCH_NEXTROW() \
-    virtual const void *nextRow() \
+    virtual const void *nextRow() override \
     { \
         try \
         { \
@@ -223,7 +382,6 @@ protected:
     inline rowcount_t getDataLinkGlobalCount() { return (count & THORDATALINK_COUNT_MASK); }
     inline rowcount_t getDataLinkCount() const { return icount; }
     virtual void debugRequest(MemoryBuffer &msg) { }
-    CSlaveActivity *queryFromActivity() { return parent; }
 
 public:
     explicit CThorStrandProcessor(CSlaveActivity &_parent, IEngineRowStream *_inputStream, unsigned _outputId)
@@ -242,7 +400,7 @@ public:
 #endif
     }
 
-    virtual void start()
+    virtual void start() override
     {
         count = 0;
         numProcessedLastGroup = 0;
@@ -251,13 +409,13 @@ public:
 
         dataLinkStart();
     }
-    virtual void reset()
+    virtual void reset() override
     {
         stopped = false;
     }
 
 // IRowStream
-    virtual void stop()
+    virtual void stop() override
     {
         if (!stopped)
         {
@@ -289,11 +447,16 @@ protected:
     Owned<IStrandJunction> splitter;
     Owned<IStrandJunction> sourceJunction; // A junction applied to the output of a source activity
     std::atomic<unsigned> active;
+protected:
+    void onStartStrands()
+    {
+        ForEachItemIn(idx, strands)
+            strands.item(idx).start();
+    }
 public:
     CThorStrandedActivity(CGraphElementBase *container, const CThorStrandOptions &_strandOptions)
-        : CSlaveActivity(container), strandOptions(_strandOptions, *container)
+        : CSlaveActivity(container), strandOptions(_strandOptions, *container), active(0)
     {
-        active = 0;
     }
 
     virtual void onCreate() override
@@ -304,144 +467,29 @@ public:
     //This function is pure (But also implemented out of line) to force the derived classes to implement it.
     //After calling the base class start method, and initialising any values from the helper they must call onStartStrands(),
     //this must also happen before any rows are read from the strands (e.g., by a source junction)
-    virtual void start(unsigned parentExtractSize, const byte *parentExtract, bool paused) = 0;
+//    virtual void start(unsigned parentExtractSize, const byte *parentExtract, bool paused) = 0;
 
-    virtual void reset()
+    /* JCS - Don't really understand the above pure + defined approach.
+     * If defined then, isn't pure meaningless, i.e. derived class does *not* need to define it as there is a definition available
+     * in base class
+     */
+    //For some reason gcc doesn't let you specify a function as pure virtual and define it at the same time.
+    virtual void start() override
     {
-        assertex(active==0);
-        ForEachItemIn(idx, strands)
-            strands.item(idx).reset();
-        resetJunction(splitter);
-        CSlaveActivity::reset();
-        resetJunction(sourceJunction);
+        CSlaveActivity::start();
+        startJunction(splitter);
     }
-
-    virtual void stop()
-    {
-        // Called from the strands... which should ensure that stop is not called more than once per strand
-        //The first strand to call
-        if (active)
-            --active;
-        if (!active)
-            CRoxieServerActivity::stop();
-    }
-
-    virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered) override
-    {
-        assertex(idx == 0);
-        assertex(strands.empty());
-        CSlaveActivity::connectDependencies();
-
-        bool inputOrdered = isInputOrdered(consumerOrdered, idx);
-        //Note, numStrands == 1 is an explicit request to disable threading
-        if (consumerOptions && (consumerOptions->numStrands != 1) && (strandOptions.numStrands != 1))
-        {
-            //Check to see if the consumer's settings should override
-            if (strandOptions.numStrands == 0)
-            {
-                strandOptions.numStrands = consumerOptions->numStrands;
-                strandOptions.blockSize = consumerOptions->blockSize;
-            }
-            else if (consumerOptions->numStrands > strandOptions.numStrands)
-            {
-                strandOptions.numStrands = consumerOptions->numStrands;
-            }
-        }
-
-        Owned <IStrandJunction> recombiner;
-        if (input)
-        {
-            if (strandOptions.numStrands == 1)
-            {
-                // 1 means explicitly requested single-strand.
-                IEngineRowStream *instream = connectSingleStream(activity, input, sourceIdx, junction, inputOrdered);
-                strands.append(*createStrandProcessor(instream));
-            }
-            else
-            {
-                PointerArrayOf<IEngineRowStream> instreams;
-                recombiner.setown(input->getOutputStreams(activity, sourceIdx, instreams, &strandOptions, inputOrdered));
-                if ((instreams.length() == 1) && (strandOptions.numStrands != 0))  // 0 means did not specify - we should use the strands that our upstream provides
-                {
-                    assertex(recombiner == NULL);
-                    // Create a splitter to split the input into n... and a recombiner if need to preserve sorting
-                    if (inputOrdered)
-                    {
-                        branch.setown(createStrandBranch(activity->queryRowManager(), strandOptions.numStrands, strandOptions.blockSize, true, input->queryOutputMeta()->isGrouped(), false));
-                        splitter.set(branch->queryInputJunction());
-                        recombiner.set(branch->queryOutputJunction());
-                    }
-                    else
-                    {
-                        splitter.setown(createStrandJunction(activity->queryRowManager(), 1, strandOptions.numStrands, strandOptions.blockSize, false));
-                    }
-                    splitter->setInput(0, instreams.item(0));
-                    for (unsigned strandNo = 0; strandNo < strandOptions.numStrands; strandNo++)
-                        strands.append(*createStrandProcessor(splitter->queryOutput(strandNo)));
-                }
-                else
-                {
-                    // Ignore my hint and just use the width already split into...
-                    ForEachItemIn(strandNo, instreams)
-                        strands.append(*createStrandProcessor(instreams.item(strandNo)));
-                }
-            }
-        }
-        else
-        {
-            unsigned numStrands = strandOptions.numStrands ? strandOptions.numStrands : 1;
-            for (unsigned i=0; i < numStrands; i++)
-                strands.append(*createStrandSourceProcessor(inputOrdered));
-
-            if (inputOrdered && (numStrands > 1))
-            {
-                if (consumerOptions)
-                {
-                    //If the output activities are also stranded then need to create a version of the branch
-                    bool isGrouped = queryOutputMeta()->isGrouped();
-                    branch.setown(createStrandBranch(activity->queryRowManager(), strandOptions.numStrands, strandOptions.blockSize, true, isGrouped, true));
-                    sourceJunction.set(branch->queryInputJunction());
-                    recombiner.set(branch->queryOutputJunction());
-
-                    //This is different from the branch above.  The first "junction" has the source activity as the input, and the outputs as the result of the activity
-                    for (unsigned strandNo = 0; strandNo < strandOptions.numStrands; strandNo++)
-                    {
-                        sourceJunction->setInput(strandNo, &strands.item(strandNo));
-                        streams.append(sourceJunction->queryOutput(strandNo));
-                    }
-#ifdef TRACE_STRANDS
-                    if (traceLevel > 2)
-                        DBGLOG("Executing activity %u with %u strands", activityId, strands.ordinality());
-#endif
-                    return recombiner.getClear();
-                }
-                else
-                    recombiner.setown(createStrandJunction(activity->queryRowManager(), numStrands, 1, strandOptions.blockSize, inputOrdered));
-            }
-        }
-        ForEachItemIn(i, strands)
-            streams.append(&strands.item(i));
-#ifdef TRACE_STRANDS
-        if (traceLevel > 2)
-            DBGLOG("Executing activity %u with %u strands", activityId, strands.ordinality());
-#endif
-
-        return recombiner.getClear();
-    }
-
+    virtual void reset() override;
+    virtual void stop() override;
     virtual CThorStrandProcessor *createStrandProcessor(IEngineRowStream *instream) = 0;
 
     //MORE: Possibly this class should be split into two for sinks and non sinks...
     virtual CThorStrandProcessor *createStrandSourceProcessor(bool inputOrdered) = 0;
 
     inline unsigned numStrands() const { return strands.ordinality(); }
-protected:
 
-    void onStartStrands()
-    {
-        ForEachItemIn(idx, strands)
-            strands.item(idx).start();
-    }
+// IThorDataLink
+    virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered) override
 };
 
 

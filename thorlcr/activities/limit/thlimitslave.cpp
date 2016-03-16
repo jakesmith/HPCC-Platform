@@ -51,14 +51,14 @@ public:
         eos = stopped = anyThisGroup = eogNext = false;
         rowLimit = RCMAX;
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
 
         if (!container.queryLocal())
             mpTag = container.queryJobChannel().deserializeMPTag(data);
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         resultSent = container.queryLocal(); // i.e. local, so don't send result to master
@@ -76,13 +76,13 @@ public:
         mb.append(r);
         queryJobChannel().queryJobComm().send(mb, 0, mpTag);
     }
-    void stop()
+    virtual void stop()
     {
         stopInput(getDataLinkCount());
         dataLinkStop();
     }
-    bool isGrouped() { return inputs.item(0)->isGrouped(); }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.canReduceNumRows = true;
@@ -163,10 +163,10 @@ public:
         input->resetEOF(); 
     }
 // steppable
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CLimitSlaveActivityBase::setInput(index, inputActivity, inputOutIdx);
-        CThorSteppable::setInput(index, inputActivity, inputOutIdx);
+        CLimitSlaveActivityBase::addInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };
@@ -248,13 +248,13 @@ public:
             cancelReceiveMsg(0, mpTag);
         CLimitSlaveActivityBase::abort();
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         CLimitSlaveActivityBase::init(data,slaveData);
         if (rowTransform)
             helperex = static_cast<IHThorLimitTransformExtra *>(queryHelper()->selectInterface(TAIlimittransformextra_1));
     }
-    void start()
+    virtual void start()
     {
         CLimitSlaveActivityBase::start();
         buf.setown(createOverflowableBuffer(*this, this, true));

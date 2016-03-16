@@ -1033,7 +1033,6 @@ public:
     bool appendRowXml(StringBuffer & target, IOutputMetaData & meta, const void * row) const;
     void logRow(const char * prefix, IOutputMetaData & meta, const void * row);
 
-    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx) { }
     virtual void clearConnections() { }
     virtual void releaseIOs() { }
     virtual void preStart(size32_t parentExtractSz, const byte *parentExtract) { }

@@ -52,7 +52,6 @@ struct ThorDataLinkMetaInfo
 {
     __int64     totalRowsMin;           // set to 0 if not known
     __int64     totalRowsMax;           // set to -1 if not known
-    rowcount_t  rowsOutput;             // rows already output (supported by all data links)
     offset_t    spilled;                // amount "spilled" to disk (approx) (offset_t)-1 for not known
 
     bool        isSource;
@@ -74,36 +73,56 @@ struct ThorDataLinkMetaInfo
 #endif
 class CActivityBase;
 
-interface IThorDataLink : extends IEngineRowStream
+interface IThorDataLink : extends IInterface
 {
-    virtual void start() = 0;
-    virtual bool isGrouped() = 0;
+    virtual CActivityBase *queryFromActivity() const = 0; // activity that has this as an output
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
+    virtual bool isGrouped() const { return false; }
+    virtual IOutputMetaData * queryOutputMeta() const;
+    virtual unsigned queryOutputIdx() const = 0;
+    virtual bool isInputOrdered(bool consumerOrdered) const = 0;
+    virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered) = 0;  // Use StrandFlags values for flags
+
+// Stepping methods
     virtual IInputSteppingMeta *querySteppingMeta() { return NULL; }
     virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
-    virtual void reset() { }
+
+// to support non-stranded activities
+    virtual IEngineRowStream *queryStream() const { return NULL; }
+};
+
+// helper interface. Used by maintainer of output links
+interface IThorDataLinkExt : extends IThorDataLink
+{
+    virtual void setOutputIdx(unsigned idx) = 0;
+};
+
+#if 0
+interface IThorDataLink : extends IEngineRowStream // legacy
+{
+    virtual void start() = 0;
+    virtual IInputSteppingMeta *querySteppingMeta() { return NULL; }
+    virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
     virtual void resetEOF() { }
 
 // information routines
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
-    virtual CActivityBase *queryFromActivity() = 0; // activity that has this as an output
     virtual void dataLinkSerialize(MemoryBuffer &mb)=0;
     virtual unsigned __int64 queryTotalCycles() const=0;
     virtual unsigned __int64 queryEndCycles() const=0;
     virtual void debugRequest(MemoryBuffer &mb) = 0;
-};
 
-interface IThorDataLinkNew : extends IInterface
-{
-// information routines
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
-
     virtual bool isGrouped() { return false; }
-    virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const StrandOptions * consumerOptions, bool consumerOrdered) = 0;  // Use StrandFlags values for flags
-    virtual void connect(unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered) = 0;
 };
+#endif
 
-
-
+interface IThorSlave
+{
+    virtual void start() = 0;
+    virtual void stop() = 0;
+    virtual void reset() = 0;
+    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) = 0;
+};
 #ifdef _MSC_VER
 #pragma warning (pop)
 #endif

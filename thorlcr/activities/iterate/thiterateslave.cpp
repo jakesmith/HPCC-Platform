@@ -73,7 +73,7 @@ public:
                 return;
         }
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         count = 0;
@@ -94,7 +94,7 @@ public:
         }
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         if (global)
             putNext(NULL);
@@ -102,7 +102,7 @@ public:
         input.clear();
         dataLinkStop();
     }
-    bool isGrouped() { return false; }
+    virtual bool isGrouped() { return false; }
 };
 
 class IterateSlaveActivity : public IterateSlaveActivityBase
@@ -292,19 +292,19 @@ public:
     CChildIteratorSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
     {
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);   // adding 'me' to outputs array
         helper = static_cast <IHThorChildIteratorArg *> (queryHelper());
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         eof = !container.queryLocalOrGrouped() && !firstNode();
         count = 0;
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         dataLinkStop();
     }
@@ -329,7 +329,7 @@ public:
         return NULL;
     }
 
-    bool isGrouped() { return false; }
+    virtual bool isGrouped() { return false; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
@@ -349,19 +349,19 @@ public:
         : CSlaveActivity(_container), CThorDataLink(this)
     {
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);   // adding 'me' to outputs array
         helper = static_cast <IHThorLinkedRawIteratorArg *> (queryHelper());
         grouped = helper->queryOutputMeta()->isGrouped();
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         dataLinkStart();
         dohere = container.queryLocalOrGrouped() || firstNode();
     }
-    void stop()
+    virtual void stop()
     {
         dataLinkStop();
     }
@@ -378,7 +378,7 @@ public:
         }
         return NULL;
     }
-    bool isGrouped() { return grouped; }
+    virtual bool isGrouped() { return grouped; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);

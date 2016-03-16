@@ -325,132 +325,8 @@ void initMetaInfo(ThorDataLinkMetaInfo &info)
     info.totalRowsMax = -1; // rely on inputs to set
     info.spilled = (offset_t)-1;
     info.byteTotal = (offset_t)-1;
-    info.rowsOutput = 0;
 }
 
-
-
-
-void CThorDataLink::initMetaInfo(ThorDataLinkMetaInfo &info)
-{
-    ::initMetaInfo(info);
-    info.rowsOutput = getDataLinkCount();
-    // more
-}
-
-void CThorDataLink::calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink *link)
-{
-    if (!info.unknownRowsOutput&&link&&((info.totalRowsMin<=0)||(info.totalRowsMax<0))) {
-        ThorDataLinkMetaInfo prev;
-        link->getMetaInfo(prev);
-        if (info.totalRowsMin<=0) {
-            if (!info.canReduceNumRows)
-                info.totalRowsMin = prev.totalRowsMin;
-            else
-                info.totalRowsMin = 0;
-        }
-        if (info.totalRowsMax<0) {
-            if (!info.canIncreaseNumRows) {
-                info.totalRowsMax = prev.totalRowsMax;
-                if (info.totalRowsMin>info.totalRowsMax)
-                    info.totalRowsMax = -1;
-            }
-        }
-        if (((offset_t)-1 != prev.byteTotal) && info.totalRowsMin == info.totalRowsMax)
-            info.byteTotal = prev.byteTotal;
-    }
-    else if (info.totalRowsMin<0)
-        info.totalRowsMin = 0; // a good bet
-
-}
-
-void CThorDataLink::calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink **link,unsigned ninputs)
-{
-    if (!link||(ninputs<=1)) {
-        calcMetaInfoSize(info,link&&(ninputs==1)?link[0]:NULL);
-        return ;
-    }
-    if (!info.unknownRowsOutput) {
-        __int64 min=0;
-        __int64 max=0;
-        for (unsigned i=0;i<ninputs;i++ ) {
-            if (link[i]) {
-                ThorDataLinkMetaInfo prev;
-                link[i]->getMetaInfo(prev);
-                if (min>=0) {
-                    if (prev.totalRowsMin>=0)
-                        min += prev.totalRowsMin;
-                    else
-                        min = -1;
-                }
-                if (max>=0) {
-                    if (prev.totalRowsMax>=0)
-                        max += prev.totalRowsMax;
-                    else
-                        max = -1;
-                }
-            }
-        }
-        if (info.totalRowsMin<=0) {
-            if (!info.canReduceNumRows)
-                info.totalRowsMin = min;
-            else
-                info.totalRowsMin = 0;
-        }
-        if (info.totalRowsMax<0) {
-            if (!info.canIncreaseNumRows) {
-                info.totalRowsMax = max;
-                if (info.totalRowsMin>info.totalRowsMax)
-                    info.totalRowsMax = -1;
-            }
-        }
-    }
-    else if (info.totalRowsMin<0)
-        info.totalRowsMin = 0; // a good bet
-}
-
-void CThorDataLink::calcMetaInfoSize(ThorDataLinkMetaInfo &info, ThorDataLinkMetaInfo *infos,unsigned num)
-{
-    if (!infos||(num<=1)) {
-        if (1 == num)
-            info = infos[0];
-        return;
-    }
-    if (!info.unknownRowsOutput) {
-        __int64 min=0;
-        __int64 max=0;
-        for (unsigned i=0;i<num;i++ ) {
-            ThorDataLinkMetaInfo &prev = infos[i];
-            if (min>=0) {
-                if (prev.totalRowsMin>=0)
-                    min += prev.totalRowsMin;
-                else
-                    min = -1;
-            }
-            if (max>=0) {
-                if (prev.totalRowsMax>=0)
-                    max += prev.totalRowsMax;
-                else
-                    max = -1;
-            }
-        }
-        if (info.totalRowsMin<=0) {
-            if (!info.canReduceNumRows)
-                info.totalRowsMin = min;
-            else
-                info.totalRowsMin = 0;
-        }
-        if (info.totalRowsMax<0) {
-            if (!info.canIncreaseNumRows) {
-                info.totalRowsMax = max;
-                if (info.totalRowsMin>info.totalRowsMax)
-                    info.totalRowsMax = -1;
-            }
-        }
-    }
-    else if (info.totalRowsMin<0)
-        info.totalRowsMin = 0; // a good bet
-}
 
 static bool canStall(CActivityBase *act)
 {
@@ -936,7 +812,7 @@ IRowStream *createSequentialPartHandler(CPartHandler *partHandler, IArrayOf<IPar
 }
 
 
-IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLinkNew *input, unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered)
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered)
 {
     if (input)
     {
@@ -960,7 +836,7 @@ IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLinkNew 
         return NULL;
 }
 
-IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLinkNew *input, unsigned idx, bool consumerOrdered)
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, bool consumerOrdered)
 {
     Owned<IStrandJunction> junction;
     IEngineRowStream * result = connectSingleStream(activity, input, idx, junction, consumerOrdered);

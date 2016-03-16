@@ -44,13 +44,13 @@ public:
         : CSlaveActivity(_container), CThorDataLink(this)
     {
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
         helper = static_cast <IHThorNormalizeArg *> (queryHelper());
         allocator.set(queryRowAllocator());
     }
-    void start()
+    virtual void start()
     { 
         ActivityTimer s(totalCycles, timeActivities);
         numThisRow = 0;
@@ -60,7 +60,7 @@ public:
         startInput(input);
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     { 
         stopInput(input);
         dataLinkStop();
@@ -96,7 +96,7 @@ public:
         }
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.unknownRowsOutput = true;
@@ -127,7 +127,7 @@ public:
     { 
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
         helper = static_cast <IHThorNormalizeChildArg *> (queryHelper());
@@ -135,7 +135,7 @@ public:
         cursor = helper->queryIterator();
         allocator.set(queryRowAllocator());
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         input = inputs.item(0);
@@ -144,7 +144,7 @@ public:
         dataLinkStart();
         curChildRow = NULL;
     }
-    void stop()
+    virtual void stop()
     {
         stopInput(input);
         dataLinkStop();
@@ -180,7 +180,7 @@ public:
             }
         }
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.unknownRowsOutput = true;
@@ -228,12 +228,12 @@ public:
     { 
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
         helper = static_cast <IHThorNormalizeLinkedChildArg *> (queryHelper());
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         input = inputs.item(0);
@@ -241,7 +241,7 @@ public:
         anyThisGroup = false;
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         stopInput(input);
         dataLinkStop();
@@ -268,7 +268,7 @@ public:
             }
         }
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.unknownRowsOutput = true;

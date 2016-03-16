@@ -47,14 +47,11 @@ public:
         stopped = true;
         helper = (IHThorFirstNArg *)container.queryHelper();
     }
-    ~CFirstNSlaveBase()
-    {
-    }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         input.set(inputs.item(0));
@@ -62,7 +59,7 @@ public:
         stopped = false;
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         if (!stopped)
         {
@@ -72,7 +69,7 @@ public:
         }
         input.clear();
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         info.canReduceNumRows = true;
@@ -92,7 +89,7 @@ public:
 
 // IRowStream overrides
     virtual bool isGrouped() { return false; }
-    void start()
+    virtual void start()
     {
         CFirstNSlaveBase::start();
         skipCount = validRC(helper->numToSkip());
@@ -144,7 +141,7 @@ public:
 
 // IRowStream overrides
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
-    void start()
+    virtual void start()
     {
         CFirstNSlaveBase::start();
         skipCount = validRC(helper->numToSkip());
@@ -233,12 +230,12 @@ public:
     CFirstNSlaveGlobal(CGraphElementBase *container) : CFirstNSlaveBase(container)
     {
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         CFirstNSlaveBase::init(data, slaveData);
         mpTag = container.queryJobChannel().deserializeMPTag(data);
     }
-    void start()
+    virtual void start()
     {
         CFirstNSlaveBase::start(); // adds to totalTime (common to local and global firstn)
         ActivityTimer s(totalCycles, timeActivities);
@@ -254,7 +251,7 @@ public:
                                           maxRead,this,true,&container.queryJob().queryIDiskUsage())); // if a very large limit don't bother truncating
         startInput(input);
     }
-    void abort()
+    virtual void abort()
     {
         CFirstNSlaveBase::abort();
         limitgot.signal();
@@ -357,8 +354,8 @@ public:
         return NULL;
     }
 
-    bool isGrouped() { return false; } // need to do different if is!
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual bool isGrouped() { return false; } // need to do different if is!
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         CFirstNSlaveBase::getMetaInfo(info);
         info.canBufferInput = true;

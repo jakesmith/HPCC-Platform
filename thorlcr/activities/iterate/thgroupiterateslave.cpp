@@ -38,15 +38,12 @@ public:
     GroupIterateSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
     {
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);   // adding 'me' to outputs array
         helper = static_cast <IHThorGroupIterateArg *> (queryHelper());
     }
-    ~GroupIterateSlaveActivity()
-    {
-    }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         anyThisGroup = false;
@@ -59,7 +56,7 @@ public:
         size32_t sz = helper->createDefault(r);
         defaultLeft.setown(r.finalizeRowClear(sz));
     }
-    void stop()
+    virtual void stop()
     {
         stopInput(input);
         dataLinkStop();
@@ -102,14 +99,14 @@ public:
         }
         return NULL;
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         if (helper->canFilter())
             info.canReduceNumRows = true;
         calcMetaInfoSize(info,inputs.item(0));
     }
-    bool isGrouped() 
+    virtual bool isGrouped()
     { 
         return true; 
     }
@@ -134,14 +131,14 @@ public:
     GroupProcessSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
     {
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);   // adding 'me' to outputs array
         helper = static_cast <IHThorProcessArg *> (queryHelper());
         rightrowif.setown(createRowInterfaces(helper->queryRightRecordSize(),queryId(),queryCodeContext()));
         rightAllocator.set(rightrowif->queryRowAllocator());
     }
-    void start()
+    virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         RtlDynamicRowBuilder r(rightAllocator);
@@ -154,7 +151,7 @@ public:
         startInput(input);
         dataLinkStart();
     }
-    void stop()
+    virtual void stop()
     {
         stopInput(input);
         dataLinkStop();
@@ -197,14 +194,14 @@ public:
         }
         return NULL;
     }
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
         if (helper->canFilter())
             info.canReduceNumRows = true;
         calcMetaInfoSize(info,inputs.item(0));
     }
-    bool isGrouped() 
+    virtual bool isGrouped()
     { 
         return true; 
     }

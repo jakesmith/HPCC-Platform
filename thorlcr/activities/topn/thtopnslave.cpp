@@ -94,7 +94,7 @@ public:
         out.clear();
         sortedRows.kill();
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
         helper = (IHThorTopNArg *) queryHelper();
@@ -215,7 +215,7 @@ public:
         dataLinkStart();
     }
     virtual bool isGrouped() { return grouped; }
-    void stop()
+    virtual void stop()
     {
         if (out)
             out->stop();
