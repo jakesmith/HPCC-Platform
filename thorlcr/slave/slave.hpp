@@ -74,17 +74,15 @@ struct ThorDataLinkMetaInfo
 #endif
 class CActivityBase;
 
-interface IThorStrand : extends IEngineRowStream
+interface IThorDataLink : extends IEngineRowStream
 {
-    virtual bool isGrouped() { return false; }
+    virtual void start() = 0;
+    virtual bool isGrouped() = 0;
     virtual IInputSteppingMeta *querySteppingMeta() { return NULL; }
     virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
     virtual void reset() { }
-    virtual void start() = 0;
-};
+    virtual void resetEOF() { }
 
-interface IThorDataLink2 : extends IInterface
-{
 // information routines
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
     virtual CActivityBase *queryFromActivity() = 0; // activity that has this as an output
@@ -92,26 +90,20 @@ interface IThorDataLink2 : extends IInterface
     virtual unsigned __int64 queryTotalCycles() const=0;
     virtual unsigned __int64 queryEndCycles() const=0;
     virtual void debugRequest(MemoryBuffer &mb) = 0;
-
-    virtual IStrandJunction *getOutputStreams(unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const StrandOptions * consumerOptions, bool consumerOrdered) = 0;  // Use StrandFlags values for flags
 };
 
-interface IThorDataLink : extends IEngineRowStream
+interface IThorDataLinkNew : extends IInterface
 {
-    virtual void start() = 0;
-    virtual bool isGrouped() = 0;
-    virtual IInputSteppingMeta *querySteppingMeta() { return NULL; }
-    virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
-    virtual void resetEOF() { }
-
-// information routines 
+// information routines
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
-    virtual CActivityBase *queryFromActivity() = 0; // activity that has this as an output
-    virtual void dataLinkSerialize(MemoryBuffer &mb)=0;
-    virtual unsigned __int64 queryTotalCycles() const=0;
-    virtual unsigned __int64 queryEndCycles() const=0;
-    virtual void debugRequest(MemoryBuffer &mb) = 0;
+
+    virtual bool isGrouped() { return false; }
+    virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const StrandOptions * consumerOptions, bool consumerOrdered) = 0;  // Use StrandFlags values for flags
+    virtual void connect(unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered) = 0;
 };
+
+
+
 #ifdef _MSC_VER
 #pragma warning (pop)
 #endif

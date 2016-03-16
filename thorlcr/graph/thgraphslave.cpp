@@ -126,6 +126,42 @@ CSlaveActivity::~CSlaveActivity()
     ActPrintLog("DESTROYED");
 }
 
+void CSlaveActivity::connectInputStreams(bool consumerOrdered)
+{
+    ForEachItemIn(index, queryContainer().connectedInputs)
+    {
+        CIOConnection *io = queryContainer().connectedInputs.item(index);
+        if (io)
+        {
+            CSlaveActivity *inputActivity = io->activity->queryActivity(true);
+            unsigned inputOutIdx = io->index;
+            Linked<IThorDataLinkNew> outLink;
+            if (!inputActivity)
+            {
+                Owned<CActivityBase> nullAct = container.factory(TAKnull);
+                outLink.set(((CSlaveActivity *)(nullAct.get()))->queryOutput(0)); // NB inputOutIdx irrelevant, null has single 'fake' output
+                nullAct->releaseIOs(); // normally done as graph winds up, clear now to avoid circular dependencies with outputs
+            }
+            else
+                outLink.set(inputActivity->queryOutput(inputOutIdx));
+
+            inputs.append(outLink);
+            inputStream.setown(connectSingleStream(*this, outLink, inputOutIdx, junction, isInputOrdered(consumerOrdered, 0)));
+        }
+    }
+}
+
+IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const StrandOptions * consumerOptions, bool consumerOrdered)
+{
+    assertex(!idx);
+    // By default, activities are assumed NOT to support streams
+    bool inputOrdered = isInputOrdered(consumerOrdered, 0);
+    connectInputStreams(inputOrdered);
+    // Return a single stream
+    streams.append(this);
+    return NULL;
+}
+
 void CSlaveActivity::setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
 {
     CActivityBase::setInput(index, inputActivity, inputOutIdx);
@@ -151,7 +187,8 @@ void CSlaveActivity::appendOutput(IThorDataLink *itdl)
     if (queryJob().getOptBool("TRACEROWS"))
     {
         const unsigned numTraceRows = queryJob().getOptInt("numTraceRows", 10);
-        outputs.append(new CTracingThorDataLink(itdl, queryHelper(), numTraceRows));
+//        outputs.append(new CTracingThorDataLink(itdl, queryHelper(), numTraceRows));
+        outputs.append(itdl);
     }
     else
         outputs.append(itdl);
@@ -163,7 +200,25 @@ void CSlaveActivity::appendOutputLinked(IThorDataLink *itdl)
     appendOutput(itdl);
 }
 
-IThorDataLink *CSlaveActivity::queryOutput(unsigned index)
+void CSlaveActivity::appendOutput(IThorDataLinkNew *itdl)
+{
+    if (queryJob().getOptBool("TRACEROWS"))
+    {
+        const unsigned numTraceRows = queryJob().getOptInt("numTraceRows", 10);
+//        outputs.append(new CTracingThorDataLink(itdl, queryHelper(), numTraceRows));
+        outputs.append(itdl);
+    }
+    else
+        outputs.append(itdl);
+}
+
+void CSlaveActivity::appendOutputLinked(IThorDataLinkNew *itdl)
+{
+    itdl->Link();
+    appendOutput(itdl);
+}
+
+IThorDataLinkNew *CSlaveActivity::queryOutput(unsigned index)
 {
     if (index>=outputs.ordinality()) return NULL;
     return outputs.item(index);
@@ -197,7 +252,7 @@ void CSlaveActivity::startInput(IThorDataLink *itdl, const char *extra)
 #endif
 }
 
-void CSlaveActivity::stopInput(IRowStream *itdl, const char *extra)
+void CSlaveActivity::stopInput(IThorDataLink *itdl, const char *extra)
 {
     StringBuffer s("Stopping input for");
     if (extra)
@@ -571,9 +626,18 @@ void CSlaveGraph::start()
 void CSlaveGraph::connect()
 {
     CriticalBlock b(progressCrit);
+/*
     Owned<IThorActivityIterator> iter = getConnectedIterator();
     ForEach(*iter)
         iter->query().doconnect();
+*/
+    Owned<IThorActivityIterator> iter = getSinkIterator();
+    ForEach(*iter)
+    {
+        CGraphElementBase &container = iter->query();
+        CSlaveActivity *sinkAct = (CSlaveActivity *)container.queryActivity();
+        sinkAct->connectInputStreams(true);
+    }
 }
 
 void CSlaveGraph::executeSubGraph(size32_t parentExtractSz, const byte *parentExtract)
@@ -1089,6 +1153,9 @@ public:
     }
 };
 
+const unsigned defaultStrandBlockSize = 512;
+const unsigned defaultForceNumStrands = 0;
+
 #define SLAVEGRAPHPOOLLIMIT 10
 CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, const char *graphName, ILoadedDllEntry *_querySo, mptag_t _mpJobTag, mptag_t _slavemptag) : CJobBase(_querySo, graphName), watchdog(_watchdog)
 {
@@ -1135,6 +1202,9 @@ CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, co
     }
     tmpHandler.setown(createTempHandler(true));
     channelMemorySize = globalMemorySize / globals->getPropInt("@channelsPerSlave", 1);
+
+    workUnitInfo->queryPropTree("Debug")->setPropInt("strandBlockSize", defaultStrandBlockSize);
+    workUnitInfo->queryPropTree("Debug")->setPropInt("forceNumStrands", defaultForceNumStrands);
 }
 
 void CJobSlave::addChannel(IMPServer *mpServer)

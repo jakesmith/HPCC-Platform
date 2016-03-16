@@ -45,12 +45,15 @@ class graphslave_decl CSlaveActivity : public CActivityBase
     mutable CriticalSection crit;
 
 protected:
-    IPointerArrayOf<IThorDataLink> inputs, outputs;
+    IPointerArrayOf<IThorDataLinkNew> inputs, outputs;
+    IArrayOf<IEngineRowStream> outputStreams;
     ActivityTimeAccumulator totalCycles;
     MemoryBuffer startCtx;
     bool optStableInput = true; // is the input forced to ordered?
     bool optUnstableInput = false;  // is the input forced to unordered?
     bool optUnordered = false; // is the output specified as unordered?
+    Owned<IEngineRowStream> inputStream;
+    Owned<IStrandJunction> junction;
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -64,16 +67,21 @@ public:
     virtual void abort();
     virtual MemoryBuffer &queryInitializationData(unsigned slave) const;
     virtual MemoryBuffer &getInitializationData(unsigned slave, MemoryBuffer &mb) const;
+    virtual void connectInputStreams(bool consumerOrdered);
     virtual void onCreate();
     virtual void onCreateN(unsigned num);
+    virtual IStrandJunction *getOutputStreams(CActivityBase &ctx, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const StrandOptions * consumerOptions, bool consumerOrdered);
 
-    IThorDataLink *queryOutput(unsigned index);
-    IThorDataLink *queryInput(unsigned index);
+
+    IThorDataLinkNew *queryOutput(unsigned index);
+    IThorDataLinkNew *queryInput(unsigned index);
     virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx);
     void appendOutput(IThorDataLink *itdl);
     void appendOutputLinked(IThorDataLink *itdl);
+    void appendOutput(IThorDataLinkNew *itdl);
+    void appendOutputLinked(IThorDataLinkNew *itdl);
     void startInput(IThorDataLink *itdl, const char *extra=NULL);
-    void stopInput(IRowStream *itdl, const char *extra=NULL);
+    void stopInput(IThorDataLink *itdl, const char *extra=NULL);
 
     ActivityTimeAccumulator &getTotalCyclesRef() { return totalCycles; }
     unsigned __int64 queryLocalCycles() const;
@@ -122,11 +130,161 @@ public:
     unsigned blockSize = 0;
 };
 
+
+#define STRAND_CATCH_NEXTROWX_CATCH \
+        catch (IException *_e) \
+        { \
+            parent->processAndThrowOwnedException(_e); \
+        }
+
+#define STRAND_CATCH_NEXTROW() \
+    virtual const void *nextRow() \
+    { \
+        try \
+        { \
+            return nextRowNoCatch(); \
+        } \
+        CATCH_NEXTROWX_CATCH \
+    } \
+    inline const void *nextRowNoCatch() __attribute__((always_inline))
+
+
+class CThorStrandProcessor : public CInterfaceOf<IEngineRowStream>
+{
+protected:
+    CSlaveActivity &parent;
+    IEngineRowStream *inputStream;
+    ActivityTimeAccumulator totalCycles;
+//    mutable CRuntimeStatisticCollection stats;
+    rowcount_t count = 0, icount = 0;
+    unsigned numProcessedLastGroup = 0;
+    const bool timeActivities;
+    bool stopped = false;
+    unsigned outputId; // if activity had >1 , this identifies (for tracing purposes) which output this strand belongs to.
+    Linked<IHThorArg> baseHelper;
+
+protected:
+    inline IHThorArg *queryHelper() const { return baseHelper; }
+    inline void dataLinkStart()
+    {
+#ifdef _TESTING
+        parent.ActPrintLog("ITDL starting for output %d", outputId);
+#endif
+#ifdef _TESTING
+        assertex(!hasStarted() || hasStopped());      // ITDL started twice
+#endif
+        icount = 0;
+        rowcount_t prevCount = count & THORDATALINK_COUNT_MASK;
+        count = prevCount | THORDATALINK_STARTED;
+    }
+
+    inline void dataLinkStop()
+    {
+#ifdef _TESTING
+        assertex(hasStarted());        // ITDL stopped without being started
+#endif
+        count |= THORDATALINK_STOPPED;
+#ifdef _TESTING
+        parent.ActPrintLog("ITDL output %d stopped, count was %" RCPF "d", outputId, getDataLinkCount());
+#endif
+    }
+
+    inline void dataLinkIncrement()
+    {
+        dataLinkIncrement(1);
+    }
+
+    inline void dataLinkIncrement(rowcount_t v)
+    {
+#ifdef _TESTING
+        assertex(hasStarted());
+#ifdef OUTPUT_RECORDSIZE
+        if (count==THORDATALINK_STARTED)
+        {
+            size32_t rsz = parent.queryRowMetaData(this)->getMinRecordSize();
+            parent.ActPrintLog("Record size %s= %d", parent.queryRowMetaData(this)->isVariableSize()?"(min) ":"",rsz);
+        }
+#endif
+#endif
+        icount += v;
+        count += v;
+    }
+
+    inline bool hasStarted() const { return (count & THORDATALINK_STARTED) ? true : false; }
+    inline bool hasStopped() const { return (count & THORDATALINK_STOPPED) ? true : false; }
+
+    inline void dataLinkSerialize(MemoryBuffer &mb) const
+    {
+        mb.append(count);
+    }
+    unsigned __int64 queryTotalCycles() const { return parent.queryTotalCycles(); }
+    unsigned __int64 queryEndCycles() const  { return parent.queryEndCycles(); }
+
+    inline rowcount_t getDataLinkGlobalCount() { return (count & THORDATALINK_COUNT_MASK); }
+    inline rowcount_t getDataLinkCount() const { return icount; }
+    virtual void debugRequest(MemoryBuffer &msg) { }
+    CSlaveActivity *queryFromActivity() { return parent; }
+
+public:
+    explicit CThorStrandProcessor(CSlaveActivity &_parent, IEngineRowStream *_inputStream, unsigned _outputId)
+      : parent(_parent), inputStream(_inputStream), outputId(_outputId), timeActivities(_parent.timeActivities)
+    {
+        baseHelper.set(parent.queryHelper());
+    }
+    ~CThorStrandProcessor()
+    {
+#ifdef _TESTING
+        if(hasStarted() && !hasStopped())
+        {
+            parent.ActPrintLog("ERROR: ITDL was not stopped before destruction");
+            dataLinkStop(); // get some info (even though failed)
+        }
+#endif
+    }
+
+    virtual void start()
+    {
+        count = 0;
+        numProcessedLastGroup = 0;
+        totalCycles.reset();
+//        stats.reset();
+
+        dataLinkStart();
+    }
+    virtual void reset()
+    {
+        stopped = false;
+    }
+
+// IRowStream
+    virtual void stop()
+    {
+        if (!stopped)
+        {
+            if (inputStream)
+                inputStream->stop();
+//            parent.stop();
+//            parent.mergeStrandStats(processed, totalCycles, stats);
+        }
+        stopped = true;
+
+#ifdef _TESTING
+        assertex(hasStarted());        // ITDL stopped without being started
+#endif
+        count |= THORDATALINK_STOPPED;
+    }
+// IEngineRowStream
+    virtual void resetEOF()
+    {
+        inputStream->resetEOF();
+    }
+};
+
 class CThorStrandedActivity : public CSlaveActivity
 {
 protected:
     CThorStrandOptions strandOptions;
-    IArrayOf<CStrandProcessor> strands;
+    IArrayOf<CThorStrandProcessor> strands;
     Owned<IStrandBranch> branch;
     Owned<IStrandJunction> splitter;
     Owned<IStrandJunction> sourceJunction; // A junction applied to the output of a source activity
@@ -168,7 +326,7 @@ public:
             CRoxieServerActivity::stop();
     }
 
-    virtual IStrandJunction *getOutputStreams(IRoxieSlaveContext *ctx, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
+    virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered) override
     {
         assertex(idx == 0);
         assertex(strands.empty());
@@ -196,26 +354,26 @@ public:
             if (strandOptions.numStrands == 1)
             {
                 // 1 means explicitly requested single-strand.
-                IEngineRowStream *instream = connectSingleStream(ctx, input, sourceIdx, junction, inputOrdered);
+                IEngineRowStream *instream = connectSingleStream(activity, input, sourceIdx, junction, inputOrdered);
                 strands.append(*createStrandProcessor(instream));
             }
             else
             {
                 PointerArrayOf<IEngineRowStream> instreams;
-                recombiner.setown(input->getOutputStreams(ctx, sourceIdx, instreams, &strandOptions, inputOrdered));
+                recombiner.setown(input->getOutputStreams(activity, sourceIdx, instreams, &strandOptions, inputOrdered));
                 if ((instreams.length() == 1) && (strandOptions.numStrands != 0))  // 0 means did not specify - we should use the strands that our upstream provides
                 {
                     assertex(recombiner == NULL);
                     // Create a splitter to split the input into n... and a recombiner if need to preserve sorting
                     if (inputOrdered)
                     {
-                        branch.setown(createStrandBranch(ctx->queryRowManager(), strandOptions.numStrands, strandOptions.blockSize, true, input->queryOutputMeta()->isGrouped(), false));
+                        branch.setown(createStrandBranch(activity->queryRowManager(), strandOptions.numStrands, strandOptions.blockSize, true, input->queryOutputMeta()->isGrouped(), false));
                         splitter.set(branch->queryInputJunction());
                         recombiner.set(branch->queryOutputJunction());
                     }
                     else
                     {
-                        splitter.setown(createStrandJunction(ctx->queryRowManager(), 1, strandOptions.numStrands, strandOptions.blockSize, false));
+                        splitter.setown(createStrandJunction(activity->queryRowManager(), 1, strandOptions.numStrands, strandOptions.blockSize, false));
                     }
                     splitter->setInput(0, instreams.item(0));
                     for (unsigned strandNo = 0; strandNo < strandOptions.numStrands; strandNo++)
@@ -241,7 +399,7 @@ public:
                 {
                     //If the output activities are also stranded then need to create a version of the branch
                     bool isGrouped = queryOutputMeta()->isGrouped();
-                    branch.setown(createStrandBranch(ctx->queryRowManager(), strandOptions.numStrands, strandOptions.blockSize, true, isGrouped, true));
+                    branch.setown(createStrandBranch(activity->queryRowManager(), strandOptions.numStrands, strandOptions.blockSize, true, isGrouped, true));
                     sourceJunction.set(branch->queryInputJunction());
                     recombiner.set(branch->queryOutputJunction());
 
@@ -258,7 +416,7 @@ public:
                     return recombiner.getClear();
                 }
                 else
-                    recombiner.setown(createStrandJunction(ctx->queryRowManager(), numStrands, 1, strandOptions.blockSize, inputOrdered));
+                    recombiner.setown(createStrandJunction(activity->queryRowManager(), numStrands, 1, strandOptions.blockSize, inputOrdered));
             }
         }
         ForEachItemIn(i, strands)
@@ -271,10 +429,10 @@ public:
         return recombiner.getClear();
     }
 
-    virtual CStrandProcessor *createStrandProcessor(IEngineRowStream *instream) = 0;
+    virtual CThorStrandProcessor *createStrandProcessor(IEngineRowStream *instream) = 0;
 
     //MORE: Possibly this class should be split into two for sinks and non sinks...
-    virtual CStrandProcessor *createStrandSourceProcessor(bool inputOrdered) = 0;
+    virtual CThorStrandProcessor *createStrandSourceProcessor(bool inputOrdered) = 0;
 
     inline unsigned numStrands() const { return strands.ordinality(); }
 protected:

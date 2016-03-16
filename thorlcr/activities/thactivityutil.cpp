@@ -935,3 +935,38 @@ IRowStream *createSequentialPartHandler(CPartHandler *partHandler, IArrayOf<IPar
     return new CSeqPartHandler(partHandler, partDescs, grouped);
 }
 
+
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLinkNew *input, unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered)
+{
+    if (input)
+    {
+        PointerArrayOf<IEngineRowStream> instreams;
+        junction.setown(input->getOutputStreams(activity, idx, instreams, NULL, consumerOrdered));
+        if (instreams.length() != 1)
+        {
+            assertex(instreams.length());
+            if (!junction)
+                junction.setown(createStrandJunction(activity.queryRowManager(), instreams.length(), 1, activity.getOptInt("strandBlockSize"), false));
+            ForEachItemIn(stream, instreams)
+            {
+                junction->setInput(stream, instreams.item(stream));
+            }
+            return junction->queryOutput(0);
+        }
+        else
+            return instreams.item(0);
+    }
+    else
+        return NULL;
+}
+
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLinkNew *input, unsigned idx, bool consumerOrdered)
+{
+    Owned<IStrandJunction> junction;
+    IEngineRowStream * result = connectSingleStream(activity, input, idx, junction, consumerOrdered);
+    assertex(!junction);
+    return result;
+}
+
+
+

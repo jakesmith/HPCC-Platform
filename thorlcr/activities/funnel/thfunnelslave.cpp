@@ -280,23 +280,6 @@ IRowStream *createParallelFunnel(CActivityBase &activity, IThorDataLink **instre
 }
 
 
-
-class CParallelProcessor : public CStrandProcessor
-{
-public:
-    explicit CParallelProcessor(CSlaveActivity &parent, IEngineRowStream *inputStream)
-        : CStrandProcessor(parent, inputStream, 0)
-    {
-    }
-// IThorStrand
-    STRAND_CATCH_NEXTROW()
-    {
-        ActivityTimer t(totalCycles, timeActivities);
-        return inputStream->nextRow();
-    }
-};
-
-
 ///////////////////
 //
 // FunnelSlaveActivity
@@ -339,17 +322,6 @@ public:
         appendOutputLinked(this);
         ActPrintLog("FUNNEL mode = %s, grouped=%s", parallel?"PARALLEL":"ORDERED", grouped?"GROUPED":"UNGROUPED");
     }
-    virtual CStrandProcessor *createStrandProcessor(IEngineRowStream *instream)
-    {
-        return new CParallelProcessor(*this, instream);
-    }
-
-    virtual void start(unsigned parentExtractSize, const byte *parentExtract, bool paused)
-    {
-        CRoxieServerStrandedActivity::start(parentExtractSize, parentExtract, paused);
-        onStartStrands();
-    }
-
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);

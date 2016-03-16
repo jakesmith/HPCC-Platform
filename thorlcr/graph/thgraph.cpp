@@ -510,9 +510,7 @@ void CGraphElementBase::doconnect()
     {
         CIOConnection *io = connectedInputs.item(i);
         if (io)
-        {
             io->connect(i, queryActivity());
-        }
     }
 }
 
