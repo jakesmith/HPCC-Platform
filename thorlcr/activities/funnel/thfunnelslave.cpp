@@ -84,7 +84,7 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
                 started = true;
                 while (!stopping)
                 {
-                    OwnedConstThorRow row = input->ungroupedNextRow();
+                    OwnedConstThorRow row = inputStream->ungroupedNextRow();
                     if (!row) break;
 
                     {
@@ -904,10 +904,10 @@ public:
     }
     virtual bool isGrouped() { return selectedInput ? selectedInput->isGrouped() : false; }
 // steppable
-    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CSlaveActivity::addInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
+        CSlaveActivity::setInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta()
     {

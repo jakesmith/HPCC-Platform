@@ -1348,7 +1348,7 @@ public:
         currentHashEntry.index = 0;
         currentHashEntry.count = 0;
 
-        right.set(rightITDL);
+        right.set(rightITDL->queryStream());
         rightAllocator.set(::queryRowAllocator(rightITDL));
         rightSerializer.set(::queryRowSerializer(rightITDL));
         rightDeserializer.set(::queryRowDeserializer(rightITDL));
@@ -1362,7 +1362,7 @@ public:
         }
 
         leftITDL = createDataLinkSmartBuffer(this,leftITDL,LOOKUPJOINL_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(leftITDL->queryFromActivity()),grouped,RCUNBOUND,this,false,&container.queryJob().queryIDiskUsage());
-        left.setown(leftITDL);
+        left.setown(leftITDL->queryStream());
         startInput(leftITDL);
 
         try

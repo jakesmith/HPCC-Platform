@@ -161,7 +161,7 @@ public:
         }
         while (!abortSoon)
         {
-            OwnedConstThorRow row(input->ungroupedNextRow());
+            OwnedConstThorRow row(inputStream->ungroupedNextRow());
             if (!row)
                 break;
             if (wanted())
@@ -251,7 +251,7 @@ public:
         }
         while (!abortSoon)
         {
-            OwnedConstThorRow row(input->ungroupedNextRow());
+            OwnedConstThorRow row(inputStream->ungroupedNextRow());
             if (!row)
                 break;
             if (wanted())

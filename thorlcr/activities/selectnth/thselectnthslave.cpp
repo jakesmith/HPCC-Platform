@@ -89,7 +89,10 @@ public:
         startN = 0; // set by initN()
         rowcount_t rowN = (rowcount_t)helper->getRowToSelect();
         if (!isLocal && rowN)
+        {
             input.setown(createDataLinkSmartBuffer(this, inputs.item(0), SELECTN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, rowN, this, false, &container.queryJob().queryIDiskUsage()));
+            inputStream = input->queryStream();
+        }
         else
             input.set(inputs.item(0));
         try
@@ -155,7 +158,7 @@ public:
                 {
                     while (!abortSoon)
                     {
-                        ret.setown(input->ungroupedNextRow());
+                        ret.setown(inputStream->ungroupedNextRow());
                         if (!ret)
                             break;
                         N--;

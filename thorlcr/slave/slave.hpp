@@ -75,8 +75,10 @@ class CActivityBase;
 
 interface IThorDataLink : extends IInterface
 {
+    virtual void start() = 0; // prepares input
     virtual CActivityBase *queryFromActivity() const = 0; // activity that has this as an output
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
+    virtual unsigned __int64 queryTotalCycles() const = 0;
     virtual bool isGrouped() const { return false; }
     virtual IOutputMetaData * queryOutputMeta() const;
     virtual unsigned queryOutputIdx() const = 0;
@@ -88,7 +90,7 @@ interface IThorDataLink : extends IInterface
     virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
 
 // to support non-stranded activities
-    virtual IEngineRowStream *queryStream() const { return NULL; }
+    virtual IEngineRowStream *queryStream() const = 0;
 };
 
 // helper interface. Used by maintainer of output links
@@ -116,12 +118,12 @@ interface IThorDataLink : extends IEngineRowStream // legacy
 };
 #endif
 
-interface IThorSlave
+interface IThorSlaveActivity
 {
     virtual void start() = 0;
     virtual void stop() = 0;
     virtual void reset() = 0;
-    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) = 0;
+    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) = 0;
 };
 #ifdef _MSC_VER
 #pragma warning (pop)

@@ -127,9 +127,9 @@ public:
                         }
                     }
                 }
-                nxt.setown(input->nextRow());
+                nxt.setown(inputStream->nextRow());
                 if (!nxt && !anyThisGroup)
-                    nxt.setown(input->nextRow());
+                    nxt.setown(inputStream->nextRow());
                 if (!nxt)
                     break;
                 unsigned len;

@@ -105,7 +105,7 @@ public:
             return NULL;
         while (!abortSoon && !eogNext)
         {
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if (!row)
             {
                 if(anyThisGroup)
@@ -113,7 +113,7 @@ public:
                     anyThisGroup = false;
                     break;
                 }
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if (!row)
                 {
                     eos = true;
@@ -143,7 +143,7 @@ public:
     const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
+        OwnedConstThorRow ret = inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
         if (ret)
         {
             if (wasCompleteMatch)
@@ -163,10 +163,10 @@ public:
         input->resetEOF(); 
     }
 // steppable
-    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CLimitSlaveActivityBase::addInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
+        CLimitSlaveActivityBase::setInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };
@@ -196,10 +196,10 @@ class CSkipLimitSlaveActivity : public CLimitSlaveActivityBase
         rowcount_t count = 0;
         while (!abortSoon)
         {
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if (!row)
             {
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if (!row)
                     break;
                 else

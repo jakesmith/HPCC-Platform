@@ -198,9 +198,12 @@ public:
         eogNext = eos = false;
         numKept = 0;
         if (global)
+        {
             input.setown(createDataLinkSmartBuffer(this, input,rollup?ROLLUP_SMART_BUFFER_SIZE:DEDUP_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(this),false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage())); // only allow spill if input can stall
+            inputStream = input->queryStream();
+        }
         startInput(input); 
-    }   
+    }
     virtual void stop()
     {
         stopInput();
@@ -245,7 +248,7 @@ public:
                 if (kept)
                     return;
             }
-            kept.setown(input->nextRow());
+            kept.setown(inputStream->nextRow());
             if (!kept && global)
                 putNextKept(); // pass on now
             if (rollup)
@@ -369,11 +372,11 @@ public:
         OwnedConstThorRow next;
         loop
         {
-            next.setown(input->nextRow());
+            next.setown(inputStream->nextRow());
             if (!next)
             {
                 if (!groupOp)
-                    next.setown(input->nextRow());
+                    next.setown(inputStream->nextRow());
                 if (!next)
                 {
                     if (global&&putNextKept()) // send kept to next node
@@ -525,11 +528,11 @@ public:
         OwnedConstThorRow next;
         loop
         {
-            next.setown(input->nextRow());
+            next.setown(inputStream->nextRow());
             if (!next)
             {
                 if (!groupOp)
-                    next.setown(input->nextRow());
+                    next.setown(inputStream->nextRow());
                 if (!next)
                 {
                     if (global&&putNextKept()) // send kept to next node

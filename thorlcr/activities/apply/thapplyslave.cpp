@@ -50,7 +50,7 @@ public:
             while(!abortSoon)
             {
                 ActivityTimer t(totalCycles, timeActivities);
-                OwnedConstThorRow r = input->ungroupedNextRow();
+                OwnedConstThorRow r = inputStream->ungroupedNextRow();
                 if (!r)
                     break;
                 helper->apply(r);

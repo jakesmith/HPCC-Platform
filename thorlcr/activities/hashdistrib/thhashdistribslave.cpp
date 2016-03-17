@@ -787,7 +787,7 @@ protected:
                     }
                     if (aborted)
                         break;
-                    const void *row = input->ungroupedNextRow();
+                    const void *row = inputStream->ungroupedNextRow();
                     if (!row)
                         break;
                     unsigned dest = owner.ihash->hash(row)%owner.numnodes;
@@ -2939,7 +2939,7 @@ public:
             OwnedConstThorRow row;
             {
                 SpinBlock b(stopSpin);
-                row.setown(grouped?input->nextRow():input->ungroupedNextRow());
+                row.setown(grouped?inputStream->nextRow():inputStream->ungroupedNextRow());
             }
             if (row)
             {
@@ -3877,12 +3877,12 @@ class CHashAggregateSlave : public CSlaveActivity, public CThorDataLink, impleme
             localAggTable->start(queryRowAllocator());
             while (!abortSoon)
             {
-                OwnedConstThorRow row = input->nextRow();
+                OwnedConstThorRow row = inputStream->nextRow();
                 if (!row)
                 {
                     if (container.queryGrouped())
                         break;
-                    row.setown(input->nextRow());
+                    row.setown(inputStream->nextRow());
                     if (!row)
                         break;
                 }
@@ -4025,7 +4025,7 @@ public:
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow row = input->ungroupedNextRow();
+        OwnedConstThorRow row = inputStream->ungroupedNextRow();
         if (!row)
             return NULL;
         if (myNode != (ihash->hash(row.get()) % nodes))

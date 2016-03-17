@@ -55,12 +55,12 @@ public:
         do
         {
             if (abortSoon) break;
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if (grouped && !first)
                 mb.append(NULL == row.get());
             if (!row)
             {
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if (!row)
                     break;
             }
@@ -90,6 +90,7 @@ public:
     void process()
     {
         input.setown(createDataLinkSmartBuffer(this, inputs.item(0), WORKUNITWRITE_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, false, &container.queryJob().queryIDiskUsage()));
+        inputStream = input->queryStream();
         startInput(input);
 
         processed = THORDATALINK_STARTED;

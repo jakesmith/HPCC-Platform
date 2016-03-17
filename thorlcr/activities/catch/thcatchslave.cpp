@@ -24,6 +24,7 @@
 
 class CCatchSlaveActivityBase : public CSlaveActivity, public CThorDataLink
 {
+    typedef CSlaveActivity PARENT;
 protected:
     Owned<IThorDataLink> input;
     IHThorCatchArg *helper;
@@ -43,14 +44,14 @@ public:
     }
     virtual void start()
     {
+        PARENT::start();
         input.set(inputs.item(0));
-        startInput(input);
         eos = false;
         dataLinkStart();
     }
     virtual void stop()
     {
-        stopInput(input);
+        PARENT::stop();
         dataLinkStop();
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
@@ -58,6 +59,8 @@ public:
 
 class CCatchSlaveActivity : public CCatchSlaveActivityBase, public CThorSteppable
 {
+    typedef CCatchSlaveActivityBase PARENT;
+
 public:
     CCatchSlaveActivity(CGraphElementBase *container) 
         : CCatchSlaveActivityBase(container), CThorSteppable(this)
@@ -75,7 +78,7 @@ public:
         {
             try
             {
-                OwnedConstThorRow row(input->nextRow());
+                OwnedConstThorRow row(inputStream->nextRow());
                 if (!row)
                     return NULL;
                 dataLinkIncrement();
@@ -109,7 +112,7 @@ public:
             try
             {
                 ActivityTimer t(totalCycles, timeActivities);
-                OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
+                OwnedConstThorRow ret = inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
                 if (ret && wasCompleteMatch)
                     dataLinkIncrement();
                 return ret.getClear();
@@ -146,10 +149,10 @@ public:
         calcMetaInfoSize(info,inputs.item(0));
     }
 // steppable
-    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CCatchSlaveActivityBase::addInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
+        CCatchSlaveActivityBase::setInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };
@@ -169,10 +172,10 @@ class CSkipCatchSlaveActivity : public CCatchSlaveActivityBase
             running = true;
             while (running)
             {
-                OwnedConstThorRow row = input->nextRow();
+                OwnedConstThorRow row = inputStream->nextRow();
                 if (!row)
                 {
-                    row.setown(input->nextRow());
+                    row.setown(inputStream->nextRow());
                     if (!row)
                         break;
                     else
@@ -204,7 +207,7 @@ public:
         global = !container->queryLocalOrGrouped();
     }
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
-    {       
+    {
         CCatchSlaveActivityBase::init(data, slaveData);
         if (global)
         {

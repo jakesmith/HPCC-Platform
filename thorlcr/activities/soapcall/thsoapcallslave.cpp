@@ -200,7 +200,7 @@ public:
         CriticalBlock b(crit);
         if (eof)
             return NULL;
-        return input->nextRow();
+        return inputStream->nextRow();
     }
     virtual void releaseRow(const void *r)
     {
@@ -322,7 +322,7 @@ public:
         if (abortSoon)
             return NULL;
 
-        const void *row = input->nextRow();
+        const void *row = inputStream->nextRow();
         if (!row) return NULL;
         processed++;
         return row;

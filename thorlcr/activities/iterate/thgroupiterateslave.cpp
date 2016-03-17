@@ -76,14 +76,14 @@ public:
                 }
             }
             
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if (!row)   {
                 count = 0;
                 if (anyThisGroup) {
                     anyThisGroup = false;
                     break;
                 }
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if (!row)
                     break;
             }
@@ -170,14 +170,14 @@ public:
                     break;
                 }
             }
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if (!row) {
                 count = 0;
                 if (anyThisGroup) {
                     anyThisGroup = false;
                     break;
                 }
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if (!row)
                     break;
             }

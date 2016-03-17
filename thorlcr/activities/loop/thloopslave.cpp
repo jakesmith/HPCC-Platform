@@ -473,10 +473,10 @@ public:
             Owned<IRowWriter> resultWriter = result->getWriter();
             loop
             {
-                OwnedConstThorRow row = input->nextRow();
+                OwnedConstThorRow row = inputStream->nextRow();
                 if (!row)
                 {
-                    row.setown(input->nextRow());
+                    row.setown(inputStream->nextRow());
                     if (!row)
                         break;
                     resultWriter->putRow(NULL);
@@ -690,10 +690,10 @@ public:
         Owned<IRowWriter> resultWriter = result->getWriter();
         loop
         {
-            OwnedConstThorRow nextrec = input->nextRow();
+            OwnedConstThorRow nextrec = inputStream->nextRow();
             if (!nextrec)
             {
-                nextrec.setown(input->nextRow());
+                nextrec.setown(inputStream->nextRow());
                 if (!nextrec)
                     break;
                 resultWriter->putRow(NULL);
@@ -756,10 +756,10 @@ public:
         RtlLinkedDictionaryBuilder builder(queryRowAllocator(), helper->queryHashLookupInfo());
         loop
         {
-            const void *row = input->nextRow();
+            const void *row = inputStream->nextRow();
             if (!row)
             {
-                row = input->nextRow();
+                row = inputStream->nextRow();
                 if (!row)
                     break;
             }
@@ -1109,7 +1109,7 @@ public:
 
             while (!ok)
             {
-                lastInput.setown(input->nextRow());
+                lastInput.setown(inputStream->nextRow());
                 if (!lastInput)
                 {
                     if (numProcessedLastGroup != getDataLinkCount()) // is this right?
@@ -1117,7 +1117,7 @@ public:
                         numProcessedLastGroup = getDataLinkCount(); // is this right?
                         return NULL;
                     }
-                    lastInput.setown(input->nextRow());
+                    lastInput.setown(inputStream->nextRow());
                     if (!lastInput)
                         return NULL;
                 }

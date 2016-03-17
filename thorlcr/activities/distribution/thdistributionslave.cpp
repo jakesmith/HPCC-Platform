@@ -54,7 +54,7 @@ public:
         {
             while (!abortSoon)
             {
-                OwnedConstThorRow row(input->ungroupedNextRow());
+                OwnedConstThorRow row(inputStream->ungroupedNextRow());
                 if (!row)
                     break;
                 helper->process(aggy, row);     

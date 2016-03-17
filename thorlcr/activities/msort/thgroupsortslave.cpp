@@ -164,7 +164,7 @@ public:
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow ret = input->nextRow();
+        OwnedConstThorRow ret = inputStream->nextRow();
         if (ret && prev && icompare->docompare(prev, ret) > 0)
         {
             // MORE - better to give mismatching rows than indexes?
@@ -183,7 +183,7 @@ public:
     virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
+        OwnedConstThorRow ret = inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
         if (ret && prev && stepCompare->docompare(prev, ret, numFields) > 0)
         {
             // MORE - better to give mismatching rows than indexes?
@@ -209,10 +209,10 @@ public:
         calcMetaInfoSize(info,inputs.item(0));
     }
 // steppable
-    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CSlaveActivity::addInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
+        CSlaveActivity::setInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };

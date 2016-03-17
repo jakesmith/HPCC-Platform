@@ -106,7 +106,7 @@ public:
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow row(input->nextRow());
+        OwnedConstThorRow row(inputStream->nextRow());
         if (!row)
             return NULL;
         dataLinkIncrement();

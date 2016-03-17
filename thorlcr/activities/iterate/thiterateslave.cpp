@@ -80,7 +80,10 @@ public:
         eof = nextPut = false;
         inrowif.set(::queryRowInterfaces(inputs.item(0)));
         if (global) // only want lookahead if global (hence serial)
+        {
             input.setown(createDataLinkSmartBuffer(this, inputs.item(0),ITERATE_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(this),false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage())); // only allow spill if input can stall
+            inputStream = input->queryStream();
+        }
         else
             input.set(inputs.item(0));
         try
@@ -149,7 +152,7 @@ public:
                     }
                 }
             }
-            OwnedConstThorRow next = input->ungroupedNextRow();
+            OwnedConstThorRow next = inputStream->ungroupedNextRow();
             if (!next) {
                 putNext(prev); // send to next node if applicable
                 eof = true;
@@ -234,7 +237,7 @@ public:
                     }
                 }
             }
-            left.setown(input->ungroupedNextRow());
+            left.setown(inputStream->ungroupedNextRow());
             if (!left) {
                 putNext(right); // send to next node 
                 eof = true;

@@ -107,7 +107,7 @@ public:
                 firstget = false;
                 while (skipped<skipCount)
                 {
-                    OwnedConstThorRow row = input->ungroupedNextRow();
+                    OwnedConstThorRow row = inputStream->ungroupedNextRow();
                     if (!row)
                     {
                         stop();
@@ -118,7 +118,7 @@ public:
             }
             if (getDataLinkCount() < limit)
             {
-                OwnedConstThorRow row = input->ungroupedNextRow();
+                OwnedConstThorRow row = inputStream->ungroupedNextRow();
                 if (row)
                 {
                     dataLinkIncrement();
@@ -160,7 +160,7 @@ public:
                     unsigned skipped = 0;
                     do
                     {
-                        OwnedConstThorRow row = input->nextRow();
+                        OwnedConstThorRow row = inputStream->nextRow();
                         if (row) 
                             skipped++;
                         else
@@ -177,7 +177,7 @@ public:
                 }
                 if (countThisGroup < limit)
                 {
-                    OwnedConstThorRow row = input->nextRow();
+                    OwnedConstThorRow row = inputStream->nextRow();
                     if (row)
                     {
                         countThisGroup++;
@@ -194,7 +194,7 @@ public:
                 { // consume rest of group
                     loop
                     {
-                        OwnedConstThorRow row = input->nextRow();
+                        OwnedConstThorRow row = inputStream->nextRow();
                         if (!row)
                             break;
                     }
@@ -250,6 +250,7 @@ public:
         input.setown(createDataLinkSmartBuffer(this, input,FIRSTN_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(this),false,
                                           maxRead,this,true,&container.queryJob().queryIDiskUsage())); // if a very large limit don't bother truncating
         startInput(input);
+        inputStream = input->queryStream();
     }
     virtual void abort()
     {
@@ -331,7 +332,7 @@ public:
                     return NULL;
                 while (skipped<skipCount)
                 {
-                    OwnedConstThorRow row = input->ungroupedNextRow();
+                    OwnedConstThorRow row = inputStream->ungroupedNextRow();
                     if (!row)
                     {
                         stop();
@@ -342,7 +343,7 @@ public:
             }
             if (getDataLinkCount() < limit)
             {
-                OwnedConstThorRow row = input->ungroupedNextRow();
+                OwnedConstThorRow row = inputStream->ungroupedNextRow();
                 if (row)
                 {
                     dataLinkIncrement();

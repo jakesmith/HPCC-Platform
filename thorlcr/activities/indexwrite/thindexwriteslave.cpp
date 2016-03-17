@@ -65,7 +65,7 @@ class IndexWriteSlaveActivity  : public ProcessSlaveActivity, public ISmartBuffe
     Owned<IPartDescriptor> partDesc, tlkDesc;
     IHThorIndexWriteArg *helper;
     Owned <IKeyBuilder> builder;
-    Owned<IThorDataLink> input;
+    Owned<IRowStream> myInputStream;
     Owned<IPropertyTree> metadata;
     Linked<IEngineRowAllocator> outRowAllocator;
 
@@ -305,13 +305,14 @@ public:
         init();
 
         ThorDataLinkMetaInfo info;
-        inputs.item(0)->getMetaInfo(info);
+        input->getMetaInfo(info);
         outRowAllocator.setown(getRowAllocator(helper->queryDiskRecordSize()));
         if (refactor)
         {
             assertex(isLocal);
-            input.setown(createDataLinkSmartBuffer(this, inputs.item(0), INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, false, &container.queryJob().queryIDiskUsage())); 
-            startInput(input);
+            input.setown(createDataLinkSmartBuffer(this, input, INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, false, &container.queryJob().queryIDiskUsage()));
+            inputStream = input->queryStream();
+            startInput(smartInput);
 
             if (active)
             {
@@ -321,7 +322,7 @@ public:
                 unsigned myPart = queryJobChannel().queryMyRank();
 
                 IArrayOf<IRowStream> streams;
-                streams.append(*LINK(input));
+                streams.append(*LINK(inuptStream));
                 --partsPerNode;
 
  // Should this be merging 1,11,21,31 etc.
@@ -334,20 +335,20 @@ public:
                 ICompare *icompare = helper->queryCompare();
                 assertex(icompare);
                 Owned<IRowLinkCounter> linkCounter = new CThorRowLinkCounter;
-                input.setown(createRowStreamToDataLinkAdapter(inputs.item(0), createRowStreamMerger(streams.ordinality(), streams.getArray(), icompare, false, linkCounter)));
+                myInputStream.setown(createRowStreamMerger(streams.ordinality(), streams.getArray(), icompare, false, linkCounter));
+                inputStream = myInputStream;
             }
             else // serve nodes, creating merged parts
-                rowServer.setown(createRowServer(this, input, queryJobChannel().queryJobComm(), mpTag));
+                rowServer.setown(createRowServer(this, inputStream, queryJobChannel().queryJobComm(), mpTag));
         }
         else if (singlePartKey)
         {
-            input.setown(createDataLinkSmartBuffer(this, inputs.item(0), INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, false, &container.queryJob().queryIDiskUsage())); 
-            startInput(input);
+            input.setown(createDataLinkSmartBuffer(this, input, INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, false, &container.queryJob().queryIDiskUsage()));
+            inputStream = input->queryStream();
+            startInput(smartInput);
         }
-        else {
-            input.set(inputs.item(0));
+        else
             startInput(input);
-        }
         processed = THORDATALINK_STARTED;
 
         // single part key support
@@ -363,7 +364,7 @@ public:
                     open(*partDesc, false, helper->queryDiskRecordSize()->isVariableSize());
                     loop
                     {
-                        OwnedConstThorRow row = input->ungroupedNextRow();
+                        OwnedConstThorRow row = inputStream->ungroupedNextRow();
                         if (!row)
                             break;
                         if (abortSoon) return;
@@ -425,7 +426,7 @@ public:
                         mb.clear();
                         do
                         {
-                            OwnedConstThorRow row = input->ungroupedNextRow();
+                            OwnedConstThorRow row = inputStream->ungroupedNextRow();
                             if (!row) break;
                             serializer->serialize(mbs, (const byte *)row.get());
                         } while (mb.length() < SINGLEPART_KEY_TRANSFER_SIZE); // NB: at least one row
@@ -454,7 +455,7 @@ public:
                         receiving = false;
                     do
                     {
-                        OwnedConstThorRow row = input->ungroupedNextRow();
+                        OwnedConstThorRow row = inputStream->ungroupedNextRow();
                         if (!row)
                             break;
                         processRow(row);
@@ -574,7 +575,7 @@ public:
             doStopInput();
             processed |= THORDATALINK_STOPPED;
         }
-        input.clear();
+        inputStream = NULL;
     }
 
     virtual void abort()

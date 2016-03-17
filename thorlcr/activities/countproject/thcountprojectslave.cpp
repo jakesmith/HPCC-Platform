@@ -24,7 +24,6 @@ class BaseCountProjectActivity : public CSlaveActivity,  public CThorDataLink, i
 protected:
     IHThorCountProjectArg *helper;
     rowcount_t count;
-    Owned<IThorDataLink> input;
 
     void start()
     {
@@ -68,7 +67,6 @@ public:
     {
         ActivityTimer s(totalCycles, timeActivities);
         ActPrintLog("COUNTPROJECT: Is Local");
-        input.set(inputs.item(0));
         anyThisGroup = false;
         startInput(input);
         BaseCountProjectActivity::start();
@@ -78,12 +76,12 @@ public:
         ActivityTimer t(totalCycles, timeActivities);
         while (!abortSoon)
         {
-            OwnedConstThorRow row(input->nextRow());
+            OwnedConstThorRow row(inputStream->nextRow());
             if (!row)
             {
                 if (anyThisGroup) 
                     break;
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if (!row)
                     break;
                 count = 0;
@@ -175,8 +173,9 @@ public:
         ThorDataLinkMetaInfo info;
         inputs.item(0)->getMetaInfo(info);
         localRecCount = (info.totalRowsMin == info.totalRowsMax) ? (rowcount_t)info.totalRowsMax : RCUNSET;
-        input.setown(createDataLinkSmartBuffer(this, inputs.item(0), COUNTPROJECT_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, true, &container.queryJob().queryIDiskUsage())); // could spot disk write output here?
+        input.setown(createDataLinkSmartBuffer(this, input, COUNTPROJECT_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, true, &container.queryJob().queryIDiskUsage())); // could spot disk write output here?
         input->start();
+        inputStream = input->queryStream();
         BaseCountProjectActivity::start();
     }
     virtual void stop()
@@ -206,7 +205,7 @@ public:
         }
         while (!abortSoon)
         {
-            OwnedConstThorRow row(input->nextRow()); // NB: lookahead ensures ungrouped
+            OwnedConstThorRow row(inputStream->nextRow()); // NB: lookahead ensures ungrouped
             if (!row) 
                 break;
             RtlDynamicRowBuilder ret(queryRowAllocator());

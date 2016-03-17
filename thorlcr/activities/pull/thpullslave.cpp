@@ -47,6 +47,7 @@ public:
         ActivityTimer s(totalCycles, timeActivities);
         input.setown(createDataLinkSmartBuffer(this,inputs.item(0),PULL_SMART_BUFFER_SIZE,true,false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage()));
         startInput(input);
+        inputStream = input->queryStream();
         dataLinkStart();
     }
     virtual void stop()
@@ -58,7 +59,7 @@ public:
     const void * nextRow()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow row = input->nextRow();
+        OwnedConstThorRow row = inputStream->nextRow();
         if (!row)
             return NULL;
         dataLinkIncrement();

@@ -145,20 +145,23 @@ void CSlaveActivity::connectInputStreams(bool consumerOrdered)
             else
                 outLink.set(inputActivity->queryOutput(inputOutIdx));
 
-            addInput(index, outLink, inputOutIdx, consumerOrdered);
+            setInput(index, outLink, inputOutIdx, consumerOrdered);
         }
     }
 }
 
-void CSlaveActivity::addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered)
+void CSlaveActivity::setInput(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered)
 {
-    inputs.append(input);
-    inputStreams.append(connectSingleStream(*this, input, inputOutIdx, junction, input->isInputOrdered(consumerOrdered)));
-    if (!inputStream)
+    IEngineRowStream *_inputStream = connectSingleStream(*this, input, inputOutIdx, junction, input->isInputOrdered(consumerOrdered));
+    if (!input)
     {
-        dbgassertex(1 == inputStreams.ordinality());
-        inputStream = inputStreams.item(0);
+        input = _input;
+        inputStream = _inputStream;
     }
+    while (inputs.ordinality()<=index) inputs.append(NULL);
+    inputs.replace(_input, index);
+    while (inputStreams.ordinality()<=index) inputStreams.append(NULL);
+    inputStreams.append(_inputStream);
 }
 
 IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
@@ -166,11 +169,11 @@ IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsig
     // Default non-stranded implementation, expects activity to have added a legacy output.
     assertex(!idx);
     // By default, activities are assumed NOT to support streams
-    bool inputOrdered = isInputOrdered(consumerOrdered, 0);
+    bool inputOrdered = isInputOrdered(consumerOrdered);
     connectInputStreams(inputOrdered);
     // Return a single stream
     // Default activity impl. adds single output as stream
-    streams.append(&legacyOutputStreams.item(0));
+    streams.append(outputs.item(0)->queryStream());
     return NULL;
 }
 
@@ -186,15 +189,11 @@ void CSlaveActivity::appendOutput(IThorDataLink *itdl)
     else
         outputs.append(itdl);
 #else
-    IEngineRowStream *stream = itdl->queryStream();
-    if (stream)
-        legacyOutputStreams.append(*stream);
     IThorDataLinkExt *itdlExt = QUERYINTERFACE(itdl, IThorDataLinkExt);
     dbgassertex(itdlExt);
     unsigned outputNum = outputs.ordinality();
     itdlExt->setOutputIdx(outputNum);
     outputs.append(itdl);
-    dbgassertex(outputs.ordinality() == legacyOutputStreams.ordinality()); // all or none
 #endif
 }
 
@@ -208,12 +207,6 @@ IThorDataLink *CSlaveActivity::queryOutput(unsigned index)
 {
     if (index>=outputs.ordinality()) return NULL;
     return outputs.item(index);
-}
-
-IEngineRowStream *CSlaveActivity::queryLegacyOutput(unsigned index)
-{
-    if (index>=outputs.ordinality()) return NULL;
-    return legacyOutputStreams.item(index);
 }
 
 IThorDataLink *CSlaveActivity::queryInput(unsigned index)
@@ -254,7 +247,7 @@ void CSlaveActivity::stopInput(IThorDataLink *itdl, const char *extra)
 #ifdef TRACE_STARTSTOP_EXCEPTIONS
     try
     {
-        itdl->stop();
+        itdl->queryStream()->stop();
     }
     catch(IException * e)
     {
@@ -262,7 +255,7 @@ void CSlaveActivity::stopInput(IThorDataLink *itdl, const char *extra)
         throw;
     }
 #else
-    itdl->stop();
+    itdl->queryStream()->stop();
 #endif
 }
 
@@ -377,7 +370,13 @@ void CSlaveActivity::debugRequest(unsigned edgeIdx, CMessageBuffer &msg)
     if (link) link->debugRequest(msg);
 }
 
-virtual IOutputMetaData *CSlaveActivity::queryOutputMeta() const
+bool CSlaveActivity::isGrouped() const
+{
+    if (!input) return false; // should possible be an error if query and not set
+    return input->isGrouped();
+}
+
+IOutputMetaData *CSlaveActivity::queryOutputMeta() const
 {
     return queryHelper()->queryOutputMeta();
 }

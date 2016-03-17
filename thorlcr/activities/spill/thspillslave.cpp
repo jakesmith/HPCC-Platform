@@ -181,7 +181,7 @@ public:
         if (abortSoon) 
             return NULL;
 
-        OwnedConstThorRow row = grouped?input->nextRow():input->ungroupedNextRow();
+        OwnedConstThorRow row = grouped?inputStream->nextRow():inputStream->ungroupedNextRow();
         if (row) {
             hadrow = true;
             dataLinkIncrement();

@@ -45,7 +45,7 @@ public:
 
         processed = THORDATALINK_STARTED;
 
-        OwnedConstThorRow row = input->ungroupedNextRow();
+        OwnedConstThorRow row = inputStream->ungroupedNextRow();
         CMessageBuffer mb;
         DelayedSizeMarker sizeMark(mb);
         if (row)

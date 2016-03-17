@@ -88,7 +88,7 @@ public:
         ActivityTimer t(totalCycles, timeActivities);
         loop
         {
-            OwnedConstThorRow row = input->ungroupedNextRow();
+            OwnedConstThorRow row = inputStream->ungroupedNextRow();
             if(!row || done || abortSoon)
                 break;
 
@@ -150,7 +150,7 @@ class ChooseSetsActivity : public BaseChooseSetsActivity
 public:
     ChooseSetsActivity(CGraphElementBase *container) : BaseChooseSetsActivity(container)
     {
-    }   
+    }
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
     {
         BaseChooseSetsActivity::init(data, slaveData);
@@ -202,7 +202,7 @@ public:
         {
             while (!abortSoon)
             {
-                OwnedConstThorRow row = input->ungroupedNextRow();
+                OwnedConstThorRow row = inputStream->ungroupedNextRow();
                 if (!row)
                     break;
                 switch (helper->getRecordAction(row))
@@ -436,7 +436,7 @@ public:
         {
             while (!abortSoon)
             {
-                OwnedConstThorRow row = input->ungroupedNextRow();
+                OwnedConstThorRow row = inputStream->ungroupedNextRow();
                 if (!row)
                     break;
                 unsigned category = helper->getCategory(row);
@@ -515,7 +515,7 @@ public:
         {
             while (!abortSoon)
             {
-                OwnedConstThorRow row = input->ungroupedNextRow();
+                OwnedConstThorRow row = inputStream->ungroupedNextRow();
                 if (!row)
                     break;
                 unsigned category = helper->getCategory(row);

@@ -251,6 +251,7 @@ const char *CDiskReadSlaveActivityBase::queryLogicalFilename(unsigned index)
 
 void CDiskReadSlaveActivityBase::start()
 {
+    PARENT::start();
     markStart = true;
     diskProgress = 0;
 }

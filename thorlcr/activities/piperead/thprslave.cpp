@@ -518,7 +518,7 @@ int PipeWriterThread::run()
         {
             if (eos||activity.abortSoon)
                 break;
-            OwnedConstThorRow row = input->ungroupedNextRow();
+            OwnedConstThorRow row = inputStream->ungroupedNextRow();
             if (!row.get())
                 break;
             if (activity.recreate)

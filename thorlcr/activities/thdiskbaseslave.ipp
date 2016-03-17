@@ -76,6 +76,7 @@ void getPartsMetaInfo(ThorDataLinkMetaInfo &metaInfo, CThorDataLink &link, unsig
 
 class CDiskReadSlaveActivityBase : public CSlaveActivity
 {
+    typedef CSlaveActivity PARENT;
     Owned<IRowInterfaces> diskRowIf;
 protected:
     StringAttr logicalFilename;

@@ -171,7 +171,7 @@ public:
             return NULL;
         eof = true;
 
-        OwnedConstThorRow next = input->ungroupedNextRow();
+        OwnedConstThorRow next = inputStream->ungroupedNextRow();
         RtlDynamicRowBuilder resultcr(queryRowAllocator());
         size32_t sz = helper->clearAggregate(resultcr);         
         if (next)
@@ -182,7 +182,7 @@ public:
             {
                 while (!abortSoon)
                 {
-                    next.setown(input->ungroupedNextRow());
+                    next.setown(inputStream->ungroupedNextRow());
                     if (!next)
                         break;
                     sz = helper->processNext(resultcr, next);
@@ -284,7 +284,7 @@ public:
         ActivityTimer t(totalCycles, timeActivities);
         if (inputStopped)
             return NULL;
-        OwnedConstThorRow row = input->ungroupedNextRow();
+        OwnedConstThorRow row = inputStream->ungroupedNextRow();
         if (!row)
             return NULL;
         process(row);

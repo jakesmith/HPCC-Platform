@@ -39,7 +39,7 @@
 class CSlaveActivity;
 
 class CSlaveGraphElement;
-class graphslave_decl CSlaveActivity : public CActivityBase, implements IThorDataLinkExt, implements IThorSlave
+class graphslave_decl CSlaveActivity : public CActivityBase, implements IThorDataLinkExt, implements IThorSlaveActivity
 {
     mutable MemoryBuffer *data;
     mutable CriticalSection crit;
@@ -47,7 +47,7 @@ class graphslave_decl CSlaveActivity : public CActivityBase, implements IThorDat
 protected:
     IPointerArrayOf<IThorDataLink> inputs, outputs;
     IPointerArrayOf<IEngineRowStream> inputStreams;
-    IArrayOf<IEngineRowStream> legacyOutputStreams;
+    Linked<IThorDataLink> input;
     IEngineRowStream *inputStream = NULL;
     ActivityTimeAccumulator totalCycles;
     MemoryBuffer startCtx;
@@ -227,10 +227,10 @@ public:
     virtual CActivityBase *queryFromActivity() const override { return this; }
     virtual IStrandJunction *getOutputStreams(CActivityBase &ctx, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered);
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { }
-    virtual bool isGrouped() override { return false; }
+    virtual bool isGrouped() const override { return false; }
     virtual IOutputMetaData * queryOutputMeta() const;
     virtual unsigned queryOutputIdx() const override { return outputIdx; }
-    virtual bool isInputOrdered(bool consumerOrdered, unsigned idx) const
+    virtual bool isInputOrdered(bool consumerOrdered) const
     {
         if (optStableInput)
             return true;
@@ -243,7 +243,7 @@ public:
 // IThorDataLinkExt
     virtual void setOutputIdx(unsigned idx) override { outputIdx = idx; }
 
-// IThorSlave
+// IThorSlaveActivity
     virtual void start() override
     {
         startJunction(junction);
@@ -255,9 +255,10 @@ public:
     }
     virtual void reset() override
     {
+        input = NULL;
         inputStream = NULL;
     }
-    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override;
+    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override;
 };
 
 

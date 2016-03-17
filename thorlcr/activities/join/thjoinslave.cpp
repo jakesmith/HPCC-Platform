@@ -406,6 +406,8 @@ public:
     void dolocaljoin()
     {
         bool isemptylhs = false;
+        IRowStream *leftInputStream = leftInput->queryStream();
+        IRowStream *rightInputStream = rightInput->queryStream();
         if (helper->isLeftAlreadyLocallySorted())
         {
             ThorDataLinkMetaInfo info;
@@ -413,14 +415,14 @@ public:
             if (info.totalRowsMax==0) 
                 isemptylhs = true;
             if (rightpartition)
-                leftStream.set(leftInput.get()); // already ungrouped
+                leftStream.set(leftInputStream); // already ungrouped
             else
-                leftStream.setown(createUngroupStream(leftInput));
+                leftStream.setown(createUngroupStream(leftInputStream));
         }
         else
         {
             Owned<IThorRowLoader> iLoaderL = createThorRowLoader(*this, ::queryRowInterfaces(leftInput), leftCompare, stableSort_earlyAlloc, rc_mixed, SPILL_PRIORITY_JOIN);
-            leftStream.setown(iLoaderL->load(leftInput, abortSoon));
+            leftStream.setown(iLoaderL->load(leftInputStream, abortSoon));
             isemptylhs = 0 == iLoaderL->numRows();
             stopLeftInput();
             mergeStats(spillStats, iLoaderL);
@@ -434,14 +436,14 @@ public:
         else if (helper->isRightAlreadyLocallySorted())
         {
             if (rightpartition)
-                rightStream.set(createUngroupStream(rightInput));
+                rightStream.set(createUngroupStream(rightInputStream));
             else
-                rightStream.set(rightInput.get()); // already ungrouped
+                rightStream.set(rightInputStream); // already ungrouped
         }
         else
         {
             Owned<IThorRowLoader> iLoaderR = createThorRowLoader(*this, ::queryRowInterfaces(rightInput), rightCompare, stableSort_earlyAlloc, rc_mixed, SPILL_PRIORITY_JOIN);
-            rightStream.setown(iLoaderR->load(rightInput, abortSoon));
+            rightStream.setown(iLoaderR->load(rightInputStream, abortSoon));
             stopRightInput();
             mergeStats(spillStats, iLoaderR);
         }
@@ -513,12 +515,12 @@ public:
 
         if (noSortPartitionSide())
         {
-            partitionRow.setown(primaryInput->ungroupedNextRow());
+            partitionRow.setown(primaryInput->queryStream()->ungroupedNextRow());
             primaryStream.set(new cRowStreamPlus1Adaptor(primaryInput, partitionRow));
         }
         else
         {
-            sorter->Gather(primaryRowIf, primaryInput, primaryCompare, NULL, NULL, primaryKeySerializer, NULL, false, isUnstable(), abortSoon, NULL);
+            sorter->Gather(primaryRowIf, primaryInput->queryStream(), primaryCompare, NULL, NULL, primaryKeySerializer, NULL, false, isUnstable(), abortSoon, NULL);
             stopPartitionInput();
             if (abortSoon)
             {
@@ -543,7 +545,7 @@ public:
             sorter->stopMerge();
         }
         // NB: on secondary sort, the primaryKeySerializer is used
-        sorter->Gather(secondaryRowIf, secondaryInput, secondaryCompare, primarySecondaryCompare, primarySecondaryUpperCompare, primaryKeySerializer, partitionRow, noSortOtherSide(), isUnstable(), abortSoon, primaryRowIf); // primaryKeySerializer *is* correct
+        sorter->Gather(secondaryRowIf, secondaryInput->queryStream(), secondaryCompare, primarySecondaryCompare, primarySecondaryUpperCompare, primaryKeySerializer, partitionRow, noSortOtherSide(), isUnstable(), abortSoon, primaryRowIf); // primaryKeySerializer *is* correct
         mergeStats(spillStats, sorter);
         //MORE: Stats from spilling the primaryStream??
         partitionRow.clear();
@@ -675,10 +677,10 @@ public:
         processor.queryResetEOF(); 
     }
 // steppable
-    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CThorNarySlaveActivity::addInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
+        CThorNarySlaveActivity::setInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };

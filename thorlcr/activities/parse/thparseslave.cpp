@@ -101,14 +101,14 @@ public:
                 rowIter->next();
                 return r.getClear();
             }
-            curRow.setown(input->nextRow());
+            curRow.setown(inputStream->nextRow());
 
             if (!curRow) {
                 if (anyThisGroup) {
                     anyThisGroup = false;
                     break;
                 }
-                curRow.setown(input->nextRow());
+                curRow.setown(inputStream->nextRow());
                 if (!curRow)
                     break;
             }

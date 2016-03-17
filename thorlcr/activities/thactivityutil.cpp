@@ -54,10 +54,11 @@
 #pragma warning(push)
 #pragma warning( disable : 4355 )
 #endif
-class ThorLookaheadCache: public IThorDataLink, public CSimpleInterface
+class ThorLookaheadCache: public CThorDataLink
 {
     rowcount_t count;
     Linked<IThorDataLink> in;
+    IRowStream *inputStream = NULL;
     Owned<ISmartRowBuffer> smartbuf;
     size32_t bufsize;
     CActivityBase &activity;
@@ -87,8 +88,6 @@ class ThorLookaheadCache: public IThorDataLink, public CSimpleInterface
     } thread;
 
 public:
-    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-
     void doNotify()
     {
         if (notify)
@@ -99,8 +98,10 @@ public:
 
     int run()
     {
-        if (!started) {
-            try {
+        if (!started)
+        {
+            try
+            {
                 in->start();
                 started = true;
             }
@@ -116,7 +117,8 @@ public:
                 return 0;
             }
         }
-        try {
+        try
+        {
             StringBuffer temp;
             if (allowspill)
                 GetTempName(temp,"lookahd",true);
@@ -133,10 +135,10 @@ public:
             {
                 while (required&&running)
                 {
-                    OwnedConstThorRow row = in->nextRow();
+                    OwnedConstThorRow row = inputStream->nextRow();
                     if (!row)
                     {
-                        row.setown(in->nextRow());
+                        row.setown(inputStream->nextRow());
                         if (!row)
                             break;
                         else
@@ -152,7 +154,7 @@ public:
             {
                 while (required&&running)
                 {
-                    OwnedConstThorRow row = in->ungroupedNextRow();
+                    OwnedConstThorRow row = inputStream->ungroupedNextRow();
                     if (!row)
                         break;
                     ++count;
@@ -202,8 +204,8 @@ public:
         running = false;
         try
         {
-            if (in)
-                in->stop();
+            if (inputStream)
+                inputStream->stop();
         }
         catch(IException * e)
         {
@@ -233,6 +235,7 @@ public:
         count = 0;
         stopped = true;
         started = _instarted;
+        inputStream = in->queryStream();
     }
 
     ~ThorLookaheadCache()
@@ -241,27 +244,27 @@ public:
             ActPrintLogEx(&activity.queryContainer(), thorlog_all, MCuserWarning, "ThorLookaheadCache join timedout");
     }
 
-    void start()
+// IEngineRowStream
+    virtual const void *nextRow() override
     {
+        OwnedConstThorRow row = smartbuf->nextRow();
+        if (getexception)
+            throw getexception.getClear();
+        if (!row)
+        {
 #ifdef _FULL_TRACE
-        ActPrintLog(&activity, "ThorLookaheadCache start %x",(unsigned)(memsize_t)this);
+            ActPrintLog(&activity, "ThorLookaheadCache eos %x",(unsigned)(memsize_t)this);
 #endif
-        stopped = false;
-        asyncstart = notify&&notify->startAsync();
-        thread.start();
-        if (!asyncstart) {
-            startsem.wait();
-            if (startexception) 
-                throw startexception.getClear();
         }
+        return row.getClear();
     }
-
-    void stop()
+    virtual void stop() override
     {
 #ifdef _FULL_TRACE
         ActPrintLog(&activity, "ThorLookaheadCache stop %x",(unsigned)(memsize_t)this);
 #endif
-        if (!stopped) {
+        if (!stopped)
+        {
             running = false;
             if (smartbuf)
                 smartbuf->stop(); // just in case blocked
@@ -272,39 +275,33 @@ public:
         }
     }
 
-    const void *nextRow()
+// IThorDataLink
+    virtual void start() override
     {
-        OwnedConstThorRow row = smartbuf->nextRow();
-        if (getexception) 
-            throw getexception.getClear();
-        if (!row) {
 #ifdef _FULL_TRACE
-            ActPrintLog(&activity, "ThorLookaheadCache eos %x",(unsigned)(memsize_t)this);
+        ActPrintLog(&activity, "ThorLookaheadCache start %x",(unsigned)(memsize_t)this);
 #endif
+        stopped = false;
+        asyncstart = notify&&notify->startAsync();
+        thread.start();
+        if (!asyncstart) {
+            startsem.wait();
+            if (startexception)
+                throw startexception.getClear();
         }
-        return row.getClear();
     }
-
-    bool isGrouped() { return preserveGrouping; }
-            
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual CActivityBase *queryFromActivity() override
+    {
+        return in->queryFromActivity();
+    }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         memset(&info,0,sizeof(info));
         in->getMetaInfo(info);
         // more TBD
     }
-
-    CActivityBase *queryFromActivity()
-    {
-        return in->queryFromActivity();
-    }
-    void dataLinkSerialize(MemoryBuffer &mb)
-    {
-        // no serialization information (yet)
-    }
-    unsigned __int64 queryTotalCycles() const { return in->queryTotalCycles(); }
-    unsigned __int64 queryEndCycles() const { return in->queryEndCycles(); }
-    virtual void debugRequest(MemoryBuffer &msg) { return in->debugRequest(msg); }
+    virtual bool isGrouped() override { return preserveGrouping; }
+    virtual unsigned __int64 queryTotalCycles() const override { return in->queryTotalCycles(); }
 };
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -313,7 +310,7 @@ public:
 
 IThorDataLink *createDataLinkSmartBuffer(CActivityBase *activity, IThorDataLink *in, size32_t bufsize, bool allowspill, bool preserveGrouping, rowcount_t maxcount, ISmartBufferNotify *notify, bool instarted, IDiskUsage *iDiskUsage)
 {
-    return new ThorLookaheadCache(*activity, in,bufsize,allowspill,preserveGrouping,maxcount,notify,instarted,iDiskUsage);
+    return new ThorLookaheadCache(*activity, in, bufsize, allowspill, preserveGrouping, maxcount, notify, instarted, iDiskUsage);
 }
 
 

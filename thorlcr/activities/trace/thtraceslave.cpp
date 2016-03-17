@@ -95,7 +95,7 @@ public:
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow ret = input->nextRow();
+        OwnedConstThorRow ret = inputStream->nextRow();
         if (ret)
         {
             onTrace(ret);
@@ -111,7 +111,7 @@ public:
     virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         ActivityTimer t(totalCycles, timeActivities);
-        OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
+        OwnedConstThorRow ret = inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
         if (ret)
         {
             onTrace(ret);
@@ -125,7 +125,7 @@ public:
     }
     virtual void resetEOF()
     { 
-        input->resetEOF(); 
+        inputStream->resetEOF();
     }
     virtual bool isGrouped() { return input->isGrouped(); }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
@@ -134,10 +134,10 @@ public:
         calcMetaInfoSize(info,inputs.item(0));
     }
 // steppable
-    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CSlaveActivity::addInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
+        CSlaveActivity::setInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };

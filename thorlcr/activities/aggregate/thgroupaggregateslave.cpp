@@ -63,7 +63,7 @@ public:
             return NULL;
         RtlDynamicRowBuilder out(queryRowAllocator());
         size32_t sz = helper->clearAggregate(out);
-        OwnedConstThorRow row = input->nextRow();
+        OwnedConstThorRow row = inputStream->nextRow();
         if (row)
         {
             sz = helper->processFirst(out, row);
@@ -72,7 +72,7 @@ public:
             {
                 while (!abortSoon)
                 {
-                    row.setown(input->nextRow());
+                    row.setown(inputStream->nextRow());
                     if (!row)
                         break;
                     sz = helper->processNext(out, row);

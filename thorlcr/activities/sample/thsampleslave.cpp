@@ -58,14 +58,14 @@ public:
         ActivityTimer t(totalCycles, timeActivities);
         while(!abortSoon)
         {
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if(!row)    {
                 numToSkip = whichSample ? whichSample - 1 : 0;
                 if(anyThisGroup) {
                     anyThisGroup = false;           
                     break;
                 }
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if(!row) 
                     break;
             }

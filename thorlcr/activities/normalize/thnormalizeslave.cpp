@@ -74,9 +74,9 @@ public:
             {
                 if (abortSoon) 
                     return NULL;
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if (!row&&!anyThisGroup)
-                    row.setown(input->nextRow());
+                    row.setown(inputStream->nextRow());
                 if(!row) {
                     anyThisGroup = false;
                     return NULL;
@@ -155,14 +155,14 @@ public:
         loop {
             while(!curChildRow) {
                 curRow = 0;
-                childBuf.setown(input->nextRow());
+                childBuf.setown(inputStream->nextRow());
                 if (!childBuf) {
                     if (anyThisGroup) 
                     {
                         anyThisGroup = false;
                         return NULL;
                     }
-                    childBuf.setown(input->nextRow());
+                    childBuf.setown(inputStream->nextRow());
                     if (!childBuf) // eos
                         return NULL;
                 }
@@ -201,7 +201,7 @@ class CNormalizeLinkedChildSlaveActivity : public CSlaveActivity, public CThorDa
     {
         loop
         {
-            curParent.setown(input->nextRow());
+            curParent.setown(inputStream->nextRow());
             if (!curParent)
             {
                 if (anyThisGroup)
@@ -209,7 +209,7 @@ class CNormalizeLinkedChildSlaveActivity : public CSlaveActivity, public CThorDa
                     anyThisGroup = false;
                     return false;
                 }
-                curParent.setown(input->nextRow());
+                curParent.setown(inputStream->nextRow());
                 if (!curParent)
                     return false;
             }

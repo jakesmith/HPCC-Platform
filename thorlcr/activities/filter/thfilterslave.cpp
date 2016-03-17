@@ -87,7 +87,7 @@ public:
         ActivityTimer t(totalCycles, timeActivities);
         while(!abortSoon)
         {
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if (!row)
             {
                 if(anyThisGroup)
@@ -95,7 +95,7 @@ public:
                     anyThisGroup = false;
                     break;
                 }
-                row.setown(input->nextRow());
+                row.setown(inputStream->nextRow());
                 if (!row)
                     break;
             }
@@ -119,7 +119,7 @@ public:
         ActivityTimer t(totalCycles, timeActivities);
         while (!abortSoon)
         {
-            OwnedConstThorRow ret = input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
+            OwnedConstThorRow ret = inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
             if (!ret)
             {
                 abortSoon = true;
@@ -155,13 +155,13 @@ public:
     { 
         abortSoon = !helper->canMatchAny();
         anyThisGroup = false;
-        input->resetEOF(); 
+        inputStream->resetEOF();
     }
 // steppable
-    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CFilterSlaveActivityBase::addInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
+        CFilterSlaveActivityBase::setInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };
@@ -194,12 +194,12 @@ public:
         ActivityTimer t(totalCycles, timeActivities);
         while (!abortSoon)
         {
-            OwnedConstThorRow row = input->nextRow();
+            OwnedConstThorRow row = inputStream->nextRow();
             if (!row) {
                 recordCount = 0;
                 if (!anyThisGroup)
                 {
-                    row.setown(input->nextRow());
+                    row.setown(inputStream->nextRow());
                     if (!row)
                     {
                         abortSoon = true;
@@ -351,12 +351,12 @@ public:
             if (stepExtra.returnMismatches())
             {
                 bool matchedCompletely = true;
-                ret.setown(input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra));
+                ret.setown(inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra));
                 if (!wasCompleteMatch)
                     return ret.getClear();
             }
             else
-                ret.setown(input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra));
+                ret.setown(inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra));
 #endif
 
         CThorExpandingRowArray rows(*this, this);
@@ -399,10 +399,10 @@ public:
         dataLinkStop();
     }
 // steppable
-    virtual void addInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CFilterSlaveActivityBase::addInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::addInput(index, input, inputOutIdx, consumerOrdered);
+        CFilterSlaveActivityBase::setInput(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };

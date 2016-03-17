@@ -162,7 +162,7 @@ class CPrefetchProjectSlaveActivity : public CSlaveActivity, public CThorDataLin
         ~CPrefetcher() { stop(); }
         PrefetchInfo *pullRecord()
         {
-            OwnedConstThorRow row = parent.input->nextRow();
+            OwnedConstThorRow row = parent.inputStream->nextRow();
             if (row)
             {
                 eog = false;

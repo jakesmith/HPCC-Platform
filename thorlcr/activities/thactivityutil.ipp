@@ -137,6 +137,8 @@ protected:
 
 
 public:
+    IMPLEMENT_IINTERFACE_USING(IThorDataLink);
+
     CThorDataLink(CActivityBase *_owner) : owner(_owner) { }
 #ifdef _TESTING
     ~CThorDataLink()
@@ -175,7 +177,7 @@ public:
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { }
     virtual IOutputMetaData * queryOutputMeta() const override { return owner->queryHelper()->queryOutputMeta(); }
     virtual unsigned queryOutputIdx() const override { return outputIdx; }
-    virtual bool isInputOrdered(bool consumerOrdered, unsigned idx) const
+    virtual bool isInputOrdered(bool consumerOrdered) const
     {
         if (optStableInput)
             return true;
