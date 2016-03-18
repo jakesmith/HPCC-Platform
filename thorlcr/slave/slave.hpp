@@ -71,26 +71,56 @@ struct ThorDataLinkMetaInfo
 #pragma warning (push)
 #pragma warning( disable : 4275 )
 #endif
-class CActivityBase;
 
+#define MAX_SENSIBLE_STRANDS 1024 // Architecture dependent...
+class CThorStrandOptions
+{
+    // Typically set from hints, common to many stranded activities
+public:
+    explicit CThorStrandOptions(IPropertyTree &_graphNode)
+    {
+        //PARALLEL(1) can be used to explicitly disable parallel processing.
+        numStrands = _graphNode.getPropInt("att[@name='parallel']/@value", 0);
+        if ((numStrands == NotFound) || (numStrands > MAX_SENSIBLE_STRANDS))
+            numStrands = getAffinityCpus();
+        blockSize = _graphNode.getPropInt("hint[@name='strandblocksize']/@value", 0);
+    }
+    CThorStrandOptions(CGraphElementBase &container)
+    {
+        blockSize = container.getOptInt("strandBlockSize");
+        numStrands = container.getOptInt("forceNumStrands");
+    }
+public:
+    unsigned numStrands = 0; // if 1 it forces single-stranded operations.  (Useful for testing.)
+    unsigned blockSize = 0;
+};
+
+
+interface IStrandJunction;
+class CSlaveActivity;
 interface IThorDataLink : extends IInterface
 {
     virtual void start() = 0; // prepares input
-    virtual CActivityBase *queryFromActivity() const = 0; // activity that has this as an output
+    virtual CSlaveActivity *queryFromActivity() = 0; // activity that has this as an output
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
     virtual unsigned __int64 queryTotalCycles() const = 0;
+    virtual unsigned __int64 queryEndCycles() const = 0;
+    virtual void dataLinkSerialize(MemoryBuffer &mb) const = 0;
+    virtual void dataLinkStart() = 0;
+    virtual void dataLinkStop() = 0;
     virtual bool isGrouped() const { return false; }
-    virtual IOutputMetaData * queryOutputMeta() const;
+    virtual IOutputMetaData * queryOutputMeta() const = 0;
     virtual unsigned queryOutputIdx() const = 0;
     virtual bool isInputOrdered(bool consumerOrdered) const = 0;
     virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered) = 0;  // Use StrandFlags values for flags
+    virtual void debugRequest(MemoryBuffer &mb) = 0;
 
 // Stepping methods
     virtual IInputSteppingMeta *querySteppingMeta() { return NULL; }
     virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
 
 // to support non-stranded activities
-    virtual IEngineRowStream *queryStream() const = 0;
+    virtual IEngineRowStream *queryStream() = 0; // should be const really, but some IEngineRowStream members are not..
 };
 
 // helper interface. Used by maintainer of output links

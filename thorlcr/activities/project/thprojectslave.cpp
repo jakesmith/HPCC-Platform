@@ -25,7 +25,6 @@ class CProjecStrandProcessor : public CThorStrandProcessor
     IHThorProjectArg *helper;
     bool anyThisGroup = false;
     Owned<IEngineRowAllocator> allocator;
-    Owned<IEngineRowAllocator> allocator;
 
 public:
     explicit CProjecStrandProcessor(CSlaveActivity &parent, IEngineRowStream *inputStream, unsigned outputId)
@@ -83,7 +82,7 @@ class CProjectSlaveActivity : public CThorStrandedActivity
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    explicit CProjectSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
+    explicit CProjectSlaveActivity(CGraphElementBase *_container) : CThorStrandedActivity(_container)
     {
         appendOutputLinked(this);
     }
@@ -113,7 +112,7 @@ public:
             info.canReduceNumRows = true;
         calcMetaInfoSize(info, inputs.item(0));
     }
-    virtual bool isGrouped() override { return inputs.item(0)->isGrouped(); }
+    virtual bool isGrouped() const override { return inputs.item(0)->isGrouped(); }
 };
 
 

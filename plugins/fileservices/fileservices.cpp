@@ -1135,6 +1135,7 @@ FILESERVICES_API void FILESERVICES_CALL fsCreateSuperFile(ICodeContext *ctx, con
 {
     IDistributedFileTransaction *transaction = ctx->querySuperFileTransaction();
     assertex(transaction);
+    CImplicitSuperTransaction implicitTransaction(transaction);
     Linked<IUserDescriptor> udesc = ctx->queryUserDescriptor();
     StringBuffer lsfn;
     constructLogicalName(ctx, lsuperfn, lsfn);

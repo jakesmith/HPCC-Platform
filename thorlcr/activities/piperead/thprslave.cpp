@@ -305,9 +305,9 @@ public:
     }
 
 protected:
-    CPipeThroughSlaveActivity &     activity;
-    IThorDataLink *                 input;
-    Owned<IException>               exc;
+    CPipeThroughSlaveActivity &activity;
+    IEngineRowStream *inputStream;
+    Owned<IException> exc;
 };
 
 
@@ -502,7 +502,7 @@ public:
 PipeWriterThread::PipeWriterThread(CPipeThroughSlaveActivity & _activity)
    : Thread("PipeWriterThread"), activity(_activity)
 {
-    input = activity.inputs.item(0);
+    inputStream = activity.inputStream;
 }
 
 int PipeWriterThread::run()

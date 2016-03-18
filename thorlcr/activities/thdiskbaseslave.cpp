@@ -52,11 +52,11 @@ void getPartsMetaInfo(ThorDataLinkMetaInfo &metaInfo, CThorDataLink &link, unsig
     unsigned p=0;
     for (; p<nparts; p++)
     {
-        link.initMetaInfo(metaInfos[p]);
+        initMetaInfo(metaInfos[p]);
         partHandler->getMetaInfo(metaInfos[p], partDescs[p]);
         sizeTotal += partDescs[p]->queryProperties().getPropInt64("@size");
     }
-    link.calcMetaInfoSize(metaInfo, metaInfos, nparts);
+    calcMetaInfoSize(metaInfo, metaInfos, nparts);
     if (!metaInfo.unknownRowsOutput && !metaInfo.canReduceNumRows && !metaInfo.canIncreaseNumRows)
         metaInfo.byteTotal = sizeTotal;
 }

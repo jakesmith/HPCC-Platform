@@ -40,7 +40,6 @@ private:
     bool isLocal;
     bool isLightweight;
     bool inputStopped;
-    IThorDataLink * input;
     Owned<IRowStream> strm;     
     ICompare * compare;
     ISortKeySerializer * keyserializer;
@@ -65,10 +64,9 @@ private:
         ActPrintLog("SELFJOIN: Performing local self-join");
 #endif
         Owned<IThorRowLoader> iLoader = createThorRowLoader(*this, ::queryRowInterfaces(input), compare, isUnstable() ? stableSort_none : stableSort_earlyAlloc, rc_mixed, SPILL_PRIORITY_SELFJOIN);
-        Owned<IRowStream> rs = iLoader->load(input, abortSoon);
+        Owned<IRowStream> rs = iLoader->load(inputStream, abortSoon);
         mergeStats(spillStats, iLoader);  // Not sure of the best policy if rs spills later on.
         stopInput(input);
-        input = NULL;
         return rs.getClear();
     }
 
@@ -77,9 +75,8 @@ private:
 #if THOR_TRACE_LEVEL > 5
         ActPrintLog("SELFJOIN: Performing global self-join");
 #endif
-        sorter->Gather(::queryRowInterfaces(input), input, compare, NULL, NULL, keyserializer, NULL, false, isUnstable(), abortSoon, NULL);
+        sorter->Gather(::queryRowInterfaces(input), inputStream, compare, NULL, NULL, keyserializer, NULL, false, isUnstable(), abortSoon, NULL);
         stopInput(input);
-        input = NULL;
         if(abortSoon)
         {
             barrier->cancel();
@@ -95,8 +92,7 @@ private:
 
     IRowStream * doLightweightSelfJoin()
     {
-        IRowStream *ret = LINK(input);
-        input = NULL;
+        IRowStream *ret = LINK(inputStream);
         return ret;
     }
 
@@ -108,7 +104,6 @@ public:
     {
         isLocal = _isLocal||_isLightweight;
         isLightweight = _isLightweight;
-        input = NULL;
         portbase = 0;
         compare = NULL;
         keyserializer = NULL;
@@ -163,7 +158,6 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
         startInput(input);
         dataLinkStart();
         bool hintunsortedoutput = getOptBool(THOROPT_UNSORTED_OUTPUT, (JFreorderable & helper->getJoinFlags()) != 0);
@@ -194,10 +188,7 @@ public:
     virtual void stop()
     {
         if (input)
-        {
             stopInput(input);
-            input = NULL;
-        }
         if(!isLocal)
         {
             barrier->wait(false);

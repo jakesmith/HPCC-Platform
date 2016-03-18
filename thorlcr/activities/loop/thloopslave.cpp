@@ -281,7 +281,7 @@ public:
         finishedLooping = ((container.getKind() == TAKloopcount) && (maxIterations == 0));
         if ((flags & IHThorLoopArg::LFnewloopagain) && !helper->loopFirstTime())
             finishedLooping = true;
-        curInput.set(input);
+        curInput.set(input->queryStream());
         lastMs = msTick();
 
         ActPrintLog("maxIterations = %d", maxIterations);
@@ -636,7 +636,7 @@ public:
         ActivityTimer t(totalCycles, timeActivities);
         if (!abortSoon && !eoi)
             return NULL;
-        OwnedConstThorRow row = inputs.item(0)->nextRow();
+        OwnedConstThorRow row = inputStream->nextRow();
         if (!row)
         {
             if (lastNull)
@@ -803,7 +803,8 @@ activityslaves_decl CActivityBase *createGraphLoopSlave(CGraphElementBase *conta
 
 class CConditionalActivity : public CSlaveActivity, public CThorDataLink
 {
-    IThorDataLink *selectedInput;
+    IThorDataLink *selectedInput = NULL;
+    IEngineRowStream *selectInputStream = NULL;
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
@@ -813,20 +814,22 @@ public:
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
-        selectedInput = NULL;
     }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         selectedInput = container.whichBranch>=inputs.ordinality() ? NULL : inputs.item(container.whichBranch);
         if (selectedInput)
+        {
             startInput(selectedInput);
+            selectInputStream = selectedInput->queryStream();
+        }
         dataLinkStart();
     }
     virtual void stop()
     {
-        if (selectedInput)
-            stopInput(selectedInput);
+        if (selectInputStream)
+            stopInput(selectInputStream);
         abortSoon = true;
         dataLinkStop();
     }
@@ -838,7 +841,7 @@ public:
         if (!selectedInput)
             return NULL;
 
-        OwnedConstThorRow ret = selectedInput->nextRow();
+        OwnedConstThorRow ret = selectInputStream->nextRow();
         if (ret)
             dataLinkIncrement();
         return ret.getClear();

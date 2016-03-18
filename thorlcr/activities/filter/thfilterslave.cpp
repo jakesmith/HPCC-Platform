@@ -285,7 +285,7 @@ public:
             CThorExpandingRowArray rows(*this, this);
             try
             {
-                groupLoader->loadGroup(input, abortSoon, &rows);
+                groupLoader->loadGroup(inputStream, abortSoon, &rows);
             }
             catch (IException *e)
             {
@@ -362,7 +362,7 @@ public:
         CThorExpandingRowArray rows(*this, this);
         try
         {
-            groupStream.setown(groupLoader->loadGroup(input, abortSoon, &rows));
+            groupStream.setown(groupLoader->loadGroup(inputStream, abortSoon, &rows));
         }
         catch (IException *e)
         {
@@ -390,7 +390,7 @@ public:
     { 
         abortSoon = false;
         groupStream.clear();
-        input->resetEOF(); 
+        inputStream->resetEOF();
     }
     void stop()
     {

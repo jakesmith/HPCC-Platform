@@ -28,7 +28,6 @@ class GroupSlaveActivity : public CSlaveActivity, public CThorDataLink
     rowcount_t numGroups;
     rowcount_t numGroupMax;
     rowcount_t startLastGroup;
-    IThorDataLink *input;
     Owned<IRowStream> stream, nextNodeStream;
     OwnedConstThorRow next;
     Owned<IRowServer> rowServer;
@@ -85,8 +84,7 @@ public:
 #endif
         }
 
-        input = inputs.item(0);
-        stream.set(input);
+        stream.set(inputStream);
         startInput(input);
         dataLinkStart();
         startLastGroup = getDataLinkGlobalCount();

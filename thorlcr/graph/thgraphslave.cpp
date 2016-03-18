@@ -133,7 +133,7 @@ void CSlaveActivity::connectInputStreams(bool consumerOrdered)
         CIOConnection *io = queryContainer().connectedInputs.item(index);
         if (io)
         {
-            CSlaveActivity *inputActivity = io->activity->queryActivity(true);
+            CSlaveActivity *inputActivity = (CSlaveActivity *)io->activity->queryActivity(true);
             unsigned inputOutIdx = io->index;
             Linked<IThorDataLink> outLink;
             if (!inputActivity)
@@ -155,7 +155,7 @@ void CSlaveActivity::setInput(unsigned index, IThorDataLink *_input, unsigned in
     IEngineRowStream *_inputStream = connectSingleStream(*this, input, inputOutIdx, junction, input->isInputOrdered(consumerOrdered));
     if (!input)
     {
-        input = _input;
+        input.set(_input);
         inputStream = _inputStream;
     }
     while (inputs.ordinality()<=index) inputs.append(NULL);
@@ -179,7 +179,11 @@ IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsig
 
 void CSlaveActivity::appendOutput(IThorDataLink *itdl)
 {
-#if 0
+    IThorDataLinkExt *itdlExt = QUERYINTERFACE(itdl, IThorDataLinkExt);
+    dbgassertex(itdlExt);
+    unsigned outputNum = outputs.ordinality();
+    itdlExt->setOutputIdx(outputNum);
+
     if (queryJob().getOptBool("TRACEROWS"))
     {
         const unsigned numTraceRows = queryJob().getOptInt("numTraceRows", 10);
@@ -188,13 +192,6 @@ void CSlaveActivity::appendOutput(IThorDataLink *itdl)
     }
     else
         outputs.append(itdl);
-#else
-    IThorDataLinkExt *itdlExt = QUERYINTERFACE(itdl, IThorDataLinkExt);
-    dbgassertex(itdlExt);
-    unsigned outputNum = outputs.ordinality();
-    itdlExt->setOutputIdx(outputNum);
-    outputs.append(itdl);
-#endif
 }
 
 void CSlaveActivity::appendOutputLinked(IThorDataLink *itdl)
@@ -203,13 +200,13 @@ void CSlaveActivity::appendOutputLinked(IThorDataLink *itdl)
     appendOutput(itdl);
 }
 
-IThorDataLink *CSlaveActivity::queryOutput(unsigned index)
+IThorDataLink *CSlaveActivity::queryOutput(unsigned index) const
 {
     if (index>=outputs.ordinality()) return NULL;
     return outputs.item(index);
 }
 
-IThorDataLink *CSlaveActivity::queryInput(unsigned index)
+IThorDataLink *CSlaveActivity::queryInput(unsigned index) const
 {
     if (index>=inputs.ordinality()) return NULL;
     return inputs.item(index);
@@ -239,6 +236,11 @@ void CSlaveActivity::startInput(IThorDataLink *itdl, const char *extra)
 
 void CSlaveActivity::stopInput(IThorDataLink *itdl, const char *extra)
 {
+    stopInput(itdl->queryStream(), extra);
+}
+
+void CSlaveActivity::stopInput(IRowStream *stream, const char *extra)
+{
     StringBuffer s("Stopping input for");
     if (extra)
         s.append(" ").append(extra);
@@ -247,7 +249,7 @@ void CSlaveActivity::stopInput(IThorDataLink *itdl, const char *extra)
 #ifdef TRACE_STARTSTOP_EXCEPTIONS
     try
     {
-        itdl->queryStream()->stop();
+        stream->stop();
     }
     catch(IException * e)
     {
@@ -255,7 +257,7 @@ void CSlaveActivity::stopInput(IThorDataLink *itdl, const char *extra)
         throw;
     }
 #else
-    itdl->queryStream()->stop();
+    stream->stop();
 #endif
 }
 
@@ -364,7 +366,7 @@ void CSlaveActivity::serializeStats(MemoryBuffer &mb)
         outputs.item(i)->dataLinkSerialize(mb);
 }
 
-void CSlaveActivity::debugRequest(unsigned edgeIdx, CMessageBuffer &msg)
+void CSlaveActivity::debugRequest(unsigned edgeIdx, MemoryBuffer &msg)
 {
     IThorDataLink *link = queryOutput(edgeIdx);
     if (link) link->debugRequest(msg);
@@ -381,6 +383,15 @@ IOutputMetaData *CSlaveActivity::queryOutputMeta() const
     return queryHelper()->queryOutputMeta();
 }
 
+void CSlaveActivity::dataLinkSerialize(MemoryBuffer &mb) const
+{
+    queryOutput(0)->dataLinkSerialize(mb);
+}
+
+void CSlaveActivity::debugRequest(MemoryBuffer &msg)
+{
+    queryOutput(0)->debugRequest(msg);
+}
 
 
 ///
@@ -391,11 +402,6 @@ void CThorStrandedActivity::onStartStrands()
 {
     ForEachItemIn(idx, strands)
         strands.item(idx).start();
-}
-
-void CThorStrandedActivity::onCreate()
-{
-    CSlaveActivity::onCreateN(strands.ordinality());
 }
 
 //This function is pure (But also implemented out of line) to force the derived classes to implement it.
@@ -443,7 +449,7 @@ IStrandJunction *CThorStrandedActivity::getOutputStreams(CActivityBase &activity
     IThorDataLink *input = queryInput(0); // Any activity that has >1 input, will have to overload getOutputStreams to handle
     unsigned sourceIdx = input->queryOutputIdx();
 
-    bool inputOrdered = isInputOrdered(consumerOrdered, idx);
+    bool inputOrdered = queryInput(idx)->isInputOrdered(consumerOrdered);
     //Note, numStrands == 1 is an explicit request to disable threading
     if (consumerOptions && (consumerOptions->numStrands != 1) && (strandOptions.numStrands != 1))
     {
@@ -784,13 +790,6 @@ void CSlaveGraph::start()
 void CSlaveGraph::connect()
 {
     CriticalBlock b(progressCrit);
-    Owned<IThorActivityIterator> iter = getConnectedIterator();
-    ForEach(*iter)
-    {
-        CGraphElementBase &container = iter->query();
-        CSlaveActivity *act = (CSlaveActivity *)container.queryActivity();
-        act->
-    }
     Owned<IThorActivityIterator> iter = getSinkIterator();
     ForEach(*iter)
     {
@@ -1413,7 +1412,7 @@ bool CJobSlave::getWorkUnitValueBool(const char *prop, bool defVal) const
     return workUnitInfo->queryPropTree("Debug")->getPropBool(propName.toLowerCase().str(), defVal);
 }
 
-void CJobSlave::debugRequest(CMessageBuffer &msg, const char *request) const
+void CJobSlave::debugRequest(MemoryBuffer &msg, const char *request) const
 {
     if (watchdog) watchdog->debugRequest(msg, request);
 }
@@ -1809,3 +1808,42 @@ IThorFileCache *createFileCache(unsigned limit)
 {
     return new CFileCache(limit);
 }
+
+/*
+ * strand stuff
+ */
+
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered)
+{
+    if (input)
+    {
+        PointerArrayOf<IEngineRowStream> instreams;
+        junction.setown(input->getOutputStreams(activity, idx, instreams, NULL, consumerOrdered));
+        if (instreams.length() != 1)
+        {
+            assertex(instreams.length());
+            if (!junction)
+                junction.setown(createStrandJunction(activity.queryRowManager(), instreams.length(), 1, activity.getOptInt("strandBlockSize"), false));
+            ForEachItemIn(stream, instreams)
+            {
+                junction->setInput(stream, instreams.item(stream));
+            }
+            return junction->queryOutput(0);
+        }
+        else
+            return instreams.item(0);
+    }
+    else
+        return NULL;
+}
+
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, bool consumerOrdered)
+{
+    Owned<IStrandJunction> junction;
+    IEngineRowStream * result = connectSingleStream(activity, input, idx, junction, consumerOrdered);
+    assertex(!junction);
+    return result;
+}
+
+
+

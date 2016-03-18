@@ -111,7 +111,7 @@ public:
             Owned<IRowInterfaces> auxrowif = createRowInterfaces(helper->querySortedRecordSize(),queryId(),queryCodeContext());
             sorter->Gather(
                 rowif,
-                input,
+                inputStream,
                 helper->queryCompare(),
                 helper->queryCompareLeftRight(),
                 NULL,helper->querySerialize(),

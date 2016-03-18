@@ -81,6 +81,7 @@ protected:
         {
             localRecCount = RCUNBOUND;
             input.setown(createDataLinkSmartBuffer(this, input,ENTH_SMART_BUFFER_SIZE,true,false,RCUNBOUND,this,true,&container.queryJob().queryIDiskUsage()));
+            inputStream = input->queryStream();
             StringBuffer tmpStr(actStr);
             startInput(input);
         }

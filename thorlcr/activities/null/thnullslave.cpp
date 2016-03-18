@@ -116,7 +116,7 @@ public:
     const void * nextRow() 
     {
         ActivityTimer t(totalCycles, timeActivities);
-        return inputs.item(0)->nextRow();
+        return inputStream->nextRow();
     }
     virtual bool isGrouped()
     {

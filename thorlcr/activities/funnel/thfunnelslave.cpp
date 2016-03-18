@@ -34,14 +34,15 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
     {
         CThreadedPersistent threaded;
         CParallelFunnel &funnel;
-        Linked<IRowStream> input;
+        Linked<IThorDataLink> input;
+        IRowStream *inputStream;
         CriticalSection stopCrit;
         StringAttr idStr;
         unsigned inputIndex;
         rowcount_t readThisInput; // purely for tracing
         bool stopping;
     public:
-        CInputHandler(CParallelFunnel &_funnel, IRowStream *_input, unsigned _inputIndex) 
+        CInputHandler(CParallelFunnel &_funnel, IThorDataLink *_input, unsigned _inputIndex)
             : threaded("CInputHandler", this), funnel(_funnel), input(_input), inputIndex(_inputIndex)
         {
             readThisInput = 0;
@@ -49,6 +50,7 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
             s.append('(').append(inputIndex).append(')');
             idStr.set(s.str());
             stopping = false;
+            inputStream = input->queryStream();
         }
         ~CInputHandler()
         {
@@ -107,7 +109,7 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
                 return;
             try
             {
-                input->stop();
+                inputStream->stop();
             }
             catch (IException *e)
             {
@@ -123,7 +125,7 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
     bool startInputs;
     Linked<IException> exception;
     unsigned eoss;
-    IArrayOf<IRowStream> oinstreams;
+    IArrayOf<IThorDataLink> oinstreams;
     StringAttr idStr;
 
     CriticalSection fullCrit, crit;
@@ -150,13 +152,6 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CParallelFunnel(CActivityBase &_activity, IRowStream **instreams, unsigned numstreams) : activity(_activity)
-    {
-        startInputs = false;
-        unsigned n = 0;
-        while (n<numstreams) oinstreams.append(*LINK(instreams[n++]));
-        init();
-    }
     CParallelFunnel(CActivityBase &_activity, IThorDataLink **instreams, unsigned numstreams, bool _startInputs) : activity(_activity)
     {
         startInputs = _startInputs;
@@ -269,11 +264,6 @@ friend class CInputHandler;
 };
 
 
-IRowStream *createParallelFunnel(CActivityBase &activity, IRowStream **instreams, unsigned numstreams)
-{
-    return new CParallelFunnel(activity, instreams, numstreams);
-}
-
 IRowStream *createParallelFunnel(CActivityBase &activity, IThorDataLink **instreams, unsigned numstreams, bool startInputs)
 {
     return new CParallelFunnel(activity, instreams, numstreams, startInputs);
@@ -289,7 +279,7 @@ IRowStream *createParallelFunnel(CActivityBase &activity, IThorDataLink **instre
 //interface IBitSet;
 class FunnelSlaveActivity : public CSlaveActivity, public CThorDataLink
 {
-    IThorDataLink *current;
+    IRowStream *current;
     unsigned currentMarker;
     bool grouped, *eog, eogNext, parallel;
     rowcount_t readThisInput;
@@ -351,7 +341,8 @@ public:
                     ActPrintLog("FUNNEL(%" ACTPF "d): Error staring input %d", container.queryId(), i);
                     throw;
                 }
-                if (!current) current = input;
+                if (!current)
+                    current = input->queryStream();;
             }
         }
         dataLinkStart();
@@ -399,7 +390,7 @@ public:
                     ActPrintLog("FUNNEL: changing to input %d", currentMarker);
                     ++stopped;
                     stopInput(current);
-                    current = inputs.item(currentMarker);
+                    current = inputs.item(currentMarker)->queryStream();
                     // if empty stream, move on (ensuring eog,eog not returned by empty streams)
                     row.setown(current->nextRow());
                     if (row)
@@ -453,7 +444,7 @@ public:
                     ActPrintLog("FUNNEL: changing to input %d", currentMarker);
                     ++stopped;
                     stopInput(current);
-                    current = inputs.item(currentMarker);
+                    current = inputs.item(currentMarker)->queryStream();
                     row.setown(current->ungroupedNextRow());
                     if (row)
                     {
@@ -542,24 +533,30 @@ public:
             bool err = false;
             unsigned i;
             unsigned n = inputs.ordinality();
-            for (i=0;i<n;i++) {
-                OwnedConstThorRow row = inputs.item(i)->nextRow();
-                if (row) {
-                    if (eog) {
+            for (i=0;i<n;i++)
+            {
+                OwnedConstThorRow row = inputs.item(i)->queryStream()->nextRow();
+                if (row)
+                {
+                    if (eog)
+                    {
                         err = true;
                         break;
                     }
                     rows.append(row.getClear());
                 }
-                else {
-                    if (i&&!eog) {
+                else
+                {
+                    if (i&&!eog)
+                    {
                         err = true;
                         break;
                     }
                     eog = true;
                 }
             }
-            if (err) {
+            if (err)
+            {
                 eog = true;
                 rows.kill();
                 throw MakeActivityException(this, -1, "mismatched input row count for Combine");
@@ -569,7 +566,8 @@ public:
             RtlDynamicRowBuilder row(queryRowAllocator());
             size32_t sizeGot = helper->transform(row, rows.ordinality(), rows.getRowArray());
             rows.kill();
-            if (sizeGot) {
+            if (sizeGot)
+            {
                 dataLinkIncrement();
                 return row.finalizeRowClear(sizeGot);
             }
@@ -641,17 +639,22 @@ public:
     {
         ActivityTimer t(totalCycles, timeActivities);
         unsigned n = inputs.ordinality();
-        loop {
-            if (curinput==n) {
-                curinput = 0;
-                break;
-            }
-            OwnedConstThorRow row = inputs.item(curinput)->nextRow();
-            if (row) {
+        IRowStream *current = inputs.item(curinput)->queryStream();
+        loop
+        {
+            OwnedConstThorRow row = current->nextRow();
+            if (row)
+            {
                 dataLinkIncrement();
                 return row.getClear();
             }
             curinput++;
+            if (curinput==n)
+            {
+                curinput = 0;
+                break;
+            }
+            current = inputs.item(curinput)->queryStream();
         }
         return NULL;
     }
@@ -769,7 +772,7 @@ public:
         }
         loop
         {
-            OwnedConstThorRow row = inputs.item(curinput)->nextRow();
+            OwnedConstThorRow row = inputs.item(curinput)->queryStream()->nextRow();
             if (row ) {
                 anyThisGroup = true;
                 anyThisInput = true;
@@ -802,14 +805,14 @@ public:
 class CNWaySelectActivity : public CSlaveActivity, public CThorDataLink, public CThorSteppable
 {
     IHThorNWaySelectArg *helper;
-    IThorDataLink *selectedInput;
+    IThorDataLink *selectedInputITDL = NULL;
+    IEngineRowStream *selectedInput = NULL;
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CNWaySelectActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this), CThorSteppable(this)
     {
         helper = (IHThorNWaySelectArg *)queryHelper();
-        selectedInput = NULL;
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
@@ -822,6 +825,7 @@ public:
         startInput(inputs.item(0));
 
         unsigned whichInput = helper->getInputIndex();
+        selectedInputITDL = NULL;
         selectedInput = NULL;
         if (whichInput--)
         {
@@ -835,7 +839,8 @@ public:
                     unsigned numRealInputs = nWayInput->numConcreteOutputs();
                     if (whichInput < numRealInputs)
                     {
-                        selectedInput = nWayInput->queryConcreteInput(whichInput);
+                        selectedInputITDL = nWayInput->queryConcreteInput(whichInput);
+                        selectedInput = selectedInputITDL->queryStream();
                         break;
                     }
                     whichInput -= numRealInputs;
@@ -843,7 +848,10 @@ public:
                 else
                 {
                     if (whichInput == 0)
-                        selectedInput = cur;
+                    {
+                        selectedInputITDL = cur;
+                        selectedInput = selectedInputITDL->queryStream();
+                    }
                     whichInput -= 1;
                 }
                 if (selectedInput)
@@ -851,7 +859,7 @@ public:
             }
         }
         if (selectedInput)
-            selectedInput->start();
+            selectedInputITDL->start();
         dataLinkStart();
     }
     virtual void stop()
@@ -875,7 +883,7 @@ public:
     { 
         if (!selectedInput)
             return false;
-        return selectedInput->gatherConjunctions(collector);
+        return selectedInputITDL->gatherConjunctions(collector);
     }
     virtual void resetEOF()
     { 
@@ -898,11 +906,11 @@ public:
     {
         initMetaInfo(info);
         if (selectedInput)
-            calcMetaInfoSize(info, selectedInput);
+            calcMetaInfoSize(info, selectedInputITDL);
         else if (!started())
             info.canStall = true; // unkwown if !started
     }
-    virtual bool isGrouped() { return selectedInput ? selectedInput->isGrouped() : false; }
+    virtual bool isGrouped() { return selectedInputITDL ? selectedInputITDL->isGrouped() : false; }
 // steppable
     virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
@@ -911,8 +919,8 @@ public:
     }
     virtual IInputSteppingMeta *querySteppingMeta()
     {
-        if (selectedInput)
-            return selectedInput->querySteppingMeta();
+        if (selectedInputITDL)
+            return selectedInputITDL->querySteppingMeta();
         return NULL;
     }
 };

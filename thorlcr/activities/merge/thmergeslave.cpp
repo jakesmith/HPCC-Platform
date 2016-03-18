@@ -285,19 +285,21 @@ public:
         ActivityTimer s(totalCycles, timeActivities);
         ForEachItemIn(i, inputs) {
             IThorDataLink * input = inputs.item(i);
-            try {
+            try
+            {
                 startInput(input); 
             }
-            catch (CATCHALL) {
+            catch (CATCHALL)
+            {
                 ActPrintLog("MERGE(%" ACTPF "d): Error starting input %d", container.queryId(), i);
                 ForEachItemIn(s, streams)
                     streams.item(s).stop();
                 throw;
             }
             if (input->isGrouped())
-                streams.append(*createUngroupStream(input));
+                streams.append(*createUngroupStream(input->queryStream()));
             else
-                streams.append(*LINK(input));
+                streams.append(*LINK(input->queryStream()));
         }
 #ifndef _STABLE_MERGE
         // shuffle streams otherwise will all be reading in order initially
@@ -448,9 +450,9 @@ public:
                 throw;
             }
             if (input->isGrouped())
-                streams.append(*createUngroupStream(input));
+                streams.append(*createUngroupStream(input->queryStream()));
             else
-                streams.append(*LINK(input));
+                streams.append(*LINK(input->queryStream()));
         }
         Owned<IRowLinkCounter> linkcounter = new CThorRowLinkCounter;
         out.setown(createRowStreamMerger(streams.ordinality(), streams.getArray(), helper->queryCompare(), helper->dedup(), linkcounter));
@@ -494,11 +496,11 @@ public:
 
 class CThorStreamMerger : public CStreamMerger
 {
-    IThorDataLink **inputArray;
+    IEngineRowStream **inputArray;
 public:
     CThorStreamMerger() : CStreamMerger(true) {}
 
-    void initInputs(unsigned _numInputs, IThorDataLink ** _inputArray)
+    void initInputs(unsigned _numInputs, IEngineRowStream ** _inputArray)
     {
         CStreamMerger::initInputs(_numInputs);
         inputArray = _inputArray;
@@ -529,6 +531,8 @@ class CNWayMergeActivity : public CThorNarySlaveActivity, public CThorDataLink, 
     CSteppingMeta meta;
     bool initializedMeta;
 
+    PointerArrayOf<IEngineRowStream> expandedInputStreams;
+
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
@@ -549,7 +553,10 @@ public:
     virtual void start()
     {
         CThorNarySlaveActivity::start();
-        merger.initInputs(expandedInputs.length(), expandedInputs.getArray());
+        expandedInputStreams.kill();
+        ForEachItemIn(i, expandedInputs)
+            expandedInputStreams.append(expandedInputs.item(i)->queryStream());
+        merger.initInputs(expandedInputStreams.length(), expandedInputStreams.getArray());
         dataLinkStart();
     }
     virtual void stop()

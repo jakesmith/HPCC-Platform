@@ -33,7 +33,6 @@ class AggregateSlaveBase : public CSlaveActivity, public CThorDataLink
 {
 protected:
     bool hadElement, inputStopped;
-    IThorDataLink *input;
 
     void doStopInput()
     {
@@ -46,7 +45,6 @@ protected:
     {
         hadElement = false;
         inputStopped = false;
-        input = inputs.item(0);
         startInput(input);
         if (input->isGrouped())
             ActPrintLog("Grouped mismatch");
@@ -121,7 +119,6 @@ public:
     AggregateSlaveBase(CGraphElementBase *_container)
         : CSlaveActivity(_container), CThorDataLink(this)
     {
-        input = NULL;
         hadElement = inputStopped = false;
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -130,7 +127,6 @@ public:
             mpTag = container.queryJobChannel().deserializeMPTag(data);
         appendOutputLinked(this);
     }
-    virtual bool isGrouped() { return false; }
 };
 
 //

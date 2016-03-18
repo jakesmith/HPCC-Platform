@@ -66,9 +66,9 @@ public:
         startInput(input);
         eoi = false;
         if (container.queryGrouped())
-            out.setown(iLoader->loadGroup(input, abortSoon));
+            out.setown(iLoader->loadGroup(inputStream, abortSoon));
         else
-            out.setown(iLoader->load(input, abortSoon));
+            out.setown(iLoader->load(inputStream, abortSoon));
         if (0 == iLoader->numRows())
             eoi = true;
     }
@@ -108,7 +108,7 @@ public:
                 eoi = true;
                 return NULL;
             }
-            out.setown(iLoader->loadGroup(input, abortSoon));
+            out.setown(iLoader->loadGroup(inputStream, abortSoon));
             if (0 == iLoader->numRows())
                 eoi = true;
             return NULL; // eog marker
@@ -200,7 +200,7 @@ public:
     }
     virtual void resetEOF()
     { 
-        input->resetEOF(); 
+        inputStream->resetEOF();
     }
     virtual bool isGrouped() { return false; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)

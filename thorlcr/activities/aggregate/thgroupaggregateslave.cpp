@@ -19,19 +19,13 @@
 
 class GroupAggregateSlaveActivity : public CSlaveActivity, public CThorDataLink
 {
-
-private:
     bool eof, ungroupedExistsAggregate;
     IHThorAggregateArg * helper;
-    IThorDataLink *input;
 
 public:
-    IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
-
     GroupAggregateSlaveActivity(CGraphElementBase *_container) 
         : CSlaveActivity(_container), CThorDataLink(this)
     { 
-        input = NULL;
     }
 
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -44,7 +38,6 @@ public:
     {
         ActivityTimer s(totalCycles, timeActivities);
         eof = false;
-        input=inputs.item(0);
         startInput(input);
         ungroupedExistsAggregate = (container.getKind() == TAKexistsaggregate) && !input->isGrouped();
         dataLinkStart();
@@ -97,8 +90,6 @@ public:
         info.canReduceNumRows = true;
         info.fastThrough = true;
     }
-
-    virtual bool isGrouped() { return false; }
 };
 
 

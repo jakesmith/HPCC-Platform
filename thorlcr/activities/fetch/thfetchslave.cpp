@@ -412,12 +412,12 @@ public:
 
             if (fetchBaseHelper->extractAllJoinFields())
             {
-                keyIn = LINK(in);
+                keyIn = LINK(in->queryStream());
                 keyInMeta.set(in->queryFromActivity()->queryRowMetaData());
             }
             else
             {
-                keyIn = new CKeyFieldExtract(this, *in, *fetchBaseHelper, *fetchContext);
+                keyIn = new CKeyFieldExtract(this, *in->queryStream(), *fetchBaseHelper, *fetchContext);
                 keyInMeta.set(QUERYINTERFACE(fetchBaseHelper->queryExtractedSize(), IOutputMetaData));
             }
             keyInIf.setown(createRowInterfaces(keyInMeta,queryId(),queryCodeContext()));
@@ -450,7 +450,7 @@ public:
             };
             Owned<IOutputMetaData> fmeta = createFixedSizeMetaData(sizeof(offset_t)); // should be provided by Gavin?
             keyInIf.setown(createRowInterfaces(fmeta,queryId(),queryCodeContext()));
-            keyIn = new CKeyFPosExtract(keyInIf, this, *in, *fetchBaseHelper, *fetchContext);
+            keyIn = new CKeyFPosExtract(keyInIf, this, *in->queryStream(), *fetchBaseHelper, *fetchContext);
         }
 
         Owned<IRowInterfaces> rowIf = createRowInterfaces(queryRowMetaData(), queryId(), queryCodeContext());

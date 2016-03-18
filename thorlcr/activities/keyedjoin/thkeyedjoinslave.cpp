@@ -2051,7 +2051,7 @@ public:
         ActPrintLog("KJ: parallelLookups=%d, freeQSize=%d, preserveGroups=%s, preserveOrder=%s", parallelLookups, freeQSize, preserveGroups?"true":"false", preserveOrder?"true":"false");
 
         pool->setOrdering(preserveGroups, preserveOrder);
-        resultDistStream->setInput(input);
+        resultDistStream->setInput(inputStream);
 
         dataLinkStart();
     }

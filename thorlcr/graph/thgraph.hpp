@@ -196,7 +196,6 @@ class CIOConnection : public CInterface
 public:
     CGraphElementBase *activity;
     unsigned index;
-    void connect(unsigned which, CActivityBase *activity);
 
     CIOConnection(CGraphElementBase *_activity, unsigned _index) : activity(_activity), index(_index) { }
 };
@@ -275,7 +274,6 @@ public:
     CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml);
     ~CGraphElementBase();
 
-    void doconnect();
     void addInput(unsigned input, CGraphElementBase *inputAct, unsigned inputOutIdx);
     void clearConnections();
     virtual void connectInput(unsigned which, CGraphElementBase *input, unsigned inputOutIdx);
@@ -863,7 +861,7 @@ public:
     virtual IThorAllocator *createThorAllocator();
 
     virtual void abort(IException *e);
-    virtual void debugRequest(CMessageBuffer &msg, const char *request) const { }
+    virtual void debugRequest(MemoryBuffer &msg, const char *request) const { }
 
 //
     virtual void addCreatedFile(const char *file) { assertex(false); }

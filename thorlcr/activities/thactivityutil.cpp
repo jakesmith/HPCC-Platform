@@ -54,7 +54,7 @@
 #pragma warning(push)
 #pragma warning( disable : 4355 )
 #endif
-class ThorLookaheadCache: public CThorDataLink
+class ThorLookaheadCache: public CSimpleInterfaceOf<IThorDataLink>, implements IEngineRowStream
 {
     rowcount_t count;
     Linked<IThorDataLink> in;
@@ -216,7 +216,8 @@ public:
         // NB: Will wait on CNotifyThread to finish before returning
         return 0;
     }
-        
+
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterfaceOf<IThorDataLink>);
 
     ThorLookaheadCache(CActivityBase &_activity, IThorDataLink *_in,size32_t _bufsize,bool _allowspill,bool _preserveGrouping, rowcount_t _required,ISmartBufferNotify *_notify, bool _instarted, IDiskUsage *_iDiskUsage)
         : thread(*this), activity(_activity), in(_in)
@@ -274,6 +275,7 @@ public:
                 throw getexception.getClear();
         }
     }
+    virtual void resetEOF() override { throwUnexpected(); }
 
 // IThorDataLink
     virtual void start() override
@@ -290,18 +292,29 @@ public:
                 throw startexception.getClear();
         }
     }
-    virtual CActivityBase *queryFromActivity() override
-    {
-        return in->queryFromActivity();
-    }
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
-    {
-        memset(&info,0,sizeof(info));
-        in->getMetaInfo(info);
-        // more TBD
-    }
-    virtual bool isGrouped() override { return preserveGrouping; }
+    virtual CSlaveActivity *queryFromActivity() override { return in->queryFromActivity(); }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { in->getMetaInfo(info); }
     virtual unsigned __int64 queryTotalCycles() const override { return in->queryTotalCycles(); }
+    virtual unsigned __int64 queryEndCycles() const { return in->queryEndCycles(); }
+    virtual void dataLinkSerialize(MemoryBuffer &mb) const { in->dataLinkSerialize(mb); }
+    virtual void dataLinkStart() { in->dataLinkStart(); }
+    virtual void dataLinkStop() { in->dataLinkStop(); }
+    virtual bool isGrouped() const { return in->isGrouped(); }
+    virtual IOutputMetaData * queryOutputMeta() const { return in->queryOutputMeta(); }
+    virtual unsigned queryOutputIdx() const { return in->queryOutputIdx(); }
+    virtual bool isInputOrdered(bool consumerOrdered) const { return in->isInputOrdered(consumerOrdered); }
+    virtual IStrandJunction *getOutputStreams(CActivityBase &_activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
+    {
+        return in->getOutputStreams(_activity, idx, streams, consumerOptions, consumerOrdered);
+    }
+    virtual void debugRequest(MemoryBuffer &mb) { in->debugRequest(mb); }
+
+// Stepping methods
+    virtual IInputSteppingMeta *querySteppingMeta() { return in->querySteppingMeta(); }
+    virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return in->gatherConjunctions(collector); }
+
+// to support non-stranded activities
+    virtual IEngineRowStream *queryStream() { return this; }
 };
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -314,6 +327,52 @@ IThorDataLink *createDataLinkSmartBuffer(CActivityBase *activity, IThorDataLink 
 }
 
 
+class CITDL : public CSimpleInterfaceOf<IThorDataLink>, implements IEngineRowStream
+{
+    IThorDataLink *base;
+    Owned<IRowStream> in;
+public:
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterfaceOf<IThorDataLink>);
+
+    CITDL(IThorDataLink *_base, IRowStream *_in) : in(_in), base(_base)
+    {
+    }
+// IEngineRowStream
+    virtual const void *nextRow() override { return in->nextRow(); }
+    virtual void stop() override { in->stop(); }
+    virtual void resetEOF() override { throwUnexpected(); }
+// IThorDataLink impl.
+    virtual void start() override { base->start(); }
+    virtual CSlaveActivity *queryFromActivity() override { return base->queryFromActivity(); }
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { base->getMetaInfo(info); }
+    virtual unsigned __int64 queryTotalCycles() const override { return base->queryTotalCycles(); }
+    virtual unsigned __int64 queryEndCycles() const { return base->queryEndCycles(); }
+    virtual void dataLinkSerialize(MemoryBuffer &mb) const { base->dataLinkSerialize(mb); }
+    virtual void dataLinkStart() { base->dataLinkStart(); }
+    virtual void dataLinkStop() { base->dataLinkStop(); }
+    virtual bool isGrouped() const { return base->isGrouped(); }
+    virtual IOutputMetaData * queryOutputMeta() const { return base->queryOutputMeta(); }
+    virtual unsigned queryOutputIdx() const { return base->queryOutputIdx(); }
+    virtual bool isInputOrdered(bool consumerOrdered) const { return base->isInputOrdered(consumerOrdered); }
+    virtual IStrandJunction *getOutputStreams(CActivityBase &_activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
+    {
+        return base->getOutputStreams(_activity, idx, streams, consumerOptions, consumerOrdered);
+    }
+    virtual void debugRequest(MemoryBuffer &mb) { base->debugRequest(mb); }
+
+// Stepping methods
+    virtual IInputSteppingMeta *querySteppingMeta() { return base->querySteppingMeta(); }
+    virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return base->gatherConjunctions(collector); }
+
+// to support non-stranded activities
+    virtual IEngineRowStream *queryStream() { return this; }
+};
+
+IThorDataLink *createRowStreamToDataLinkAdapter(IThorDataLink *base, IRowStream *in)
+{
+    return new CITDL(base, in);
+}
+
 void initMetaInfo(ThorDataLinkMetaInfo &info)
 {
     memset(&info,0,sizeof(info));
@@ -322,6 +381,141 @@ void initMetaInfo(ThorDataLinkMetaInfo &info)
     info.totalRowsMax = -1; // rely on inputs to set
     info.spilled = (offset_t)-1;
     info.byteTotal = (offset_t)-1;
+}
+
+void calcMetaInfoSize(ThorDataLinkMetaInfo &info, IThorDataLink *link)
+{
+    if (!info.unknownRowsOutput&&link&&((info.totalRowsMin<=0)||(info.totalRowsMax<0)))
+    {
+        ThorDataLinkMetaInfo prev;
+        link->getMetaInfo(prev);
+        if (info.totalRowsMin<=0)
+        {
+            if (!info.canReduceNumRows)
+                info.totalRowsMin = prev.totalRowsMin;
+            else
+                info.totalRowsMin = 0;
+        }
+        if (info.totalRowsMax<0)
+        {
+            if (!info.canIncreaseNumRows)
+            {
+                info.totalRowsMax = prev.totalRowsMax;
+                if (info.totalRowsMin>info.totalRowsMax)
+                    info.totalRowsMax = -1;
+            }
+        }
+        if (((offset_t)-1 != prev.byteTotal) && info.totalRowsMin == info.totalRowsMax)
+            info.byteTotal = prev.byteTotal;
+    }
+    else if (info.totalRowsMin<0)
+        info.totalRowsMin = 0; // a good bet
+
+}
+
+void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink **link,unsigned ninputs)
+{
+    if (!link||(ninputs<=1))
+    {
+        calcMetaInfoSize(info,link&&(ninputs==1)?link[0]:NULL);
+        return ;
+    }
+    if (!info.unknownRowsOutput)
+    {
+        __int64 min=0;
+        __int64 max=0;
+        for (unsigned i=0;i<ninputs;i++ )
+        {
+            if (link[i])
+            {
+                ThorDataLinkMetaInfo prev;
+                link[i]->getMetaInfo(prev);
+                if (min>=0)
+                {
+                    if (prev.totalRowsMin>=0)
+                        min += prev.totalRowsMin;
+                    else
+                        min = -1;
+                }
+                if (max>=0)
+                {
+                    if (prev.totalRowsMax>=0)
+                        max += prev.totalRowsMax;
+                    else
+                        max = -1;
+                }
+            }
+        }
+        if (info.totalRowsMin<=0)
+        {
+            if (!info.canReduceNumRows)
+                info.totalRowsMin = min;
+            else
+                info.totalRowsMin = 0;
+        }
+        if (info.totalRowsMax<0)
+        {
+            if (!info.canIncreaseNumRows)
+            {
+                info.totalRowsMax = max;
+                if (info.totalRowsMin>info.totalRowsMax)
+                    info.totalRowsMax = -1;
+            }
+        }
+    }
+    else if (info.totalRowsMin<0)
+        info.totalRowsMin = 0; // a good bet
+}
+
+void calcMetaInfoSize(ThorDataLinkMetaInfo &info, ThorDataLinkMetaInfo *infos, unsigned num)
+{
+    if (!infos||(num<=1))
+    {
+        if (1 == num)
+            info = infos[0];
+        return;
+    }
+    if (!info.unknownRowsOutput)
+    {
+        __int64 min=0;
+        __int64 max=0;
+        for (unsigned i=0;i<num;i++ )
+        {
+            ThorDataLinkMetaInfo &prev = infos[i];
+            if (min>=0)
+            {
+                if (prev.totalRowsMin>=0)
+                    min += prev.totalRowsMin;
+                else
+                    min = -1;
+            }
+            if (max>=0)
+            {
+                if (prev.totalRowsMax>=0)
+                    max += prev.totalRowsMax;
+                else
+                    max = -1;
+            }
+        }
+        if (info.totalRowsMin<=0)
+        {
+            if (!info.canReduceNumRows)
+                info.totalRowsMin = min;
+            else
+                info.totalRowsMin = 0;
+        }
+        if (info.totalRowsMax<0)
+        {
+            if (!info.canIncreaseNumRows)
+            {
+                info.totalRowsMax = max;
+                if (info.totalRowsMin>info.totalRowsMax)
+                    info.totalRowsMax = -1;
+            }
+        }
+    }
+    else if (info.totalRowsMin<0)
+        info.totalRowsMin = 0; // a good bet
 }
 
 
@@ -807,39 +1001,4 @@ IRowStream *createSequentialPartHandler(CPartHandler *partHandler, IArrayOf<IPar
     };
     return new CSeqPartHandler(partHandler, partDescs, grouped);
 }
-
-
-IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered)
-{
-    if (input)
-    {
-        PointerArrayOf<IEngineRowStream> instreams;
-        junction.setown(input->getOutputStreams(activity, idx, instreams, NULL, consumerOrdered));
-        if (instreams.length() != 1)
-        {
-            assertex(instreams.length());
-            if (!junction)
-                junction.setown(createStrandJunction(activity.queryRowManager(), instreams.length(), 1, activity.getOptInt("strandBlockSize"), false));
-            ForEachItemIn(stream, instreams)
-            {
-                junction->setInput(stream, instreams.item(stream));
-            }
-            return junction->queryOutput(0);
-        }
-        else
-            return instreams.item(0);
-    }
-    else
-        return NULL;
-}
-
-IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, bool consumerOrdered)
-{
-    Owned<IStrandJunction> junction;
-    IEngineRowStream * result = connectSingleStream(activity, input, idx, junction, consumerOrdered);
-    assertex(!junction);
-    return result;
-}
-
-
 

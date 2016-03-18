@@ -160,7 +160,7 @@ public:
     void resetEOF() 
     { 
         //Do not reset the rowLimit
-        input->resetEOF(); 
+        inputStream->resetEOF();
     }
 // steppable
     virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override

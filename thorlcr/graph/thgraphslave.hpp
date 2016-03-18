@@ -35,6 +35,7 @@
 #include "thgraph.hpp"
 #include "jdebug.hpp"
 #include "traceslave.hpp"
+#include "thorstrand.hpp"
 
 class CSlaveActivity;
 
@@ -49,7 +50,6 @@ protected:
     IPointerArrayOf<IEngineRowStream> inputStreams;
     Linked<IThorDataLink> input;
     IEngineRowStream *inputStream = NULL;
-    ActivityTimeAccumulator totalCycles;
     MemoryBuffer startCtx;
     bool optStableInput = true; // is the input forced to ordered?
     bool optUnstableInput = false;  // is the input forced to unordered?
@@ -57,6 +57,68 @@ protected:
     Owned<IStrandJunction> junction;
     unsigned outputIdx = 0; // for IThorDataLinkExt
 
+    ActivityTimeAccumulator totalCycles;
+    rowcount_t count = 0, icount = 0;
+
+protected:
+    inline void dataLinkStart()
+    {
+#ifdef _TESTING
+        ActPrintLog("ITDL starting for output %d", outputIdx);
+#endif
+#ifdef _TESTING
+        assertex(!started() || stopped());      // ITDL started twice
+#endif
+        icount = 0;
+//      count = THORDATALINK_STARTED;
+        rowcount_t prevCount = count & THORDATALINK_COUNT_MASK;
+        count = prevCount | THORDATALINK_STARTED;
+    }
+    inline void dataLinkStop()
+    {
+#ifdef _TESTING
+        assertex(started());        // ITDL stopped without being started
+#endif
+        count |= THORDATALINK_STOPPED;
+#ifdef _TESTING
+        ActPrintLog("ITDL output %d stopped, count was %" RCPF "d", outputIdx, getDataLinkCount());
+#endif
+    }
+    inline void dataLinkIncrement()
+    {
+        dataLinkIncrement(1);
+    }
+    inline void dataLinkIncrement(rowcount_t v)
+    {
+#ifdef _TESTING
+        assertex(started());
+#ifdef OUTPUT_RECORDSIZE
+        if (count==THORDATALINK_STARTED)
+        {
+            size32_t rsz = queryRowMetaData(this)->getMinRecordSize();
+            ActPrintLog(owner, "Record size %s= %d", queryRowMetaData(this)->isVariableSize()?"(min) ":"",rsz);
+        }
+#endif
+#endif
+        icount += v;
+        count += v;
+    }
+    inline bool started() const
+    {
+        return (count & THORDATALINK_STARTED) ? true : false;
+    }
+    inline bool stopped() const
+    {
+        return (count & THORDATALINK_STOPPED) ? true : false;
+    }
+    inline rowcount_t getDataLinkGlobalCount() const
+    {
+        return (count & THORDATALINK_COUNT_MASK);
+    }
+    inline rowcount_t getDataLinkCount() const
+    {
+        return icount;
+    }
 public:
     IMPLEMENT_IINTERFACE;
 
@@ -70,167 +132,31 @@ public:
     virtual MemoryBuffer &queryInitializationData(unsigned slave) const;
     virtual MemoryBuffer &getInitializationData(unsigned slave, MemoryBuffer &mb) const;
     virtual void connectInputStreams(bool consumerOrdered);
-    virtual void onCreate();
-    virtual void onCreateN(unsigned num);
 
-    IThorDataLink *queryOutput(unsigned index);
-    IThorDataLink *queryInput(unsigned index);
+    IThorDataLink *queryOutput(unsigned index) const;
+    IThorDataLink *queryInput(unsigned index) const;
     void appendOutput(IThorDataLink *itdl);
     void appendOutputLinked(IThorDataLink *itdl);
     void startInput(IThorDataLink *itdl, const char *extra=NULL);
     void stopInput(IThorDataLink *itdl, const char *extra=NULL);
+    void stopInput(IRowStream *stream, const char *extra=NULL);
 
     ActivityTimeAccumulator &getTotalCyclesRef() { return totalCycles; }
     unsigned __int64 queryLocalCycles() const;
     virtual unsigned __int64 queryTotalCycles() const; // some acts. may calculate accumulated total from inputs (e.g. splitter)
     virtual unsigned __int64 queryEndCycles() const;
     virtual void serializeStats(MemoryBuffer &mb);
-    void debugRequest(unsigned edgeIdx, CMessageBuffer &msg);
-    void initMetaInfo(ThorDataLinkMetaInfo &info)
-    {
-        ::initMetaInfo(info);
-    }
-    void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink *link)
-    {
-        if (!info.unknownRowsOutput&&link&&((info.totalRowsMin<=0)||(info.totalRowsMax<0)))
-        {
-            ThorDataLinkMetaInfo prev;
-            link->getMetaInfo(prev);
-            if (info.totalRowsMin<=0)
-            {
-                if (!info.canReduceNumRows)
-                    info.totalRowsMin = prev.totalRowsMin;
-                else
-                    info.totalRowsMin = 0;
-            }
-            if (info.totalRowsMax<0)
-            {
-                if (!info.canIncreaseNumRows)
-                {
-                    info.totalRowsMax = prev.totalRowsMax;
-                    if (info.totalRowsMin>info.totalRowsMax)
-                        info.totalRowsMax = -1;
-                }
-            }
-            if (((offset_t)-1 != prev.byteTotal) && info.totalRowsMin == info.totalRowsMax)
-                info.byteTotal = prev.byteTotal;
-        }
-        else if (info.totalRowsMin<0)
-            info.totalRowsMin = 0; // a good bet
-
-    }
-    void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink **link,unsigned ninputs)
-    {
-        if (!link||(ninputs<=1))
-        {
-            calcMetaInfoSize(info,link&&(ninputs==1)?link[0]:NULL);
-            return ;
-        }
-        if (!info.unknownRowsOutput)
-        {
-            __int64 min=0;
-            __int64 max=0;
-            for (unsigned i=0;i<ninputs;i++ )
-            {
-                if (link[i])
-                {
-                    ThorDataLinkMetaInfo prev;
-                    link[i]->getMetaInfo(prev);
-                    if (min>=0)
-                    {
-                        if (prev.totalRowsMin>=0)
-                            min += prev.totalRowsMin;
-                        else
-                            min = -1;
-                    }
-                    if (max>=0)
-                    {
-                        if (prev.totalRowsMax>=0)
-                            max += prev.totalRowsMax;
-                        else
-                            max = -1;
-                    }
-                }
-            }
-            if (info.totalRowsMin<=0)
-            {
-                if (!info.canReduceNumRows)
-                    info.totalRowsMin = min;
-                else
-                    info.totalRowsMin = 0;
-            }
-            if (info.totalRowsMax<0)
-            {
-                if (!info.canIncreaseNumRows)
-                {
-                    info.totalRowsMax = max;
-                    if (info.totalRowsMin>info.totalRowsMax)
-                        info.totalRowsMax = -1;
-                }
-            }
-        }
-        else if (info.totalRowsMin<0)
-            info.totalRowsMin = 0; // a good bet
-    }
-    void calcMetaInfoSize(ThorDataLinkMetaInfo &info, ThorDataLinkMetaInfo *infos, unsigned num)
-    {
-        if (!infos||(num<=1))
-        {
-            if (1 == num)
-                info = infos[0];
-            return;
-        }
-        if (!info.unknownRowsOutput)
-        {
-            __int64 min=0;
-            __int64 max=0;
-            for (unsigned i=0;i<num;i++ )
-            {
-                ThorDataLinkMetaInfo &prev = infos[i];
-                if (min>=0)
-                {
-                    if (prev.totalRowsMin>=0)
-                        min += prev.totalRowsMin;
-                    else
-                        min = -1;
-                }
-                if (max>=0)
-                {
-                    if (prev.totalRowsMax>=0)
-                        max += prev.totalRowsMax;
-                    else
-                        max = -1;
-                }
-            }
-            if (info.totalRowsMin<=0)
-            {
-                if (!info.canReduceNumRows)
-                    info.totalRowsMin = min;
-                else
-                    info.totalRowsMin = 0;
-            }
-            if (info.totalRowsMax<0)
-            {
-                if (!info.canIncreaseNumRows)
-                {
-                    info.totalRowsMax = max;
-                    if (info.totalRowsMin>info.totalRowsMax)
-                        info.totalRowsMax = -1;
-                }
-            }
-        }
-        else if (info.totalRowsMin<0)
-            info.totalRowsMin = 0; // a good bet
-    }
+    void debugRequest(unsigned edgeIdx, MemoryBuffer &msg);
 
 // IThorDataLink
-    virtual CActivityBase *queryFromActivity() const override { return this; }
+    virtual CSlaveActivity *queryFromActivity() override { return this; }
     virtual IStrandJunction *getOutputStreams(CActivityBase &ctx, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered);
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { }
-    virtual bool isGrouped() const override { return false; }
+    virtual bool isGrouped() const override;
     virtual IOutputMetaData * queryOutputMeta() const;
     virtual unsigned queryOutputIdx() const override { return outputIdx; }
-    virtual bool isInputOrdered(bool consumerOrdered) const
+    virtual void dataLinkSerialize(MemoryBuffer &mb) const override;
+    virtual bool isInputOrdered(bool consumerOrdered) const override
     {
         if (optStableInput)
             return true;
@@ -240,6 +166,10 @@ public:
             return false;
         return consumerOrdered;
     }
+    virtual void debugRequest(MemoryBuffer &msg) override;
+
+    virtual IEngineRowStream *queryStream() { return inputStream; }
+
 // IThorDataLinkExt
     virtual void setOutputIdx(unsigned idx) override { outputIdx = idx; }
 
@@ -255,40 +185,15 @@ public:
     }
     virtual void reset() override
     {
-        input = NULL;
+        input.clear();
         inputStream = NULL;
     }
     virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override;
 };
 
 
-#define MAX_SENSIBLE_STRANDS 1024 // Architecture dependent...
-class CThorStrandOptions
-{
-    // Typically set from hints, common to many stranded activities
-public:
-    explicit CThorStrandOptions(IPropertyTree &_graphNode)
-    {
-        //PARALLEL(1) can be used to explicitly disable parallel processing.
-        numStrands = _graphNode.getPropInt("att[@name='parallel']/@value", 0);
-        if ((numStrands == NotFound) || (numStrands > MAX_SENSIBLE_STRANDS))
-            numStrands = getAffinityCpus();
-        blockSize = _graphNode.getPropInt("hint[@name='strandblocksize']/@value", 0);
-    }
-    CThorStrandOptions(const CThorStrandOptions &from, CGraphElementBase &container)
-    {
-        numStrands = from.numStrands;
-        blockSize = from.blockSize;
-
-        if (!blockSize)
-            blockSize = container.getOptInt("strandBlockSize");
-        if (numStrands == 0)
-            numStrands = container.getOptInt("forceNumStrands");
-    }
-public:
-    unsigned numStrands = 0; // if 1 it forces single-stranded operations.  (Useful for testing.)
-    unsigned blockSize = 0;
-};
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, Owned<IStrandJunction> &junction, bool consumerOrdered);
+IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *input, unsigned idx, bool consumerOrdered);
 
 
 #define STRAND_CATCH_NEXTROWX_CATCH \
@@ -386,7 +291,7 @@ protected:
 
 public:
     explicit CThorStrandProcessor(CSlaveActivity &_parent, IEngineRowStream *_inputStream, unsigned _outputId)
-      : parent(_parent), inputStream(_inputStream), outputId(_outputId), timeActivities(_parent.timeActivities)
+      : parent(_parent), inputStream(_inputStream), outputId(_outputId), timeActivities(_parent.queryTimeActivities())
     {
         baseHelper.set(parent.queryHelper());
     }
@@ -400,8 +305,22 @@ public:
         }
 #endif
     }
-
-    virtual void start() override
+    __declspec(noreturn) void processAndThrowOwnedException(IException *_e) __attribute__((noreturn))
+    {
+        IThorException *e = QUERYINTERFACE(_e, IThorException);
+        if (e)
+        {
+            if (!e->queryActivityId())
+                setExceptionActivityInfo(parent.queryContainer(), e);
+        }
+        else
+        {
+            e = MakeActivityException(&parent, _e);
+            _e->Release();
+        }
+        throw e;
+    }
+    virtual void start()
     {
         count = 0;
         numProcessedLastGroup = 0;
@@ -410,7 +329,7 @@ public:
 
         dataLinkStart();
     }
-    virtual void reset() override
+    virtual void reset()
     {
         stopped = false;
     }
@@ -433,7 +352,7 @@ public:
         count |= THORDATALINK_STOPPED;
     }
 // IEngineRowStream
-    virtual void resetEOF()
+    virtual void resetEOF() override
     {
         inputStream->resetEOF();
     }
@@ -449,20 +368,11 @@ protected:
     Owned<IStrandJunction> sourceJunction; // A junction applied to the output of a source activity
     std::atomic<unsigned> active;
 protected:
-    void onStartStrands()
-    {
-        ForEachItemIn(idx, strands)
-            strands.item(idx).start();
-    }
+    void onStartStrands();
 public:
-    CThorStrandedActivity(CGraphElementBase *container, const CThorStrandOptions &_strandOptions)
-        : CSlaveActivity(container), strandOptions(_strandOptions, *container), active(0)
+    CThorStrandedActivity(CGraphElementBase *container)
+        : CSlaveActivity(container), strandOptions(*container), active(0)
     {
-    }
-
-    virtual void onCreate() override
-    {
-        CSlaveActivity::onCreateN(strands.ordinality());
     }
 
     //This function is pure (But also implemented out of line) to force the derived classes to implement it.
@@ -475,11 +385,7 @@ public:
      * in base class
      */
     //For some reason gcc doesn't let you specify a function as pure virtual and define it at the same time.
-    virtual void start() override
-    {
-        CSlaveActivity::start();
-        startJunction(splitter);
-    }
+    virtual void start() override;
     virtual void reset() override;
     virtual void stop() override;
     virtual CThorStrandProcessor *createStrandProcessor(IEngineRowStream *instream) = 0;
@@ -490,7 +396,7 @@ public:
     inline unsigned numStrands() const { return strands.ordinality(); }
 
 // IThorDataLink
-    virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered) override
+    virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered) override;
 };
 
 
@@ -578,7 +484,7 @@ public:
     virtual StringBuffer &getWorkUnitValue(const char *prop, StringBuffer &str) const;
     virtual bool getWorkUnitValueBool(const char *prop, bool defVal) const;
     virtual IThorAllocator *createThorAllocator();
-    virtual void debugRequest(CMessageBuffer &msg, const char *request) const;
+    virtual void debugRequest(MemoryBuffer &msg, const char *request) const;
 
 // IExceptionHandler
     virtual bool fireException(IException *e)

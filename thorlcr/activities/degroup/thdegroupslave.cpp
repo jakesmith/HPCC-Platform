@@ -19,19 +19,12 @@
 
 class CDegroupSlaveActivity : public CSlaveActivity, public CThorDataLink, public CThorSteppable
 {
-    IThorDataLink *input;
-
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CDegroupSlaveActivity(CGraphElementBase *_container) 
         : CSlaveActivity(_container), CThorDataLink(this), CThorSteppable(this)
     { 
-        input = NULL; 
-    }
-    virtual bool isGrouped() override
-    { 
-        return false; 
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
@@ -40,8 +33,6 @@ public:
     virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
-//        input = inputs.item(0);
-
         startInput(input);
         if(!input->isGrouped()) ActPrintLog("DEGROUP: Degrouping non-grouped input!");
         dataLinkStart();
@@ -71,7 +62,7 @@ public:
         try { return nextRowGENoCatch(seek, numFields, wasCompleteMatch, stepExtra); }
         CATCH_NEXTROWX_CATCH;
     }
-    virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra) override
+    virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         ActivityTimer t(totalCycles, timeActivities);
         if (!abortSoon)

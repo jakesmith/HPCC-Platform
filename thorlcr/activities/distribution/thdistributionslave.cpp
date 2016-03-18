@@ -23,12 +23,10 @@ class CDistributionSlaveActivity : public ProcessSlaveActivity
     IHThorDistributionArg * helper;
     MemoryAttr ma;
     IDistributionTable * * aggy;                // should this be row?
-    IThorDataLink *input;
 
 public:
     CDistributionSlaveActivity(CGraphElementBase *container) : ProcessSlaveActivity(container)
     {
-        input = NULL;
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
@@ -46,7 +44,6 @@ public:
     void process()
     {
         helper->clearAggregate(aggy);
-        input = inputs.item(0);
         startInput(input);
         processed = THORDATALINK_STARTED;
 

@@ -123,25 +123,26 @@ public:
     void stop()
     {
         ForEachItemIn(ei, expandedInputs)
-            expandedInputs.item(ei)->stop();
+            expandedInputs.item(ei)->queryStream()->stop();
         expandedInputs.kill();
     }
 };
 
 
-class CThorSteppedInput : public CSimpleInterface, implements ISteppedInput
+class CThorSteppedInput : public CSimpleInterfaceOf<ISteppedInput>
 {
 protected:
+    IEngineRowStream *inputStream;
     IThorDataLink *input;
 
     virtual const void *nextInputRow()
     {
-        return input->ungroupedNextRow();
+        return inputStream->ungroupedNextRow();
     }
     virtual const void *nextInputRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         assertex(wasCompleteMatch);
-        return input->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
+        return inputStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
     }
     virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return input->gatherConjunctions(collector); }
     virtual IInputSteppingMeta *queryInputSteppingMeta()
@@ -150,12 +151,13 @@ protected:
     }
     virtual void resetEOF()
     {
-        input->resetEOF(); 
+        inputStream->resetEOF();
     }
 public:
-    IMPLEMENT_IINTERFACE_USING(CSimpleInterface)
-
-    CThorSteppedInput(IThorDataLink *_input) : input(_input) { }
+    CThorSteppedInput(IThorDataLink *_input) : input(_input)
+    {
+        inputStream = input->queryStream();
+    }
 };
 
 

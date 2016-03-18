@@ -139,7 +139,7 @@ public:
     }
     virtual void resetEOF() 
     { 
-        input->resetEOF();
+        inputStream->resetEOF();
     }
     void getMetaInfo(ThorDataLinkMetaInfo &info)
     {

@@ -73,7 +73,6 @@ class TopNSlaveActivity : public CSlaveActivity, public CThorDataLink
     ICompare *compare;
     CThorExpandingRowArray sortedRows;
     Owned<IRowStream> out;
-    IThorDataLink *input;
     IHThorTopNArg *helper;
     rowidx_t topNLimit;
     Owned<IRowServer> rowServer;
@@ -194,7 +193,6 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
         startInput(input);
         inputStopped = false;
         // NB: topNLimit shouldn't be stupid size, resourcing will guarantee this
@@ -208,7 +206,7 @@ public:
         }
         else
         {
-            out.setown(getNextSortGroup(input));
+            out.setown(getNextSortGroup(inputStream));
             eos = false;
         }
         eog = false;
@@ -229,7 +227,7 @@ public:
             return NULL;
         if (NULL == out)
         {
-            out.setown(getNextSortGroup(input));
+            out.setown(getNextSortGroup(inputStream));
             if (NULL == out)
             {
                 eos = true;
@@ -249,7 +247,7 @@ public:
             {
                 if (eog)
                 {
-                    out.setown(getNextSortGroup(input));
+                    out.setown(getNextSortGroup(inputStream));
                     if (NULL == out)
                         eos = true;
                     else
@@ -264,7 +262,7 @@ public:
                 else
                 {
                     eog = true;
-                    out.setown(getNextSortGroup(input));
+                    out.setown(getNextSortGroup(inputStream));
                     if (NULL == out)
                         eos = true;
                 }

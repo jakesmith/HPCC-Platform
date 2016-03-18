@@ -27,14 +27,15 @@ class CDedupAllHelper : public CSimpleInterface, implements IRowStream
 {
     CActivityBase *activity;
 
-    unsigned dedupCount;
-    const void ** dedupArray;
-    unsigned dedupIdx;
-    IThorDataLink * in;
-    IHThorDedupArg * helper;
-    bool keepLeft;
-    bool * abort;
-    IStopInput *iStopInput;
+    unsigned dedupCount = 0;
+    const void ** dedupArray = nullptr;
+    unsigned dedupIdx = 0;
+    IThorDataLink * in = nullptr;
+    IEngineRowStream *inputStream = nullptr;
+    IHThorDedupArg * helper = nullptr;
+    bool keepLeft = true;
+    bool * abort = nullptr;
+    IStopInput *iStopInput = nullptr;
 
     Owned<IThorRowLoader> rowLoader;
     CThorExpandingRowArray rows;
@@ -84,25 +85,19 @@ public:
 
     CDedupAllHelper(CActivityBase *_activity) : activity(_activity), rows(*_activity, _activity)
     {
-        in = NULL;
-        helper = NULL;
-        abort = NULL;
-        dedupIdx = dedupCount = 0;
-        dedupArray = NULL;
-        iStopInput = NULL;
-        keepLeft = true;
         rowLoader.setown(createThorRowLoader(*activity, NULL, stableSort_none, rc_allMem));
     }
 
     void init(IThorDataLink * _in, IHThorDedupArg * _helper, bool _keepLeft, bool * _abort, IStopInput *_iStopInput)
     {
+        assertex(_in);
         in = _in;
+        inputStream = in->queryStream();
         helper = _helper;
         keepLeft = _keepLeft;
         abort = _abort;
         iStopInput = _iStopInput;
 
-        assertex(in);
         assertex(helper);
         assertex(abort);
 
@@ -119,7 +114,7 @@ public:
         // JCSMORE - could do in chunks and merge if > mem
         try
         {
-            groupOp ? rowLoader->loadGroup(in, activity->queryAbortSoon(), &rows) : rowLoader->load(in, activity->queryAbortSoon(), false, &rows);
+            groupOp ? rowLoader->loadGroup(inputStream, activity->queryAbortSoon(), &rows) : rowLoader->load(inputStream, activity->queryAbortSoon(), false, &rows);
         }
         catch (IException *e)
         {
@@ -578,7 +573,6 @@ class CRollupGroupSlaveActivity : public CSlaveActivity, public CThorDataLink
     IHThorRollupGroupArg *helper;
     Owned<IThorRowLoader> groupLoader;
     bool eoi;
-    IThorDataLink *input;
     CThorExpandingRowArray rows;
 
 public:
@@ -587,7 +581,6 @@ public:
     CRollupGroupSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this), rows(*this, NULL)
     {
         eoi = false;
-        input = NULL;
         helper = NULL;
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -599,7 +592,6 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
         eoi = false;
         startInput(input);
         dataLinkStart();
@@ -619,7 +611,7 @@ public:
         {
             loop
             {
-                groupLoader->loadGroup(input, abortSoon, &rows);
+                groupLoader->loadGroup(inputStream, abortSoon, &rows);
                 unsigned count = rows.ordinality();
                 if (0 == count)
                 {

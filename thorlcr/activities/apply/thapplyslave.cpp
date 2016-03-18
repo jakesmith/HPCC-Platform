@@ -21,14 +21,12 @@
 class CApplySlaveActivity : public ProcessSlaveActivity
 {
     IHThorApplyArg *helper;
-    IThorDataLink *input;
 
 public:
     CApplySlaveActivity(CGraphElementBase *container) 
         : ProcessSlaveActivity(container)
     { 
         helper = NULL;
-        input = NULL;
     }
 
 // IThorSlaveActivity overloaded methods
@@ -40,7 +38,6 @@ public:
     virtual void process()
     {
         processed = 0;
-        input = inputs.item(0);
         startInput(input);
         processed = THORDATALINK_STARTED;
         try

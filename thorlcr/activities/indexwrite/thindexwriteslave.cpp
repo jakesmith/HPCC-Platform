@@ -33,32 +33,6 @@
 #define FEWWARNCAP 10
 
 
-class CITDL : public CSimpleInterface, public CThorDataLink
-{
-    IThorDataLink *base;
-    Owned<IRowStream> in;
-public:
-    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-
-    CITDL(IThorDataLink *_base, IRowStream *_in) : CThorDataLink(_base->queryFromActivity()), in(_in), base(_base)
-    {
-    }
-    virtual const void *nextRow() { return in->nextRow(); }
-    virtual void stop() { in->stop(); }
-// IThorDataLink impl.
-    virtual void start() { }
-    virtual bool isGrouped() { return false; }
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
-    {
-        // JCSMORE - TBD
-        base->getMetaInfo(info);
-    }
-};
-IThorDataLink *createRowStreamToDataLinkAdapter(IThorDataLink *base, IRowStream *in)
-{
-    return new CITDL(base, in);
-}
-
 class IndexWriteSlaveActivity  : public ProcessSlaveActivity, public ISmartBufferNotify, implements ICopyFileProgress, implements IBlobCreator
 {
     StringAttr logicalFilename;
@@ -304,6 +278,7 @@ public:
         ActPrintLog("INDEXWRITE: Start");
         init();
 
+        IRowStream *stream = inputStream;
         ThorDataLinkMetaInfo info;
         input->getMetaInfo(info);
         outRowAllocator.setown(getRowAllocator(helper->queryDiskRecordSize()));
@@ -311,8 +286,8 @@ public:
         {
             assertex(isLocal);
             input.setown(createDataLinkSmartBuffer(this, input, INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, false, &container.queryJob().queryIDiskUsage()));
-            inputStream = input->queryStream();
-            startInput(smartInput);
+            stream = input->queryStream();
+            startInput(input);
 
             if (active)
             {
@@ -322,7 +297,7 @@ public:
                 unsigned myPart = queryJobChannel().queryMyRank();
 
                 IArrayOf<IRowStream> streams;
-                streams.append(*LINK(inuptStream));
+                streams.append(*LINK(stream));
                 --partsPerNode;
 
  // Should this be merging 1,11,21,31 etc.
@@ -336,16 +311,16 @@ public:
                 assertex(icompare);
                 Owned<IRowLinkCounter> linkCounter = new CThorRowLinkCounter;
                 myInputStream.setown(createRowStreamMerger(streams.ordinality(), streams.getArray(), icompare, false, linkCounter));
-                inputStream = myInputStream;
+                stream = myInputStream;
             }
             else // serve nodes, creating merged parts
-                rowServer.setown(createRowServer(this, inputStream, queryJobChannel().queryJobComm(), mpTag));
+                rowServer.setown(createRowServer(this, stream, queryJobChannel().queryJobComm(), mpTag));
         }
         else if (singlePartKey)
         {
             input.setown(createDataLinkSmartBuffer(this, input, INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, false, &container.queryJob().queryIDiskUsage()));
-            inputStream = input->queryStream();
-            startInput(smartInput);
+            stream = input->queryStream();
+            startInput(input);
         }
         else
             startInput(input);
