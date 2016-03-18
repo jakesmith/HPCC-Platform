@@ -33,7 +33,6 @@
 class CWorkUnitWriteSlaveBase : public ProcessSlaveActivity
 {
 protected:
-    Owned<IThorDataLink> input;
     bool grouped;
 
 public:
@@ -77,7 +76,6 @@ public:
             stopInput(input);
             processed |= THORDATALINK_STOPPED;
         }
-        input.clear();
     }
 };
 
@@ -144,7 +142,6 @@ public:
     }
     void process()
     {
-        input.set(inputs.item(0));
         startInput(input);
         processed = THORDATALINK_STARTED;
 

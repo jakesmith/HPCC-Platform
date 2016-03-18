@@ -117,7 +117,6 @@ protected:
     offset_t uncompressedBytesWritten;
     unsigned replicateDone;
     Owned<ICompressor> ecomp;
-    Owned<IThorDataLink> input;
     unsigned usageCount;
     CDfsLogicalFileName dlfn;
     StringBuffer tempExternalName;

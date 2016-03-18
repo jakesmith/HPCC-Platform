@@ -26,7 +26,6 @@ protected:
     Semaphore finishedSem;
     rowcount_t counter, localRecCount;
     rowcount_t denominator, numerator;
-    Owned<IThorDataLink> input;
 
     bool haveLocalCount() { return RCUNBOUND != localRecCount; }
     inline bool wanted()
@@ -106,14 +105,12 @@ public:
         counter = 0;
         denominator = validRC(helper->getProportionDenominator());
         numerator = validRC(helper->getProportionNumerator());
-        input.set(inputs.item(0));
         startInput(input);
         dataLinkStart();
     }
     virtual void stop()
     {
         stopInput(input);
-        input.clear();
         dataLinkStop();
     }
     virtual bool isGrouped() { return false; }

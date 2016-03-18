@@ -23,8 +23,6 @@
 
 class PullSlaveActivity : public CSlaveActivity, public CThorDataLink
 {
-    Owned<IThorDataLink> input;
-
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
@@ -46,8 +44,8 @@ public:
     {
         ActivityTimer s(totalCycles, timeActivities);
         input.setown(createDataLinkSmartBuffer(this,inputs.item(0),PULL_SMART_BUFFER_SIZE,true,false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage()));
-        startInput(input);
         inputStream = input->queryStream();
+        startInput(input);
         dataLinkStart();
     }
     virtual void stop()

@@ -29,7 +29,6 @@ class CFirstNSlaveBase : public CSlaveActivity, public CThorDataLink
 {
 protected:
     rowcount_t limit, skipCount;
-    Owned<IThorDataLink> input;
     bool stopped;
     IHThorFirstNArg *helper;
 
@@ -54,7 +53,6 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input.set(inputs.item(0));
         startInput(input);
         stopped = false;
         dataLinkStart();
@@ -67,7 +65,6 @@ public:
             stopped = true;
             doStop();
         }
-        input.clear();
     }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
@@ -249,8 +246,8 @@ public:
         rowcount_t maxRead = (totallimit>(RCUNBOUND-_skipCount))?RCUNBOUND:totallimit+_skipCount;
         input.setown(createDataLinkSmartBuffer(this, input,FIRSTN_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(this),false,
                                           maxRead,this,true,&container.queryJob().queryIDiskUsage())); // if a very large limit don't bother truncating
-        startInput(input);
         inputStream = input->queryStream();
+        startInput(input);
     }
     virtual void abort()
     {

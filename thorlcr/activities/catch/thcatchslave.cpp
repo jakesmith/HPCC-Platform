@@ -26,7 +26,6 @@ class CCatchSlaveActivityBase : public CSlaveActivity, public CThorDataLink
 {
     typedef CSlaveActivity PARENT;
 protected:
-    Owned<IThorDataLink> input;
     IHThorCatchArg *helper;
     bool eos;
 
@@ -45,7 +44,6 @@ public:
     virtual void start()
     {
         PARENT::start();
-        input.set(inputs.item(0));
         eos = false;
         dataLinkStart();
     }

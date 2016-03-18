@@ -164,7 +164,6 @@ protected:
     bool groupOp;
     OwnedConstThorRow kept;
     OwnedConstThorRow keptTransformed; // only used by rollup
-    Owned<IThorDataLink> input;
     bool needFirstRow;
 
     unsigned numKept; // not used by rollup
@@ -180,15 +179,11 @@ public:
     {
         CriticalBlock block(stopsect);  // can be called async by distribute
         if (input)
-        {
             CSlaveActivity::stopInput(input);
-            input.clear();
-        }
     }
     virtual void start()
     {
         needFirstRow = true;
-        input.set(inputs.item(0));
         rowif.set(queryRowInterfaces(input));
         eogNext = eos = false;
         numKept = 0;

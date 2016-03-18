@@ -113,6 +113,16 @@ public:
 
 // 
 
+void CSlaveActivity::Link(void) const
+{
+    CInterface::Link();
+}
+
+bool CSlaveActivity::Release(void) const
+{
+    return CInterface::Release();
+}
+
 CSlaveActivity::CSlaveActivity(CGraphElementBase *_container) : CActivityBase(_container)
 {
     data = NULL;
@@ -121,6 +131,7 @@ CSlaveActivity::CSlaveActivity(CGraphElementBase *_container) : CActivityBase(_c
 CSlaveActivity::~CSlaveActivity()
 {
     inputs.kill();
+    inputStreams.kill();
     outputs.kill();
     if (data) delete [] data;
     ActPrintLog("DESTROYED");
@@ -145,14 +156,14 @@ void CSlaveActivity::connectInputStreams(bool consumerOrdered)
             else
                 outLink.set(inputActivity->queryOutput(inputOutIdx));
 
-            setInput(index, outLink, inputOutIdx, consumerOrdered);
+            setInput(index, outLink.getClear(), inputOutIdx, consumerOrdered);
         }
     }
 }
 
 void CSlaveActivity::setInput(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered)
 {
-    IEngineRowStream *_inputStream = connectSingleStream(*this, input, inputOutIdx, junction, input->isInputOrdered(consumerOrdered));
+    IEngineRowStream *_inputStream = connectSingleStream(*this, _input, inputOutIdx, junction, _input->isInputOrdered(consumerOrdered));
     if (!input)
     {
         input.set(_input);
@@ -161,7 +172,7 @@ void CSlaveActivity::setInput(unsigned index, IThorDataLink *_input, unsigned in
     while (inputs.ordinality()<=index) inputs.append(NULL);
     inputs.replace(_input, index);
     while (inputStreams.ordinality()<=index) inputStreams.append(NULL);
-    inputStreams.append(_inputStream);
+    inputStreams.append(LINK(_inputStream));
 }
 
 IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
@@ -288,6 +299,7 @@ void CSlaveActivity::releaseIOs()
 void CSlaveActivity::clearConnections()
 {
     inputs.kill();
+    inputStreams.kill();
 }
 
 MemoryBuffer &CSlaveActivity::queryInitializationData(unsigned slave) const
@@ -385,12 +397,11 @@ IOutputMetaData *CSlaveActivity::queryOutputMeta() const
 
 void CSlaveActivity::dataLinkSerialize(MemoryBuffer &mb) const
 {
-    queryOutput(0)->dataLinkSerialize(mb);
+    mb.append(count);
 }
 
 void CSlaveActivity::debugRequest(MemoryBuffer &msg)
 {
-    queryOutput(0)->debugRequest(msg);
 }
 
 
@@ -446,8 +457,7 @@ IStrandJunction *CThorStrandedActivity::getOutputStreams(CActivityBase &activity
     assertex(strands.empty());
     //CSlaveActivity::connectDependencies();
 
-    IThorDataLink *input = queryInput(0); // Any activity that has >1 input, will have to overload getOutputStreams to handle
-    unsigned sourceIdx = input->queryOutputIdx();
+    unsigned sourceIdx = 0; // JCSMORE - how do I get the connectedInputs output idx queryOutputIdx();
 
     bool inputOrdered = queryInput(idx)->isInputOrdered(consumerOrdered);
     //Note, numStrands == 1 is an explicit request to disable threading

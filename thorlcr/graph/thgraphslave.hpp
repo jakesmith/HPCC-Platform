@@ -56,6 +56,7 @@ protected:
     bool optUnordered = false; // is the output specified as unordered?
     Owned<IStrandJunction> junction;
     unsigned outputIdx = 0; // for IThorDataLinkExt
+    IEngineRowStream *singleOutput;
 
     ActivityTimeAccumulator totalCycles;
     rowcount_t count = 0, icount = 0;
@@ -120,7 +121,9 @@ protected:
         return icount;
     }
 public:
-    IMPLEMENT_IINTERFACE;
+//    IMPLEMENT_IINTERFACE;
+    virtual void Link(void) const;
+    virtual bool Release(void) const;
 
     CSlaveActivity(CGraphElementBase *container);
     ~CSlaveActivity();
@@ -140,7 +143,7 @@ public:
     void startInput(IThorDataLink *itdl, const char *extra=NULL);
     void stopInput(IThorDataLink *itdl, const char *extra=NULL);
     void stopInput(IRowStream *stream, const char *extra=NULL);
-
+    void setSingleOutput(IEngineRowStream *output) { singleOutput = output; }
     ActivityTimeAccumulator &getTotalCyclesRef() { return totalCycles; }
     unsigned __int64 queryLocalCycles() const;
     virtual unsigned __int64 queryTotalCycles() const; // some acts. may calculate accumulated total from inputs (e.g. splitter)
@@ -168,7 +171,7 @@ public:
     }
     virtual void debugRequest(MemoryBuffer &msg) override;
 
-    virtual IEngineRowStream *queryStream() { return inputStream; }
+    virtual IEngineRowStream *queryStream() { return singleOutput; }
 
 // IThorDataLinkExt
     virtual void setOutputIdx(unsigned idx) override { outputIdx = idx; }

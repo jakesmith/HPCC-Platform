@@ -77,10 +77,8 @@ class CThorDataLink : public CSimpleInterfaceOf<IEngineRowStream>
     bool optUnstableInput = false;  // is the input forced to unordered?
     bool optUnordered = false; // is the output specified as unordered?
 
-protected:
-
 public:
-    CThorDataLink(CSlaveActivity *_owner) : owner(_owner) { }
+    CThorDataLink(CSlaveActivity *_owner) : owner(_owner) { owner->setSingleOutput(this); }
 
 // IEngineRowStream
     virtual void resetEOF() override { throwUnexpected(); }

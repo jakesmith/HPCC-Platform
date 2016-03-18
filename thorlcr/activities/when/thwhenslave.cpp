@@ -70,9 +70,6 @@ public:
 
 class CWhenSlaveActivity : public CSlaveActivity, public CDependencyExecutorSlaveActivity, public CThorDataLink
 {
-protected:
-    Owned<IThorDataLink> input;
-
 public:
     IMPLEMENT_IINTERFACE_USING(CDependencyExecutorSlaveActivity);
 
@@ -91,7 +88,6 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input.set(inputs.item(0));
         startInput(input);
         dataLinkStart();
     }

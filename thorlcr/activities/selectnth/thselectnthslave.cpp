@@ -24,7 +24,6 @@ class CSelectNthSlaveActivity : public CSlaveActivity, public CThorDataLink, imp
     bool first, isLocal, seenNth;
     rowcount_t lookaheadN, N, startN;
     bool createDefaultIfFail;
-    Owned<IThorDataLink> input;
     IHThorSelectNArg *helper;
     SpinLock spin;
 
@@ -93,8 +92,6 @@ public:
             input.setown(createDataLinkSmartBuffer(this, inputs.item(0), SELECTN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, rowN, this, false, &container.queryJob().queryIDiskUsage()));
             inputStream = input->queryStream();
         }
-        else
-            input.set(inputs.item(0));
         try
         {
             startInput(input);

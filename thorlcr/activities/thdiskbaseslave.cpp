@@ -300,6 +300,7 @@ void CDiskWriteSlaveActivityBase::open()
     if (dlfn.isExternal() && !firstNode())
     {
         input.setown(createDataLinkSmartBuffer(this, inputs.item(0), PROCESS_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, false, &container.queryJob().queryIDiskUsage()));
+        inputStream = input->queryStream();
         startInput(input);
         if (!rfsQueryParallel)
         {
@@ -314,10 +315,7 @@ void CDiskWriteSlaveActivityBase::open()
         }
     }
     else
-    {
-        input.set(inputs.item(0));
         startInput(input);
-    }
     processed = THORDATALINK_STARTED;
 
     bool extend = 0 != (diskHelperBase->getFlags() & TDWextend);

@@ -26,7 +26,6 @@ class IterateSlaveActivityBase : public CSlaveActivity, public CThorDataLink
 {
     OwnedConstThorRow first;
 protected:
-    Owned<IThorDataLink> input;
     Owned<IRowInterfaces> inrowif;
     bool global;
     bool eof, nextPut;
@@ -84,8 +83,6 @@ public:
             input.setown(createDataLinkSmartBuffer(this, inputs.item(0),ITERATE_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(this),false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage())); // only allow spill if input can stall
             inputStream = input->queryStream();
         }
-        else
-            input.set(inputs.item(0));
         try
         { 
             startInput(input); 
@@ -102,7 +99,6 @@ public:
         if (global)
             putNext(NULL);
         stopInput(input);
-        input.clear();
         dataLinkStop();
     }
     virtual bool isGrouped() { return false; }
