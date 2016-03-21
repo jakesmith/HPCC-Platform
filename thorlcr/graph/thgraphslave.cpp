@@ -137,42 +137,56 @@ CSlaveActivity::~CSlaveActivity()
     ActPrintLog("DESTROYED");
 }
 
+void CSlaveActivity::setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
+{
+    CActivityBase::setInput(index, inputActivity, inputOutIdx);
+    Linked<IThorDataLink> outLink;
+    if (!inputActivity)
+    {
+        Owned<CActivityBase> nullAct = container.factory(TAKnull);
+
+        outLink.set(((CSlaveActivity *)(nullAct.get()))->queryOutput(0)); // NB inputOutIdx irrelevant, null has single 'fake' output
+        nullAct->releaseIOs(); // normally done as graph winds up, clear now to avoid circular dependencies with outputs
+    }
+    else
+        outLink.set(((CSlaveActivity *)inputActivity)->queryOutput(inputOutIdx));
+    assertex(outLink);
+
+    while (inputs.ordinality()<=index)
+    {
+    	inputs.append(NULL);
+    	inputSourceIdxs.append(NotFound);
+    }
+    inputs.replace(outLink.getLink(), index);
+    if (!input)
+    {
+    	input.set(outLink);
+    	inputSourceIdx = inputOutIdx;
+    }
+    inputSourceIdxs.replace(inputOutIdx, index);
+}
+
 void CSlaveActivity::connectInputStreams(bool consumerOrdered)
 {
-    ForEachItemIn(index, queryContainer().connectedInputs)
+    ForEachItemIn(index, inputs)
     {
-        CIOConnection *io = queryContainer().connectedInputs.item(index);
-        if (io)
-        {
-            CSlaveActivity *inputActivity = (CSlaveActivity *)io->activity->queryActivity(true);
-            unsigned inputOutIdx = io->index;
-            Linked<IThorDataLink> outLink;
-            if (!inputActivity)
-            {
-                Owned<CActivityBase> nullAct = container.factory(TAKnull);
-                outLink.set(((CSlaveActivity *)(nullAct.get()))->queryOutput(0)); // NB inputOutIdx irrelevant, null has single 'fake' output
-                nullAct->releaseIOs(); // normally done as graph winds up, clear now to avoid circular dependencies with outputs
-            }
-            else
-                outLink.set(inputActivity->queryOutput(inputOutIdx));
-
-            setInput(index, outLink.getClear(), inputOutIdx, consumerOrdered);
-        }
+		IThorDataLink *_input = inputs.item(index);
+		if (_input)
+		{
+			unsigned inputOutIdx = inputSourceIdxs.item(index);
+			setInputStream(index, _input, inputOutIdx, consumerOrdered);
+		}
     }
 }
 
-void CSlaveActivity::setInput(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered)
+void CSlaveActivity::setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered)
 {
-    IEngineRowStream *_inputStream = connectSingleStream(*this, _input, inputOutIdx, junction, _input->isInputOrdered(consumerOrdered));
-    if (!input)
-    {
-        input.set(_input);
-        inputStream = _inputStream;
+	if (input) // will be none if source act.
+	{
+		inputStream = connectSingleStream(*this, _input, inputOutIdx, junction, _input->isInputOrdered(consumerOrdered));
+		while (inputStreams.ordinality()<=index) inputStreams.append(NULL);
+		inputStreams.replace(LINK(inputStream), index);
     }
-    while (inputs.ordinality()<=index) inputs.append(NULL);
-    inputs.replace(_input, index);
-    while (inputStreams.ordinality()<=index) inputStreams.append(NULL);
-    inputStreams.append(LINK(_inputStream));
 }
 
 IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
@@ -184,7 +198,7 @@ IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsig
     connectInputStreams(inputOrdered);
     // Return a single stream
     // Default activity impl. adds single output as stream
-    streams.append(outputs.item(0)->queryStream());
+    streams.append(outputs.item(0)->querySingleOutput());
     return NULL;
 }
 
@@ -457,9 +471,8 @@ IStrandJunction *CThorStrandedActivity::getOutputStreams(CActivityBase &activity
     assertex(strands.empty());
     //CSlaveActivity::connectDependencies();
 
-    unsigned sourceIdx = 0; // JCSMORE - how do I get the connectedInputs output idx queryOutputIdx();
-
-    bool inputOrdered = queryInput(idx)->isInputOrdered(consumerOrdered);
+    // JCSMORE these may be wrong if this is a source activity
+    bool inputOrdered = input ? input->isInputOrdered(consumerOrdered) : isInputOrdered(consumerOrdered);
     //Note, numStrands == 1 is an explicit request to disable threading
     if (consumerOptions && (consumerOptions->numStrands != 1) && (strandOptions.numStrands != 1))
     {
@@ -481,13 +494,13 @@ IStrandJunction *CThorStrandedActivity::getOutputStreams(CActivityBase &activity
         if (strandOptions.numStrands == 1)
         {
             // 1 means explicitly requested single-strand.
-            IEngineRowStream *instream = connectSingleStream(activity, input, sourceIdx, junction, inputOrdered);
+            IEngineRowStream *instream = connectSingleStream(activity, input, inputSourceIdx, junction, inputOrdered);
             strands.append(*createStrandProcessor(instream));
         }
         else
         {
             PointerArrayOf<IEngineRowStream> instreams;
-            recombiner.setown(input->getOutputStreams(activity, sourceIdx, instreams, &strandOptions, inputOrdered));
+            recombiner.setown(input->getOutputStreams(activity, inputSourceIdx, instreams, &strandOptions, inputOrdered));
             if ((instreams.length() == 1) && (strandOptions.numStrands != 0))  // 0 means did not specify - we should use the strands that our upstream provides
             {
                 assertex(recombiner == NULL);
@@ -800,7 +813,10 @@ void CSlaveGraph::start()
 void CSlaveGraph::connect()
 {
     CriticalBlock b(progressCrit);
-    Owned<IThorActivityIterator> iter = getSinkIterator();
+    Owned<IThorActivityIterator> iter = getConnectedIterator();
+    ForEach(*iter)
+        iter->query().doconnect();
+    iter.setown(getSinkIterator());
     ForEach(*iter)
     {
         CGraphElementBase &container = iter->query();

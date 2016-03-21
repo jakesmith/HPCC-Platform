@@ -367,10 +367,12 @@ public:
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        if (dohere) {
+        if (dohere)
+        {
             OwnedConstThorRow row;
             row.set(helper->next()); // needs linking allegedly
-            if (row.get()) {
+            if (row.get())
+            {
                 dataLinkIncrement();
                 return row.getClear();
             }

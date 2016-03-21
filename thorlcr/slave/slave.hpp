@@ -120,6 +120,7 @@ interface IThorDataLink : extends IInterface
     virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
 
 // to support non-stranded activities
+    virtual IEngineRowStream *querySingleOutput() = 0;
     virtual IEngineRowStream *queryStream() = 0; // should be const really, but some IEngineRowStream members are not..
 };
 
@@ -153,7 +154,6 @@ interface IThorSlaveActivity
     virtual void start() = 0;
     virtual void stop() = 0;
     virtual void reset() = 0;
-    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) = 0;
 };
 #ifdef _MSC_VER
 #pragma warning (pop)

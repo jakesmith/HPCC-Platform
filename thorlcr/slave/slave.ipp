@@ -66,7 +66,7 @@ public:
     IInputSteppingMeta *inputStepping;
 
     CThorSteppable(CSlaveActivity *_activity) { stepCompare = NULL; inputStepping = NULL; }
-    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered)
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered)
     {
         if (0 == index && input)
         {

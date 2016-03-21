@@ -324,6 +324,11 @@ bool isDiskInput(ThorActivityKind kind)
     }
 }
 
+void CIOConnection::connect(unsigned which, CActivityBase *destActivity)
+{
+    destActivity->setInput(which, activity->queryActivity(true), index);
+}
+
 /////////////////////////////////// 
 CGraphElementBase *createGraphElement(IPropertyTree &node, CGraphBase &owner, CGraphBase *resultsGraph)
 {
@@ -496,6 +501,16 @@ void CGraphElementBase::abort(IException *e)
     ForEach (*graphIter)
     {
         graphIter->query().abort(e);
+    }
+}
+
+void CGraphElementBase::doconnect()
+{
+    ForEachItemIn(i, connectedInputs)
+    {
+        CIOConnection *io = connectedInputs.item(i);
+        if (io)
+            io->connect(i, queryActivity());
     }
 }
 

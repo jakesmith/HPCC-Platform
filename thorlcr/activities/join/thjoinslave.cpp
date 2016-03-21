@@ -677,10 +677,10 @@ public:
         processor.queryResetEOF(); 
     }
 // steppable
-    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CThorNarySlaveActivity::setInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
+        CThorNarySlaveActivity::setInputStream(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInputStream(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };

@@ -158,10 +158,10 @@ public:
         inputStream->resetEOF();
     }
 // steppable
-    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CFilterSlaveActivityBase::setInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
+        CFilterSlaveActivityBase::setInputStream(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInputStream(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };
@@ -399,10 +399,10 @@ public:
         dataLinkStop();
     }
 // steppable
-    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CFilterSlaveActivityBase::setInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
+        CFilterSlaveActivityBase::setInputStream(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInputStream(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };

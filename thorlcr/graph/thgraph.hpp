@@ -196,6 +196,7 @@ class CIOConnection : public CInterface
 public:
     CGraphElementBase *activity;
     unsigned index;
+    void connect(unsigned which, CActivityBase *activity);
 
     CIOConnection(CGraphElementBase *_activity, unsigned _index) : activity(_activity), index(_index) { }
 };
@@ -274,6 +275,7 @@ public:
     CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml);
     ~CGraphElementBase();
 
+    void doconnect();
     void addInput(unsigned input, CGraphElementBase *inputAct, unsigned inputOutIdx);
     void clearConnections();
     virtual void connectInput(unsigned which, CGraphElementBase *input, unsigned inputOutIdx);
@@ -1031,6 +1033,7 @@ public:
     bool appendRowXml(StringBuffer & target, IOutputMetaData & meta, const void * row) const;
     void logRow(const char * prefix, IOutputMetaData & meta, const void * row);
 
+    virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx) { }
     virtual void clearConnections() { }
     virtual void releaseIOs() { }
     virtual void preStart(size32_t parentExtractSz, const byte *parentExtract) { }

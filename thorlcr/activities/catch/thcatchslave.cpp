@@ -147,10 +147,10 @@ public:
         calcMetaInfoSize(info,inputs.item(0));
     }
 // steppable
-    virtual void setInput(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CCatchSlaveActivityBase::setInput(index, input, inputOutIdx, consumerOrdered);
-        CThorSteppable::setInput(index, input, inputOutIdx, consumerOrdered);
+        CCatchSlaveActivityBase::setInputStream(index, input, inputOutIdx, consumerOrdered);
+        CThorSteppable::setInputStream(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
 };

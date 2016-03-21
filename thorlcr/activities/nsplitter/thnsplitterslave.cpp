@@ -200,6 +200,7 @@ class NSplitterSlaveActivity : public CSlaveActivity, implements ISharedSmartBuf
         virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
 
     // to support non-stranded activities
+        virtual IEngineRowStream *querySingleOutput() { return &stream; }
         virtual IEngineRowStream *queryStream() { return &stream; }
     };
 
