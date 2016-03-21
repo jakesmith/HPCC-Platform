@@ -23,7 +23,7 @@
 #include "thormisc.hpp"
 
 
-class CLimitSlaveActivityBase : public CSlaveActivity, public CThorDataLink
+class CLimitSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
 {
 protected:
     rowcount_t rowLimit;
@@ -36,14 +36,14 @@ protected:
         if (!stopped) {
             stopped = true;
             sendResult(c);
-            CSlaveActivity::stopInput(input);
+            CSlaveActivity::stopInput(inputStream);
         }
     }
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CLimitSlaveActivityBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CLimitSlaveActivityBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         helper = (IHThorLimitArg *)queryHelper();
         input = NULL;       

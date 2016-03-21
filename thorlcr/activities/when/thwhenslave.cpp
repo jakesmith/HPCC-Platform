@@ -68,12 +68,12 @@ public:
 };
 
 
-class CWhenSlaveActivity : public CSlaveActivity, public CDependencyExecutorSlaveActivity, public CThorDataLink
+class CWhenSlaveActivity : public CSlaveActivity, public CDependencyExecutorSlaveActivity, public CThorSingleOutput
 {
 public:
     IMPLEMENT_IINTERFACE_USING(CDependencyExecutorSlaveActivity);
 
-    CWhenSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CDependencyExecutorSlaveActivity(this), CThorDataLink(this)
+    CWhenSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CDependencyExecutorSlaveActivity(this), CThorSingleOutput(this)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -93,7 +93,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         if (!executeDependencies(abortSoon ? WhenFailureId : WhenSuccessId))
             abortSoon = true;
         dataLinkStop();

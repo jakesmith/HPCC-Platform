@@ -200,6 +200,7 @@ public:
 
     virtual IEngineRowStream *queryStream() override { return this; }
     virtual IEngineRowStream *querySingleOutput() override { return this; }
+    virtual void setSingleOutput(IEngineRowStream *stream) { throwUnexpected(); }
 
 // IEngineRowStream
     virtual void resetEOF() override { inputStream->resetEOF(); }

@@ -21,7 +21,7 @@
 #include "thgroupiterateslave.ipp"
 #include "thactivityutil.ipp"
 
-class GroupIterateSlaveActivity : public CSlaveActivity, public CThorDataLink
+class GroupIterateSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
 
 private:
@@ -35,7 +35,7 @@ private:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    GroupIterateSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    GroupIterateSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -58,7 +58,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -113,7 +113,7 @@ public:
 };
 
 
-class GroupProcessSlaveActivity : public CSlaveActivity, public CThorDataLink
+class GroupProcessSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorProcessArg * helper;
     rowcount_t count;
@@ -128,7 +128,7 @@ class GroupProcessSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    GroupProcessSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    GroupProcessSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -153,7 +153,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()

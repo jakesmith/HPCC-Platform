@@ -17,7 +17,7 @@
 
 #include "thfilterslave.ipp"
 
-class CFilterSlaveActivityBase : public CSlaveActivity, public CThorDataLink
+class CFilterSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
 {
 protected:
     bool anyThisGroup;
@@ -27,7 +27,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     explicit CFilterSlaveActivityBase(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         input = NULL;
     }
@@ -44,7 +44,7 @@ public:
     }
     virtual void stop() override
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     virtual const void *nextRow() override =0;
@@ -395,7 +395,7 @@ public:
     void stop()
     {
         groupStream.clear();
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
 // steppable

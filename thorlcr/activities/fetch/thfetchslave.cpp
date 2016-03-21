@@ -264,7 +264,7 @@ IFetchStream *createFetchStream(CSlaveActivity &owner, IRowInterfaces *keyRowIf,
     return new CFetchStream(owner, keyRowIf, fetchRowIf, abortSoon, parts, offsetCount, offsetMapSz, offsetMap, iFetchHandler, tag, eexp);
 }
 
-class CFetchSlaveBase : public CSlaveActivity, public CThorDataLink, implements IFetchHandler
+class CFetchSlaveBase : public CSlaveActivity, public CThorSingleOutput, implements IFetchHandler
 {
     IRowStream *fetchStreamOut;
     unsigned maxKeyRecSize;
@@ -289,7 +289,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CFetchSlaveBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CFetchSlaveBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         fetchStream = NULL;
         keyIn = NULL;

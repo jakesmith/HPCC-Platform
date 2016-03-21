@@ -22,7 +22,7 @@
 #include "commonext.hpp"
 #include "slave.ipp"
 
-class CCatchSlaveActivityBase : public CSlaveActivity, public CThorDataLink
+class CCatchSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
 {
     typedef CSlaveActivity PARENT;
 protected:
@@ -32,7 +32,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CCatchSlaveActivityBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CCatchSlaveActivityBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)

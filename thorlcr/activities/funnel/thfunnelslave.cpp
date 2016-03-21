@@ -277,7 +277,7 @@ IRowStream *createParallelFunnel(CActivityBase &activity, IThorDataLink **instre
 
 //class CParallelFunnel;
 //interface IBitSet;
-class FunnelSlaveActivity : public CSlaveActivity, public CThorDataLink
+class FunnelSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IRowStream *current;
     unsigned currentMarker;
@@ -289,7 +289,7 @@ class FunnelSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    FunnelSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    FunnelSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         grouped = false;
         eog = NULL;
@@ -477,7 +477,7 @@ public:
 // CombineSlaveActivity
 //
 
-class CombineSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CombineSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorCombineArg *helper;
     bool grouped;
@@ -490,7 +490,7 @@ public:
 
 
     CombineSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this), rows(*this, this)
+        : CSlaveActivity(_container), CThorSingleOutput(this), rows(*this, this)
     {
         grouped = container.queryGrouped();
     }
@@ -590,7 +590,7 @@ public:
 /////
 
 
-class RegroupSlaveActivity : public CSlaveActivity, public CThorDataLink
+class RegroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorRegroupArg *helper;
     bool grouped;
@@ -599,7 +599,7 @@ class RegroupSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    RegroupSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    RegroupSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         grouped = container.queryGrouped();
     }
@@ -669,7 +669,7 @@ public:
 
 /////
 
-class NonEmptySlaveActivity : public CSlaveActivity, public CThorDataLink
+class NonEmptySlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorNonEmptyArg *helper;
     bool eogNext, eoi, anyThisGroup, anyThisInput;
@@ -714,7 +714,7 @@ class NonEmptySlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    NonEmptySlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    NonEmptySlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         helper = (IHThorNonEmptyArg *) queryHelper();
         sendReceiving = false;
@@ -802,7 +802,7 @@ public:
 };
 
 
-class CNWaySelectActivity : public CSlaveActivity, public CThorDataLink, public CThorSteppable
+class CNWaySelectActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
 {
     IHThorNWaySelectArg *helper;
     IThorDataLink *selectedInputITDL = NULL;
@@ -810,7 +810,7 @@ class CNWaySelectActivity : public CSlaveActivity, public CThorDataLink, public 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CNWaySelectActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this), CThorSteppable(this)
+    CNWaySelectActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this), CThorSteppable(this)
     {
         helper = (IHThorNWaySelectArg *)queryHelper();
     }
@@ -926,7 +926,7 @@ public:
 };
 
 
-class CThorNWayInputSlaveActivity : public CSlaveActivity, public CThorDataLink, implements IThorNWayInput
+class CThorNWayInputSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IThorNWayInput
 {
     IHThorNWayInputArg *helper;
     PointerArrayOf<IThorDataLink> selectedInputs;
@@ -935,7 +935,7 @@ class CThorNWayInputSlaveActivity : public CSlaveActivity, public CThorDataLink,
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CThorNWayInputSlaveActivity(CGraphElementBase *container) : CSlaveActivity(container), CThorDataLink(this)
+    CThorNWayInputSlaveActivity(CGraphElementBase *container) : CSlaveActivity(container), CThorSingleOutput(this)
     {
         helper = (IHThorNWayInputArg *)queryHelper();
         grouped = helper->queryOutputMeta()->isGrouped(); // JCSMORE should match graph info, i.e. container.queryGrouped()

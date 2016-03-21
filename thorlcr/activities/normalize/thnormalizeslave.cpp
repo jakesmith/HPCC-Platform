@@ -25,7 +25,7 @@
 #include "thexception.hpp"
 
 
-class NormalizeSlaveActivity : public CSlaveActivity, public CThorDataLink
+class NormalizeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorNormalizeArg * helper;
     IThorDataLink *input;
@@ -41,7 +41,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     NormalizeSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -62,7 +62,7 @@ public:
     }
     virtual void stop()
     { 
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -108,7 +108,7 @@ public:
 ////////////////////
 
 
-class CNormalizeChildSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CNormalizeChildSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorNormalizeChildArg *helper;
     INormalizeChildIterator *cursor;
@@ -123,7 +123,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CNormalizeChildSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     { 
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
@@ -146,7 +146,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -188,7 +188,7 @@ public:
     }
 };
 
-class CNormalizeLinkedChildSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CNormalizeLinkedChildSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorNormalizeLinkedChildArg *helper;
     IThorDataLink *input;
@@ -224,7 +224,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CNormalizeLinkedChildSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     { 
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
@@ -243,7 +243,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()

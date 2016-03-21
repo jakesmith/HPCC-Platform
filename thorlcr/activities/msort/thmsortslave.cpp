@@ -36,7 +36,7 @@
 //
 
 
-class MSortSlaveActivity : public CSlaveActivity, public CThorDataLink
+class MSortSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IThorDataLink *input;
     Owned<IRowStream> output;
@@ -59,7 +59,7 @@ class MSortSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    MSortSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this), spillStats(spillStatistics)
+    MSortSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this), spillStats(spillStatistics)
     {
         input = NULL;
         portbase = 0;
@@ -120,7 +120,7 @@ public:
                 isUnstable(),
                 abortSoon,
                 auxrowif);
-            stopInput(input);
+            stopInput(inputStream);
             input = NULL;
             if (abortSoon)
             {
@@ -160,7 +160,7 @@ public:
         barrier->wait(false);
         ActPrintLog("SORT barrier.2 raised");
         if (input)
-            stopInput(input);
+            stopInput(inputStream);
         sorter->stopMerge();
         ActPrintLog("SORT waiting for merge");
         dataLinkStop();

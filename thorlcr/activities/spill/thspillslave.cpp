@@ -28,7 +28,7 @@
 #include "thactivityutil.ipp"
 #include "thspillslave.ipp"
 
-class SpillSlaveActivity : public CSlaveActivity, public CThorDataLink
+class SpillSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IThorDataLink *input;
     StringBuffer fileName;
@@ -45,7 +45,7 @@ class SpillSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    SpillSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    SpillSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         compress = false;
         grouped = false;
@@ -171,7 +171,7 @@ public:
     {
         readRest();
         close();
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
 

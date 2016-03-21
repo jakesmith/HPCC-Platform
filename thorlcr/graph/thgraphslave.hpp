@@ -146,7 +146,6 @@ public:
     void startInput(IThorDataLink *itdl, const char *extra=NULL);
     void stopInput(IThorDataLink *itdl, const char *extra=NULL);
     void stopInput(IRowStream *stream, const char *extra=NULL);
-    void setSingleOutput(IEngineRowStream *output) { singleOutput = output; }
     ActivityTimeAccumulator &getTotalCyclesRef() { return totalCycles; }
     unsigned __int64 queryLocalCycles() const;
     virtual unsigned __int64 queryTotalCycles() const; // some acts. may calculate accumulated total from inputs (e.g. splitter)
@@ -176,6 +175,7 @@ public:
 
     virtual IEngineRowStream *queryStream() { return inputStream; }
     virtual IEngineRowStream *querySingleOutput() override { return singleOutput; }
+    virtual void setSingleOutput(IEngineRowStream *stream) override { singleOutput = stream; }
 
 // IThorDataLinkExt
     virtual void setOutputIdx(unsigned idx) override { outputIdx = idx; }

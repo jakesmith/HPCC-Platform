@@ -22,7 +22,7 @@
 #include "thactivityutil.ipp"
 #include "eclrtl.hpp"
 
-class CXmlParseSlaveActivity : public CSlaveActivity, public CThorDataLink, implements IXMLSelect
+class CXmlParseSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IXMLSelect
 {
     IHThorXmlParseArg *helper;
     bool eogNext;
@@ -37,7 +37,7 @@ class CXmlParseSlaveActivity : public CSlaveActivity, public CThorDataLink, impl
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CXmlParseSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CXmlParseSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         searchStr = NULL;
         input = NULL;

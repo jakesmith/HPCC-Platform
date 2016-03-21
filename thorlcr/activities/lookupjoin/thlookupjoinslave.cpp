@@ -756,7 +756,7 @@ struct HtEntry { rowidx_t index, count; };
  * and base common functionality for all and lookup varieties
  */
 template <class HTHELPER, class HELPER>
-class CInMemJoinBase : public CSlaveActivity, public CThorDataLink, public CAllOrLookupHelper<HELPER>, implements ISmartBufferNotify, implements IBCastReceive
+class CInMemJoinBase : public CSlaveActivity, public CThorSingleOutput, public CAllOrLookupHelper<HELPER>, implements ISmartBufferNotify, implements IBCastReceive
 {
     Semaphore leftstartsem;
     Owned<IException> leftexception;
@@ -1236,7 +1236,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CInMemJoinBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this),
+    CInMemJoinBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this),
         HELPERBASE((HELPER *)queryHelper()), rhs(*this, NULL)
     {
         gotRHS = false;

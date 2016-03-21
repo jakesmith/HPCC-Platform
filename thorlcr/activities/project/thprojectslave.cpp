@@ -116,7 +116,7 @@ public:
 };
 
 
-class CPrefetchProjectSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CPrefetchProjectSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorPrefetchProjectArg *helper;
     rowcount_t numProcessedLastGroup;
@@ -255,7 +255,7 @@ class CPrefetchProjectSlaveActivity : public CSlaveActivity, public CThorDataLin
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CPrefetchProjectSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this), prefetcher(*this)
+    CPrefetchProjectSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this), prefetcher(*this)
     {
         helper = (IHThorPrefetchProjectArg *) queryHelper();
         parallel = 0 != (helper->getFlags() & PPFparallel);
@@ -285,7 +285,7 @@ public:
     {
         if (parallel)
             prefetcher.stop();
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()

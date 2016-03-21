@@ -21,12 +21,12 @@
 #include "thbufdef.hpp"
 #include "thpullslave.ipp"
 
-class PullSlaveActivity : public CSlaveActivity, public CThorDataLink
+class PullSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    PullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    PullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
     }
     ~PullSlaveActivity() 
@@ -50,7 +50,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
 

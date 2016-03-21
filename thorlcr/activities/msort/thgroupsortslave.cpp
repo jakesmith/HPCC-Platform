@@ -30,7 +30,7 @@
 #include "thactivityutil.ipp"
 
 
-class CLocalSortSlaveActivity : public CSlaveActivity, public CThorDataLink 
+class CLocalSortSlaveActivity : public CSlaveActivity, public CThorSingleOutput 
 {
     IThorDataLink *input;
     IHThorSortArg *helper;
@@ -45,7 +45,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CLocalSortSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this), spillStats(spillStatistics)
+        : CSlaveActivity(_container), CThorSingleOutput(this), spillStats(spillStatistics)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -85,7 +85,7 @@ public:
     virtual void stop()
     {
         out.clear();
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
 
         //Critical block
@@ -127,7 +127,7 @@ public:
 
 // Sorted 
 
-class CSortedSlaveActivity : public CSlaveActivity, public CThorDataLink, public CThorSteppable
+class CSortedSlaveActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
 {
     IThorDataLink *input;
     IHThorSortedArg *helper;
@@ -138,7 +138,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CSortedSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this), CThorSteppable(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this), CThorSteppable(this)
     {
         helper = (IHThorSortedArg *)queryHelper();
         icompare = helper->queryCompare();
@@ -158,7 +158,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()

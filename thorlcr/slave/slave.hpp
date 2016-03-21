@@ -77,18 +77,15 @@ class CThorStrandOptions
 {
     // Typically set from hints, common to many stranded activities
 public:
-    explicit CThorStrandOptions(IPropertyTree &_graphNode)
+    explicit CThorStrandOptions(CGraphElementBase &container)
     {
         //PARALLEL(1) can be used to explicitly disable parallel processing.
-        numStrands = _graphNode.getPropInt("att[@name='parallel']/@value", 0);
+        numStrands = container.queryXGMML().getPropInt("att[@name='parallel']/@value", 0);
         if ((numStrands == NotFound) || (numStrands > MAX_SENSIBLE_STRANDS))
             numStrands = getAffinityCpus();
-        blockSize = _graphNode.getPropInt("hint[@name='strandblocksize']/@value", 0);
-    }
-    CThorStrandOptions(CGraphElementBase &container)
-    {
-        blockSize = container.getOptInt("strandBlockSize");
-        numStrands = container.getOptInt("forceNumStrands");
+        if (0 == numStrands)
+        	numStrands = container.getOptInt("forceNumStrands");
+ 		blockSize = container.getOptInt("strandBlockSize");
     }
 public:
     unsigned numStrands = 0; // if 1 it forces single-stranded operations.  (Useful for testing.)
@@ -122,6 +119,7 @@ interface IThorDataLink : extends IInterface
 // to support non-stranded activities
     virtual IEngineRowStream *querySingleOutput() = 0;
     virtual IEngineRowStream *queryStream() = 0; // should be const really, but some IEngineRowStream members are not..
+    virtual void setSingleOutput(IEngineRowStream *stream) = 0;
 };
 
 // helper interface. Used by maintainer of output links

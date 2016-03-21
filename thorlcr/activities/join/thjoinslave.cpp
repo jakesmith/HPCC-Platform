@@ -38,7 +38,7 @@
 #define BUFFERSIZE 0x10000
 #define NUMSLAVEPORTS 2     // actually should be num MP tags
 
-class JoinSlaveActivity : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify
+class JoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements ISmartBufferNotify
 {
     Owned<IThorDataLink> leftInput, rightInput;
     Owned<IThorDataLink> secondaryInput, primaryInput;
@@ -137,7 +137,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     JoinSlaveActivity(CGraphElementBase *_container, bool local)
-        : CSlaveActivity(_container), CThorDataLink(this), spillStats(spillStatistics)
+        : CSlaveActivity(_container), CThorSingleOutput(this), spillStats(spillStatistics)
     {
         islocal = local;
         portbase = 0;
@@ -594,7 +594,7 @@ public:
 //////////////////////
 
 
-class CMergeJoinSlaveBaseActivity : public CThorNarySlaveActivity, public CThorDataLink, public CThorSteppable
+class CMergeJoinSlaveBaseActivity : public CThorNarySlaveActivity, public CThorSingleOutput, public CThorSteppable
 {
     IHThorNWayMergeJoinArg *helper;
     Owned<IEngineRowAllocator> inputAllocator, outputAllocator;
@@ -608,7 +608,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CMergeJoinSlaveBaseActivity(CGraphElementBase *container, CMergeJoinProcessor &_processor) : CThorNarySlaveActivity(container), CThorDataLink(this), CThorSteppable(this), processor(_processor)
+    CMergeJoinSlaveBaseActivity(CGraphElementBase *container, CMergeJoinProcessor &_processor) : CThorNarySlaveActivity(container), CThorSingleOutput(this), CThorSteppable(this), processor(_processor)
     {
         helper = (IHThorNWayMergeJoinArg *)queryHelper();
         inputAllocator.setown(getRowAllocator(helper->queryInputMeta()));

@@ -145,7 +145,7 @@ public:
     {
         if (processed & THORDATALINK_STARTED)
         {
-            stopInput(input);
+            stopInput(inputStream);
             processed |= THORDATALINK_STOPPED;
         }
 

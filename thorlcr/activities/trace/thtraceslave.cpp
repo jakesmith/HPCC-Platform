@@ -20,7 +20,7 @@
 #include "slave.ipp"
 #include "thactivityutil.ipp"
 
-class CTraceSlaveActivity : public CSlaveActivity, public CThorDataLink, public CThorSteppable
+class CTraceSlaveActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
 {
     IThorDataLink *input;
     IHThorTraceArg *helper;
@@ -34,7 +34,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CTraceSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this), CThorSteppable(this),
+        : CSlaveActivity(_container), CThorSingleOutput(this), CThorSteppable(this),
           keepLimit(0), skip(0), sample(0), traceEnabled(false)
     {
         helper = (IHThorTraceArg *) queryHelper();
@@ -69,7 +69,7 @@ public:
     virtual void stop()
     {
         name.clear();
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     void onTrace(const void *row)

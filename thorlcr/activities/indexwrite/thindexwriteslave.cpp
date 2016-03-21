@@ -64,7 +64,7 @@ class IndexWriteSlaveActivity  : public ProcessSlaveActivity, public ISmartBuffe
         if (!inputStopped)
         {
             inputStopped = true;
-            stopInput(input);
+            stopInput(inputStream);
         }
     }
     void init()

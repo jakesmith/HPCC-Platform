@@ -31,7 +31,7 @@
 
 #define NUMSLAVEPORTS 2     // actually should be num MP tags
 
-class SelfJoinSlaveActivity : public CSlaveActivity, public CThorDataLink
+class SelfJoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
 private:
     Owned<IThorSorter> sorter;
@@ -66,7 +66,7 @@ private:
         Owned<IThorRowLoader> iLoader = createThorRowLoader(*this, ::queryRowInterfaces(input), compare, isUnstable() ? stableSort_none : stableSort_earlyAlloc, rc_mixed, SPILL_PRIORITY_SELFJOIN);
         Owned<IRowStream> rs = iLoader->load(inputStream, abortSoon);
         mergeStats(spillStats, iLoader);  // Not sure of the best policy if rs spills later on.
-        stopInput(input);
+        stopInput(inputStream);
         return rs.getClear();
     }
 
@@ -76,7 +76,7 @@ private:
         ActPrintLog("SELFJOIN: Performing global self-join");
 #endif
         sorter->Gather(::queryRowInterfaces(input), inputStream, compare, NULL, NULL, keyserializer, NULL, false, isUnstable(), abortSoon, NULL);
-        stopInput(input);
+        stopInput(inputStream);
         if(abortSoon)
         {
             barrier->cancel();
@@ -100,7 +100,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     SelfJoinSlaveActivity(CGraphElementBase *_container, bool _isLocal, bool _isLightweight)
-        : CSlaveActivity(_container), CThorDataLink(this), spillStats(spillStatistics)
+        : CSlaveActivity(_container), CThorSingleOutput(this), spillStats(spillStatistics)
     {
         isLocal = _isLocal||_isLightweight;
         isLightweight = _isLightweight;
@@ -188,7 +188,7 @@ public:
     virtual void stop()
     {
         if (input)
-            stopInput(input);
+            stopInput(inputStream);
         if(!isLocal)
         {
             barrier->wait(false);

@@ -20,7 +20,7 @@
 #include "thgroupslave.ipp"
 
 
-class GroupSlaveActivity : public CSlaveActivity, public CThorDataLink
+class GroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorGroupArg * helper;
     bool eogNext, prevEog, eof;
@@ -53,7 +53,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     GroupSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         helper = static_cast <IHThorGroupArg *> (queryHelper());
         rolloverEnabled = false;
@@ -126,7 +126,7 @@ public:
     {
         if (nextNodeStream)
             nextNodeStream->stop();
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     virtual void kill()

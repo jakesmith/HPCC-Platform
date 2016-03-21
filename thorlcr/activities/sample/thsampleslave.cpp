@@ -18,7 +18,7 @@
 
 #include "thsampleslave.ipp"
 
-class SampleSlaveActivity : public CSlaveActivity, public CThorDataLink
+class SampleSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorSampleArg * helper;
     unsigned numSamples, whichSample, numToSkip;
@@ -29,7 +29,7 @@ class SampleSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    SampleSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this) { }
+    SampleSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this) { }
 
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
@@ -51,7 +51,7 @@ public:
     virtual void stop()
     {
         dataLinkStop();
-        stopInput(input);
+        stopInput(inputStream);
     }
     CATCH_NEXTROW()
     {

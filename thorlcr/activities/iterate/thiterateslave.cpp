@@ -22,7 +22,7 @@
 
 #include "thiterateslave.ipp"
 
-class IterateSlaveActivityBase : public CSlaveActivity, public CThorDataLink
+class IterateSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
 {
     OwnedConstThorRow first;
 protected:
@@ -33,7 +33,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    IterateSlaveActivityBase(CGraphElementBase *_container, bool _global) : CSlaveActivity(_container), CThorDataLink(this)
+    IterateSlaveActivityBase(CGraphElementBase *_container, bool _global) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         global = _global;
     }
@@ -98,7 +98,7 @@ public:
     {
         if (global)
             putNext(NULL);
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     virtual bool isGrouped() { return false; }
@@ -278,7 +278,7 @@ CActivityBase *createLocalProcessSlave(CGraphElementBase *container)
 }
 
 
-class CChildIteratorSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CChildIteratorSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     // only for toplevel activity 
     IHThorChildIteratorArg * helper;
@@ -288,7 +288,7 @@ class CChildIteratorSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CChildIteratorSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CChildIteratorSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -335,7 +335,7 @@ public:
     }
 };
 
-class CLinkedRawIteratorSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CLinkedRawIteratorSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     // only for toplevel activity 
     IHThorLinkedRawIteratorArg * helper;
@@ -345,7 +345,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CLinkedRawIteratorSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -398,7 +398,7 @@ CActivityBase *createChildIteratorSlave(CGraphElementBase *container)
 }
 
 
-class CStreamedIteratorSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CStreamedIteratorSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorStreamedIteratorArg *helper;
     Owned<IRowStream> rows;
@@ -408,7 +408,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CStreamedIteratorSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     {
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)

@@ -28,7 +28,7 @@
 
 #include "thparseslave.ipp"
 
-class CParseSlaveActivity : public CSlaveActivity, public CThorDataLink, implements IMatchedAction
+class CParseSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IMatchedAction
 {
     IHThorParseArg *helper;
     IThorDataLink *input;
@@ -44,7 +44,7 @@ class CParseSlaveActivity : public CSlaveActivity, public CThorDataLink, impleme
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CParseSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CParseSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         anyThisGroup = false;
         curSearchTextLen = 0;
@@ -75,7 +75,7 @@ public:
     }
     virtual void stop()
     { 
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     void processRecord(const void * in)

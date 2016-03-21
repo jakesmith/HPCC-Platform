@@ -25,7 +25,7 @@
 
 #include "thwuidreadslave.ipp"
 
-class CWuidReadSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CWuidReadSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     Owned<ISerialStream> replyStream;
     CThorStreamDeserializerSource rowSource;
@@ -39,7 +39,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CWuidReadSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         replyTag = queryMPServer().createReplyTag();
         replyStream.setown(createMemoryBufferSerialStream(masterReplyMsg));

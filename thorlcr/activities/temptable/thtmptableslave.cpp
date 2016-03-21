@@ -28,7 +28,7 @@
  * up consuming a lot of rows.
  *
  */
-class CInlineTableSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CInlineTableSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
 private:
     IHThorInlineTableArg * helper;
@@ -40,7 +40,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CInlineTableSlaveActivity(CGraphElementBase *_container)
-    : CSlaveActivity(_container), CThorDataLink(this)
+    : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         helper = NULL;
         startRow = 0;

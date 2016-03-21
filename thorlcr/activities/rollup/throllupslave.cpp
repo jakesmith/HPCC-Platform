@@ -179,7 +179,7 @@ public:
     {
         CriticalBlock block(stopsect);  // can be called async by distribute
         if (input)
-            CSlaveActivity::stopInput(input);
+            CSlaveActivity::stopInput(inputStream);
     }
     virtual void start()
     {
@@ -281,7 +281,7 @@ public:
     }
 };
 
-class CDedupBaseSlaveActivity : public CDedupRollupBaseActivity, public CThorDataLink
+class CDedupBaseSlaveActivity : public CDedupRollupBaseActivity, public CThorSingleOutput
 {
 protected:
     IHThorDedupArg *ddhelper;
@@ -292,7 +292,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CDedupBaseSlaveActivity(CGraphElementBase *_container, bool global, bool groupOp)
-        : CDedupRollupBaseActivity(_container, false, global, groupOp), CThorDataLink(this)
+        : CDedupRollupBaseActivity(_container, false, global, groupOp), CThorSingleOutput(this)
     {
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -457,7 +457,7 @@ public:
     }
 };
 
-class CRollupSlaveActivity : public CDedupRollupBaseActivity, public CThorDataLink
+class CRollupSlaveActivity : public CDedupRollupBaseActivity, public CThorSingleOutput
 {
 private:
     IHThorRollupArg * ruhelper;
@@ -466,7 +466,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CRollupSlaveActivity(CGraphElementBase *_container, bool global, bool groupOp) 
-        : CDedupRollupBaseActivity(_container, true, global, groupOp), CThorDataLink(this)
+        : CDedupRollupBaseActivity(_container, true, global, groupOp), CThorSingleOutput(this)
     {
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -563,7 +563,7 @@ public:
     }
 };
 
-class CRollupGroupSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CRollupGroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHThorRollupGroupArg *helper;
     Owned<IThorRowLoader> groupLoader;
@@ -573,7 +573,7 @@ class CRollupGroupSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CRollupGroupSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this), rows(*this, NULL)
+    CRollupGroupSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this), rows(*this, NULL)
     {
         eoi = false;
         helper = NULL;
@@ -593,7 +593,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()

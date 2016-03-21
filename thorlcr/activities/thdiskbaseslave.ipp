@@ -70,7 +70,7 @@ public:
 
 //////////////////////////////////////////////
 
-void getPartsMetaInfo(ThorDataLinkMetaInfo &metaInfo, CThorDataLink &link, unsigned nparts, IPartDescriptor **partDescs, CDiskPartHandlerBase *partHandler);
+void getPartsMetaInfo(ThorDataLinkMetaInfo &metaInfo, CThorSingleOutput &link, unsigned nparts, IPartDescriptor **partDescs, CDiskPartHandlerBase *partHandler);
 
 //////////////////////////////////////////////
 

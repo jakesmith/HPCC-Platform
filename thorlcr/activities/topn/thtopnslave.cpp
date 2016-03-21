@@ -67,7 +67,7 @@ IRowStream *createFirstNReadSeqVar(IRowStream *input, unsigned limit)
     return new CFirstNReadSeqVar(input, limit);
 }
 
-class TopNSlaveActivity : public CSlaveActivity, public CThorDataLink
+class TopNSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     bool eos, eog, global, grouped, inputStopped;
     ICompare *compare;
@@ -82,7 +82,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     TopNSlaveActivity(CGraphElementBase *_container, bool _global, bool _grouped)
-        : CSlaveActivity(_container), CThorDataLink(this), global(_global), grouped(_grouped), sortedRows(*this, this)
+        : CSlaveActivity(_container), CThorSingleOutput(this), global(_global), grouped(_grouped), sortedRows(*this, this)
     {
         assertex(!(global && grouped));
         eog = eos = false;
@@ -186,7 +186,7 @@ public:
         if (!inputStopped)
         {
             inputStopped = true;
-            stopInput(input);
+            stopInput(inputStream);
         }
     }
 // IThorDataLink

@@ -1938,7 +1938,7 @@ IHashDistributor *createPullHashDistributor(CActivityBase *activity, ICommunicat
 #endif
 
 
-class HashDistributeSlaveBase : public CSlaveActivity, public CThorDataLink, implements IStopInput
+class HashDistributeSlaveBase : public CSlaveActivity, public CThorSingleOutput, implements IStopInput
 {
     IHashDistributor *distributor;
     Owned<IRowStream> out;
@@ -1954,7 +1954,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     HashDistributeSlaveBase(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         eofin = false;
         mptag = TAG_NULL;
@@ -1989,7 +1989,7 @@ public:
         CriticalBlock block(stopsect);  // can be called async by distribute
         if (!inputstopped)
         {
-            CSlaveActivity::stopInput(input);
+            CSlaveActivity::stopInput(inputStream);
             inputstopped = true;
         }
     }
@@ -2772,7 +2772,7 @@ public:
     }
 };
 
-class HashDedupSlaveActivityBase : public CSlaveActivity, public CThorDataLink
+class HashDedupSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
 {
 protected:
     IRowStream *distInput = NULL;
@@ -2826,7 +2826,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     HashDedupSlaveActivityBase(CGraphElementBase *_container, bool _local)
-        : CSlaveActivity(_container), CThorDataLink(this), local(_local)
+        : CSlaveActivity(_container), CThorSingleOutput(this), local(_local)
     {
         initialNumBuckets = 0;
         inputstopped = eos = lastEog = extractKey = local = isVariable = grouped = false;
@@ -3539,7 +3539,7 @@ public:
 //===========================================================================
 
 
-class HashJoinSlaveActivity : public CSlaveActivity, public CThorDataLink, implements IStopInput
+class HashJoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IStopInput
 {
     IThorDataLink *inL;
     IThorDataLink *inR;
@@ -3565,7 +3565,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     HashJoinSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         lhsProgressCount = rhsProgressCount = 0;
         mptag = TAG_NULL;
@@ -3860,7 +3860,7 @@ RowAggregator *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBas
 #pragma warning(push)
 #pragma warning( disable : 4355 ) // 'this' : used in base member initializer list
 #endif
-class CHashAggregateSlave : public CSlaveActivity, public CThorDataLink, implements IHThorRowAggregator
+class CHashAggregateSlave : public CSlaveActivity, public CThorSingleOutput, implements IHThorRowAggregator
 {
     IHThorHashAggregateArg *helper;
     mptag_t mptag;
@@ -3901,7 +3901,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CHashAggregateSlave(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         mptag = TAG_NULL;
         eos = true;
@@ -3938,7 +3938,7 @@ public:
     {
         ActPrintLog("HASHAGGREGATE: stopping");
         localAggTable->reset();
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     virtual void abort()
@@ -3985,7 +3985,7 @@ public:
 #endif
 
 
-class CHashDistributeSlavedActivity : public CSlaveActivity, public CThorDataLink
+class CHashDistributeSlavedActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IHash *ihash;
     unsigned myNode, nodes;
@@ -3993,7 +3993,7 @@ class CHashDistributeSlavedActivity : public CSlaveActivity, public CThorDataLin
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CHashDistributeSlavedActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CHashDistributeSlavedActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         IHThorHashDistributeArg *distribargs = (IHThorHashDistributeArg *)queryHelper();
         ihash = distribargs->queryHash();
@@ -4012,7 +4012,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()

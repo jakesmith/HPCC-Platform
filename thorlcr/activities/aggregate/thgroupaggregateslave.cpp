@@ -17,14 +17,14 @@
 
 #include "thgroupaggregateslave.ipp"
 
-class GroupAggregateSlaveActivity : public CSlaveActivity, public CThorDataLink
+class GroupAggregateSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     bool eof, ungroupedExistsAggregate;
     IHThorAggregateArg * helper;
 
 public:
     GroupAggregateSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     { 
     }
 
@@ -45,7 +45,7 @@ public:
 
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
 

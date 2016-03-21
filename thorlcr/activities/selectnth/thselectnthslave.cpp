@@ -19,7 +19,7 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class CSelectNthSlaveActivity : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify
+class CSelectNthSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements ISmartBufferNotify
 {
     bool first, isLocal, seenNth;
     rowcount_t lookaheadN, N, startN;
@@ -63,7 +63,7 @@ class CSelectNthSlaveActivity : public CSlaveActivity, public CThorDataLink, imp
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CSelectNthSlaveActivity(CGraphElementBase *_container, bool _isLocal) : CSlaveActivity(_container), CThorDataLink(this)
+    CSelectNthSlaveActivity(CGraphElementBase *_container, bool _isLocal) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         isLocal = _isLocal;
         createDefaultIfFail = isLocal || lastNode();
@@ -124,7 +124,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     virtual void abort()

@@ -33,7 +33,7 @@
 
 #define _STABLE_MERGE
 
-class GlobalMergeSlaveActivity : public CSlaveActivity, public CThorDataLink
+class GlobalMergeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
 public:
     IArrayOf<IRowStream> streams; 
@@ -243,7 +243,7 @@ public:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    GlobalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    GlobalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         partitionpos = NULL;
         linkcounter.setown(new CThorRowLinkCounter);
@@ -410,7 +410,7 @@ public:
 
 
 
-class LocalMergeSlaveActivity : public CSlaveActivity, public CThorDataLink
+class LocalMergeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     IArrayOf<IRowStream> streams; 
     Owned<IRowStream> out;
@@ -418,7 +418,7 @@ class LocalMergeSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    LocalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this) { }
+    LocalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this) { }
 
 // IThorSlaveActivity overloaded methods
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -524,7 +524,7 @@ public:
 };
 
 
-class CNWayMergeActivity : public CThorNarySlaveActivity, public CThorDataLink, public CThorSteppable
+class CNWayMergeActivity : public CThorNarySlaveActivity, public CThorSingleOutput, public CThorSteppable
 {
     IHThorNWayMergeArg *helper;
     CThorStreamMerger merger;
@@ -536,7 +536,7 @@ class CNWayMergeActivity : public CThorNarySlaveActivity, public CThorDataLink, 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CNWayMergeActivity(CGraphElementBase *container) : CThorNarySlaveActivity(container), CThorDataLink(this), CThorSteppable(this)
+    CNWayMergeActivity(CGraphElementBase *container) : CThorNarySlaveActivity(container), CThorSingleOutput(this), CThorSteppable(this)
     {
         helper = (IHThorNWayMergeArg *)queryHelper();
         merger.init(helper->queryCompare(), helper->dedup(), helper->querySteppingMeta()->queryCompare());

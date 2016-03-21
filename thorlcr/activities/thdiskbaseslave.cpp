@@ -39,7 +39,7 @@
 
 #include "thdiskbaseslave.ipp"
 
-void getPartsMetaInfo(ThorDataLinkMetaInfo &metaInfo, CThorDataLink &link, unsigned nparts, IPartDescriptor **partDescs, CDiskPartHandlerBase *partHandler)
+void getPartsMetaInfo(ThorDataLinkMetaInfo &metaInfo, CThorSingleOutput &link, unsigned nparts, IPartDescriptor **partDescs, CDiskPartHandlerBase *partHandler)
 {
     ThorDataLinkMetaInfo *metaInfos = new ThorDataLinkMetaInfo[nparts];
     struct ownedMetaInfos
@@ -301,7 +301,7 @@ void CDiskWriteSlaveActivityBase::open()
     {
         input.setown(createDataLinkSmartBuffer(this, inputs.item(0), PROCESS_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, false, &container.queryJob().queryIDiskUsage()));
         inputStream = input->queryStream();
-        startInput(input);
+        start();
         if (!rfsQueryParallel)
         {
             ActPrintLog("Blocked, waiting for previous part to complete write");
@@ -315,7 +315,7 @@ void CDiskWriteSlaveActivityBase::open()
         }
     }
     else
-        startInput(input);
+        start();
     processed = THORDATALINK_STARTED;
 
     bool extend = 0 != (diskHelperBase->getFlags() & TDWextend);

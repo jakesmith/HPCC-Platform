@@ -202,6 +202,7 @@ class NSplitterSlaveActivity : public CSlaveActivity, implements ISharedSmartBuf
     // to support non-stranded activities
         virtual IEngineRowStream *querySingleOutput() { return &stream; }
         virtual IEngineRowStream *queryStream() { return &stream; }
+        virtual void setSingleOutput(IEngineRowStream *stream) override { throwUnexpected(); }
     };
 
     IPointerArrayOf<CDelayedInput> delayInputsList;
@@ -404,7 +405,7 @@ public:
         if (nstopped && --nstopped==0) 
         {
             writer.stop();
-            stopInput(input);
+            stopInput(inputStream);
             inputPrepared = false;
         }
     }

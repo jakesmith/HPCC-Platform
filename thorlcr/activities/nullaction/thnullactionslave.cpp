@@ -24,12 +24,12 @@
 
 #include "thnullactionslave.ipp"
 
-class CNullActionSlaveActivity : public CSlaveActivity, public CThorDataLink
+class CNullActionSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CNullActionSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this) { }
+    CNullActionSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this) { }
     ~CNullActionSlaveActivity()
     {
     }

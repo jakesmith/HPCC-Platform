@@ -316,6 +316,7 @@ public:
 // to support non-stranded activities
     virtual IEngineRowStream *queryStream() { return this; }
     virtual IEngineRowStream *querySingleOutput() override { return this; }
+    virtual void setSingleOutput(IEngineRowStream *stream) override { throwUnexpected(); }
 };
 #ifdef _MSC_VER
 #pragma warning(pop)
@@ -368,6 +369,7 @@ public:
 // to support non-stranded activities
     virtual IEngineRowStream *queryStream() { return this; }
     virtual IEngineRowStream *querySingleOutput() override { return this; }
+    virtual void setSingleOutput(IEngineRowStream *stream) override { throwUnexpected(); }
 };
 
 IThorDataLink *createRowStreamToDataLinkAdapter(IThorDataLink *base, IRowStream *in)

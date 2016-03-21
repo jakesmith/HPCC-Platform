@@ -32,7 +32,7 @@ static StringBuffer &buildAuthToken(IUserDescriptor *userDesc, StringBuffer &aut
     return authToken;
 }
 
-class CWscRowCallSlaveActivity : public CSlaveActivity, public CThorDataLink, implements IWSCRowProvider
+class CWscRowCallSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IWSCRowProvider
 {
     bool eof;
     Owned<IWSCHelper> wscHelper;
@@ -41,7 +41,7 @@ class CWscRowCallSlaveActivity : public CSlaveActivity, public CThorDataLink, im
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CWscRowCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this) { }
+    CWscRowCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this) { }
 
     // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -123,7 +123,7 @@ public:
 
 //---------------------------------------------------------------------------
 
-class SoapDatasetCallSlaveActivity : public CSlaveActivity, public CThorDataLink, implements IWSCRowProvider
+class SoapDatasetCallSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IWSCRowProvider
 {
     bool eof;
     Owned<IWSCHelper> wscHelper;
@@ -133,7 +133,7 @@ class SoapDatasetCallSlaveActivity : public CSlaveActivity, public CThorDataLink
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    SoapDatasetCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this) { }
+    SoapDatasetCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this) { }
 
     // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -156,7 +156,7 @@ public:
     virtual void stop()
     {
         eof = true;
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -298,7 +298,7 @@ public:
     {
         if (processed & THORDATALINK_STARTED)
         {
-            stopInput(input);
+            stopInput(inputStream);
             processed |= THORDATALINK_STOPPED;
         }
     }

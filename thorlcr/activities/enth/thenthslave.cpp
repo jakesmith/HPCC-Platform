@@ -19,7 +19,7 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class BaseEnthActivity : public CSlaveActivity, public CThorDataLink, implements ISmartBufferNotify
+class BaseEnthActivity : public CSlaveActivity, public CThorSingleOutput, implements ISmartBufferNotify
 {
 protected:
     StringBuffer actStr;
@@ -88,7 +88,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    BaseEnthActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    BaseEnthActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
     }
     ~BaseEnthActivity()
@@ -110,7 +110,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     virtual bool isGrouped() { return false; }

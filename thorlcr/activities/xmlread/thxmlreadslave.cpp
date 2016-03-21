@@ -32,7 +32,7 @@
 #include "thorxmlread.hpp"
 #include "thdiskbaseslave.ipp"
 
-class CXmlReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDataLink
+class CXmlReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorSingleOutput
 {
     IHThorXmlReadArg *helper;
     IRowStream *out;
@@ -195,7 +195,7 @@ class CXmlReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorDat
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CXmlReadSlaveActivity(CGraphElementBase *_container) : CDiskReadSlaveActivityBase(_container), CThorDataLink(this)
+    CXmlReadSlaveActivity(CGraphElementBase *_container) : CDiskReadSlaveActivityBase(_container), CThorSingleOutput(this)
     {
         out = NULL;
         helper = (IHThorXmlReadArg *)queryHelper();

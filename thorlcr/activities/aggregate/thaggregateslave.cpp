@@ -29,7 +29,7 @@
 #include "thactivityutil.ipp"
 #include "thaggregateslave.ipp"
 
-class AggregateSlaveBase : public CSlaveActivity, public CThorDataLink
+class AggregateSlaveBase : public CSlaveActivity, public CThorSingleOutput
 {
 protected:
     bool hadElement, inputStopped;
@@ -39,7 +39,7 @@ protected:
         if (inputStopped)
             return;
         inputStopped = true;
-        stopInput(input);
+        stopInput(inputStream);
     }
     void doStart()
     {
@@ -117,7 +117,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     AggregateSlaveBase(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorDataLink(this)
+        : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         hadElement = inputStopped = false;
     }

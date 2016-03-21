@@ -520,7 +520,7 @@ interface IRowStreamSetInput : extends IRowStream
     virtual void setInput(IRowStream *input) = 0;
 };
 
-class CKeyedJoinSlave : public CSlaveActivity, public CThorDataLink, implements IJoinProcessor, implements IJoinGroupNotify
+class CKeyedJoinSlave : public CSlaveActivity, public CThorSingleOutput, implements IJoinProcessor, implements IJoinGroupNotify
 {
 #ifdef TRACE_JOINGROUPS
     unsigned groupsPendsNoted, fetchReadBack, groupPendsEnded, doneGroupsDeQueued, wroteToFetchPipe, groupsComplete;
@@ -1565,7 +1565,7 @@ class CKeyedJoinSlave : public CSlaveActivity, public CThorDataLink, implements 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CKeyedJoinSlave(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CKeyedJoinSlave(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
 #ifdef TRACE_JOINGROUPS
         groupsPendsNoted = fetchReadBack = groupPendsEnded = doneGroupsDeQueued = wroteToFetchPipe = groupsComplete = 0;

@@ -19,7 +19,7 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class BaseChooseSetsActivity : public CSlaveActivity,  public CThorDataLink
+class BaseChooseSetsActivity : public CSlaveActivity,  public CThorSingleOutput
 {
 protected:
     IHThorChooseSetsArg *helper;
@@ -30,7 +30,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    BaseChooseSetsActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    BaseChooseSetsActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         helper = NULL;
         done = false;
@@ -78,7 +78,7 @@ public:
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -172,7 +172,7 @@ public:
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     virtual void abort()
@@ -244,7 +244,7 @@ public:
 
 
 // A hookling class that counts records as they are read by the smart buffering....
-class ChooseSetsPlusActivity : public CSlaveActivity,  public CThorDataLink, implements ISmartBufferNotify
+class ChooseSetsPlusActivity : public CSlaveActivity,  public CThorSingleOutput, implements ISmartBufferNotify
 {
     friend class CInputCounter;
 protected:
@@ -262,7 +262,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    ChooseSetsPlusActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    ChooseSetsPlusActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         helper = NULL;
         counts = NULL;
@@ -316,7 +316,7 @@ public:
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
-        stopInput(input);
+        stopInput(inputStream);
         input.clear();
         dataLinkStop();
     }

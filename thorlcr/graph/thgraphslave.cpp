@@ -1388,8 +1388,8 @@ CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, co
     tmpHandler.setown(createTempHandler(true));
     channelMemorySize = globalMemorySize / globals->getPropInt("@channelsPerSlave", 1);
 
-    workUnitInfo->queryPropTree("Debug")->setPropInt("strandBlockSize", defaultStrandBlockSize);
-    workUnitInfo->queryPropTree("Debug")->setPropInt("forceNumStrands", defaultForceNumStrands);
+    workUnitInfo->queryPropTree("Debug")->setPropInt("strandblocksize", defaultStrandBlockSize);
+    workUnitInfo->queryPropTree("Debug")->setPropInt("forcenumstrands", defaultForceNumStrands);
 }
 
 void CJobSlave::addChannel(IMPServer *mpServer)
@@ -1854,7 +1854,9 @@ IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *in
             {
                 junction->setInput(stream, instreams.item(stream));
             }
-            return junction->queryOutput(0);
+            IEngineRowStream *inputSingleOutput = junction->queryOutput(0);
+            input->setSingleOutput(inputSingleOutput);
+            return inputSingleOutput;
         }
         else
             return instreams.item(0);

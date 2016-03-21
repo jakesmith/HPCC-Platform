@@ -25,7 +25,7 @@
 
 #include "thfirstnslave.ipp"
 
-class CFirstNSlaveBase : public CSlaveActivity, public CThorDataLink
+class CFirstNSlaveBase : public CSlaveActivity, public CThorSingleOutput
 {
 protected:
     rowcount_t limit, skipCount;
@@ -34,14 +34,14 @@ protected:
 
     virtual void doStop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CFirstNSlaveBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    CFirstNSlaveBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         stopped = true;
         helper = (IHThorFirstNArg *)container.queryHelper();

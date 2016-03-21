@@ -73,7 +73,7 @@ public:
     {
         if (processed & THORDATALINK_STARTED)
         {
-            stopInput(input);
+            stopInput(inputStream);
             processed |= THORDATALINK_STOPPED;
         }
     }
@@ -87,9 +87,9 @@ public:
     }
     void process()
     {
-        input.setown(createDataLinkSmartBuffer(this, inputs.item(0), WORKUNITWRITE_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, false, &container.queryJob().queryIDiskUsage()));
+        start();
+        input.setown(createDataLinkSmartBuffer(this, input, WORKUNITWRITE_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, false, &container.queryJob().queryIDiskUsage()));
         inputStream = input->queryStream();
-        startInput(input);
 
         processed = THORDATALINK_STARTED;
 
@@ -142,7 +142,7 @@ public:
     }
     void process()
     {
-        startInput(input);
+        start();
         processed = THORDATALINK_STARTED;
 
         ActPrintLog("WORKUNITWRITELOCAL: processing first block");

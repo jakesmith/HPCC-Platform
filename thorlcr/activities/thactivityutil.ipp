@@ -68,7 +68,7 @@ IRowStream *createSequentialPartHandler(CPartHandler *partHandler, IArrayOf<IPar
     } \
     inline const void *nextRowNoCatch() __attribute__((always_inline))
 
-class CThorDataLink : public CSimpleInterfaceOf<IEngineRowStream>
+class CThorSingleOutput : public CSimpleInterfaceOf<IEngineRowStream>
 {
     CSlaveActivity *owner;
     unsigned outputId = 0;
@@ -78,7 +78,7 @@ class CThorDataLink : public CSimpleInterfaceOf<IEngineRowStream>
     bool optUnordered = false; // is the output specified as unordered?
 
 public:
-    CThorDataLink(CSlaveActivity *_owner) : owner(_owner) { owner->setSingleOutput(this); }
+    CThorSingleOutput(CSlaveActivity *_owner) : owner(_owner) { owner->setSingleOutput(this); }
 
 // IEngineRowStream
     virtual void resetEOF() override { throwUnexpected(); }

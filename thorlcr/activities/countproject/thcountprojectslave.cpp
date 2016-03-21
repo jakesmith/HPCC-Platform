@@ -19,7 +19,7 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class BaseCountProjectActivity : public CSlaveActivity,  public CThorDataLink, implements ISmartBufferNotify
+class BaseCountProjectActivity : public CSlaveActivity,  public CThorSingleOutput, implements ISmartBufferNotify
 {
 protected:
     IHThorCountProjectArg *helper;
@@ -33,7 +33,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    BaseCountProjectActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorDataLink(this)
+    BaseCountProjectActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         helper = NULL;
     }
@@ -44,7 +44,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(input);
+        stopInput(inputStream);
         dataLinkStop();
     }
     virtual void onInputStarted(IException *)
