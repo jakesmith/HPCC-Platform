@@ -125,10 +125,11 @@ public:
 
 class SoapDatasetCallSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IWSCRowProvider
 {
+    typedef CSlaveActivity PARENT;
+
     bool eof;
     Owned<IWSCHelper> wscHelper;
     CriticalSection crit;
-    IThorDataLink *input;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
@@ -147,9 +148,8 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         eof = false;
-        input = inputs.item(0);
-        startInput(input);
         dataLinkStart();
         wscHelper->start();
     }
@@ -264,7 +264,6 @@ class SoapDatasetActionSlaveActivity : public ProcessSlaveActivity, implements I
 {
     Owned<IWSCHelper> wscHelper;
     CriticalSection crit;
-    IThorDataLink *input;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
@@ -282,10 +281,9 @@ public:
     // IThorSlaveProcess overloaded methods
     virtual void process()
     {
+        start();
         processed = 0;
 
-        input = inputs.item(0);
-        startInput(input);
         processed = THORDATALINK_STARTED;
 
         wscHelper->start();

@@ -1940,12 +1940,14 @@ IHashDistributor *createPullHashDistributor(CActivityBase *activity, ICommunicat
 
 class HashDistributeSlaveBase : public CSlaveActivity, public CThorSingleOutput, implements IStopInput
 {
+    typedef CSlaveActivity PARENT;
+
     IHashDistributor *distributor;
-    Owned<IRowStream> out;
     bool inputstopped;
     CriticalSection stopsect;
     mptag_t mptag;
 protected:
+    Owned<IRowStream> out;
     Owned<IRowStream> instrm;
     IHash *ihash;
     ICompare *mergecmp;     // if non-null is merge distribute
@@ -1993,13 +1995,14 @@ public:
             inputstopped = true;
         }
     }
+#if 0
     void start(bool passthrough)
     {
         // bit messy
         eofin = false;
         if (!instrm.get()) // derived class may override
         {
-            startInput(input);
+            PARENT::start();
             inputstopped = false;
             instrm.set(inputStream);
             if (passthrough)
@@ -2021,6 +2024,17 @@ public:
         ActivityTimer s(totalCycles, timeActivities);
         start(false);
     }
+#else
+    virtual void start()
+    {
+        ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
+        eofin = false;
+        instrm.set(inputStream);
+        Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
+        out.setown(distributor->connect(myRowIf, instrm, ihash, mergecmp));
+    }
+#endif
     virtual void stop()
     {
         ActPrintLog("HASHDISTRIB: stopping");
@@ -2052,12 +2066,14 @@ public:
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities); // careful not to call again in derivatives
-        if (abortSoon||eofin) {
+        if (abortSoon||eofin)
+        {
             eofin = true;
             return NULL;
         }
         OwnedConstThorRow row = out->ungroupedNextRow();
-        if (!row.get()) {
+        if (!row.get())
+        {
             eofin =  true;
             return NULL;
         }
@@ -2155,7 +2171,7 @@ public:
         free(sizes);
     }
 
-    IRowStream *calc(CSlaveActivity *activity, IThorDataLink *in, bool &passthrough)
+    IRowStream *calc(CSlaveActivity *activity, IThorDataLink *in, IEngineRowStream *inputStream, bool &passthrough)
     {
         // first - find size
         serializer.set(activity->queryRowSerializer());
@@ -2177,7 +2193,7 @@ public:
             {
                 ActPrintLogEx(&activity->queryContainer(), thorlog_null, MCwarning, "REDISTRIBUTE size unknown, spilling to disk");
                 MemoryAttr ma;
-                activity->startInput(in);
+                activity->start();
                 if (activity->getOptBool(THOROPT_COMPRESS_SPILLS, true))
                 {
                     rwFlags |= rw_compress;
@@ -2188,7 +2204,6 @@ public:
                 Owned<IExtRowWriter> out = createRowWriter(tempfile, activity, rwFlags);
                 if (!out)
                     throw MakeStringException(-1,"Could not created file %s",tempname.str());
-                IRowStream *inputStream = in->queryStream();
                 loop
                 {
                     const void * row = inputStream->ungroupedNextRow();
@@ -2325,12 +2340,13 @@ public:
             sizes[self] -= rs;
         return self;
     }
-
 };
 
 
 class ReDistributeSlaveActivity : public HashDistributeSlaveBase
 {
+    typedef HashDistributeSlaveBase PARENT;
+
     Owned<CHDRproportional> partitioner;
 public:
     ReDistributeSlaveActivity(CGraphElementBase *container) : HashDistributeSlaveBase(container) { }
@@ -2342,24 +2358,21 @@ public:
         partitioner.setown(new CHDRproportional(this, distribargs,tag));
         ihash = partitioner;
     }
-
-    virtual void start()
+    virtual void start() override
     {
+        ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         bool passthrough;
-        {
-            ActivityTimer s(totalCycles, timeActivities);
-            instrm.setown(partitioner->calc(this, inputs.item(0), passthrough));  // may return NULL
-        }
-        HashDistributeSlaveBase::start(passthrough);
+        instrm.setown(partitioner->calc(this, inputs.item(0), inputStream, passthrough));  // may return NULL
+        if (passthrough)
+            out.set(instrm);
+        dataLinkStart();
     }
-
     virtual void stop()
     {
         HashDistributeSlaveBase::stop();
-        if (instrm) {
-            instrm.clear();
-            // should remove here rather than later?
-        }
+        if (instrm)
+            instrm.clear(); // should remove here rather than later?
     }
 };
 
@@ -2774,6 +2787,8 @@ public:
 
 class HashDedupSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 protected:
     IRowStream *distInput = NULL;
     IRowStream *initialInput = NULL;
@@ -2889,9 +2904,9 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         inputstopped = false;
         eos = lastEog = false;
-        startInput(inputs.item(0));
         ThorDataLinkMetaInfo info;
         inputs.item(0)->getMetaInfo(info);
         distInput = inputStream;
@@ -3541,8 +3556,10 @@ public:
 
 class HashJoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IStopInput
 {
-    IThorDataLink *inL;
-    IThorDataLink *inR;
+    IThorDataLink *inL = NULL;
+    IThorDataLink *inR = NULL;
+    IEngineRowStream *leftInputStream = NULL;
+    IEngineRowStream *rightInputStream = NULL;
     MemoryBuffer ptrbuf;
     IHThorHashJoinArg *joinargs;
     Owned<IJoinHelper> joinhelper;
@@ -3588,16 +3605,15 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        startAllInputs();
         inputLstopped = true;
         inputRstopped = true;
         leftdone = false;
         eof = false;
         ActPrintLog("HASHJOIN: starting");
         inL = inputs.item(0);
-        startInput(inL);
         inputLstopped = false;
         inR = inputs.item(1);
-        startInput(inR);
         inputRstopped = false;
         IHash *ihashL = joinargs->queryHashLeft();
         IHash *ihashR = joinargs->queryHashRight();
@@ -3605,7 +3621,7 @@ public:
         ICompare *icompareR = joinargs->queryCompareRight();
         if (!lhsDistributor)
             lhsDistributor.setown(createHashDistributor(this, queryJobChannel().queryJobComm(), mptag, false, this, "LHS"));
-        Owned<IRowStream> reader = lhsDistributor->connect(queryRowInterfaces(inL), inL->queryStream(), ihashL, icompareL);
+        Owned<IRowStream> reader = lhsDistributor->connect(queryRowInterfaces(inL), leftInputStream, ihashL, icompareL);
         Owned<IThorRowLoader> loaderL = createThorRowLoader(*this, ::queryRowInterfaces(inL), icompareL, stableSort_earlyAlloc, rc_allDisk, SPILL_PRIORITY_HASHJOIN);
         strmL.setown(loaderL->load(reader, abortSoon));
         loaderL.clear();
@@ -3616,7 +3632,7 @@ public:
         leftdone = true;
         if (!rhsDistributor)
             rhsDistributor.setown(createHashDistributor(this, queryJobChannel().queryJobComm(), mptag2, false, this, "RHS"));
-        reader.setown(rhsDistributor->connect(queryRowInterfaces(inR), inR->queryStream(), ihashR, icompareR));
+        reader.setown(rhsDistributor->connect(queryRowInterfaces(inR), rightInputStream, ihashR, icompareR));
         Owned<IThorRowLoader> loaderR = createThorRowLoader(*this, ::queryRowInterfaces(inR), icompareR, stableSort_earlyAlloc, rc_mixed, SPILL_PRIORITY_HASHJOIN);;
         strmR.setown(loaderR->load(reader, abortSoon));
         loaderR.clear();
@@ -3862,6 +3878,8 @@ RowAggregator *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBas
 #endif
 class CHashAggregateSlave : public CSlaveActivity, public CThorSingleOutput, implements IHThorRowAggregator
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorHashAggregateArg *helper;
     mptag_t mptag;
     Owned<RowAggregator> localAggTable;
@@ -3921,7 +3939,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        startInput(input);
+        PARENT::start();
         doNextGroup(); // or local set if !grouped
         if (!container.queryGrouped())
             ActPrintLog("Table before distribution contains %d entries", localAggTable->elementCount());
@@ -3987,6 +4005,8 @@ public:
 
 class CHashDistributeSlavedActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHash *ihash;
     unsigned myNode, nodes;
 
@@ -4007,7 +4027,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input->start();
+        PARENT::start();
         dataLinkStart();
     }
     virtual void stop()

@@ -35,7 +35,6 @@ private:
     Owned<IPipeWriteXformHelper> writeTransformer;
     StringAttr pipeCommand;
     bool pipeOpen;
-    IThorDataLink *input;
 
 public:
     CPipeWriteSlaveActivity(CGraphElementBase *container) : ProcessSlaveActivity(container)
@@ -117,8 +116,7 @@ public:
     }
     void process()
     {
-        input = inputs.item(0);
-        startInput(input);
+        start();
         if (!writeTransformer)
         {
             writeTransformer.setown(createPipeWriteXformHelper(helper->getPipeFlags(), helper->queryXmlOutput(), helper->queryCsvOutput(), ::queryRowInterfaces(input)->queryRowSerializer()));

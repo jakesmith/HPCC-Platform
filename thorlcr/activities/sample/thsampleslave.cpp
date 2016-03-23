@@ -20,11 +20,12 @@
 
 class SampleSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorSampleArg * helper;
     unsigned numSamples, whichSample, numToSkip;
     bool anyThisGroup;
     bool eogNext;
-    IThorDataLink *input;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
@@ -39,8 +40,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
-        startInput(input);
+        PARENT::start();
         eogNext = false;
         anyThisGroup = false;
         numSamples = helper->getProportion();

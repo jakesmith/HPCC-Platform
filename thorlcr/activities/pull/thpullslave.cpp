@@ -23,13 +23,12 @@
 
 class PullSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     PullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
-    {
-    }
-    ~PullSlaveActivity() 
     {
     }
 
@@ -40,12 +39,16 @@ public:
     }
 
 // IThorDataLink methods
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+        PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+        lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), PULL_SMART_BUFFER_SIZE, true, false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
+        inputStream = lookAheadStream;
+    }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input.setown(createDataLinkSmartBuffer(this,inputs.item(0),PULL_SMART_BUFFER_SIZE,true,false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage()));
-        inputStream = input->queryStream();
-        startInput(input);
+        PARENT::start();
         dataLinkStart();
     }
     virtual void stop()

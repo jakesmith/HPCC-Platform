@@ -43,8 +43,8 @@ public:
     }
     void process()
     {
+        start();
         helper->clearAggregate(aggy);
-        startInput(input);
         processed = THORDATALINK_STARTED;
 
         try

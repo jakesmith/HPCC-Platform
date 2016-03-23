@@ -24,6 +24,8 @@
 
 class IterateSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
 {
+	typedef CSlaveActivity PARENT;
+
     OwnedConstThorRow first;
 protected:
     Owned<IRowInterfaces> inrowif;
@@ -42,6 +44,15 @@ public:
         appendOutputLinked(this);   // adding 'me' to outputs array
         if (global)
             mpTag = container.queryJobChannel().deserializeMPTag(data);
+    }
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+    	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+        if (global) // only want lookahead if global (hence serial)
+        {
+			lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), ENTH_SMART_BUFFER_SIZE, true, false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
+			inputStream = lookAheadStream;
+        }
     }
     const void *getFirst() // for global, not called on 1st slave
     {
@@ -75,23 +86,10 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         count = 0;
         eof = nextPut = false;
         inrowif.set(::queryRowInterfaces(inputs.item(0)));
-        if (global) // only want lookahead if global (hence serial)
-        {
-            input.setown(createDataLinkSmartBuffer(this, inputs.item(0),ITERATE_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(this),false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage())); // only allow spill if input can stall
-            inputStream = input->queryStream();
-        }
-        try
-        { 
-            startInput(input); 
-        }
-        catch (IException *e)
-        {
-            ActPrintLog(e,"ITERATE");
-            throw;
-        }
         dataLinkStart();
     }
     virtual void stop()

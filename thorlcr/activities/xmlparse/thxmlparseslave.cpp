@@ -24,6 +24,8 @@
 
 class CXmlParseSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IXMLSelect
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorXmlParseArg *helper;
     bool eogNext;
     bool anyThisGroup;
@@ -31,7 +33,6 @@ class CXmlParseSlaveActivity : public CSlaveActivity, public CThorSingleOutput, 
     char *searchStr;
     Owned<IXMLParse> xmlParser;
     OwnedConstThorRow nxt;
-    IThorDataLink *input;
     Owned<IEngineRowAllocator> allocator;
 
 public:
@@ -40,7 +41,6 @@ public:
     CXmlParseSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         searchStr = NULL;
-        input = NULL;
     }
 
 // IXMLSelect
@@ -67,10 +67,9 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         anyThisGroup = false;
         eogNext = false;
-        input = inputs.item(0);
-        startInput(input);
         dataLinkStart();
     }
     virtual void stop()

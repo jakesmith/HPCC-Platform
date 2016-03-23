@@ -27,8 +27,9 @@
 
 class NormalizeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorNormalizeArg * helper;
-    IThorDataLink *input;
     OwnedConstThorRow row;
     unsigned curRow;
     unsigned numThisRow;
@@ -53,11 +54,10 @@ public:
     virtual void start()
     { 
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         numThisRow = 0;
         curRow = 0;
         anyThisGroup = false;
-        input = inputs.item(0);
-        startInput(input);
         dataLinkStart();
     }
     virtual void stop()
@@ -110,9 +110,10 @@ public:
 
 class CNormalizeChildSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorNormalizeChildArg *helper;
     INormalizeChildIterator *cursor;
-    IThorDataLink *input;
     OwnedConstThorRow childBuf;
     void * curChildRow;
     unsigned curRow;
@@ -138,8 +139,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
-        startInput(input);
+        PARENT::start();
         anyThisGroup = false;
         dataLinkStart();
         curChildRow = NULL;
@@ -190,8 +190,9 @@ public:
 
 class CNormalizeLinkedChildSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorNormalizeLinkedChildArg *helper;
-    IThorDataLink *input;
     bool anyThisGroup;
 
     OwnedConstThorRow curParent;
@@ -236,8 +237,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
-        startInput(input);
+        PARENT::start();
         anyThisGroup = false;
         dataLinkStart();
     }

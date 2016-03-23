@@ -78,19 +78,10 @@ class CThorSingleOutput : public CSimpleInterfaceOf<IEngineRowStream>
     bool optUnordered = false; // is the output specified as unordered?
 
 public:
-    CThorSingleOutput(CSlaveActivity *_owner) : owner(_owner) { owner->setSingleOutput(this); }
+    CThorSingleOutput(CSlaveActivity *_owner) : owner(_owner) { owner->setOutputStream(this); }
 
 // IEngineRowStream
     virtual void resetEOF() override { throwUnexpected(); }
-};
-
-IThorDataLink *createRowStreamToDataLinkAdapter(IThorDataLink *base, IRowStream *in);
-
-interface ISmartBufferNotify
-{
-    virtual bool startAsync() =0;                       // return true if need to start asynchronously
-    virtual void onInputStarted(IException *e) =0;      // e==NULL if start suceeded, NB only called with exception if Async
-    virtual void onInputFinished(rowcount_t count) =0;
 };
 
 void initMetaInfo(ThorDataLinkMetaInfo &info);
@@ -98,8 +89,14 @@ void calcMetaInfoSize(ThorDataLinkMetaInfo &info, IThorDataLink *link);
 void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink **link,unsigned ninputs);
 void calcMetaInfoSize(ThorDataLinkMetaInfo &info, ThorDataLinkMetaInfo *infos, unsigned num);
 
+interface ILookAheadStopNotify
+{
+    virtual void onInputFinished(rowcount_t count) = 0;
+};
 interface IDiskUsage;
-IThorDataLink *createDataLinkSmartBuffer(CActivityBase *activity,IThorDataLink *in,size32_t bufsize,bool spillenabled,bool preserveGrouping=true,rowcount_t maxcount=RCUNBOUND,ISmartBufferNotify *notify=NULL, bool inputstarted=false, IDiskUsage *_diskUsage=NULL); //maxcount is maximum rows to read set to RCUNBOUND for all
+ILookAheadEngineRowStream *createRowStreamLookAhead(CSlaveActivity *activity, IEngineRowStream *inputStream, IRowInterfaces *rowIf, size32_t bufsize, bool spillenabled, bool preserveGrouping=true, rowcount_t maxcount=RCUNBOUND, ILookAheadStopNotify *notify=NULL, IDiskUsage *_diskUsage=NULL); //maxcount is maximum rows to read set to RCUNBOUND for all
+
+
 
 bool isSmartBufferSpillNeeded(CActivityBase *act);
 

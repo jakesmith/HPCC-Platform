@@ -42,10 +42,6 @@ public:
     {
         grouped = false;
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
-    {
-        mpTag = container.queryJobChannel().deserializeMPTag(data);
-    }
     void processBlock(unsigned &numGot, MemoryBuffer &mb)
     {
         Linked<IOutputRowSerializer> serializer = ::queryRowSerializer(input);
@@ -69,7 +65,12 @@ public:
             serializer->serialize(mbs,(const byte *)row.get());
         } while (mb.length() < PIPE_BUFFER_SIZE); // NB: allows at least 1
     }
-    void endProcess()
+
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
+    {
+        mpTag = container.queryJobChannel().deserializeMPTag(data);
+    }
+    virtual void endProcess() override
     {
         if (processed & THORDATALINK_STARTED)
         {
@@ -81,16 +82,21 @@ public:
 
 class CWorkUnitWriteGlobalSlaveBaseActivity : public CWorkUnitWriteSlaveBase
 {
+    typedef CWorkUnitWriteSlaveBase PARENT;
+
 public:
     CWorkUnitWriteGlobalSlaveBaseActivity(CGraphElementBase *container) : CWorkUnitWriteSlaveBase(container)
     {
     }
-    void process()
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+        PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+    	lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), WORKUNITWRITE_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
+    	inputStream = lookAheadStream;
+    }
+    virtual void process() override
     {
         start();
-        input.setown(createDataLinkSmartBuffer(this, input, WORKUNITWRITE_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, false, &container.queryJob().queryIDiskUsage()));
-        inputStream = input->queryStream();
-
         processed = THORDATALINK_STARTED;
 
         ActPrintLog("WORKUNITWRITE: processing first block");
@@ -122,9 +128,9 @@ public:
             queryJobChannel().queryJobComm().send(msgMb, 0, mpTag);
         } while (!abortSoon && numGot);
     }
-    void abort()
+    virtual void abort() override
     {
-        CWorkUnitWriteSlaveBase::abort();
+        PARENT::abort();
         cancelReceiveMsg(0, mpTag);
     }
 };
@@ -140,7 +146,7 @@ public:
         grouped = 0 != (POFgrouped & helper->getFlags());
         replyTag = queryMPServer().createReplyTag();
     }
-    void process()
+    virtual void process() override
     {
         start();
         processed = THORDATALINK_STARTED;
@@ -196,7 +202,7 @@ public:
             }
         } while (!abortSoon && numGot);
     }
-    void abort()
+    virtual void abort() override
     {
         CWorkUnitWriteSlaveBase::abort();
         cancelReceiveMsg(0, replyTag);

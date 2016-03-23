@@ -19,8 +19,11 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class BaseEnthActivity : public CSlaveActivity, public CThorSingleOutput, implements ISmartBufferNotify
+class BaseEnthActivity : public CSlaveActivity, public CThorSingleOutput, implements ILookAheadStopNotify
 {
+	typedef CSlaveActivity PARENT;
+
+	ThorDataLinkMetaInfo intoMetaInfo;
 protected:
     StringBuffer actStr;
     Semaphore finishedSem;
@@ -66,24 +69,16 @@ protected:
     }
     void setLocalCountReq()
     {
-        ThorDataLinkMetaInfo info;
-        input->getMetaInfo(info);
         // Need lookahead _unless_ row count pre-known.
         if (0 == numerator)
             localRecCount = 0;
-        else if (info.totalRowsMin == info.totalRowsMax)
+        else if (intoMetaInfo.totalRowsMin == intoMetaInfo.totalRowsMax)
         {
-            localRecCount = (rowcount_t)info.totalRowsMax;
+            localRecCount = (rowcount_t)intoMetaInfo.totalRowsMax;
             ActPrintLog("%s: row count pre-known to be %" RCPF "d", actStr.str(), localRecCount);
         }
         else
-        {
             localRecCount = RCUNBOUND;
-            input.setown(createDataLinkSmartBuffer(this, input,ENTH_SMART_BUFFER_SIZE,true,false,RCUNBOUND,this,true,&container.queryJob().queryIDiskUsage()));
-            inputStream = input->queryStream();
-            StringBuffer tmpStr(actStr);
-            startInput(input);
-        }
     }
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
@@ -91,21 +86,29 @@ public:
     BaseEnthActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
     }
-    ~BaseEnthActivity()
-    {
-    }
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
     {
         appendOutputLinked(this);
     }
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+    	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+        input->getMetaInfo(intoMetaInfo);
+        // Need lookahead _unless_ row count pre-known.
+        if (numerator && (intoMetaInfo.totalRowsMin != intoMetaInfo.totalRowsMax))
+        {
+			lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), ENTH_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
+			inputStream = lookAheadStream;
+		}
+    }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         IHThorEnthArg *helper = static_cast <IHThorEnthArg *> (queryHelper());
         counter = 0;
         denominator = validRC(helper->getProportionDenominator());
         numerator = validRC(helper->getProportionNumerator());
-        startInput(input);
         dataLinkStart();
     }
     virtual void stop()
@@ -119,16 +122,15 @@ public:
         initMetaInfo(info);
         info.buffersInput = true;
         info.canReduceNumRows = true;
-        calcMetaInfoSize(info,inputs.item(0));
+        calcMetaInfoSize(info, input);
     }
-// ISmartBufferNotify impl.
-    virtual void onInputStarted(IException *) { }
-    virtual bool startAsync() { return false; }
 };
 
 class CLocalEnthSlaveActivity : public BaseEnthActivity
 {
-    bool localCountReq;
+	typedef BaseEnthActivity PARENT;
+
+	bool localCountReq;
 public:
     CLocalEnthSlaveActivity(CGraphElementBase *container) : BaseEnthActivity(container)
     {
@@ -137,7 +139,7 @@ public:
     }
     virtual void start()
     {
-        BaseEnthActivity::start();
+    	PARENT::start();
         if (RCUNBOUND == denominator)
         {
             localCountReq = true;
@@ -172,7 +174,7 @@ public:
     }
     virtual void abort()
     {
-        BaseEnthActivity::abort();
+    	PARENT::abort();
         localRecCount = 0;
         finishedSem.signal();
     }
@@ -186,6 +188,8 @@ public:
 
 class CEnthSlaveActivity : public BaseEnthActivity
 {
+    typedef BaseEnthActivity PARENT;
+
     Semaphore prevRecCountSem;
     rowcount_t prevRecCount;
     bool first;
@@ -222,19 +226,19 @@ public:
     }
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
     {
-        BaseEnthActivity::init(data, slaveData);
+        PARENT::init(data, slaveData);
         mpTag = container.queryJobChannel().deserializeMPTag(data);
     }
     virtual void start()
     {
-        BaseEnthActivity::start();
+    	PARENT::start();
         prevRecCount = 0;
         first = true;
         setLocalCountReq();
     }
     virtual void abort()
     {
-        BaseEnthActivity::abort();
+    	PARENT::abort();
         if (!firstNode())
             cancelReceiveMsg(RANK_ALL, mpTag);
     }
@@ -268,7 +272,7 @@ public:
             first = false;
             getPrev();
         }
-        BaseEnthActivity::stop();
+        PARENT::stop();
     }
     virtual void onInputFinished(rowcount_t localRecCount)
     {

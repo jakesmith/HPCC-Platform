@@ -30,7 +30,6 @@
 
 
 activityslaves_decl CActivityBase *createFunnelSlave(CGraphElementBase *container);
-activityslaves_decl IRowStream *createParallelFunnel(CActivityBase &activity, IThorDataLink **instreams, unsigned numstreams, bool startInputs, const bool &aborted);
 activityslaves_decl CActivityBase *createCombineSlave(CGraphElementBase *container);
 activityslaves_decl CActivityBase *createRegroupSlave(CGraphElementBase *container);
 activityslaves_decl CActivityBase *createNonEmptySlave(CGraphElementBase *container);

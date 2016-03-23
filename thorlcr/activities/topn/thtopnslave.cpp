@@ -69,6 +69,8 @@ IRowStream *createFirstNReadSeqVar(IRowStream *input, unsigned limit)
 
 class TopNSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     bool eos, eog, global, grouped, inputStopped;
     ICompare *compare;
     CThorExpandingRowArray sortedRows;
@@ -193,7 +195,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        startInput(input);
+        PARENT::start();
         inputStopped = false;
         // NB: topNLimit shouldn't be stupid size, resourcing will guarantee this
         __int64 _topNLimit = helper->getLimit();

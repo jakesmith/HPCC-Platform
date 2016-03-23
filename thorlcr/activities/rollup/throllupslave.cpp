@@ -88,11 +88,10 @@ public:
         rowLoader.setown(createThorRowLoader(*activity, NULL, stableSort_none, rc_allMem));
     }
 
-    void init(IThorDataLink * _in, IHThorDedupArg * _helper, bool _keepLeft, bool * _abort, IStopInput *_iStopInput)
+    void init(IThorDataLink * _in, IEngineRowStream *_inputStream, IHThorDedupArg * _helper, bool _keepLeft, bool * _abort, IStopInput *_iStopInput)
     {
         assertex(_in);
-        in = _in;
-        inputStream = in->queryStream();
+        inputStream = _inputStream;
         helper = _helper;
         keepLeft = _keepLeft;
         abort = _abort;
@@ -154,6 +153,8 @@ public:
 
 class CDedupRollupBaseActivity : public CSlaveActivity, implements IStopInput
 {
+    typedef CSlaveActivity PARENT;
+
     bool rollup;
     CriticalSection stopsect;
     Linked<IRowInterfaces> rowif;
@@ -181,18 +182,22 @@ public:
         if (input)
             CSlaveActivity::stopInput(inputStream);
     }
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+        PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+        if (global)
+        {
+            lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), rollup?ROLLUP_SMART_BUFFER_SIZE:DEDUP_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage())); // only allow spill if input can stall
+            inputStream = lookAheadStream;
+        }
+    }
     virtual void start()
     {
+        PARENT::start();
         needFirstRow = true;
         rowif.set(queryRowInterfaces(input));
         eogNext = eos = false;
         numKept = 0;
-        if (global)
-        {
-            input.setown(createDataLinkSmartBuffer(this, input,rollup?ROLLUP_SMART_BUFFER_SIZE:DEDUP_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(this),false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage())); // only allow spill if input can stall
-            inputStream = input->queryStream();
-        }
-        startInput(input); 
     }
     virtual void stop()
     {
@@ -429,7 +434,7 @@ public:
         lastEog = false;
         assertex(!global);      // dedup(),local,all only supported
         dedupHelper.setown(new CDedupAllHelper(this));
-        dedupHelper->init(input, ddhelper, keepLeft, &abortSoon, groupOp?NULL:this);
+        dedupHelper->init(input, inputStream, ddhelper, keepLeft, &abortSoon, groupOp?NULL:this);
         dedupHelper->calcNextDedupAll(groupOp);
     }
     CATCH_NEXTROW()
@@ -565,6 +570,8 @@ public:
 
 class CRollupGroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorRollupGroupArg *helper;
     Owned<IThorRowLoader> groupLoader;
     bool eoi;
@@ -587,8 +594,8 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         eoi = false;
-        startInput(input);
         dataLinkStart();
     }
     virtual void stop()

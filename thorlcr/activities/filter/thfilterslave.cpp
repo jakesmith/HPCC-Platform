@@ -19,9 +19,10 @@
 
 class CFilterSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 protected:
     bool anyThisGroup;
-    IThorDataLink * input;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
@@ -29,17 +30,15 @@ public:
     explicit CFilterSlaveActivityBase(CGraphElementBase *_container)
         : CSlaveActivity(_container), CThorSingleOutput(this)
     {
-        input = NULL;
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         appendOutputLinked(this);
     }
     virtual void start() override
-    {   
-        input = inputs.item(0);
+    {
+        PARENT::start();
         anyThisGroup = false;
-        startInput(input);
         dataLinkStart();
     }
     virtual void stop() override

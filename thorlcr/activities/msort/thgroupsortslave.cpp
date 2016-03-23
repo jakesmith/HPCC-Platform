@@ -32,7 +32,8 @@
 
 class CLocalSortSlaveActivity : public CSlaveActivity, public CThorSingleOutput 
 {
-    IThorDataLink *input;
+    typedef CSlaveActivity PARENT;
+
     IHThorSortArg *helper;
     ICompare *iCompare;
     Owned<IThorRowLoader> iLoader;
@@ -59,11 +60,10 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         dataLinkStart();
-        input = inputs.item(0);
         unsigned spillPriority = container.queryGrouped() ? SPILL_PRIORITY_GROUPSORT : SPILL_PRIORITY_LARGESORT;
         iLoader.setown(createThorRowLoader(*this, queryRowInterfaces(input), iCompare, unstable ? stableSort_none : stableSort_earlyAlloc, rc_mixed, spillPriority));
-        startInput(input);
         eoi = false;
         if (container.queryGrouped())
             out.setown(iLoader->loadGroup(inputStream, abortSoon));
@@ -129,7 +129,8 @@ public:
 
 class CSortedSlaveActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
 {
-    IThorDataLink *input;
+    typedef CSlaveActivity PARENT;
+
     IHThorSortedArg *helper;
     ICompare *icompare;
     OwnedConstThorRow prev; 
@@ -152,9 +153,8 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         dataLinkStart();
-        input = inputs.item(0);
-        startInput(input);
     }
     virtual void stop()
     {

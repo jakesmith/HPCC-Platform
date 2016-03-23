@@ -23,15 +23,14 @@
 
 class GroupIterateSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
 
-private:
     OwnedConstThorRow prev;
     OwnedConstThorRow defaultLeft;
     IHThorGroupIterateArg * helper;
     rowcount_t count;
     bool eogNext;
     bool anyThisGroup;
-    IThorDataLink *input;
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
@@ -46,11 +45,10 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         anyThisGroup = false;
         eogNext = false;    
         count = 0;
-        input = inputs.item(0);
-        startInput(input);
         dataLinkStart();
         RtlDynamicRowBuilder r(queryRowAllocator());
         size32_t sz = helper->createDefault(r);
@@ -115,13 +113,14 @@ public:
 
 class GroupProcessSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorProcessArg * helper;
     rowcount_t count;
     bool eogNext;
     bool anyThisGroup;
     OwnedConstThorRow firstright;
     OwnedConstThorRow nextright;
-    IThorDataLink *input;
     Owned<IRowInterfaces> rightrowif;
     Owned<IEngineRowAllocator> rightAllocator;
 
@@ -141,14 +140,13 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         RtlDynamicRowBuilder r(rightAllocator);
         size32_t sz = helper->createInitialRight(r);  
         firstright.setown(r.finalizeRowClear(sz));
         anyThisGroup = false;
         count = 0;
         eogNext = false;    
-        input = inputs.item(0);
-        startInput(input);
         dataLinkStart();
     }
     virtual void stop()

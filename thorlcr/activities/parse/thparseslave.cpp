@@ -30,8 +30,9 @@
 
 class CParseSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IMatchedAction
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorParseArg *helper;
-    IThorDataLink *input;
     OwnedConstThorRow curRow;
     Owned<INlpParseAlgorithm> algorithm;
     Owned<INlpParser> parser;
@@ -69,8 +70,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
-        startInput(input);
+        PARENT::start();
         dataLinkStart();
     }
     virtual void stop()

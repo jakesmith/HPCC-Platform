@@ -37,8 +37,10 @@
 #include "traceslave.hpp"
 #include "thorstrand.hpp"
 
-class CSlaveActivity;
-
+interface ILookAheadEngineRowStream : extends IEngineRowStream
+{
+    virtual void start() = 0;
+};
 class CSlaveGraphElement;
 class graphslave_decl CSlaveActivity : public CActivityBase, implements IThorDataLinkExt, implements IThorSlaveActivity
 {
@@ -46,9 +48,11 @@ class graphslave_decl CSlaveActivity : public CActivityBase, implements IThorDat
     mutable CriticalSection crit;
 
 protected:
+    Owned<ILookAheadEngineRowStream> lookAheadStream;
     IPointerArrayOf<IThorDataLink> inputs, outputs;
     UnsignedArray inputSourceIdxs;
     IPointerArrayOf<IEngineRowStream> inputStreams;
+    IPointerArrayOf<IStrandJunction> inputJunctions;
     Linked<IThorDataLink> input;
     unsigned inputSourceIdx = 0;
     IEngineRowStream *inputStream = NULL;
@@ -58,7 +62,6 @@ protected:
     bool optUnordered = false; // is the output specified as unordered?
     Owned<IStrandJunction> junction;
     unsigned outputIdx = 0; // for IThorDataLinkExt
-    IEngineRowStream *singleOutput = NULL;
 
     ActivityTimeAccumulator totalCycles;
     rowcount_t count = 0, icount = 0;
@@ -131,9 +134,6 @@ public:
     ~CSlaveActivity();
     virtual void clearConnections();
     virtual void releaseIOs();
-    virtual void init(MemoryBuffer &in, MemoryBuffer &out) { }
-    virtual void processDone(MemoryBuffer &mb) { };
-    virtual void abort();
     virtual MemoryBuffer &queryInitializationData(unsigned slave) const;
     virtual MemoryBuffer &getInitializationData(unsigned slave, MemoryBuffer &mb) const;
     virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx) override;
@@ -141,9 +141,12 @@ public:
 
     IThorDataLink *queryOutput(unsigned index) const;
     IThorDataLink *queryInput(unsigned index) const;
+    IEngineRowStream *queryInputStream(unsigned index) const;
+    unsigned queryNumInputs() const { return inputs.ordinality(); }
     void appendOutput(IThorDataLink *itdl);
     void appendOutputLinked(IThorDataLink *itdl);
-    void startInput(IThorDataLink *itdl, const char *extra=NULL);
+    void startInput(unsigned index, const char *extra=NULL);
+    void startAllInputs();
     void stopInput(IThorDataLink *itdl, const char *extra=NULL);
     void stopInput(IRowStream *stream, const char *extra=NULL);
     ActivityTimeAccumulator &getTotalCyclesRef() { return totalCycles; }
@@ -174,30 +177,28 @@ public:
     virtual void debugRequest(MemoryBuffer &msg) override;
 
     virtual IEngineRowStream *queryStream() { return inputStream; }
-    virtual IEngineRowStream *querySingleOutput() override { return singleOutput; }
-    virtual void setSingleOutput(IEngineRowStream *stream) override { singleOutput = stream; }
+    virtual void setOutputStream(IEngineRowStream *stream) override { inputStream = stream; }
 
-// IThorDataLinkExt
-    virtual void setOutputIdx(unsigned idx) override { outputIdx = idx; }
-
-// IThorSlaveActivity
-    virtual void start() override
-    {
-        if (input)
-            input->start();
-        startJunction(junction);
-    }
+// IThorDataLink
+    virtual void start() override;
     virtual void stop() override
     {
         if (inputStream)
             inputStream->stop();
     }
+// IThorDataLinkExt
+    virtual void setOutputIdx(unsigned idx) override { outputIdx = idx; }
+
+// IThorSlaveActivity
+    virtual void init(MemoryBuffer &in, MemoryBuffer &out) override { }
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered);
+    virtual void processDone(MemoryBuffer &mb) override { };
     virtual void reset() override
     {
         input.clear();
         inputStream = NULL;
     }
-    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered);
+    virtual void abort() override;
 };
 
 

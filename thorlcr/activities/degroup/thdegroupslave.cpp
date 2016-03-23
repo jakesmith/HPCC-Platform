@@ -19,6 +19,8 @@
 
 class CDegroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
 {
+    typedef CSlaveActivity PARENT;
+
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
@@ -33,7 +35,7 @@ public:
     virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
-        startInput(input);
+        PARENT::start();
         if(!input->isGrouped()) ActPrintLog("DEGROUP: Degrouping non-grouped input!");
         dataLinkStart();
     }

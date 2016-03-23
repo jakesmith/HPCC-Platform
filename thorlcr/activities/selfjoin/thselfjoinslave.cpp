@@ -33,6 +33,8 @@
 
 class SelfJoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 private:
     Owned<IThorSorter> sorter;
     IHThorJoinArg * helper;
@@ -158,7 +160,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        startInput(input);
+        PARENT::start();
         dataLinkStart();
         bool hintunsortedoutput = getOptBool(THOROPT_UNSORTED_OUTPUT, (JFreorderable & helper->getJoinFlags()) != 0);
         bool hintparallelmatch = getOptBool(THOROPT_PARALLEL_MATCH, hintunsortedoutput); // i.e. unsorted, implies use parallel by default, otherwise no point

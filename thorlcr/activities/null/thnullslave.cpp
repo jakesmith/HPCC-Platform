@@ -32,7 +32,7 @@ public:
     }
     virtual void process()
     {
-        startInput(inputs.item(0));
+        start();
         stopInput(inputs.item(0));
     }
     virtual void endProcess()
@@ -89,6 +89,8 @@ public:
 
 class CThroughSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
@@ -105,7 +107,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        startInput(inputs.item(0));
+        PARENT::start();
         dataLinkStart();
     }
     virtual void stop()

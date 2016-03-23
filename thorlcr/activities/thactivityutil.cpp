@@ -50,35 +50,29 @@
 #define JOIN_TIMEOUT (10*60*1000)
 
 
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning( disable : 4355 )
-#endif
-class ThorLookaheadCache: public CSimpleInterfaceOf<IThorDataLink>, implements IEngineRowStream
+
+class CRowStreamLookAhead : public CSimpleInterfaceOf<ILookAheadEngineRowStream>
 {
     rowcount_t count;
-    Linked<IThorDataLink> in;
-    IRowStream *inputStream = NULL;
+    Linked<IEngineRowStream> inputStream;
+    IRowInterfaces *rowIf;
     Owned<ISmartRowBuffer> smartbuf;
     size32_t bufsize;
-    CActivityBase &activity;
+    CSlaveActivity &activity;
     bool allowspill, preserveGrouping;
-    ISmartBufferNotify *notify;
+    ILookAheadStopNotify *notify;
     bool running;
     bool stopped;
     rowcount_t required;
-    Semaphore startsem;
-    bool started;
-    Owned<IException> startexception;
+    Semaphore startSem;
     Owned<IException> getexception;
-    bool asyncstart;
 
-    class Cthread: public Thread
+    class CThread: public Thread
     {
-        ThorLookaheadCache &parent;
+    	CRowStreamLookAhead &parent;
     public:
-        Cthread(ThorLookaheadCache &_parent)
-            : Thread("ThorLookaheadCache"), parent(_parent)
+        CThread(CRowStreamLookAhead &_parent)
+            : Thread("CRowStreamLookAhead"), parent(_parent)
         {
         }
         int run()
@@ -98,25 +92,6 @@ public:
 
     int run()
     {
-        if (!started)
-        {
-            try
-            {
-                in->start();
-                started = true;
-            }
-            catch(IException * e)
-            {
-                ActPrintLog(&activity, e, "ThorLookaheadCache starting input");
-                startexception.setown(e);
-                if (asyncstart) 
-                    notify->onInputStarted(startexception);
-                running = false;
-                stopped = true;
-                startsem.signal();
-                return 0;
-            }
-        }
         try
         {
             StringBuffer temp;
@@ -124,12 +99,10 @@ public:
                 GetTempName(temp,"lookahd",true);
             assertex(bufsize);
             if (allowspill)
-                smartbuf.setown(createSmartBuffer(&activity, temp.str(), bufsize, queryRowInterfaces(in)));
+                smartbuf.setown(createSmartBuffer(&activity, temp.str(), bufsize, rowIf));
             else
-                smartbuf.setown(createSmartInMemoryBuffer(&activity, queryRowInterfaces(in), bufsize));
-            if (notify) 
-                notify->onInputStarted(NULL);
-            startsem.signal();
+                smartbuf.setown(createSmartInMemoryBuffer(&activity, rowIf, bufsize));
+            startSem.signal();
             IRowWriter *writer = smartbuf->queryWriter();
             if (preserveGrouping)
             {
@@ -166,7 +139,8 @@ public:
         }
         catch(IException * e)
         {
-            ActPrintLog(&activity, e, "ThorLookaheadCache get exception");
+            startSem.signal();
+            ActPrintLog(&activity, e, "CRowStreamLookAhead get exception");
             getexception.setown(e);
         }
 
@@ -179,9 +153,9 @@ public:
         class CNotifyThread : implements IThreaded
         {
             CThreaded threaded;
-            ThorLookaheadCache &owner;
+            CRowStreamLookAhead &owner;
         public:
-            CNotifyThread(ThorLookaheadCache &_owner) : threaded("Lookahead-CNotifyThread"), owner(_owner)
+            CNotifyThread(CRowStreamLookAhead &_owner) : threaded("Lookahead-CNotifyThread"), owner(_owner)
             {
                 threaded.init(this);
             }
@@ -209,7 +183,7 @@ public:
         }
         catch(IException * e)
         {
-            ActPrintLog(&activity, e, "ThorLookaheadCache stop exception");
+            ActPrintLog(&activity, e, "CRowStreamLookAhead stop exception");
             if (!getexception.get())
                 getexception.setown(e);
         }
@@ -217,15 +191,12 @@ public:
         return 0;
     }
 
-    IMPLEMENT_IINTERFACE_USING(CSimpleInterfaceOf<IThorDataLink>);
-
-    ThorLookaheadCache(CActivityBase &_activity, IThorDataLink *_in,size32_t _bufsize,bool _allowspill,bool _preserveGrouping, rowcount_t _required,ISmartBufferNotify *_notify, bool _instarted, IDiskUsage *_iDiskUsage)
-        : thread(*this), activity(_activity), in(_in)
+    CRowStreamLookAhead(CSlaveActivity &_activity, IEngineRowStream *_inputStream, IRowInterfaces *_rowIf, size32_t _bufsize, bool _allowspill, bool _preserveGrouping, rowcount_t _required, ILookAheadStopNotify *_notify, IDiskUsage *_iDiskUsage)
+        : thread(*this), activity(_activity), inputStream(_inputStream), rowIf(_rowIf)
     {
 #ifdef _FULL_TRACE
-        ActPrintLog(&activity, "ThorLookaheadCache create %x",(unsigned)(memsize_t)this);
+        ActPrintLog(&activity, "CRowStreamLookAhead create %x",(unsigned)(memsize_t)this);
 #endif
-        asyncstart = false;
         allowspill = _allowspill;
         preserveGrouping = _preserveGrouping;
         assertex((unsigned)-1 != _bufsize); // no longer supported
@@ -235,16 +206,12 @@ public:
         required = _required;
         count = 0;
         stopped = true;
-        started = _instarted;
-        inputStream = in->queryStream();
     }
-
-    ~ThorLookaheadCache()
+    ~CRowStreamLookAhead()
     {
         if (!thread.join(1000*60))
-            ActPrintLogEx(&activity.queryContainer(), thorlog_all, MCuserWarning, "ThorLookaheadCache join timedout");
+            ActPrintLogEx(&activity.queryContainer(), thorlog_all, MCuserWarning, "CRowStreamLookAhead join timedout");
     }
-
 // IEngineRowStream
     virtual const void *nextRow() override
     {
@@ -254,15 +221,29 @@ public:
         if (!row)
         {
 #ifdef _FULL_TRACE
-            ActPrintLog(&activity, "ThorLookaheadCache eos %x",(unsigned)(memsize_t)this);
+            ActPrintLog(&activity, "CRowStreamLookAhead eos %x",(unsigned)(memsize_t)this);
 #endif
         }
         return row.getClear();
     }
+
+// ILookAheadEngineRowStream
+    virtual void start() override
+    {
+#ifdef _FULL_TRACE
+        ActPrintLog(&activity, "CRowStreamLookAhead start %x",(unsigned)(memsize_t)this);
+#endif
+        stopped = false;
+        thread.start();
+		startSem.wait();
+    }
+// IEngineRowStream
+    virtual void resetEOF() override { throwUnexpected(); }
+// IRowStream
     virtual void stop() override
     {
 #ifdef _FULL_TRACE
-        ActPrintLog(&activity, "ThorLookaheadCache stop %x",(unsigned)(memsize_t)this);
+        ActPrintLog(&activity, "CRowStreamLookAhead stop %x",(unsigned)(memsize_t)this);
 #endif
         if (!stopped)
         {
@@ -271,110 +252,19 @@ public:
                 smartbuf->stop(); // just in case blocked
             thread.join();
             stopped = true;
-            if (getexception) 
+            if (getexception)
                 throw getexception.getClear();
         }
     }
-    virtual void resetEOF() override { throwUnexpected(); }
-
-// IThorDataLink
-    virtual void start() override
-    {
-#ifdef _FULL_TRACE
-        ActPrintLog(&activity, "ThorLookaheadCache start %x",(unsigned)(memsize_t)this);
-#endif
-        stopped = false;
-        asyncstart = notify&&notify->startAsync();
-        thread.start();
-        if (!asyncstart) {
-            startsem.wait();
-            if (startexception)
-                throw startexception.getClear();
-        }
-    }
-    virtual CSlaveActivity *queryFromActivity() override { return in->queryFromActivity(); }
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { in->getMetaInfo(info); }
-    virtual unsigned __int64 queryTotalCycles() const override { return in->queryTotalCycles(); }
-    virtual unsigned __int64 queryEndCycles() const { return in->queryEndCycles(); }
-    virtual void dataLinkSerialize(MemoryBuffer &mb) const { in->dataLinkSerialize(mb); }
-    virtual void dataLinkStart() { in->dataLinkStart(); }
-    virtual void dataLinkStop() { in->dataLinkStop(); }
-    virtual bool isGrouped() const { return in->isGrouped(); }
-    virtual IOutputMetaData * queryOutputMeta() const { return in->queryOutputMeta(); }
-    virtual unsigned queryOutputIdx() const { return in->queryOutputIdx(); }
-    virtual bool isInputOrdered(bool consumerOrdered) const { return in->isInputOrdered(consumerOrdered); }
-    virtual IStrandJunction *getOutputStreams(CActivityBase &_activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
-    {
-        return in->getOutputStreams(_activity, idx, streams, consumerOptions, consumerOrdered);
-    }
-    virtual void debugRequest(MemoryBuffer &mb) { in->debugRequest(mb); }
-
-// Stepping methods
-    virtual IInputSteppingMeta *querySteppingMeta() { return in->querySteppingMeta(); }
-    virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return in->gatherConjunctions(collector); }
-
-// to support non-stranded activities
-    virtual IEngineRowStream *queryStream() { return this; }
-    virtual IEngineRowStream *querySingleOutput() override { return this; }
-    virtual void setSingleOutput(IEngineRowStream *stream) override { throwUnexpected(); }
 };
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
 
 
-IThorDataLink *createDataLinkSmartBuffer(CActivityBase *activity, IThorDataLink *in, size32_t bufsize, bool allowspill, bool preserveGrouping, rowcount_t maxcount, ISmartBufferNotify *notify, bool instarted, IDiskUsage *iDiskUsage)
+ILookAheadEngineRowStream *createRowStreamLookAhead(CSlaveActivity *activity, IEngineRowStream *inputStream, IRowInterfaces *rowIf, size32_t bufsize, bool allowspill, bool preserveGrouping, rowcount_t maxcount, ILookAheadStopNotify *notify, IDiskUsage *iDiskUsage)
 {
-    return new ThorLookaheadCache(*activity, in, bufsize, allowspill, preserveGrouping, maxcount, notify, instarted, iDiskUsage);
-}
-
-
-class CITDL : public CSimpleInterfaceOf<IThorDataLink>, implements IEngineRowStream
-{
-    IThorDataLink *base;
-    Owned<IRowStream> in;
-public:
-    IMPLEMENT_IINTERFACE_USING(CSimpleInterfaceOf<IThorDataLink>);
-
-    CITDL(IThorDataLink *_base, IRowStream *_in) : in(_in), base(_base)
-    {
-    }
-// IEngineRowStream
-    virtual const void *nextRow() override { return in->nextRow(); }
-    virtual void stop() override { in->stop(); }
-    virtual void resetEOF() override { throwUnexpected(); }
-// IThorDataLink impl.
-    virtual void start() override { base->start(); }
-    virtual CSlaveActivity *queryFromActivity() override { return base->queryFromActivity(); }
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { base->getMetaInfo(info); }
-    virtual unsigned __int64 queryTotalCycles() const override { return base->queryTotalCycles(); }
-    virtual unsigned __int64 queryEndCycles() const { return base->queryEndCycles(); }
-    virtual void dataLinkSerialize(MemoryBuffer &mb) const { base->dataLinkSerialize(mb); }
-    virtual void dataLinkStart() { base->dataLinkStart(); }
-    virtual void dataLinkStop() { base->dataLinkStop(); }
-    virtual bool isGrouped() const { return base->isGrouped(); }
-    virtual IOutputMetaData * queryOutputMeta() const { return base->queryOutputMeta(); }
-    virtual unsigned queryOutputIdx() const { return base->queryOutputIdx(); }
-    virtual bool isInputOrdered(bool consumerOrdered) const { return base->isInputOrdered(consumerOrdered); }
-    virtual IStrandJunction *getOutputStreams(CActivityBase &_activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
-    {
-        return base->getOutputStreams(_activity, idx, streams, consumerOptions, consumerOrdered);
-    }
-    virtual void debugRequest(MemoryBuffer &mb) { base->debugRequest(mb); }
-
-// Stepping methods
-    virtual IInputSteppingMeta *querySteppingMeta() { return base->querySteppingMeta(); }
-    virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return base->gatherConjunctions(collector); }
-
-// to support non-stranded activities
-    virtual IEngineRowStream *queryStream() { return this; }
-    virtual IEngineRowStream *querySingleOutput() override { return this; }
-    virtual void setSingleOutput(IEngineRowStream *stream) override { throwUnexpected(); }
-};
-
-IThorDataLink *createRowStreamToDataLinkAdapter(IThorDataLink *base, IRowStream *in)
-{
-    return new CITDL(base, in);
+    return new CRowStreamLookAhead(*activity, inputStream, rowIf, bufsize, allowspill, preserveGrouping, maxcount, notify, iDiskUsage);
 }
 
 void initMetaInfo(ThorDataLinkMetaInfo &info)

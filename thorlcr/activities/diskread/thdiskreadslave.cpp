@@ -465,7 +465,7 @@ public:
             gotMeta = true;
             initMetaInfo(cachedMetaInfo);
             cachedMetaInfo.isSource = true;
-            getPartsMetaInfo(cachedMetaInfo, *this, partDescs.ordinality(), partDescs.getArray(), partHandler);
+            getPartsMetaInfo(cachedMetaInfo, partDescs.ordinality(), partDescs.getArray(), partHandler);
         }
         info = cachedMetaInfo;
         if (info.totalRowsMin==info.totalRowsMax)
@@ -624,7 +624,7 @@ public:
             gotMeta = true;
             initMetaInfo(cachedMetaInfo);
             cachedMetaInfo.isSource = true;
-            getPartsMetaInfo(cachedMetaInfo, *this, partDescs.ordinality(), partDescs.getArray(), partHandler);
+            getPartsMetaInfo(cachedMetaInfo, partDescs.ordinality(), partDescs.getArray(), partHandler);
             cachedMetaInfo.unknownRowsOutput = true; // JCSMORE
         }
         info = cachedMetaInfo;

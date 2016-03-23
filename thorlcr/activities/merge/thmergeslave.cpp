@@ -283,11 +283,12 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        ForEachItemIn(i, inputs) {
+        ForEachItemIn(i, inputs)
+        {
             IThorDataLink * input = inputs.item(i);
             try
             {
-                startInput(input); 
+                startInput(i);
             }
             catch (CATCHALL)
             {
@@ -297,9 +298,9 @@ public:
                 throw;
             }
             if (input->isGrouped())
-                streams.append(*createUngroupStream(input->queryStream()));
+                streams.append(*createUngroupStream(inputStreams.item(i)));
             else
-                streams.append(*LINK(input->queryStream()));
+                streams.append(*LINK(inputStreams.item(i)));
         }
 #ifndef _STABLE_MERGE
         // shuffle streams otherwise will all be reading in order initially
@@ -438,10 +439,12 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        ForEachItemIn(i, inputs) {
-            IThorDataLink * input = inputs.item(i);
-            try { 
-                startInput(input); 
+        ForEachItemIn(i, inputs)
+        {
+            IThorDataLink *input = inputs.item(i);
+            try
+            {
+                startInput(i);
             }
             catch (CATCHALL) {
                 ActPrintLog("MERGE(%" ACTPF "d): Error starting input %d", container.queryId(), i);
@@ -450,9 +453,9 @@ public:
                 throw;
             }
             if (input->isGrouped())
-                streams.append(*createUngroupStream(input->queryStream()));
+                streams.append(*createUngroupStream(inputStreams.item(i)));
             else
-                streams.append(*LINK(input->queryStream()));
+                streams.append(*LINK(inputStreams.item(i)));
         }
         Owned<IRowLinkCounter> linkcounter = new CThorRowLinkCounter;
         out.setown(createRowStreamMerger(streams.ordinality(), streams.getArray(), helper->queryCompare(), helper->dedup(), linkcounter));
@@ -553,10 +556,7 @@ public:
     virtual void start()
     {
         CThorNarySlaveActivity::start();
-        expandedInputStreams.kill();
-        ForEachItemIn(i, expandedInputs)
-            expandedInputStreams.append(expandedInputs.item(i)->queryStream());
-        merger.initInputs(expandedInputStreams.length(), expandedInputStreams.getArray());
+        merger.initInputs(expandedStreams.length(), expandedStreams.getArray());
         dataLinkStart();
     }
     virtual void stop()

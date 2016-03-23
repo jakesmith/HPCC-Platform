@@ -756,9 +756,10 @@ struct HtEntry { rowidx_t index, count; };
  * and base common functionality for all and lookup varieties
  */
 template <class HTHELPER, class HELPER>
-class CInMemJoinBase : public CSlaveActivity, public CThorSingleOutput, public CAllOrLookupHelper<HELPER>, implements ISmartBufferNotify, implements IBCastReceive
+class CInMemJoinBase : public CSlaveActivity, public CThorSingleOutput, public CAllOrLookupHelper<HELPER>, implements ILookAheadStopNotify, implements IBCastReceive
 {
-    Semaphore leftstartsem;
+    typedef CSlaveActivity PARENT;
+
     Owned<IException> leftexception;
 
     bool eos, eog, someSinceEog;
@@ -1288,6 +1289,18 @@ public:
         }
     }
     HTHELPER *queryTable() { return table; }
+    void startLeftInput()
+    {
+        try
+        {
+            input->start();
+            startJunction(junction);
+        }
+        catch(IException *e)
+        {
+            leftexception.setown(e);
+        }
+    }
 
 // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -1309,6 +1322,15 @@ public:
             broadcaster.setown(new CBroadcaster(*this));
             if (0 == queryJobChannelNumber())
                 rowProcessor = new CRowProcessor(*this);
+        }
+    }
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+        PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+        if (0 == index)
+        {
+            lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), LOOKUPJOINL_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(leftITDL->queryFromActivity()), grouped, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
+            inputStream = lookAheadStream;
         }
     }
     virtual void start()
@@ -1348,7 +1370,6 @@ public:
         currentHashEntry.index = 0;
         currentHashEntry.count = 0;
 
-        right.set(rightITDL->queryStream());
         rightAllocator.set(::queryRowAllocator(rightITDL));
         rightSerializer.set(::queryRowSerializer(rightITDL));
         rightDeserializer.set(::queryRowDeserializer(rightITDL));
@@ -1361,26 +1382,38 @@ public:
             defaultRight.setown(rr.finalizeRowClear(rrsz));
         }
 
-        leftITDL = createDataLinkSmartBuffer(this,leftITDL,LOOKUPJOINL_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(leftITDL->queryFromActivity()),grouped,RCUNBOUND,this,false,&container.queryJob().queryIDiskUsage());
-        left.setown(leftITDL->queryStream());
-        startInput(leftITDL);
+        class CASyncCall : implements IThreaded
+        {
+            CThreaded threaded;
+            CInMemJoinBase &activity;
+        public:
+            CASyncCall(CInMemJoinBase &_activity) : activity(_activity), threaded("CAsyncCall", this) { }
+            void start() { threaded.start(); }
+            void wait() { threaded.join(); }
+        // IThreaded
+            virtual void main() { activity.startLeftInput(); }
+        } asyncLeftStart(*this);
+
+        asyncLeftStart.start();
 
         try
         {
-            startInput(rightITDL);
+            rightITDL->start();
+            startJunction(inputJunctions.item(1));
         }
         catch (CATCHALL)
         {
-            leftstartsem.wait();
+            asyncLeftStart.wait();
             left->stop();
             throw;
         }
-        leftstartsem.wait();
+        asyncLeftStart.wait();
         if (leftexception)
         {
             right->stop();
             throw leftexception.getClear();
         }
+        right.set(inputStreams.item(1));
         dataLinkStart();
     }
     virtual void abort()
@@ -1488,16 +1521,6 @@ public:
             sendItem = NULL; // NB: NULL indicates end
         }
         rowProcessor->addBlock(sendItem);
-    }
-// ISmartBufferNotify
-    virtual void onInputStarted(IException *except)
-    {
-        leftexception.set(except);
-        leftstartsem.signal();
-    }
-    virtual bool startAsync()
-    {
-        return true;
     }
     virtual void onInputFinished(rowcount_t count)
     {

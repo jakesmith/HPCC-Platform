@@ -70,7 +70,7 @@ public:
 
 //////////////////////////////////////////////
 
-void getPartsMetaInfo(ThorDataLinkMetaInfo &metaInfo, CThorSingleOutput &link, unsigned nparts, IPartDescriptor **partDescs, CDiskPartHandlerBase *partHandler);
+void getPartsMetaInfo(ThorDataLinkMetaInfo &metaInfo, unsigned nparts, IPartDescriptor **partDescs, CDiskPartHandlerBase *partHandler);
 
 //////////////////////////////////////////////
 
@@ -93,7 +93,7 @@ public:
     CDiskReadSlaveActivityBase(CGraphElementBase *_container);
     const char *queryLogicalFilename(unsigned index);
     IRowInterfaces * queryDiskRowInterfaces();
-    virtual void start();
+    virtual void start() override;
 
     
 // IThorSlaveActivity
@@ -105,6 +105,8 @@ friend class CDiskPartHandlerBase;
 
 class CDiskWriteSlaveActivityBase : public ProcessSlaveActivity, implements ICopyFileProgress
 {
+    typedef ProcessSlaveActivity PARENT;
+
 protected:
     IHThorDiskWriteArg *diskHelperBase;
     Owned<IFileIO> outputIO;
@@ -138,6 +140,7 @@ public:
     virtual CFPmode onProgress(unsigned __int64 sizeDone, unsigned __int64 totalSize);
 
 // IThorSlaveProcess overloaded methods
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override;
     virtual void kill();
     virtual void process();
     virtual void endProcess();

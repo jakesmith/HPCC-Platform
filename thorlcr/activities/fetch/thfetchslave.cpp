@@ -266,6 +266,8 @@ IFetchStream *createFetchStream(CSlaveActivity &owner, IRowInterfaces *keyRowIf,
 
 class CFetchSlaveBase : public CSlaveActivity, public CThorSingleOutput, implements IFetchHandler
 {
+    typedef CSlaveActivity PARENT;
+
     IRowStream *fetchStreamOut;
     unsigned maxKeyRecSize;
     rowcount_t limit;
@@ -359,6 +361,9 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
+        dataLinkStart();
+
         class CKeyFieldExtractBase : public CSimpleInterface, implements IRowStream
         {
         protected:
@@ -380,10 +385,6 @@ public:
             virtual void stop() { in.stop(); }
         };
 
-        startInput(inputs.item(0));
-        dataLinkStart();
-
-        IThorDataLink *in = inputs.item(0);
         Owned<IRowInterfaces> keyInIf;
         if (indexRowExtractNeeded)
         {
@@ -412,12 +413,12 @@ public:
 
             if (fetchBaseHelper->extractAllJoinFields())
             {
-                keyIn = LINK(in->queryStream());
-                keyInMeta.set(in->queryFromActivity()->queryRowMetaData());
+                keyIn = LINK(inputStream);
+                keyInMeta.set(input->queryFromActivity()->queryRowMetaData());
             }
             else
             {
-                keyIn = new CKeyFieldExtract(this, *in->queryStream(), *fetchBaseHelper, *fetchContext);
+                keyIn = new CKeyFieldExtract(this, *inputStream, *fetchBaseHelper, *fetchContext);
                 keyInMeta.set(QUERYINTERFACE(fetchBaseHelper->queryExtractedSize(), IOutputMetaData));
             }
             keyInIf.setown(createRowInterfaces(keyInMeta,queryId(),queryCodeContext()));
@@ -450,7 +451,7 @@ public:
             };
             Owned<IOutputMetaData> fmeta = createFixedSizeMetaData(sizeof(offset_t)); // should be provided by Gavin?
             keyInIf.setown(createRowInterfaces(fmeta,queryId(),queryCodeContext()));
-            keyIn = new CKeyFPosExtract(keyInIf, this, *in->queryStream(), *fetchBaseHelper, *fetchContext);
+            keyIn = new CKeyFPosExtract(keyInIf, this, *inputStream, *fetchBaseHelper, *fetchContext);
         }
 
         Owned<IRowInterfaces> rowIf = createRowInterfaces(queryRowMetaData(), queryId(), queryCodeContext());

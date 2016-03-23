@@ -38,8 +38,16 @@
 #define BUFFERSIZE 0x10000
 #define NUMSLAVEPORTS 2     // actually should be num MP tags
 
-class JoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements ISmartBufferNotify
+class JoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements ILookAheadStopNotify
 {
+    typedef CSlaveActivity PARENT;
+
+    IStrandJunction *rightJunction = NULL;
+    IStrandJunction *primaryJunction = NULL;
+    IStrandJunction *secondaryJunction = NULL;
+    IEngineRowStream *rightInputStream = NULL;
+    IEngineRowStream *primaryInputStream = NULL;
+    IEngineRowStream *secondaryInputStream = NULL;
     Owned<IThorDataLink> leftInput, rightInput;
     Owned<IThorDataLink> secondaryInput, primaryInput;
     IHThorJoinBaseArg *helper;
@@ -56,7 +64,6 @@ class JoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput, imple
     ICompare *primarySecondaryUpperCompare; // if non-null then between join
 
     Owned<IRowStream> leftStream, rightStream;
-    Semaphore secondaryStartSem;
     Owned<IException> secondaryStartException;
 
     bool islocal;
@@ -196,12 +203,27 @@ public:
         leftKeySerializer = helper->querySerializeLeft();
         rightKeySerializer = helper->querySerializeRight();
     }
-    virtual void onInputStarted(IException *except)
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        secondaryStartException.set(except);
-        secondaryStartSem.signal();
+        IEngineRowStream *thisInputStream;
+        PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+        if (1 == index)
+            rightJunction = inputJunctions.item(1);
+        if ((rightpartition && (0 == index)) || (!rightpartition && (1 == index)))
+        {
+            IEngineRowStream * &stream = rightpartition ? inputStream : rightInputStream;
+            lookAheadStream.setown(createRowStreamLookAhead(this, stream, queryRowInterfaces(_input), JOIN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(secondaryInput->queryFromActivity()),
+                                                        false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
+            stream = lookAheadStream;
+            secondaryInputStream = lookAheadStream;
+            secondaryJunction = rightpartition ? junction.get() : rightJunction;
+        }
+        else
+        {
+            primaryInputStream = inputStream;
+            primaryJunction = rightpartition ? rightJunction : junction.get();
+        }
     }
-    virtual bool startAsync() { return true; }
     virtual void onInputFinished(rowcount_t count)
     {
         ActPrintLog("JOIN: %s input finished, %" RCPF "d rows read", rightpartition?"LHS":"RHS", count);
@@ -229,6 +251,19 @@ public:
         }
     }
 
+    void startSecondaryInput()
+    {
+        try
+        {
+            secondaryInput->start();
+            startJunction(secondaryJunction);
+        }
+        catch (IException *e)
+        {
+            secondaryStartException.setown(e);
+        }
+
+    }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
@@ -257,26 +292,38 @@ public:
             secondaryInputStr.set("R");
         }
         ActPrintLog("JOIN partition: %s", primaryInputStr.get());
-
-        secondaryInput.setown(createDataLinkSmartBuffer(this, secondaryInput, JOIN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(secondaryInput->queryFromActivity()),
-                                                    false, RCUNBOUND, this, false, &container.queryJob().queryIDiskUsage()));
         ActPrintLog("JOIN: Starting %s then %s", secondaryInputStr.get(), primaryInputStr.get());
-        startInput(secondaryInput);
+
         *secondaryInputStopped = false;
+
+        class CASyncCall : implements IThreaded
+        {
+            CThreaded threaded;
+            JoinSlaveActivity &activity;
+        public:
+            CASyncCall(JoinSlaveActivity &_activity) : activity(_activity), threaded("CAsyncCall", this) { }
+            void start() { threaded.start(); }
+            void wait() { threaded.join(); }
+        // IThreaded
+            virtual void main() { activity.startSecondaryInput(); }
+        } asyncSecondaryStart(*this);
+
+        asyncSecondaryStart.start();
         try
         {
-            startInput(primaryInput);
+            primaryInput->start();
+            startJunction(primaryJunction);
             *primaryInputStopped = false;
         }
         catch (IException *e)
         {
             fireException(e);
             barrier->cancel();
-            secondaryStartSem.wait();
+            asyncSecondaryStart.wait();
             stopOtherInput();
             throw;
         }
-        secondaryStartSem.wait();
+        asyncSecondaryStart.wait();
         if (secondaryStartException)
         {
             IException *e=secondaryStartException.getClear();
@@ -406,8 +453,7 @@ public:
     void dolocaljoin()
     {
         bool isemptylhs = false;
-        IRowStream *leftInputStream = leftInput->queryStream();
-        IRowStream *rightInputStream = rightInput->queryStream();
+        IRowStream *leftInputStream = inputStream;
         if (helper->isLeftAlreadyLocallySorted())
         {
             ThorDataLinkMetaInfo info;
@@ -515,12 +561,12 @@ public:
 
         if (noSortPartitionSide())
         {
-            partitionRow.setown(primaryInput->queryStream()->ungroupedNextRow());
-            primaryStream.set(new cRowStreamPlus1Adaptor(primaryInput->queryStream(), partitionRow));
+            partitionRow.setown(primaryInputStream->ungroupedNextRow());
+            primaryStream.set(new cRowStreamPlus1Adaptor(primaryInputStream, partitionRow));
         }
         else
         {
-            sorter->Gather(primaryRowIf, primaryInput->queryStream(), primaryCompare, NULL, NULL, primaryKeySerializer, NULL, false, isUnstable(), abortSoon, NULL);
+            sorter->Gather(primaryRowIf, primaryInputStream, primaryCompare, NULL, NULL, primaryKeySerializer, NULL, false, isUnstable(), abortSoon, NULL);
             stopPartitionInput();
             if (abortSoon)
             {
@@ -545,7 +591,7 @@ public:
             sorter->stopMerge();
         }
         // NB: on secondary sort, the primaryKeySerializer is used
-        sorter->Gather(secondaryRowIf, secondaryInput->queryStream(), secondaryCompare, primarySecondaryCompare, primarySecondaryUpperCompare, primaryKeySerializer, partitionRow, noSortOtherSide(), isUnstable(), abortSoon, primaryRowIf); // primaryKeySerializer *is* correct
+        sorter->Gather(secondaryRowIf, secondaryInputStream, secondaryCompare, primarySecondaryCompare, primarySecondaryUpperCompare, primaryKeySerializer, partitionRow, noSortOtherSide(), isUnstable(), abortSoon, primaryRowIf); // primaryKeySerializer *is* correct
         mergeStats(spillStats, sorter);
         //MORE: Stats from spilling the primaryStream??
         partitionRow.clear();
@@ -624,8 +670,7 @@ public:
 
         ForEachItemIn(i1, expandedInputs)
         {
-            IThorDataLink *cur = expandedInputs.item(i1);
-            Owned<CThorSteppedInput> stepInput = new CThorSteppedInput(cur);
+            Owned<CThorSteppedInput> stepInput = new CThorSteppedInput(expandedInputs.item(i1), expandedStreams.item(i1));
             processor.addInput(stepInput);
         }
         processor.beforeProcessing(inputAllocator, outputAllocator);

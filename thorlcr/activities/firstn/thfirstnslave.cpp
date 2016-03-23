@@ -27,6 +27,8 @@
 
 class CFirstNSlaveBase : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 protected:
     rowcount_t limit, skipCount;
     bool stopped;
@@ -53,7 +55,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        startInput(input);
+        PARENT::start();
         stopped = false;
         dataLinkStart();
     }
@@ -77,7 +79,9 @@ public:
 
 class CFirstNSlaveLocal : public CFirstNSlaveBase
 {
-    bool firstget;
+	typedef CFirstNSlaveBase PARENT;
+
+	bool firstget;
     rowcount_t skipped;
 public:
     CFirstNSlaveLocal(CGraphElementBase *container) : CFirstNSlaveBase(container)
@@ -88,7 +92,7 @@ public:
     virtual bool isGrouped() { return false; }
     virtual void start()
     {
-        CFirstNSlaveBase::start();
+    	PARENT::start();
         skipCount = validRC(helper->numToSkip());
         limit = (rowcount_t)helper->getLimit();
         firstget = true;
@@ -130,6 +134,8 @@ public:
 
 class CFirstNSlaveGrouped : public CFirstNSlaveBase
 {
+	typedef CFirstNSlaveBase PARENT;
+
     unsigned countThisGroup;
 public:
     CFirstNSlaveGrouped(CGraphElementBase *container) : CFirstNSlaveBase(container)
@@ -140,7 +146,7 @@ public:
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
     virtual void start()
     {
-        CFirstNSlaveBase::start();
+    	PARENT::start();
         skipCount = validRC(helper->numToSkip());
         limit = (rowcount_t)helper->getLimit();
         countThisGroup = 0;
@@ -205,22 +211,22 @@ public:
     }
 };
 
-class CFirstNSlaveGlobal : public CFirstNSlaveBase, implements ISmartBufferNotify
+class CFirstNSlaveGlobal : public CFirstNSlaveBase, implements ILookAheadStopNotify
 {
+	typedef CFirstNSlaveBase PARENT;
+
     Semaphore limitgot;
     CriticalSection crit;
     rowcount_t maxres, skipped, totallimit;
     bool firstget;
     ThorDataLinkMetaInfo inputMeta;
 
-//  ISmartBufferNotify methods used for global firstn only
-
 protected:
     virtual void doStop()
     {
         limitgot.signal(); // JIC not previously signalled by lookahead
         onInputFinished(getDataLinkCount()+skipped);
-        CFirstNSlaveBase::doStop();
+        PARENT::doStop();
     }
 
 public:
@@ -229,29 +235,31 @@ public:
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
-        CFirstNSlaveBase::init(data, slaveData);
+    	PARENT::init(data, slaveData);
         mpTag = container.queryJobChannel().deserializeMPTag(data);
+    }
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+    	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+    	totallimit = (rowcount_t)helper->getLimit();
+        rowcount_t _skipCount = validRC(helper->numToSkip()); // max
+        rowcount_t maxRead = (totallimit>(RCUNBOUND-_skipCount))?RCUNBOUND:totallimit+_skipCount;
+        lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), FIRSTN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false,
+                                          maxRead, this, &container.queryJob().queryIDiskUsage())); // if a very large limit don't bother truncating
     }
     virtual void start()
     {
-        CFirstNSlaveBase::start(); // adds to totalTime (common to local and global firstn)
         ActivityTimer s(totalCycles, timeActivities);
-        totallimit = (rowcount_t)helper->getLimit();
+        PARENT::start(); // adds to totalTime (common to local and global firstn)
         limit = maxres = RCUNBOUND;
         skipCount = 0;
         skipped = 0;
         firstget = true;
         input->getMetaInfo(inputMeta);
-        rowcount_t _skipCount = validRC(helper->numToSkip()); // max
-        rowcount_t maxRead = (totallimit>(RCUNBOUND-_skipCount))?RCUNBOUND:totallimit+_skipCount;
-        input.setown(createDataLinkSmartBuffer(this, input,FIRSTN_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(this),false,
-                                          maxRead,this,true,&container.queryJob().queryIDiskUsage())); // if a very large limit don't bother truncating
-        inputStream = input->queryStream();
-        startInput(input);
     }
     virtual void abort()
     {
-        CFirstNSlaveBase::abort();
+    	PARENT::abort();
         limitgot.signal();
         CriticalBlock b(crit);
         cancelReceiveMsg(RANK_ALL, mpTag);
@@ -355,12 +363,10 @@ public:
     virtual bool isGrouped() { return false; } // need to do different if is!
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
-        CFirstNSlaveBase::getMetaInfo(info);
+    	PARENT::getMetaInfo(info);
         info.canBufferInput = true;
     }
-    //  ISmartBufferNotify methods used for global firstn only
-    virtual void onInputStarted(IException *) { } // not needed
-    virtual bool startAsync() { return false; }
+// ILookAheadStopNotify
     virtual void onInputFinished(rowcount_t count)  // count is the total read from input (including skipped)
     {
         // sneaky short circuit

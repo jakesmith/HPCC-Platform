@@ -70,6 +70,8 @@ public:
 
 class CWhenSlaveActivity : public CSlaveActivity, public CDependencyExecutorSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 public:
     IMPLEMENT_IINTERFACE_USING(CDependencyExecutorSlaveActivity);
 
@@ -88,7 +90,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        startInput(input);
+        PARENT::start();
         dataLinkStart();
     }
     virtual void stop()

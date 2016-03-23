@@ -98,6 +98,7 @@ class CSlaveActivity;
 interface IThorDataLink : extends IInterface
 {
     virtual void start() = 0; // prepares input
+    virtual void stop() = 0; // prepares input
     virtual CSlaveActivity *queryFromActivity() = 0; // activity that has this as an output
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
     virtual unsigned __int64 queryTotalCycles() const = 0;
@@ -117,9 +118,8 @@ interface IThorDataLink : extends IInterface
     virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
 
 // to support non-stranded activities
-    virtual IEngineRowStream *querySingleOutput() = 0;
     virtual IEngineRowStream *queryStream() = 0; // should be const really, but some IEngineRowStream members are not..
-    virtual void setSingleOutput(IEngineRowStream *stream) = 0;
+    virtual void setOutputStream(IEngineRowStream *stream) = 0;
 };
 
 // helper interface. Used by maintainer of output links
@@ -149,8 +149,9 @@ interface IThorDataLink : extends IEngineRowStream // legacy
 
 interface IThorSlaveActivity
 {
-    virtual void start() = 0;
-    virtual void stop() = 0;
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) = 0;
+    virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) = 0;
+    virtual void processDone(MemoryBuffer &mb) = 0;
     virtual void reset() = 0;
 };
 #ifdef _MSC_VER

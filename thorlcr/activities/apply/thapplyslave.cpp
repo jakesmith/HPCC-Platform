@@ -37,8 +37,8 @@ public:
 // IThorSlaveProcess overloaded methods
     virtual void process()
     {
+        start();
         processed = 0;
-        startInput(input);
         processed = THORDATALINK_STARTED;
         try
         {

@@ -25,10 +25,11 @@
 
 class CLimitSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 protected:
     rowcount_t rowLimit;
     bool eos, eogNext, stopped, resultSent, anyThisGroup;
-    IThorDataLink *input;
     IHThorLimitArg *helper;
 
     void stopInput(rowcount_t c)
@@ -46,7 +47,6 @@ public:
     CLimitSlaveActivityBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         helper = (IHThorLimitArg *)queryHelper();
-        input = NULL;       
         resultSent = container.queryLocal(); // i.e. local, so don't send result to master
         eos = stopped = anyThisGroup = eogNext = false;
         rowLimit = RCMAX;
@@ -61,10 +61,9 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         resultSent = container.queryLocal(); // i.e. local, so don't send result to master
         eos = stopped = anyThisGroup = eogNext = false;
-        input = inputs.item(0);
-        startInput(input);
         rowLimit = (rowcount_t)helper->getRowLimit();
         dataLinkStart();
     }

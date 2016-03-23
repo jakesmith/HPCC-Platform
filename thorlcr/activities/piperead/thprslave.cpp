@@ -315,6 +315,8 @@ protected:
 
 class CPipeThroughSlaveActivity : public CPipeSlaveBase, public CThorSingleOutput
 {
+    typedef CPipeSlaveBase PARENT;
+
     friend class PipeWriterThread;
 
     IHThorPipeThroughArg *helper;
@@ -367,6 +369,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         eof = anyThisGroup = inputExhausted = false;
         firstRead = true;
 
@@ -380,7 +383,6 @@ public:
             OwnedRoxieString pipeProgram(helper->getPipeProgram());
             openPipe(pipeProgram, "PIPETHROUGH");
         }
-        startInput(inputs.item(0));
         dataLinkStart();
         pipeWriter = new PipeWriterThread(*this);
         pipeWriter->start();

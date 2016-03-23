@@ -30,7 +30,8 @@
 
 class SpillSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
-    IThorDataLink *input;
+    typedef CSlaveActivity PARENT;
+
     StringBuffer fileName;
     Owned<IPartDescriptor> partDesc;
     Owned<IExtRowWriter> out;
@@ -156,11 +157,10 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         uncompressedBytesWritten = 0;
         if (!container.queryJob().queryUseCheckpoints())
             container.queryTempHandler()->registerFile(fileName.str(), container.queryOwner().queryGraphId(), usageCount, true);
-        input = inputs.item(0);
-        startInput(input);
         
         dataLinkStart();
 

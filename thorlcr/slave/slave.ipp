@@ -90,15 +90,24 @@ interface IThorNWayInput
 
 class CThorNarySlaveActivity : public CSlaveActivity
 {
+    typedef CSlaveActivity PARENT;
+    
 protected:
     PointerArrayOf<IThorDataLink> expandedInputs;
+    Owned<IStrandJunction> *expandedJunctions = nullptr;
+    IPointerArrayOf<IEngineRowStream> expandedStreams;
 
 public:
     CThorNarySlaveActivity(CGraphElementBase *container) : CSlaveActivity(container)
     {
     }
-    void start()
+    ~CThorNarySlaveActivity()
     {
+        delete [] expandedJunctions;
+    }
+    virtual void start() override
+    {
+        PARENT::start();
         ForEachItemIn(i, inputs)
         {
             IThorDataLink *cur = inputs.item(i);
@@ -107,8 +116,7 @@ public:
             if (nWayInput)
             {
                 unsigned numRealInputs = nWayInput->numConcreteOutputs();
-                unsigned i = 0;
-                for (; i < numRealInputs; i++)
+                for (unsigned i=0; i < numRealInputs; i++)
                 {
                     IThorDataLink *curReal = nWayInput->queryConcreteInput(i);
                     expandedInputs.append(curReal);
@@ -117,14 +125,21 @@ public:
             else
                 expandedInputs.append(cur);
         }
-        ForEachItemIn(ei, expandedInputs)
-            expandedInputs.item(ei)->start();
+        expandedJunctions = new Owned<IStrandJunction> [expandedInputs.length()];
+        ForEachItemIn(idx, expandedInputs)
+        {
+            expandedStreams.append(connectSingleStream(*this, expandedInputs.item(idx), 0, expandedJunctions[idx], true));  // MORE - is the index 0 right?
+            startJunction(expandedJunctions[idx]);
+        }
     }
     void stop()
     {
-        ForEachItemIn(ei, expandedInputs)
-            expandedInputs.item(ei)->queryStream()->stop();
+        ForEachItemIn(idx, expandedInputs)
+            resetJunction(expandedJunctions[idx]);
         expandedInputs.kill();
+        expandedStreams.kill();
+        delete [] expandedJunctions;
+        expandedJunctions = nullptr;
     }
 };
 
@@ -154,9 +169,8 @@ protected:
         inputStream->resetEOF();
     }
 public:
-    CThorSteppedInput(IThorDataLink *_input) : input(_input)
+    CThorSteppedInput(IThorDataLink *_input, IEngineRowStream *_inputStream) : input(_input), inputStream(_inputStream)
     {
-        inputStream = input->queryStream();
     }
 };
 

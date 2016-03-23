@@ -19,7 +19,7 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class BaseCountProjectActivity : public CSlaveActivity,  public CThorSingleOutput, implements ISmartBufferNotify
+class BaseCountProjectActivity : public CSlaveActivity,  public CThorSingleOutput
 {
 protected:
     IHThorCountProjectArg *helper;
@@ -47,16 +47,12 @@ public:
         stopInput(inputStream);
         dataLinkStop();
     }
-    virtual void onInputStarted(IException *)
-    {
-        // not needed
-    }
-    virtual bool startAsync() { return false; }
 };
 
 
 class LocalCountProjectActivity : public BaseCountProjectActivity
 {
+	typedef BaseCountProjectActivity PARENT;
     bool anyThisGroup;
 
 public:
@@ -68,8 +64,7 @@ public:
         ActivityTimer s(totalCycles, timeActivities);
         ActPrintLog("COUNTPROJECT: Is Local");
         anyThisGroup = false;
-        startInput(input);
-        BaseCountProjectActivity::start();
+        PARENT::start();
     }
     CATCH_NEXTROW()
     {
@@ -113,9 +108,9 @@ public:
 };
 
 
-class CountProjectActivity : public BaseCountProjectActivity
+class CountProjectActivity : public BaseCountProjectActivity, implements ILookAheadStopNotify
 {
-private:
+	typedef BaseCountProjectActivity PARENT;
     bool first;
     Semaphore prevRecCountSem;
     rowcount_t prevRecCount, localRecCount;
@@ -160,8 +155,14 @@ public:
     }   
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
     {
-        BaseCountProjectActivity::init(data, slaveData);
+    	PARENT::init(data, slaveData);
         mpTag = container.queryJobChannel().deserializeMPTag(data);
+    }
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+    	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+        lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), COUNTPROJECT_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage())); // could spot disk write output here?
+    	inputStream = lookAheadStream;
     }
     virtual void start()
     {
@@ -169,18 +170,14 @@ public:
         ActPrintLog( "COUNTPROJECT: Is Global");
         first = true;
         prevRecCount = 0;
-        startInput(inputs.item(0));
         ThorDataLinkMetaInfo info;
-        inputs.item(0)->getMetaInfo(info);
+        input->getMetaInfo(info);
         localRecCount = (info.totalRowsMin == info.totalRowsMax) ? (rowcount_t)info.totalRowsMax : RCUNSET;
-        input.setown(createDataLinkSmartBuffer(this, input, COUNTPROJECT_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, true, &container.queryJob().queryIDiskUsage())); // could spot disk write output here?
-        input->start();
-        inputStream = input->queryStream();
-        BaseCountProjectActivity::start();
+        PARENT::start();
     }
     virtual void stop()
     {
-        BaseCountProjectActivity::stop();
+    	PARENT::stop();
         if (first) // nextRow, therefore getPrevCount()/sendCount() never called
         {
             prevRecCount = count = getPrevCount();

@@ -22,6 +22,8 @@
 
 class GroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorGroupArg * helper;
     bool eogNext, prevEog, eof;
     bool rolloverEnabled, useRollover;
@@ -75,6 +77,7 @@ public:
     {
         ActivityTimer s(totalCycles, timeActivities);
         ActPrintLog(rolloverEnabled ? "GROUP: is global" : "GROUP: is local");
+        PARENT::start();
         eogNext = prevEog = eof = false;
         if (rolloverEnabled)
         {
@@ -85,7 +88,6 @@ public:
         }
 
         stream.set(inputStream);
-        startInput(input);
         dataLinkStart();
         startLastGroup = getDataLinkGlobalCount();
         next.setown(getNext());

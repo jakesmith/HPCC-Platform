@@ -31,6 +31,7 @@
 
 class AggregateSlaveBase : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
 protected:
     bool hadElement, inputStopped;
 
@@ -41,11 +42,11 @@ protected:
         inputStopped = true;
         stopInput(inputStream);
     }
-    void doStart()
+    virtual void start() override
     {
+        PARENT::start();
         hadElement = false;
         inputStopped = false;
-        startInput(input);
         if (input->isGrouped())
             ActPrintLog("Grouped mismatch");
     }
@@ -133,6 +134,8 @@ public:
 
 class AggregateSlaveActivity : public AggregateSlaveBase
 {
+    typedef AggregateSlaveBase PARENT;
+
     bool eof;
     IHThorAggregateArg * helper;
 
@@ -151,7 +154,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        doStart();
+        PARENT::start();
         eof = false;
         dataLinkStart();
     }
@@ -214,6 +217,7 @@ public:
 
 class ThroughAggregateSlaveActivity : public AggregateSlaveBase
 {
+    typedef AggregateSlaveBase PARENT;
     IHThorThroughAggregateArg *helper;
     RtlDynamicRowBuilder partResult;
     size32_t partResultSize;
@@ -260,7 +264,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        doStart();
+        PARENT::start();
         aggrowif.setown(createRowInterfaces(helper->queryAggregateRecordSize(),queryId(),queryCodeContext()));
         partResult.setAllocator(aggrowif->queryRowAllocator()).ensureRow();
         helper->clearAggregate(partResult);

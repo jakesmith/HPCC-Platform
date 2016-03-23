@@ -522,6 +522,8 @@ interface IRowStreamSetInput : extends IRowStream
 
 class CKeyedJoinSlave : public CSlaveActivity, public CThorSingleOutput, implements IJoinProcessor, implements IJoinGroupNotify
 {
+    typedef CSlaveActivity PARENT;
+
 #ifdef TRACE_JOINGROUPS
     unsigned groupsPendsNoted, fetchReadBack, groupPendsEnded, doneGroupsDeQueued, wroteToFetchPipe, groupsComplete;
 #endif
@@ -530,7 +532,6 @@ class CKeyedJoinSlave : public CSlaveActivity, public CThorSingleOutput, impleme
     IRowStreamSetInput *resultDistStream;
     CPartDescriptorArray indexParts, dataParts;
     Owned<IKeyIndexSet> tlkKeySet, partKeySet;
-    IThorDataLink *input;
     bool preserveGroups, preserveOrder, eos, inputStopped, needsDiskRead, atMostProvided, remoteDataFiles;
     unsigned joinFlags, abortLimit, parallelLookups, freeQSize, filePartTotal;
     size32_t fixedRecordSize;
@@ -1570,7 +1571,6 @@ public:
 #ifdef TRACE_JOINGROUPS
         groupsPendsNoted = fetchReadBack = groupPendsEnded = doneGroupsDeQueued = wroteToFetchPipe = groupsComplete = 0;
 #endif
-        input = NULL;
         inputHelper = NULL;
         preserveGroups = preserveOrder = eos = false;
         resultDistStream = NULL;
@@ -1748,7 +1748,6 @@ public:
         {
             inputStopped = true;
             CSlaveActivity::stopInput(input, "(LEFT)");
-            input = NULL;
         }
     }
     void doAbortLimit(CJoinGroup *jg)
@@ -2040,10 +2039,9 @@ public:
     {
         ActivityTimer s(totalCycles, timeActivities);
         assertex(inputs.ordinality() == 1);
+        PARENT::start();
 
         eos = false;
-        input = inputs.item(0);
-        startInput(input);
         inputHelper = LINK(input->queryFromActivity()->queryContainer().queryHelper());
         inputStopped = false;
         preserveOrder = ((joinFlags & JFreorderable) == 0);

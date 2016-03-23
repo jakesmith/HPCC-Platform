@@ -49,6 +49,7 @@ public:
     }
     virtual void start()
     {
+    	CSlaveActivity::start();
         numSets = helper->getNumSets();
         if (tallies)
             delete [] tallies;
@@ -63,14 +64,15 @@ public:
 
 class LocalChooseSetsActivity : public BaseChooseSetsActivity
 {
+    typedef BaseChooseSetsActivity PARENT;
+
 public:
     LocalChooseSetsActivity(CGraphElementBase *container) : BaseChooseSetsActivity(container) { }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        BaseChooseSetsActivity::start();
+        PARENT::start();
         ActPrintLog("CHOOSESETS: Is Local");
-        startInput(input);
         dataLinkStart();
     }
     virtual void stop()
@@ -114,6 +116,8 @@ public:
 
 class ChooseSetsActivity : public BaseChooseSetsActivity
 {
+    typedef BaseChooseSetsActivity PARENT;
+
     bool first;
     bool done;
 
@@ -151,20 +155,23 @@ public:
     }
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
     {
-        BaseChooseSetsActivity::init(data, slaveData);
+        PARENT::init(data, slaveData);
         SocketEndpoint server;
         server.serialize(slaveData);
+    }
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+        PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+    	lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), CHOOSESETS_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
+    	inputStream = lookAheadStream;
     }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         ActPrintLog("CHOOSESETS: Is Global");
-        BaseChooseSetsActivity::start();
+        PARENT::start();
         first = true;
         done = false;
-        input.setown(createDataLinkSmartBuffer(this, inputs.item(0),CHOOSESETS_SMART_BUFFER_SIZE,isSmartBufferSpillNeeded(this),false,RCUNBOUND,NULL,false,&container.queryJob().queryIDiskUsage())); // only allow spill if input can stall
-        startInput(input);
-        inputStream = input->queryStream();
         dataLinkStart();
     }
     virtual void stop()
@@ -232,20 +239,24 @@ public:
 //---------------------------------------------------------------------------
 
 class ChooseSetsPlusActivity;
-class CInputCounter : public CSimpleInterfaceOf<IRowStream>
+class CInputCounter : public CSimpleInterfaceOf<IEngineRowStream>
 {
+	IEngineRowStream *inputStream;
     ChooseSetsPlusActivity &activity;
 public:
     CInputCounter(ChooseSetsPlusActivity & _activity) : activity(_activity) { }
+    void setInputStream(IEngineRowStream *_inputStream) { inputStream = _inputStream; }
 
     virtual const void *nextRow() override;
     virtual void stop() override {}
+    virtual void resetEOF() override { throwUnexpected(); }
 };
 
 
 // A hookling class that counts records as they are read by the smart buffering....
-class ChooseSetsPlusActivity : public CSlaveActivity,  public CThorSingleOutput, implements ISmartBufferNotify
+class ChooseSetsPlusActivity : public CSlaveActivity,  public CThorSingleOutput, implements ILookAheadStopNotify
 {
+	typedef CSlaveActivity PARENT;
     friend class CInputCounter;
 protected:
     IHThorChooseSetsExArg * helper;
@@ -257,7 +268,6 @@ protected:
     rowcount_t * totalCounts;
     __int64 * limits;
     Owned<CInputCounter> inputCounter;
-    Owned<IThorDataLink> inputCounterITDL;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
@@ -285,9 +295,17 @@ public:
         appendOutputLinked(this);
         helper = static_cast <IHThorChooseSetsExArg *> (queryHelper());
     }
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+    	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+    	inputCounter->setInputStream(inputStream);
+        lookAheadStream.setown(createRowStreamLookAhead(this, inputCounter.get(), queryRowInterfaces(input), CHOOSESETSPLUS_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage())); // read all input
+    	inputStream = lookAheadStream;
+    }
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         ActPrintLog("CHOOSESETS: Is Global");
         if (counts)
         {
@@ -305,10 +323,6 @@ public:
         done = false;
         first = true;
 
-        inputCounterITDL.setown(createRowStreamToDataLinkAdapter(input, inputCounter));
-        input.setown(createDataLinkSmartBuffer(this, inputCounterITDL,CHOOSESETSPLUS_SMART_BUFFER_SIZE,true,false,RCUNBOUND,this,false,&container.queryJob().queryIDiskUsage())); // read all input
-        startInput(input);
-        inputStream = input->queryStream();
         dataLinkStart();
     }
     virtual void stop()
@@ -346,8 +360,6 @@ public:
         memcpy(totalCounts, msg.readDirect(numSets*sizeof(rowcount_t)), numSets*sizeof(rowcount_t));
         memcpy(priorCounts, msg.readDirect(numSets*sizeof(rowcount_t)), numSets*sizeof(rowcount_t));
     }
-    virtual bool startAsync() { return false; }
-    virtual void onInputStarted(IException *e) { }
     virtual void onInputFinished(rowcount_t count)
     {
         if (container.queryLocalOrGrouped())
@@ -362,7 +374,7 @@ public:
 
 const void *CInputCounter::nextRow()
 {
-    OwnedConstThorRow row = activity.inputStream->nextRow();
+    OwnedConstThorRow row = inputStream->nextRow();
     if (row)
     {
         unsigned category = activity.helper->getCategory(row);

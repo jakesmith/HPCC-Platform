@@ -156,6 +156,8 @@ void CSlaveActivity::setInput(unsigned index, CActivityBase *inputActivity, unsi
     {
     	inputs.append(NULL);
     	inputSourceIdxs.append(NotFound);
+        inputStreams.append(NULL);
+        inputJunctions.append(NULL);
     }
     inputs.replace(outLink.getLink(), index);
     if (!input)
@@ -184,8 +186,8 @@ void CSlaveActivity::setInputStream(unsigned index, IThorDataLink *_input, unsig
 	if (input) // will be none if source act.
 	{
 		inputStream = connectSingleStream(*this, _input, inputOutIdx, junction, _input->isInputOrdered(consumerOrdered));
-		while (inputStreams.ordinality()<=index) inputStreams.append(NULL);
 		inputStreams.replace(LINK(inputStream), index);
+		inputJunctions.replace(junction.getLink(), index);
     }
 }
 
@@ -198,7 +200,7 @@ IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsig
     connectInputStreams(inputOrdered);
     // Return a single stream
     // Default activity impl. adds single output as stream
-    streams.append(outputs.item(0)->querySingleOutput());
+    streams.append(outputs.item(0)->queryStream());
     return NULL;
 }
 
@@ -237,25 +239,55 @@ IThorDataLink *CSlaveActivity::queryInput(unsigned index) const
     return inputs.item(index);
 }
 
-void CSlaveActivity::startInput(IThorDataLink *itdl, const char *extra)
+IEngineRowStream *CSlaveActivity::queryInputStream(unsigned index) const
+{
+    if (index>=inputStreams.ordinality()) return NULL;
+    return inputStreams.item(index);
+}
+
+void CSlaveActivity::start()
+{
+    if (inputs.ordinality()>1)
+        throwUnexpected();
+    if (input)
+        startInput(0);
+}
+
+void CSlaveActivity::startAllInputs()
+{
+    ForEachItemIn(i, inputs)
+    {
+        startInput(i);
+    }
+}
+
+void CSlaveActivity::startInput(unsigned index, const char *extra)
 {
     StringBuffer s("Starting input");
     if (extra)
         s.append(" ").append(extra);
     ActPrintLog("%s", s.str());
 
+    IThorDataLink *itdl = inputs.item(index);
+    IStrandJunction *inputJunction = inputJunctions.item(index);
 #ifdef TRACE_STARTSTOP_EXCEPTIONS
     try
     {
+#endif
         itdl->start();
+        startJunction(inputJunction);
+        if (lookAheadStream)
+        {
+            dbgassertex(0 == index); // For default activity setInput handling, assumed to only be one lookahead on single input
+            lookAheadStream->start();
+        }
+#ifdef TRACE_STARTSTOP_EXCEPTIONS
     }
     catch(IException *e)
     {
         ActPrintLog(e, "%s", s.str());
         throw;
     }
-#else
-    itdl->start();
 #endif
 }
 
@@ -1855,7 +1887,7 @@ IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *in
                 junction->setInput(stream, instreams.item(stream));
             }
             IEngineRowStream *inputSingleOutput = junction->queryOutput(0);
-            input->setSingleOutput(inputSingleOutput);
+            input->setOutputStream(inputSingleOutput);
             return inputSingleOutput;
         }
         else

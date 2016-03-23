@@ -22,7 +22,8 @@
 
 class CTraceSlaveActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
 {
-    IThorDataLink *input;
+    typedef CSlaveActivity PARENT;
+
     IHThorTraceArg *helper;
     OwnedRoxieString name;
     unsigned keepLimit;
@@ -47,9 +48,8 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         dataLinkStart();
-        input = inputs.item(0);
-        startInput(input);
         if (traceEnabled && helper->canMatchAny() && queryRowMetaData())
         {
             keepLimit = helper->getKeepLimit();

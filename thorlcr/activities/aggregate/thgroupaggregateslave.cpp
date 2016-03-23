@@ -19,6 +19,8 @@
 
 class GroupAggregateSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     bool eof, ungroupedExistsAggregate;
     IHThorAggregateArg * helper;
 
@@ -37,8 +39,8 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         eof = false;
-        startInput(input);
         ungroupedExistsAggregate = (container.getKind() == TAKexistsaggregate) && !input->isGrouped();
         dataLinkStart();
     }

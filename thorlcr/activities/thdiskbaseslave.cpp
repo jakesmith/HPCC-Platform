@@ -39,7 +39,7 @@
 
 #include "thdiskbaseslave.ipp"
 
-void getPartsMetaInfo(ThorDataLinkMetaInfo &metaInfo, CThorSingleOutput &link, unsigned nparts, IPartDescriptor **partDescs, CDiskPartHandlerBase *partHandler)
+void getPartsMetaInfo(ThorDataLinkMetaInfo &metaInfo, unsigned nparts, IPartDescriptor **partDescs, CDiskPartHandlerBase *partHandler)
 {
     ThorDataLinkMetaInfo *metaInfos = new ThorDataLinkMetaInfo[nparts];
     struct ownedMetaInfos
@@ -295,13 +295,21 @@ void CDiskReadSlaveActivityBase::serializeStats(MemoryBuffer &mb)
 
 /////////////////
 
-void CDiskWriteSlaveActivityBase::open()
+void CDiskWriteSlaveActivityBase::setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered)
 {
+    PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
     if (dlfn.isExternal() && !firstNode())
     {
-        input.setown(createDataLinkSmartBuffer(this, inputs.item(0), PROCESS_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, false, &container.queryJob().queryIDiskUsage()));
-        inputStream = input->queryStream();
-        start();
+        lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), PROCESS_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
+        inputStream = lookAheadStream;
+    }
+}
+
+void CDiskWriteSlaveActivityBase::open()
+{
+    start();
+    if (dlfn.isExternal() && !firstNode())
+    {
         if (!rfsQueryParallel)
         {
             ActPrintLog("Blocked, waiting for previous part to complete write");
@@ -314,8 +322,6 @@ void CDiskWriteSlaveActivityBase::open()
             ActPrintLog("Previous write row count = %" RCPF "d", prevRows);
         }
     }
-    else
-        start();
     processed = THORDATALINK_STARTED;
 
     bool extend = 0 != (diskHelperBase->getFlags() & TDWextend);

@@ -30,8 +30,9 @@
 
 class CLoopSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 protected:
-    IThorDataLink *input;
     bool global;
     bool sentEndLooping;
     unsigned maxIterations;
@@ -79,7 +80,6 @@ public:
 
     CLoopSlaveActivityBase(CGraphElementBase *container) : CSlaveActivity(container), CThorSingleOutput(this)
     {
-        input = NULL;
         mpTag = TAG_NULL;
         maxEmptyLoopIterations = getOptUInt(THOROPT_LOOP_MAX_EMPTY, 1000);
     }
@@ -96,14 +96,13 @@ public:
         if (!container.queryLocalOrGrouped())
             cancelReceiveMsg(0, mpTag);
     }
-    void dostart()
+    virtual void start() override
     {
+        PARENT::start();
         extractBuilder.clear();
         sentEndLooping = false;
         lastMaxEmpty = false;
         loopCounter = 1;
-        input = inputs.item(0);
-        startInput(input);
     }
     void doStop()
     {
@@ -131,6 +130,8 @@ public:
 
 class CLoopSlaveActivity : public CLoopSlaveActivityBase
 {
+    typedef CLoopSlaveActivityBase PARENT;
+
     Owned<IRowStream> curInput;
     Owned<IRowWriterMultiReader> loopPending;
     rowcount_t loopPendingCount;
@@ -271,7 +272,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        dostart();
+        PARENT::start();
         eof = false;
         helper->createParentExtract(extractBuilder);
         maxIterations = helper->numIterations();
@@ -281,7 +282,7 @@ public:
         finishedLooping = ((container.getKind() == TAKloopcount) && (maxIterations == 0));
         if ((flags & IHThorLoopArg::LFnewloopagain) && !helper->loopFirstTime())
             finishedLooping = true;
-        curInput.set(input->queryStream());
+        curInput.set(inputStream);
         lastMs = msTick();
 
         ActPrintLog("maxIterations = %d", maxIterations);
@@ -435,6 +436,8 @@ public:
 
 class CGraphLoopSlaveActivity : public CLoopSlaveActivityBase
 {
+    typedef CLoopSlaveActivityBase PARENT;
+
     IHThorGraphLoopArg *helper;
     bool executed;
     unsigned flags;
@@ -455,7 +458,7 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        dostart();
+        PARENT::start();
         executed = false;
         maxIterations = helper->numIterations();
         if ((int)maxIterations < 0) maxIterations = 0;
@@ -517,7 +520,6 @@ activityslaves_decl CActivityBase *createLoopSlave(CGraphElementBase *container)
 
 class CLocalResultReadActivity : public CSlaveActivity, public CThorSingleOutput
 {
-    IThorDataLink *input;
     IHThorLocalResultReadArg *helper;
     Owned<IRowStream> resultStream;
     unsigned curRow;
@@ -529,7 +531,6 @@ public:
     CLocalResultReadActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
     {
         helper = (IHThorLocalResultReadArg *)queryHelper();
-        input = NULL;
         curRow = 0;
         replyTag = queryMPServer().createReplyTag();
     }
@@ -594,6 +595,8 @@ activityslaves_decl CActivityBase *createLocalResultReadSlave(CGraphElementBase 
 
 class CLocalResultSpillActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorLocalResultSpillArg *helper;
     bool eoi, lastNull;
     Owned<IRowWriter> resultWriter;
@@ -622,13 +625,13 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         lastNull = eoi = false;
         abortSoon = false;
         assertex(container.queryResultsGraph());
         Owned<CGraphBase> graph = queryJobChannel().getGraph(container.queryResultsGraph()->queryGraphId());
         IThorResult *result = graph->createResult(*this, helper->querySequence(), this, !queryGraph().isLocalChild());  // NB graph owns result
         resultWriter.setown(result->getWriter());
-        startInput(inputs.item(0));
         dataLinkStart();
     }
     CATCH_NEXTROW()
@@ -671,18 +674,14 @@ public:
 
 class CLocalResultWriteActivityBase : public ProcessSlaveActivity
 {
-protected:
-    IThorDataLink *input;
 public:
     CLocalResultWriteActivityBase(CGraphElementBase *_container) : ProcessSlaveActivity(_container)
     {
-        input = NULL;
     }
     virtual IThorResult *createResult() = 0;
     virtual void process()
     {
-        input = inputs.item(0);
-        startInput(input);
+        start();
         processed = THORDATALINK_STARTED;
 
         IThorResult *result = createResult();
@@ -739,18 +738,14 @@ activityslaves_decl CActivityBase *createLocalResultSpillSlave(CGraphElementBase
 class CDictionaryResultWriteActivity : public ProcessSlaveActivity
 {
     IHThorDictionaryResultWriteArg *helper;
-protected:
-    IThorDataLink *input;
 public:
     CDictionaryResultWriteActivity(CGraphElementBase *_container) : ProcessSlaveActivity(_container)
     {
         helper = (IHThorDictionaryResultWriteArg *)queryHelper();
-        input = NULL;
     }
     virtual void process()
     {
-        input = inputs.item(0);
-        startInput(input);
+        start();
         processed = THORDATALINK_STARTED;
 
         RtlLinkedDictionaryBuilder builder(queryRowAllocator(), helper->queryHashLookupInfo());
@@ -821,8 +816,8 @@ public:
         selectedInput = container.whichBranch>=inputs.ordinality() ? NULL : inputs.item(container.whichBranch);
         if (selectedInput)
         {
-            startInput(selectedInput);
-            selectInputStream = selectedInput->queryStream();
+            startInput(container.whichBranch);
+            selectInputStream = inputStreams.item(container.whichBranch);;
         }
         dataLinkStart();
     }
@@ -1066,6 +1061,8 @@ activityslaves_decl CActivityBase *createChildGroupAggregateSlave(CGraphElementB
 
 class CChildThroughNormalizeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorChildThroughNormalizeArg *helper;
     Owned<IEngineRowAllocator> allocator;
     OwnedConstThorRow lastInput;
@@ -1090,11 +1087,11 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
         ok = false;
         numProcessedLastGroup = getDataLinkCount(); // is this right?
         lastInput.clear();
         nextOutput.clear();
-        startInput(inputs.item(0));
         dataLinkStart();
     }
     virtual void stop()
@@ -1104,7 +1101,6 @@ public:
     }
     CATCH_NEXTROW()
     {
-        IThorDataLink *input = inputs.item(0);
         loop
         {
             if (ok)

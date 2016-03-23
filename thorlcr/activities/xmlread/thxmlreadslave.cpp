@@ -269,7 +269,7 @@ public:
             gotMeta = true;
             initMetaInfo(cachedMetaInfo);
             cachedMetaInfo.isSource = true;
-            getPartsMetaInfo(cachedMetaInfo, *this, partDescs.ordinality(), partDescs.getArray(), partHandler);
+            getPartsMetaInfo(cachedMetaInfo, partDescs.ordinality(), partDescs.getArray(), partHandler);
             cachedMetaInfo.unknownRowsOutput = true; // at least I don't think we know
         }
         info = cachedMetaInfo;

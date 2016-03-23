@@ -118,10 +118,11 @@ public:
 
 class CPrefetchProjectSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorPrefetchProjectArg *helper;
     rowcount_t numProcessedLastGroup;
     bool eof;
-    IThorDataLink *input;
     Owned<IEngineRowAllocator> allocator;
     IThorChildGraph *child;
     bool parallel;
@@ -272,8 +273,7 @@ public:
     void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
-        startInput(input);
+        PARENT::start();
 
         numProcessedLastGroup = getDataLinkGlobalCount();
         eof = !helper->canMatchAny();

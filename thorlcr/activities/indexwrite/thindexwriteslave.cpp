@@ -33,8 +33,9 @@
 #define FEWWARNCAP 10
 
 
-class IndexWriteSlaveActivity  : public ProcessSlaveActivity, public ISmartBufferNotify, implements ICopyFileProgress, implements IBlobCreator
+class IndexWriteSlaveActivity : public ProcessSlaveActivity, public ILookAheadStopNotify, implements ICopyFileProgress, implements IBlobCreator
 {
+	typedef ProcessSlaveActivity PARENT;
     StringAttr logicalFilename;
     Owned<IPartDescriptor> partDesc, tlkDesc;
     IHThorIndexWriteArg *helper;
@@ -94,8 +95,7 @@ public:
         enableTlkPart0 = (0 != container.queryJob().getWorkUnitValueInt("enableTlkPart0", globals->getPropBool("@enableTlkPart0", true)));
         reInit = (0 != (TIWvarfilename & helper->getFlags()));
     }
-
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         isLocal = 0 != (TIWlocal & helper->getFlags());
 
@@ -156,7 +156,12 @@ public:
             maxDiskRecordSize = diskSize->getFixedSize();
         reportOverflow = false;
     }
-
+    virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
+    {
+    	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
+    	lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
+    	inputStream = lookAheadStream;
+    }
     void open(IPartDescriptor &partDesc, bool isTopLevel, bool isVariable)
     {
         StringBuffer partFname;
@@ -273,7 +278,7 @@ public:
     {
         return builder->createBlob(size, (const char *) ptr);
     }
-    void process()
+    virtual void process() override
     {
         ActPrintLog("INDEXWRITE: Start");
         init();
@@ -282,13 +287,10 @@ public:
         ThorDataLinkMetaInfo info;
         input->getMetaInfo(info);
         outRowAllocator.setown(getRowAllocator(helper->queryDiskRecordSize()));
+        start();
         if (refactor)
         {
             assertex(isLocal);
-            input.setown(createDataLinkSmartBuffer(this, input, INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, false, &container.queryJob().queryIDiskUsage()));
-            stream = input->queryStream();
-            startInput(input);
-
             if (active)
             {
                 unsigned targetWidth = partDesc->queryOwner().numParts()-(buildTlk?1:0);
@@ -316,14 +318,6 @@ public:
             else // serve nodes, creating merged parts
                 rowServer.setown(createRowServer(this, stream, queryJobChannel().queryJobComm(), mpTag));
         }
-        else if (singlePartKey)
-        {
-            input.setown(createDataLinkSmartBuffer(this, input, INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, false, &container.queryJob().queryIDiskUsage()));
-            stream = input->queryStream();
-            startInput(input);
-        }
-        else
-            startInput(input);
         processed = THORDATALINK_STARTED;
 
         // single part key support
@@ -542,8 +536,7 @@ public:
             ActPrintLog("INDEXWRITE: All done");
         }
     }
-
-    void endProcess()
+    virtual void endProcess() override
     {
         if (processed & THORDATALINK_STARTED)
         {
@@ -552,20 +545,18 @@ public:
         }
         inputStream = NULL;
     }
-
-    virtual void abort()
+    virtual void abort() override
     {
-        ProcessSlaveActivity::abort();
+    	PARENT::abort();
         cancelReceiveMsg(RANK_ALL, mpTag);
         if (receivingTag2)
             queryJobChannel().queryJobComm().cancel(RANK_ALL, mpTag2);
         if (rowServer)
             rowServer->stop();
     }
-
-    void kill()
+    virtual void kill() override
     {
-        ProcessSlaveActivity::kill();
+    	PARENT::kill();
         if (abortSoon)
         {
             if (partDesc)
@@ -574,8 +565,7 @@ public:
                 removeFiles(*tlkDesc);
         }
     }
-
-    void processDone(MemoryBuffer &mb)
+    virtual void processDone(MemoryBuffer &mb) override
     {
         builder.clear();
         if (refactor && !active)
@@ -641,7 +631,6 @@ public:
             fireException(e);
         }
     }
-
     virtual void onInputFinished(rowcount_t finalcount)
     {
         if (!sizeSignalled)
@@ -650,20 +639,9 @@ public:
             ActPrintLog("finished input %" RCPF "d", finalcount);
         }
     }
-
-    virtual bool startAsync()
-    {
-        return false;
-    }
-
-    virtual void onInputStarted(IException *)
-    {
-        // not needed
-    }
-
     virtual void serializeStats(MemoryBuffer &mb)
     {
-        ProcessSlaveActivity::serializeStats(mb);
+    	PARENT::serializeStats(mb);
         mb.append(replicateDone);
     }
 

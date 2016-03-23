@@ -38,7 +38,8 @@
 
 class MSortSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
-    IThorDataLink *input;
+    typedef CSlaveActivity PARENT;
+
     Owned<IRowStream> output;
     IHThorSortArg *helper;
     Owned<IThorSorter> sorter;
@@ -61,7 +62,6 @@ public:
 
     MSortSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this), spillStats(spillStatistics)
     {
-        input = NULL;
         portbase = 0;
         totalrows = RCUNSET;
     }
@@ -86,11 +86,11 @@ public:
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
-        input = inputs.item(0);
         try
         {
-            try { 
-                startInput(input); 
+            try
+            {
+                PARENT::start();
             }
             catch (IException *e)
             {
@@ -121,7 +121,6 @@ public:
                 abortSoon,
                 auxrowif);
             stopInput(inputStream);
-            input = NULL;
             if (abortSoon)
             {
                 ActPrintLogEx(&queryContainer(), thorlog_null, MCwarning, "MSortSlaveActivity::start aborting");

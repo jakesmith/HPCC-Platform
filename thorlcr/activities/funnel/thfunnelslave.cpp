@@ -34,23 +34,20 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
     {
         CThreadedPersistent threaded;
         CParallelFunnel &funnel;
-        Linked<IThorDataLink> input;
-        IRowStream *inputStream;
         CriticalSection stopCrit;
         StringAttr idStr;
         unsigned inputIndex;
         rowcount_t readThisInput; // purely for tracing
         bool stopping;
     public:
-        CInputHandler(CParallelFunnel &_funnel, IThorDataLink *_input, unsigned _inputIndex)
-            : threaded("CInputHandler", this), funnel(_funnel), input(_input), inputIndex(_inputIndex)
+        CInputHandler(CParallelFunnel &_funnel, unsigned _inputIndex)
+            : threaded("CInputHandler", this), funnel(_funnel), inputIndex(_inputIndex)
         {
             readThisInput = 0;
             StringBuffer s(funnel.idStr);
             s.append('(').append(inputIndex).append(')');
             idStr.set(s.str());
             stopping = false;
-            inputStream = input->queryStream();
         }
         ~CInputHandler()
         {
@@ -76,14 +73,12 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
         virtual void main()
         {
             bool started = false;
+            IEngineRowStream *inputStream = nullptr;
             try
             {
-                if (funnel.startInputs)
-                {
-                    IThorDataLink *_input = QUERYINTERFACE(input.get(), IThorDataLink);
-                    _input->start();
-                }
+                funnel.activity.startInput(inputIndex);
                 started = true;
+                inputStream = funnel.activity.queryInputStream(inputIndex);
                 while (!stopping)
                 {
                     OwnedConstThorRow row = inputStream->ungroupedNextRow();
@@ -120,12 +115,11 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
         }
     };
 
-    CActivityBase &activity;
+    CSlaveActivity &activity;
     CIArrayOf<CInputHandler> inputHandlers;
     bool startInputs;
     Linked<IException> exception;
     unsigned eoss;
-    IArrayOf<IThorDataLink> oinstreams;
     StringAttr idStr;
 
     CriticalSection fullCrit, crit;
@@ -152,11 +146,8 @@ class CParallelFunnel : public CSimpleInterface, implements IRowStream
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    CParallelFunnel(CActivityBase &_activity, IThorDataLink **instreams, unsigned numstreams, bool _startInputs) : activity(_activity)
+    CParallelFunnel(CSlaveActivity &_activity) : activity(_activity)
     {
-        startInputs = _startInputs;
-        unsigned n = 0;
-        while (n<numstreams) oinstreams.append(*LINK(instreams[n++]));
         init();
     }
     ~CParallelFunnel()
@@ -174,10 +165,9 @@ public:
         stopped = full = false;
         totSize = 0;
         eoss = 0;
-        unsigned numinputs = oinstreams.ordinality();
         serializer.set(activity.queryRowSerializer());
-        ForEachItemIn(i, oinstreams)
-            inputHandlers.append(* new CInputHandler(*this, &oinstreams.item(i), i));
+        for (unsigned i=0; i<activity.queryNumInputs(); i++)
+            inputHandlers.append(* new CInputHandler(*this, i));
         // because of the way eos reported make sure started afterwards
         ForEachItemIn(j, inputHandlers)
             inputHandlers.item(j).start();
@@ -264,12 +254,6 @@ friend class CInputHandler;
 };
 
 
-IRowStream *createParallelFunnel(CActivityBase &activity, IThorDataLink **instreams, unsigned numstreams, bool startInputs)
-{
-    return new CParallelFunnel(activity, instreams, numstreams, startInputs);
-}
-
-
 ///////////////////
 //
 // FunnelSlaveActivity
@@ -279,6 +263,8 @@ IRowStream *createParallelFunnel(CActivityBase &activity, IThorDataLink **instre
 //interface IBitSet;
 class FunnelSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
     IRowStream *current;
     unsigned currentMarker;
     bool grouped, *eog, eogNext, parallel;
@@ -316,7 +302,10 @@ public:
     {
         ActivityTimer s(totalCycles, timeActivities);
         if (!grouped && parallel)
-            parallelOutput.setown(createParallelFunnel(*this, inputs.getArray(), inputs.ordinality(), true));
+        {
+            //NB starts inputs on each thread
+            parallelOutput.setown(new CParallelFunnel(*this));
+        }
         else
         {
             eogNext = false;
@@ -334,15 +323,14 @@ public:
             readThisInput = 0;
             ForEachItemIn(i, inputs)
             {
-                IThorDataLink * input = inputs.item(i);
-                try { startInput(input); }
+                try { startInput(i); }
                 catch (CATCHALL)
                 {
                     ActPrintLog("FUNNEL(%" ACTPF "d): Error staring input %d", container.queryId(), i);
                     throw;
                 }
                 if (!current)
-                    current = input->queryStream();;
+                    current = inputStreams.item(i);
             }
         }
         dataLinkStart();
@@ -390,7 +378,7 @@ public:
                     ActPrintLog("FUNNEL: changing to input %d", currentMarker);
                     ++stopped;
                     stopInput(current);
-                    current = inputs.item(currentMarker)->queryStream();
+                    current = inputStreams.item(currentMarker);
                     // if empty stream, move on (ensuring eog,eog not returned by empty streams)
                     row.setown(current->nextRow());
                     if (row)
@@ -444,7 +432,7 @@ public:
                     ActPrintLog("FUNNEL: changing to input %d", currentMarker);
                     ++stopped;
                     stopInput(current);
-                    current = inputs.item(currentMarker)->queryStream();
+                    current = inputStreams.item(currentMarker);
                     row.setown(current->ungroupedNextRow());
                     if (row)
                     {
@@ -509,8 +497,7 @@ public:
         eogNext = false;
         ForEachItemIn(i, inputs)
         {
-            IThorDataLink * input = inputs.item(i);
-            try { startInput(input); }
+            try { startInput(i); }
             catch (CATCHALL)
             {
                 ActPrintLog("COMBINE(%" ACTPF "d): Error staring input %d", container.queryId(), i);
@@ -528,14 +515,15 @@ public:
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        loop {
+        loop
+        {
             bool eog = false;
             bool err = false;
             unsigned i;
             unsigned n = inputs.ordinality();
             for (i=0;i<n;i++)
             {
-                OwnedConstThorRow row = inputs.item(i)->queryStream()->nextRow();
+                OwnedConstThorRow row = inputStreams.item(i)->nextRow();
                 if (row)
                 {
                     if (eog)
@@ -619,8 +607,7 @@ public:
         eogNext = false;
         ForEachItemIn(i, inputs)
         {
-            IThorDataLink * input = inputs.item(i);
-            try { startInput(input); }
+            try { startInput(i); }
             catch (CATCHALL)
             {
                 ActPrintLog("REGROUP(%" ACTPF "d): Error staring input %d", container.queryId(), i);
@@ -639,7 +626,7 @@ public:
     {
         ActivityTimer t(totalCycles, timeActivities);
         unsigned n = inputs.ordinality();
-        IRowStream *current = inputs.item(curinput)->queryStream();
+        IRowStream *current = inputStreams.item(curinput);
         loop
         {
             OwnedConstThorRow row = current->nextRow();
@@ -654,7 +641,7 @@ public:
                 curinput = 0;
                 break;
             }
-            current = inputs.item(curinput)->queryStream();
+            current = inputStreams.item(curinput);
         }
         return NULL;
     }
@@ -744,8 +731,7 @@ public:
         anyThisGroup = anyThisInput = eogNext = false;
         ForEachItemIn(i, inputs)
         {
-            IThorDataLink * input = inputs.item(i);
-            try { startInput(input); }
+            try { startInput(i); }
             catch (CATCHALL)
             {
                 ActPrintLog("NONEMPTY(%" ACTPF "d): Error staring input %d", container.queryId(), i);
@@ -772,7 +758,7 @@ public:
         }
         loop
         {
-            OwnedConstThorRow row = inputs.item(curinput)->queryStream()->nextRow();
+            OwnedConstThorRow row = inputStreams.item(curinput)->nextRow();
             if (row ) {
                 anyThisGroup = true;
                 anyThisInput = true;
@@ -804,9 +790,12 @@ public:
 
 class CNWaySelectActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
 {
+    typedef CSlaveActivity PARENT;
+
     IHThorNWaySelectArg *helper;
-    IThorDataLink *selectedInputITDL = NULL;
-    IEngineRowStream *selectedInput = NULL;
+    IThorDataLink *selectedInputITDL = nullptr;
+    IEngineRowStream *selectedStream = nullptr;
+    Owned<IStrandJunction> selectedJunction;
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
@@ -822,73 +811,60 @@ public:
     {
         ActivityTimer s(totalCycles, timeActivities);
 
-        startInput(inputs.item(0));
+        PARENT::start();
 
         unsigned whichInput = helper->getInputIndex();
         selectedInputITDL = NULL;
-        selectedInput = NULL;
+        selectedStream = NULL;
         if (whichInput--)
         {
             ForEachItemIn(i, inputs)
             {
                 IThorDataLink *cur = inputs.item(i);
-                CActivityBase *activity = cur->queryFromActivity();
-                IThorNWayInput *nWayInput = dynamic_cast<IThorNWayInput *>(activity);
+                IThorNWayInput *nWayInput = dynamic_cast<IThorNWayInput *>(cur);
                 if (nWayInput)
                 {
                     unsigned numRealInputs = nWayInput->numConcreteOutputs();
                     if (whichInput < numRealInputs)
                     {
                         selectedInputITDL = nWayInput->queryConcreteInput(whichInput);
-                        selectedInput = selectedInputITDL->queryStream();
+                        selectedStream = connectSingleStream(*this, selectedInputITDL, 0, selectedJunction, true);  // Should this be passing whichInput??
                         break;
                     }
                     whichInput -= numRealInputs;
                 }
-                else
-                {
-                    if (whichInput == 0)
-                    {
-                        selectedInputITDL = cur;
-                        selectedInput = selectedInputITDL->queryStream();
-                    }
-                    whichInput -= 1;
-                }
-                if (selectedInput)
-                    break;
             }
         }
-        if (selectedInput)
-            selectedInputITDL->start();
+        startJunction(selectedJunction);
         dataLinkStart();
     }
     virtual void stop()
     {
         stopInput(inputs.item(0));
-        if (selectedInput)
-            selectedInput->stop();
+        if (selectedStream)
+            selectedStream->stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        if (!selectedInput)
+        if (!selectedStream)
             return NULL;
-        OwnedConstThorRow ret = selectedInput->nextRow();
+        OwnedConstThorRow ret = selectedStream->nextRow();
         if (ret)
             dataLinkIncrement();
         return ret.getClear();
     }
     virtual bool gatherConjunctions(ISteppedConjunctionCollector &collector)
     { 
-        if (!selectedInput)
+        if (!selectedStream)
             return false;
         return selectedInputITDL->gatherConjunctions(collector);
     }
     virtual void resetEOF()
     { 
-        if (selectedInput)
-            selectedInput->resetEOF(); 
+        if (selectedStream)
+            selectedStream->resetEOF();
     }
     virtual const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
@@ -898,14 +874,14 @@ public:
     virtual const void *nextRowGENoCatch(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra)
     {
         ActivityTimer t(totalCycles, timeActivities);
-        if (!selectedInput)
+        if (!selectedStream)
             return NULL;
-        return selectedInput->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
+        return selectedStream->nextRowGE(seek, numFields, wasCompleteMatch, stepExtra);
     }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
     {
         initMetaInfo(info);
-        if (selectedInput)
+        if (selectedStream)
             calcMetaInfoSize(info, selectedInputITDL);
         else if (!started())
             info.canStall = true; // unkwown if !started

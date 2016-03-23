@@ -59,6 +59,8 @@ public:
 
 class NSplitterSlaveActivity : public CSlaveActivity, implements ISharedSmartBufferCallback
 {
+    typedef CSlaveActivity PARENT;
+
     bool spill;
     bool eofHit;
     bool inputsConfigured;
@@ -200,9 +202,8 @@ class NSplitterSlaveActivity : public CSlaveActivity, implements ISharedSmartBuf
         virtual bool gatherConjunctions(ISteppedConjunctionCollector & collector) { return false; }
 
     // to support non-stranded activities
-        virtual IEngineRowStream *querySingleOutput() { return &stream; }
         virtual IEngineRowStream *queryStream() { return &stream; }
-        virtual void setSingleOutput(IEngineRowStream *stream) override { throwUnexpected(); }
+        virtual void setOutputStream(IEngineRowStream *stream) override { throwUnexpected(); }
     };
 
     IPointerArrayOf<CDelayedInput> delayInputsList;
@@ -304,7 +305,7 @@ public:
             inputPrepared = true;
             try
             {
-                startInput(input);
+                PARENT::start();
                 grouped = input->isGrouped();
                 nstopped = container.connectedOutputs.getCount();
                 if (smartBuf)
