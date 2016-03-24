@@ -96,7 +96,7 @@ public:
     {
         if (global)
             putNext(NULL);
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     virtual bool isGrouped() { return false; }

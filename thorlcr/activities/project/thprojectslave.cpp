@@ -285,7 +285,7 @@ public:
     {
         if (parallel)
             prefetcher.stop();
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()

@@ -34,10 +34,11 @@ protected:
 
     void stopInput(rowcount_t c)
     {
-        if (!stopped) {
+        if (!stopped)
+        {
             stopped = true;
             sendResult(c);
-            CSlaveActivity::stopInput(inputStream);
+            PARENT::stop();
         }
     }
 

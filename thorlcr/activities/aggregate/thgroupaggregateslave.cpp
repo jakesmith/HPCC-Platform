@@ -36,7 +36,7 @@ public:
         helper = static_cast <IHThorAggregateArg *> (queryHelper());
     }
 
-    virtual void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         PARENT::start();
@@ -45,9 +45,9 @@ public:
         dataLinkStart();
     }
 
-    virtual void stop()
+    virtual void stop() override
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
 

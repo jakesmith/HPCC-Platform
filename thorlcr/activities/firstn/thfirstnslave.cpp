@@ -36,7 +36,7 @@ protected:
 
     virtual void doStop()
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
 

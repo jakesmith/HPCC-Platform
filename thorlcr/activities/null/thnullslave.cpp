@@ -30,12 +30,12 @@ public:
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
     {       
     }
-    virtual void process()
+    virtual void process() override
     {
         start();
-        stopInput(inputs.item(0));
+        stop();
     }
-    virtual void endProcess()
+    virtual void endProcess() override
     {
     }
 };
@@ -112,7 +112,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputs.item(0));
+        PARENT::stop();
         dataLinkStop();
     }
     const void * nextRow() 

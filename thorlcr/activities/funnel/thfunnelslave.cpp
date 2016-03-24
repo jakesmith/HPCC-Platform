@@ -347,7 +347,7 @@ public:
             current = NULL;
             unsigned i = stopped;
             for (;i<inputs.ordinality(); i++)
-                stopInput(inputs.item(i));
+                stopInput(i);
             stopped = 0;
         }
         dataLinkStop();
@@ -374,10 +374,10 @@ public:
                 if (currentMarker + 1 < inputs.ordinality())
                 {
                     readThisInput = 0;
+                    stopInput(currentMarker);
+                    ++stopped;
                     currentMarker++;
                     ActPrintLog("FUNNEL: changing to input %d", currentMarker);
-                    ++stopped;
-                    stopInput(current);
                     current = inputStreams.item(currentMarker);
                     // if empty stream, move on (ensuring eog,eog not returned by empty streams)
                     row.setown(current->nextRow());
@@ -428,10 +428,10 @@ public:
                 if (currentMarker + 1 < inputs.ordinality())
                 {
                     readThisInput = 0;
+                    stopInput(currentMarker);
+                    ++stopped;
                     currentMarker++;
                     ActPrintLog("FUNNEL: changing to input %d", currentMarker);
-                    ++stopped;
-                    stopInput(current);
                     current = inputStreams.item(currentMarker);
                     row.setown(current->ungroupedNextRow());
                     if (row)
@@ -508,8 +508,7 @@ public:
     }
     virtual void stop()
     {
-        for (unsigned i=0;i<inputs.ordinality(); i++)
-            stopInput(inputs.item(i));
+        stopAllInputs();
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -618,8 +617,7 @@ public:
     }
     virtual void stop()
     {
-        for (unsigned i=0;i<inputs.ordinality(); i++)
-            stopInput(inputs.item(i));
+        stopAllInputs();
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -743,8 +741,7 @@ public:
     }
     virtual void stop()
     {
-        for (unsigned i=0;i<inputs.ordinality(); i++)
-            stopInput(inputs.item(i));
+        stopAllInputs();
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -840,7 +837,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputs.item(0));
+        PARENT::stop();
         if (selectedStream)
             selectedStream->stop();
         dataLinkStop();

@@ -95,7 +95,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputStream);
+        PARENT::stop();
         if (!executeDependencies(abortSoon ? WhenFailureId : WhenSuccessId))
             abortSoon = true;
         dataLinkStop();

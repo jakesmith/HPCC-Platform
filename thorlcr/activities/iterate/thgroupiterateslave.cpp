@@ -56,7 +56,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -151,7 +151,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()

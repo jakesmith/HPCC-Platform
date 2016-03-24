@@ -40,7 +40,7 @@ protected:
         if (inputStopped)
             return;
         inputStopped = true;
-        stopInput(inputStream);
+        PARENT::stop();
     }
     virtual void start() override
     {
@@ -151,14 +151,14 @@ public:
         if (firstNode())
             cancelReceiveMsg(1, mpTag);
     }
-    virtual void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         PARENT::start();
         eof = false;
         dataLinkStart();
     }
-    virtual void stop()
+    virtual void stop() override
     {
         doStopInput();
         dataLinkStop();
@@ -270,7 +270,7 @@ public:
         helper->clearAggregate(partResult);
         dataLinkStart();
     }
-    virtual void stop()
+    virtual void stop() override
     {
         if (inputStopped) 
             return;

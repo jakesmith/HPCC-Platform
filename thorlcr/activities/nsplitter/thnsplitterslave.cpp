@@ -406,7 +406,7 @@ public:
         if (nstopped && --nstopped==0) 
         {
             writer.stop();
-            stopInput(inputStream);
+            PARENT::stop();
             inputPrepared = false;
         }
     }

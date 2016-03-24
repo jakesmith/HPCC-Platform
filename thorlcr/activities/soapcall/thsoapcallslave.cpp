@@ -155,8 +155,8 @@ public:
     }
     virtual void stop()
     {
+        PARENT::stop();
         eof = true;
-        stopInput(inputStream);
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -296,7 +296,7 @@ public:
     {
         if (processed & THORDATALINK_STARTED)
         {
-            stopInput(inputStream);
+            stop();
             processed |= THORDATALINK_STOPPED;
         }
     }

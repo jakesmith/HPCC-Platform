@@ -68,7 +68,7 @@ private:
         Owned<IThorRowLoader> iLoader = createThorRowLoader(*this, ::queryRowInterfaces(input), compare, isUnstable() ? stableSort_none : stableSort_earlyAlloc, rc_mixed, SPILL_PRIORITY_SELFJOIN);
         Owned<IRowStream> rs = iLoader->load(inputStream, abortSoon);
         mergeStats(spillStats, iLoader);  // Not sure of the best policy if rs spills later on.
-        stopInput(inputStream);
+        PARENT::stop();
         return rs.getClear();
     }
 
@@ -78,7 +78,7 @@ private:
         ActPrintLog("SELFJOIN: Performing global self-join");
 #endif
         sorter->Gather(::queryRowInterfaces(input), inputStream, compare, NULL, NULL, keyserializer, NULL, false, isUnstable(), abortSoon, NULL);
-        stopInput(inputStream);
+        PARENT::stop();
         if(abortSoon)
         {
             barrier->cancel();
@@ -189,8 +189,7 @@ public:
     }
     virtual void stop()
     {
-        if (input)
-            stopInput(inputStream);
+        PARENT::stop();
         if(!isLocal)
         {
             barrier->wait(false);

@@ -1747,7 +1747,7 @@ public:
         if (!inputStopped)
         {
             inputStopped = true;
-            CSlaveActivity::stopInput(input, "(LEFT)");
+            PARENT::stop();
         }
     }
     void doAbortLimit(CJoinGroup *jg)

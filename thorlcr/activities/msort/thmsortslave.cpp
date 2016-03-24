@@ -120,7 +120,8 @@ public:
                 isUnstable(),
                 abortSoon,
                 auxrowif);
-            stopInput(inputStream);
+
+            PARENT::stop();
             if (abortSoon)
             {
                 ActPrintLogEx(&queryContainer(), thorlog_null, MCwarning, "MSortSlaveActivity::start aborting");
@@ -151,15 +152,15 @@ public:
     }
     virtual void stop()
     {
-        if (output) {
+        if (output)
+        {
             output->stop();
             output.clear();
         }
         ActPrintLog("SORT waiting barrier.2");
         barrier->wait(false);
         ActPrintLog("SORT barrier.2 raised");
-        if (input)
-            stopInput(inputStream);
+        PARENT::stop();
         sorter->stopMerge();
         ActPrintLog("SORT waiting for merge");
         dataLinkStop();

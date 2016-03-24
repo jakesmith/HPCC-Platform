@@ -595,7 +595,7 @@ void CDiskWriteSlaveActivityBase::endProcess()
 {
     if (processed & THORDATALINK_STARTED)
     {
-        stopInput(inputStream);
+        stop();
         processed |= THORDATALINK_STOPPED;
     }
 }

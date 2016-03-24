@@ -21,6 +21,8 @@
 
 class BaseChooseSetsActivity : public CSlaveActivity,  public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 protected:
     IHThorChooseSetsArg *helper;
     bool done;
@@ -41,13 +43,13 @@ public:
         if (tallies)
             delete [] tallies;
     }
-    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData) override
     {
         mpTag = container.queryJobChannel().deserializeMPTag(data);
         appendOutputLinked(this);
         helper = static_cast <IHThorChooseSetsArg *> (queryHelper());
     }
-    virtual void start()
+    virtual void start() override
     {
     	CSlaveActivity::start();
         numSets = helper->getNumSets();
@@ -58,6 +60,7 @@ public:
         memset(tallies, 0, sizeof(unsigned)*numSets);
         done = helper->setCounts(tallies);
     }
+    virtual void stop() override { CSlaveActivity::stop(); }
     virtual bool isGrouped() { return false; }
 };
 
@@ -68,19 +71,19 @@ class LocalChooseSetsActivity : public BaseChooseSetsActivity
 
 public:
     LocalChooseSetsActivity(CGraphElementBase *container) : BaseChooseSetsActivity(container) { }
-    virtual void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         PARENT::start();
         ActPrintLog("CHOOSESETS: Is Local");
         dataLinkStart();
     }
-    virtual void stop()
+    virtual void stop() override
     {
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()
@@ -153,7 +156,7 @@ public:
     ChooseSetsActivity(CGraphElementBase *container) : BaseChooseSetsActivity(container)
     {
     }
-    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData) override
     {
         PARENT::init(data, slaveData);
         SocketEndpoint server;
@@ -165,7 +168,7 @@ public:
     	lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), CHOOSESETS_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
     	inputStream = lookAheadStream;
     }
-    virtual void start()
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         ActPrintLog("CHOOSESETS: Is Global");
@@ -174,15 +177,15 @@ public:
         done = false;
         dataLinkStart();
     }
-    virtual void stop()
+    virtual void stop() override
     {
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
-    virtual void abort()
+    virtual void abort() override
     {
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: abort()");
@@ -330,8 +333,7 @@ public:
 #if THOR_TRACE_LEVEL >= 5
         ActPrintLog("CHOOSESETS: stop()");
 #endif
-        stopInput(inputStream);
-        input.clear();
+        PARENT::stop();
         dataLinkStop();
     }
     virtual void abort()

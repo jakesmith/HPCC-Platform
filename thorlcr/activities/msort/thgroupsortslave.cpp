@@ -85,7 +85,7 @@ public:
     virtual void stop()
     {
         out.clear();
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
 
         //Critical block
@@ -158,7 +158,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()

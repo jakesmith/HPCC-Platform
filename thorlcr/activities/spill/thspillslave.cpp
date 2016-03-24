@@ -171,7 +171,7 @@ public:
     {
         readRest();
         close();
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
 

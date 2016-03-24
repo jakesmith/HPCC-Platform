@@ -179,8 +179,7 @@ public:
     virtual void stopInput()
     {
         CriticalBlock block(stopsect);  // can be called async by distribute
-        if (input)
-            CSlaveActivity::stopInput(inputStream);
+        PARENT::stop();
     }
     virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
     {
@@ -600,7 +599,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()

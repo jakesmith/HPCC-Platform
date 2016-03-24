@@ -107,7 +107,7 @@ public:
     void doStop()
     {
         sendEndLooping();
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
 // IThorDataLink
@@ -659,7 +659,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputs.item(0));
+        PARENT::stop();
         abortSoon = true;
         dataLinkStop();
     }
@@ -704,7 +704,7 @@ public:
     {
         if (processed & THORDATALINK_STARTED)
         {
-            stopInput(inputStream);
+            stop();
             processed |= THORDATALINK_STOPPED;
         }
     }
@@ -777,7 +777,7 @@ public:
     {
         if (processed & THORDATALINK_STARTED)
         {
-            stopInput(inputStream);
+            stop();
             processed |= THORDATALINK_STOPPED;
         }
     }
@@ -817,14 +817,14 @@ public:
         if (selectedInput)
         {
             startInput(container.whichBranch);
-            selectInputStream = inputStreams.item(container.whichBranch);;
+            selectInputStream = inputStreams.item(container.whichBranch);
         }
         dataLinkStart();
     }
     virtual void stop()
     {
         if (selectInputStream)
-            stopInput(selectInputStream);
+            stopInput(container.whichBranch);
         abortSoon = true;
         dataLinkStop();
     }
@@ -1096,7 +1096,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputs.item(0));
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()

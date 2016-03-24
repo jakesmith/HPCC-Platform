@@ -158,11 +158,12 @@ void CSlaveActivity::setInput(unsigned index, CActivityBase *inputActivity, unsi
     	inputSourceIdxs.append(NotFound);
         inputStreams.append(NULL);
         inputJunctions.append(NULL);
+        inputsStopped.append(false);
     }
     inputs.replace(outLink.getLink(), index);
     if (!input)
     {
-    	input.set(outLink);
+    	input = outLink;
     	inputSourceIdx = inputOutIdx;
     }
     inputSourceIdxs.replace(inputOutIdx, index);
@@ -281,6 +282,11 @@ void CSlaveActivity::startInput(unsigned index, const char *extra)
             dbgassertex(0 == index); // For default activity setInput handling, assumed to only be one lookahead on single input
             lookAheadStream->start();
         }
+        if (0 == index)
+        {
+            input = itdl;
+            inputStopped = false;
+        }
 #ifdef TRACE_STARTSTOP_EXCEPTIONS
     }
     catch(IException *e)
@@ -291,31 +297,61 @@ void CSlaveActivity::startInput(unsigned index, const char *extra)
 #endif
 }
 
-void CSlaveActivity::stopInput(IThorDataLink *itdl, const char *extra)
+void CSlaveActivity::stop()
 {
-    stopInput(itdl->queryStream(), extra);
+    if (input)
+        stopInput(0);
 }
 
-void CSlaveActivity::stopInput(IRowStream *stream, const char *extra)
+void CSlaveActivity::stopInput(unsigned index, const char *extra)
 {
+    if (inputsStopped.item(index))
+        return;
     StringBuffer s("Stopping input for");
     if (extra)
         s.append(" ").append(extra);
     ActPrintLog("%s", s.str());
 
+    IEngineRowStream *inputStream = inputStreams.item(index);
+    IThorDataLink *itdl = inputs.item(index);
+    IStrandJunction *inputJunction = inputJunctions.item(index);
 #ifdef TRACE_STARTSTOP_EXCEPTIONS
     try
     {
-        stream->stop();
+#endif
+        inputStream->stop();
+        resetJunction(junction);
+        itdl->stop();
+        if (0 == index)
+        {
+            inputStopped = true;
+            input = NULL;
+            inputStream = NULL;
+        }
+#ifdef TRACE_STARTSTOP_EXCEPTIONS
     }
     catch(IException * e)
     {
         ActPrintLog(e, "%s", s.str());
         throw;
     }
-#else
-    stream->stop();
 #endif
+}
+
+void CSlaveActivity::stopAllInputs()
+{
+    ForEachItemIn(i, inputs)
+    {
+        stopInput(i);
+    }
+}
+
+void CSlaveActivity::reset()
+{
+    resetJunction(junction);
+    input = NULL;
+    inputStream = NULL;
+    inputStopped = true;
 }
 
 void CSlaveActivity::abort()

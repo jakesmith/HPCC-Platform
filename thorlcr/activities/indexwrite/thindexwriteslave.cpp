@@ -65,7 +65,7 @@ class IndexWriteSlaveActivity : public ProcessSlaveActivity, public ILookAheadSt
         if (!inputStopped)
         {
             inputStopped = true;
-            stopInput(inputStream);
+            stop();
         }
     }
     void init()

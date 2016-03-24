@@ -43,7 +43,7 @@ public:
     }
     virtual void stop() override
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     virtual const void *nextRow() override =0;
@@ -62,6 +62,8 @@ public:
 
 class CFilterSlaveActivity : public CFilterSlaveActivityBase, public CThorSteppable
 {
+    typedef CFilterSlaveActivityBase PARENT;
+
     IHThorFilterArg *helper;
     unsigned matched;
 public:
@@ -71,7 +73,7 @@ public:
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
-        CFilterSlaveActivityBase::init(data,slaveData);
+        PARENT::init(data,slaveData);
         helper = static_cast <IHThorFilterArg *> (queryHelper());
     }
     void start()
@@ -79,7 +81,7 @@ public:
         ActivityTimer s(totalCycles, timeActivities);
         matched = 0;
         abortSoon = !helper->canMatchAny();
-        CFilterSlaveActivityBase::start();
+        PARENT::start();
     }
     CATCH_NEXTROW()
     {
@@ -159,7 +161,7 @@ public:
 // steppable
     virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CFilterSlaveActivityBase::setInputStream(index, input, inputOutIdx, consumerOrdered);
+        PARENT::setInputStream(index, input, inputOutIdx, consumerOrdered);
         CThorSteppable::setInputStream(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }
@@ -167,6 +169,8 @@ public:
 
 class CFilterProjectSlaveActivity : public CFilterSlaveActivityBase
 {
+    typedef CFilterSlaveActivityBase PARENT;
+
     IHThorFilterProjectArg *helper;
     rowcount_t recordCount;  // NB local (not really used for global)
     Owned<IEngineRowAllocator> allocator;
@@ -177,7 +181,7 @@ public:
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
-        CFilterSlaveActivityBase::init(data,slaveData);
+        PARENT::init(data,slaveData);
         helper = static_cast <IHThorFilterProjectArg *> (queryHelper());
         allocator.set(queryRowAllocator());
     }
@@ -186,7 +190,7 @@ public:
         ActivityTimer s(totalCycles, timeActivities);
         abortSoon = !helper->canMatchAny();
         recordCount = 0;
-        CFilterSlaveActivityBase::start();
+        PARENT::start();
     }
     CATCH_NEXTROW()
     {
@@ -236,6 +240,8 @@ public:
 
 class CFilterGroupSlaveActivity : public CFilterSlaveActivityBase, public CThorSteppable
 {
+    typedef CFilterSlaveActivityBase PARENT;
+
     IHThorFilterGroupArg *helper;
     Owned<IThorRowLoader> groupLoader;
     Owned<IRowStream> groupStream;
@@ -256,14 +262,14 @@ public:
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {
-        CFilterSlaveActivityBase::init(data,slaveData);
+        PARENT::init(data,slaveData);
         helper = (IHThorFilterGroupArg *)queryHelper();
     }
     void start()
     {   
         ActivityTimer s(totalCycles, timeActivities);
         abortSoon = !helper->canMatchAny();
-        CFilterSlaveActivityBase::start();
+        PARENT::start();
     }
     CATCH_NEXTROW()
     {
@@ -393,14 +399,14 @@ public:
     }
     void stop()
     {
+        PARENT::stop();
         groupStream.clear();
-        stopInput(inputStream);
         dataLinkStop();
     }
 // steppable
     virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered) override
     {
-        CFilterSlaveActivityBase::setInputStream(index, input, inputOutIdx, consumerOrdered);
+        PARENT::setInputStream(index, input, inputOutIdx, consumerOrdered);
         CThorSteppable::setInputStream(index, input, inputOutIdx, consumerOrdered);
     }
     virtual IInputSteppingMeta *querySteppingMeta() { return CThorSteppable::inputStepping; }

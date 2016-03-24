@@ -1435,12 +1435,12 @@ public:
         clearHT();
         if (right)
         {
-            stopInput(right, "(R)");
+            stopInput(1, "(R)");
             right.clear();
         }
         if (broadcaster)
             broadcaster->reset();
-        stopInput(left, "(L)");
+        stopInput(0, "(L)");
         left.clear();
         dataLinkStop();
     }

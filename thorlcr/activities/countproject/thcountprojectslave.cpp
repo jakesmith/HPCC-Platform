@@ -21,6 +21,8 @@
 
 class BaseCountProjectActivity : public CSlaveActivity,  public CThorSingleOutput
 {
+    typedef CSlaveActivity PARENT;
+
 protected:
     IHThorCountProjectArg *helper;
     rowcount_t count;
@@ -44,7 +46,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
 };

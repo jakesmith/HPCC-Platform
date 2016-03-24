@@ -460,7 +460,7 @@ public:
         if (recreate)
             pipeVerified.signal();
         Owned<IException> wrexc = pipeWriter->joinExc();
-        stopInput(inputs.item(0));
+        PARENT::stop();
         verifyPipe();
         dataLinkStop();
         if (wrexc)

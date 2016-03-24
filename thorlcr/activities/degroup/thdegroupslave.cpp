@@ -41,7 +41,7 @@ public:
     }
     virtual void stop() override
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()

@@ -74,7 +74,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputs.item(0));
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()

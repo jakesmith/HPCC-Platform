@@ -127,7 +127,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     virtual void abort()

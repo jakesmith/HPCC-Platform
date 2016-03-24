@@ -71,7 +71,7 @@ class TopNSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 {
     typedef CSlaveActivity PARENT;
 
-    bool eos, eog, global, grouped, inputStopped;
+    bool eos, eog, global, grouped;
     ICompare *compare;
     CThorExpandingRowArray sortedRows;
     Owned<IRowStream> out;
@@ -88,7 +88,6 @@ public:
     {
         assertex(!(global && grouped));
         eog = eos = false;
-        inputStopped = true;
     }
     ~TopNSlaveActivity()
     {
@@ -177,26 +176,17 @@ public:
         }
         if (global || 0 == topNLimit || 0 == sortedCount)
         {
-            doStopInput();
+            PARENT::stop();
             if (!global || 0 == topNLimit)
                 eos = true;
         }
         return retStream.getClear();
-    }
-    void doStopInput()
-    {
-        if (!inputStopped)
-        {
-            inputStopped = true;
-            stopInput(inputStream);
-        }
     }
 // IThorDataLink
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
         PARENT::start();
-        inputStopped = false;
         // NB: topNLimit shouldn't be stupid size, resourcing will guarantee this
         __int64 _topNLimit = helper->getLimit();
         assertex(_topNLimit < RCIDXMAX); // hopefully never this big, but if were must be max-1 for binary insert
@@ -204,7 +194,7 @@ public:
         if (0 == topNLimit)
         {
             eos = true;
-            doStopInput();
+            PARENT::stop();
         }
         else
         {
@@ -219,7 +209,7 @@ public:
     {
         if (out)
             out->stop();
-        doStopInput();
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()

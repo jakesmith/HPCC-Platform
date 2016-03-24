@@ -75,7 +75,7 @@ public:
     }
     virtual void stop()
     { 
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     void processRecord(const void * in)

@@ -128,7 +128,7 @@ public:
     {
         if (nextNodeStream)
             nextNodeStream->stop();
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     virtual void kill()

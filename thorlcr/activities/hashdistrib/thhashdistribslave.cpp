@@ -1991,40 +1991,10 @@ public:
         CriticalBlock block(stopsect);  // can be called async by distribute
         if (!inputstopped)
         {
-            CSlaveActivity::stopInput(inputStream);
+            CSlaveActivity::stop();
             inputstopped = true;
         }
     }
-#if 0
-    void start(bool passthrough)
-    {
-        // bit messy
-        eofin = false;
-        if (!instrm.get()) // derived class may override
-        {
-            PARENT::start();
-            inputstopped = false;
-            instrm.set(inputStream);
-            if (passthrough)
-                out.set(instrm);
-        }
-        else if (passthrough)
-        {
-            out.set(instrm);
-        }
-        if (!passthrough)
-        {
-            Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
-            out.setown(distributor->connect(myRowIf, instrm, ihash, mergecmp));
-        }
-        dataLinkStart();
-    }
-    virtual void start()
-    {
-        ActivityTimer s(totalCycles, timeActivities);
-        start(false);
-    }
-#else
     virtual void start()
     {
         ActivityTimer s(totalCycles, timeActivities);
@@ -2034,7 +2004,6 @@ public:
         Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
         out.setown(distributor->connect(myRowIf, instrm, ihash, mergecmp));
     }
-#endif
     virtual void stop()
     {
         ActPrintLog("HASHDISTRIB: stopping");
@@ -2213,7 +2182,7 @@ public:
                 }
                 out->flush();
                 sz = out->getPosition();
-                activity->stopInput(inputStream);
+                activity->stop();
             }
             ret.setown(createRowStream(tempfile, activity, rwFlags));
         }
@@ -2930,7 +2899,7 @@ public:
         if (!inputstopped)
         {
             SpinBlock b(stopSpin);
-            CSlaveActivity::stopInput(inputs.item(0));
+            CSlaveActivity::stop();
             inputstopped = true;
         }
     }
@@ -3556,6 +3525,8 @@ public:
 
 class HashJoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IStopInput
 {
+    typedef CSlaveActivity PARENT;
+
     IThorDataLink *inL = NULL;
     IThorDataLink *inR = NULL;
     IEngineRowStream *leftInputStream = NULL;
@@ -3671,16 +3642,18 @@ public:
     void stopInputL()
     {
         CriticalBlock block(stopsect);  // can be called async by distribute
-        if (!inputLstopped) {
-            CSlaveActivity::stopInput(inL);
+        if (!inputLstopped)
+        {
+            PARENT::stopInput(0);
             inputLstopped = true;
         }
     }
     void stopInputR()
     {
         CriticalBlock block(stopsect);  // can be called async by distribute
-        if (!inputRstopped) {
-            CSlaveActivity::stopInput(inR);
+        if (!inputRstopped)
+        {
+            PARENT::stopInput(1);
             inputRstopped = true;
         }
     }
@@ -3956,7 +3929,7 @@ public:
     {
         ActPrintLog("HASHAGGREGATE: stopping");
         localAggTable->reset();
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     virtual void abort()
@@ -4032,7 +4005,7 @@ public:
     }
     virtual void stop()
     {
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     CATCH_NEXTROW()

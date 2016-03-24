@@ -69,7 +69,7 @@ public:
     virtual void stop()
     {
         name.clear();
-        stopInput(inputStream);
+        PARENT::stop();
         dataLinkStop();
     }
     void onTrace(const void *row)

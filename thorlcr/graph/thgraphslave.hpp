@@ -53,7 +53,9 @@ protected:
     UnsignedArray inputSourceIdxs;
     IPointerArrayOf<IEngineRowStream> inputStreams;
     IPointerArrayOf<IStrandJunction> inputJunctions;
-    Linked<IThorDataLink> input;
+    BoolArray inputsStopped;
+    IThorDataLink *input = nullptr;
+    bool inputStopped = true;
     unsigned inputSourceIdx = 0;
     IEngineRowStream *inputStream = NULL;
     MemoryBuffer startCtx;
@@ -147,8 +149,8 @@ public:
     void appendOutputLinked(IThorDataLink *itdl);
     void startInput(unsigned index, const char *extra=NULL);
     void startAllInputs();
-    void stopInput(IThorDataLink *itdl, const char *extra=NULL);
-    void stopInput(IRowStream *stream, const char *extra=NULL);
+    void stopInput(unsigned index, const char *extra=NULL);
+    void stopAllInputs();
     ActivityTimeAccumulator &getTotalCyclesRef() { return totalCycles; }
     unsigned __int64 queryLocalCycles() const;
     virtual unsigned __int64 queryTotalCycles() const; // some acts. may calculate accumulated total from inputs (e.g. splitter)
@@ -181,11 +183,7 @@ public:
 
 // IThorDataLink
     virtual void start() override;
-    virtual void stop() override
-    {
-        if (inputStream)
-            inputStream->stop();
-    }
+    virtual void stop() override;
 // IThorDataLinkExt
     virtual void setOutputIdx(unsigned idx) override { outputIdx = idx; }
 
@@ -193,11 +191,7 @@ public:
     virtual void init(MemoryBuffer &in, MemoryBuffer &out) override { }
     virtual void setInputStream(unsigned index, IThorDataLink *input, unsigned inputOutIdx, bool consumerOrdered);
     virtual void processDone(MemoryBuffer &mb) override { };
-    virtual void reset() override
-    {
-        input.clear();
-        inputStream = NULL;
-    }
+    virtual void reset() override;
     virtual void abort() override;
 };
 

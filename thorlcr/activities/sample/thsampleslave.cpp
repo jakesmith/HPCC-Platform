@@ -50,8 +50,8 @@ public:
     }
     virtual void stop()
     {
+        PARENT::stop();
         dataLinkStop();
-        stopInput(inputStream);
     }
     CATCH_NEXTROW()
     {

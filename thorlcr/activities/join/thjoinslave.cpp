@@ -360,15 +360,18 @@ public:
     }
     void stopLeftInput()
     {
-        if (!leftInputStopped) {
-            stopInput(leftInput, "(L)");
+        if (!leftInputStopped)
+        {
+
+            stopInput(rightpartition ? 1 : 0, "(L)");
             leftInputStopped = true;
         }
     }
     void stopRightInput()
     {
-        if (!rightInputStopped) {
-            stopInput(rightInput, "(R)");
+        if (!rightInputStopped)
+        {
+            stopInput(rightpartition ? 0 : 1, "(R)");
             rightInputStopped = true;
         }
     }
