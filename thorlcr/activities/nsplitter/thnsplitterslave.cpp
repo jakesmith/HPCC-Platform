@@ -191,6 +191,7 @@ class NSplitterSlaveActivity : public CSlaveActivity, implements ISharedSmartBuf
         virtual IOutputMetaData * queryOutputMeta() const { return activity->queryOutputMeta(); }
         virtual unsigned queryOutputIdx() const { return 0; }
         virtual bool isInputOrdered(bool consumerOrdered) const { return activity->isInputOrdered(consumerOrdered); }
+        virtual void setOutputStream(unsigned index, IEngineRowStream *stream) { activity->setOutputStream(index, stream); }
         virtual IStrandJunction *getOutputStreams(CActivityBase &_activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
         {
             return activity->getOutputStreams(_activity, idx, streams, consumerOptions, consumerOrdered);
@@ -203,7 +204,6 @@ class NSplitterSlaveActivity : public CSlaveActivity, implements ISharedSmartBuf
 
     // to support non-stranded activities
         virtual IEngineRowStream *queryStream() { return &stream; }
-        virtual void setOutputStream(IEngineRowStream *stream) override { throwUnexpected(); }
     };
 
     IPointerArrayOf<CDelayedInput> delayInputsList;

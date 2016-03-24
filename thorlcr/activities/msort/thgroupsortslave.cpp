@@ -30,7 +30,7 @@
 #include "thactivityutil.ipp"
 
 
-class CLocalSortSlaveActivity : public CSlaveActivity, public CThorSingleOutput 
+class CLocalSortSlaveActivity : public CSlaveActivity 
 {
     typedef CSlaveActivity PARENT;
 
@@ -46,7 +46,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CLocalSortSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorSingleOutput(this), spillStats(spillStatistics)
+        : CSlaveActivity(_container), spillStats(spillStatistics)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -127,7 +127,7 @@ public:
 
 // Sorted 
 
-class CSortedSlaveActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
+class CSortedSlaveActivity : public CSlaveActivity, public CThorSteppable
 {
     typedef CSlaveActivity PARENT;
 
@@ -139,7 +139,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CSortedSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorSingleOutput(this), CThorSteppable(this)
+        : CSlaveActivity(_container), CThorSteppable(this)
     {
         helper = (IHThorSortedArg *)queryHelper();
         icompare = helper->queryCompare();

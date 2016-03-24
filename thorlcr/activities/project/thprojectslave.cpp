@@ -116,7 +116,7 @@ public:
 };
 
 
-class CPrefetchProjectSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CPrefetchProjectSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -256,7 +256,7 @@ class CPrefetchProjectSlaveActivity : public CSlaveActivity, public CThorSingleO
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CPrefetchProjectSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this), prefetcher(*this)
+    CPrefetchProjectSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), prefetcher(*this)
     {
         helper = (IHThorPrefetchProjectArg *) queryHelper();
         parallel = 0 != (helper->getFlags() & PPFparallel);

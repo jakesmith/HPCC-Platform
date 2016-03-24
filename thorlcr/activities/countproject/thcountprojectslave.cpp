@@ -19,7 +19,7 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class BaseCountProjectActivity : public CSlaveActivity,  public CThorSingleOutput
+class BaseCountProjectActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -35,7 +35,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    BaseCountProjectActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    BaseCountProjectActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = NULL;
     }

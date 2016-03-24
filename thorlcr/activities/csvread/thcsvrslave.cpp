@@ -33,7 +33,7 @@
 #include "csvsplitter.hpp"
 #include "thdiskbaseslave.ipp"
 
-class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorSingleOutput
+class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase
 {
     IHThorCsvReadArg *helper;
     StringAttr csvQuote, csvSeparate, csvTerminate, csvEscape;
@@ -305,7 +305,7 @@ class CCsvReadSlaveActivity : public CDiskReadSlaveActivityBase, public CThorSin
 public:
     IMPLEMENT_IINTERFACE_USING(CDiskReadSlaveActivityBase);
 
-    CCsvReadSlaveActivity(CGraphElementBase *_container) : CDiskReadSlaveActivityBase(_container), CThorSingleOutput(this)
+    CCsvReadSlaveActivity(CGraphElementBase *_container) : CDiskReadSlaveActivityBase(_container)
     {
         helper = static_cast <IHThorCsvReadArg *> (queryHelper());
         stopAfter = (rowcount_t)helper->getChooseNLimit();

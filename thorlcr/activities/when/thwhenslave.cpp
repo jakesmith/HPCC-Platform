@@ -68,14 +68,14 @@ public:
 };
 
 
-class CWhenSlaveActivity : public CSlaveActivity, public CDependencyExecutorSlaveActivity, public CThorSingleOutput
+class CWhenSlaveActivity : public CSlaveActivity, public CDependencyExecutorSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CDependencyExecutorSlaveActivity);
 
-    CWhenSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CDependencyExecutorSlaveActivity(this), CThorSingleOutput(this)
+    CWhenSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CDependencyExecutorSlaveActivity(this)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)

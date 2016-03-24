@@ -42,15 +42,17 @@ interface ILookAheadEngineRowStream : extends IEngineRowStream
     virtual void start() = 0;
 };
 class CSlaveGraphElement;
-class graphslave_decl CSlaveActivity : public CActivityBase, implements IThorDataLinkExt, implements IThorSlaveActivity
+class graphslave_decl CSlaveActivity : public CActivityBase, implements IThorDataLinkExt, implements IEngineRowStream, implements IThorSlaveActivity
 {
     mutable MemoryBuffer *data;
     mutable CriticalSection crit;
 
 protected:
     Owned<ILookAheadEngineRowStream> lookAheadStream;
+    IPointerArrayOf<IThorDebug> tracingStreams;
     IPointerArrayOf<IThorDataLink> inputs, outputs;
     UnsignedArray inputSourceIdxs;
+    IPointerArrayOf<IEngineRowStream> outputStreams;
     IPointerArrayOf<IEngineRowStream> inputStreams;
     IPointerArrayOf<IStrandJunction> inputJunctions;
     BoolArray inputsStopped;
@@ -144,6 +146,7 @@ public:
     IThorDataLink *queryOutput(unsigned index) const;
     IThorDataLink *queryInput(unsigned index) const;
     IEngineRowStream *queryInputStream(unsigned index) const;
+    IEngineRowStream *queryOutputStream(unsigned index) const;
     unsigned queryNumInputs() const { return inputs.ordinality(); }
     void appendOutput(IThorDataLink *itdl);
     void appendOutputLinked(IThorDataLink *itdl);
@@ -161,6 +164,7 @@ public:
 // IThorDataLink
     virtual CSlaveActivity *queryFromActivity() override { return this; }
     virtual IStrandJunction *getOutputStreams(CActivityBase &ctx, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered);
+    virtual void setOutputStream(unsigned index, IEngineRowStream *stream) override;
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { }
     virtual bool isGrouped() const override;
     virtual IOutputMetaData * queryOutputMeta() const;
@@ -178,14 +182,17 @@ public:
     }
     virtual void debugRequest(MemoryBuffer &msg) override;
 
-    virtual IEngineRowStream *queryStream() { return inputStream; }
-    virtual void setOutputStream(IEngineRowStream *stream) override { inputStream = stream; }
+    virtual IEngineRowStream *queryStream() { return this; }
 
 // IThorDataLink
     virtual void start() override;
-    virtual void stop() override;
 // IThorDataLinkExt
     virtual void setOutputIdx(unsigned idx) override { outputIdx = idx; }
+
+// IEngineRowStream
+    virtual const void *nextRow() override { throwUnexpected(); }
+    virtual void stop() override;
+    virtual void resetEOF() override { throwUnexpected(); }
 
 // IThorSlaveActivity
     virtual void init(MemoryBuffer &in, MemoryBuffer &out) override { }

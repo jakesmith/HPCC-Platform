@@ -98,7 +98,6 @@ class CSlaveActivity;
 interface IThorDataLink : extends IInterface
 {
     virtual void start() = 0; // prepares input
-    virtual void stop() = 0; // prepares input
     virtual CSlaveActivity *queryFromActivity() = 0; // activity that has this as an output
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) = 0;
     virtual unsigned __int64 queryTotalCycles() const = 0;
@@ -111,6 +110,7 @@ interface IThorDataLink : extends IInterface
     virtual unsigned queryOutputIdx() const = 0;
     virtual bool isInputOrdered(bool consumerOrdered) const = 0;
     virtual IStrandJunction *getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered) = 0;  // Use StrandFlags values for flags
+    virtual void setOutputStream(unsigned index, IEngineRowStream *stream) = 0;
     virtual void debugRequest(MemoryBuffer &mb) = 0;
 
 // Stepping methods
@@ -119,7 +119,6 @@ interface IThorDataLink : extends IInterface
 
 // to support non-stranded activities
     virtual IEngineRowStream *queryStream() = 0; // should be const really, but some IEngineRowStream members are not..
-    virtual void setOutputStream(IEngineRowStream *stream) = 0;
 };
 
 // helper interface. Used by maintainer of output links

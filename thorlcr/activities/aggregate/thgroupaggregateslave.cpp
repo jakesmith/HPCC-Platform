@@ -17,7 +17,7 @@
 
 #include "thgroupaggregateslave.ipp"
 
-class GroupAggregateSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class GroupAggregateSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -26,7 +26,7 @@ class GroupAggregateSlaveActivity : public CSlaveActivity, public CThorSingleOut
 
 public:
     GroupAggregateSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorSingleOutput(this)
+        : CSlaveActivity(_container)
     { 
     }
 

@@ -41,12 +41,12 @@ public:
 };
 
 
-class CNullSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CNullSlaveActivity : public CSlaveActivity
 {
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CNullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CNullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         appendOutputLinked(this);
     }
@@ -87,14 +87,14 @@ public:
 };
 
 
-class CThroughSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CThroughSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CThroughSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CThroughSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         appendOutputLinked(this);
     }

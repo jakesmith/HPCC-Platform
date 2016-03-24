@@ -19,7 +19,7 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class BaseChooseSetsActivity : public CSlaveActivity,  public CThorSingleOutput
+class BaseChooseSetsActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -32,7 +32,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    BaseChooseSetsActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    BaseChooseSetsActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = NULL;
         done = false;
@@ -257,7 +257,7 @@ public:
 
 
 // A hookling class that counts records as they are read by the smart buffering....
-class ChooseSetsPlusActivity : public CSlaveActivity,  public CThorSingleOutput, implements ILookAheadStopNotify
+class ChooseSetsPlusActivity : public CSlaveActivity, implements ILookAheadStopNotify
 {
 	typedef CSlaveActivity PARENT;
     friend class CInputCounter;
@@ -275,7 +275,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    ChooseSetsPlusActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    ChooseSetsPlusActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = NULL;
         counts = NULL;

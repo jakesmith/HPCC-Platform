@@ -29,7 +29,7 @@
 #include "thactivityutil.ipp"
 #include "thaggregateslave.ipp"
 
-class AggregateSlaveBase : public CSlaveActivity, public CThorSingleOutput
+class AggregateSlaveBase : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 protected:
@@ -117,8 +117,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    AggregateSlaveBase(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorSingleOutput(this)
+    AggregateSlaveBase(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         hadElement = inputStopped = false;
     }

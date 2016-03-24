@@ -32,7 +32,7 @@ static StringBuffer &buildAuthToken(IUserDescriptor *userDesc, StringBuffer &aut
     return authToken;
 }
 
-class CWscRowCallSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IWSCRowProvider
+class CWscRowCallSlaveActivity : public CSlaveActivity, implements IWSCRowProvider
 {
     bool eof;
     Owned<IWSCHelper> wscHelper;
@@ -41,7 +41,7 @@ class CWscRowCallSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CWscRowCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this) { }
+    CWscRowCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container) { }
 
     // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -123,7 +123,7 @@ public:
 
 //---------------------------------------------------------------------------
 
-class SoapDatasetCallSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IWSCRowProvider
+class SoapDatasetCallSlaveActivity : public CSlaveActivity, implements IWSCRowProvider
 {
     typedef CSlaveActivity PARENT;
 
@@ -134,7 +134,7 @@ class SoapDatasetCallSlaveActivity : public CSlaveActivity, public CThorSingleOu
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    SoapDatasetCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this) { }
+    SoapDatasetCallSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container) { }
 
     // IThorSlaveActivity overloaded methods
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)

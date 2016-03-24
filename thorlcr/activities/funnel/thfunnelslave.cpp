@@ -261,7 +261,7 @@ friend class CInputHandler;
 
 //class CParallelFunnel;
 //interface IBitSet;
-class FunnelSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class FunnelSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -275,7 +275,7 @@ class FunnelSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    FunnelSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    FunnelSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         grouped = false;
         eog = NULL;
@@ -465,7 +465,7 @@ public:
 // CombineSlaveActivity
 //
 
-class CombineSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CombineSlaveActivity : public CSlaveActivity
 {
     IHThorCombineArg *helper;
     bool grouped;
@@ -478,7 +478,7 @@ public:
 
 
     CombineSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorSingleOutput(this), rows(*this, this)
+        : CSlaveActivity(_container), rows(*this, this)
     {
         grouped = container.queryGrouped();
     }
@@ -577,7 +577,7 @@ public:
 /////
 
 
-class RegroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class RegroupSlaveActivity : public CSlaveActivity
 {
     IHThorRegroupArg *helper;
     bool grouped;
@@ -586,7 +586,7 @@ class RegroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    RegroupSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    RegroupSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         grouped = container.queryGrouped();
     }
@@ -654,7 +654,7 @@ public:
 
 /////
 
-class NonEmptySlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class NonEmptySlaveActivity : public CSlaveActivity
 {
     IHThorNonEmptyArg *helper;
     bool eogNext, eoi, anyThisGroup, anyThisInput;
@@ -699,7 +699,7 @@ class NonEmptySlaveActivity : public CSlaveActivity, public CThorSingleOutput
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    NonEmptySlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    NonEmptySlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = (IHThorNonEmptyArg *) queryHelper();
         sendReceiving = false;
@@ -785,7 +785,7 @@ public:
 };
 
 
-class CNWaySelectActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
+class CNWaySelectActivity : public CSlaveActivity, public CThorSteppable
 {
     typedef CSlaveActivity PARENT;
 
@@ -796,7 +796,7 @@ class CNWaySelectActivity : public CSlaveActivity, public CThorSingleOutput, pub
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CNWaySelectActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this), CThorSteppable(this)
+    CNWaySelectActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSteppable(this)
     {
         helper = (IHThorNWaySelectArg *)queryHelper();
     }
@@ -899,7 +899,7 @@ public:
 };
 
 
-class CThorNWayInputSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IThorNWayInput
+class CThorNWayInputSlaveActivity : public CSlaveActivity, implements IThorNWayInput
 {
     IHThorNWayInputArg *helper;
     PointerArrayOf<IThorDataLink> selectedInputs;
@@ -908,7 +908,7 @@ class CThorNWayInputSlaveActivity : public CSlaveActivity, public CThorSingleOut
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CThorNWayInputSlaveActivity(CGraphElementBase *container) : CSlaveActivity(container), CThorSingleOutput(this)
+    CThorNWayInputSlaveActivity(CGraphElementBase *container) : CSlaveActivity(container)
     {
         helper = (IHThorNWayInputArg *)queryHelper();
         grouped = helper->queryOutputMeta()->isGrouped(); // JCSMORE should match graph info, i.e. container.queryGrouped()

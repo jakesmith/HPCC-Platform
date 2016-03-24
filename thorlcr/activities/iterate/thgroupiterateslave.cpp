@@ -21,7 +21,7 @@
 #include "thgroupiterateslave.ipp"
 #include "thactivityutil.ipp"
 
-class GroupIterateSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class GroupIterateSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -34,7 +34,7 @@ class GroupIterateSlaveActivity : public CSlaveActivity, public CThorSingleOutpu
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    GroupIterateSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    GroupIterateSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -111,7 +111,7 @@ public:
 };
 
 
-class GroupProcessSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class GroupProcessSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -127,7 +127,7 @@ class GroupProcessSlaveActivity : public CSlaveActivity, public CThorSingleOutpu
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    GroupProcessSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    GroupProcessSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)

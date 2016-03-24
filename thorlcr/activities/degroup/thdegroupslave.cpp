@@ -17,7 +17,7 @@
 
 #include "thdegroupslave.ipp"
 
-class CDegroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
+class CDegroupSlaveActivity : public CSlaveActivity, public CThorSteppable
 {
     typedef CSlaveActivity PARENT;
 
@@ -25,7 +25,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CDegroupSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorSingleOutput(this), CThorSteppable(this)
+        : CSlaveActivity(_container), CThorSteppable(this)
     { 
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override

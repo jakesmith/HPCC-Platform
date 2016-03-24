@@ -21,14 +21,14 @@
 #include "thbufdef.hpp"
 #include "thpullslave.ipp"
 
-class PullSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class PullSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    PullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    PullSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
     }
 

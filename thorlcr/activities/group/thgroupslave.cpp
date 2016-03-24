@@ -20,7 +20,7 @@
 #include "thgroupslave.ipp"
 
 
-class GroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class GroupSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -55,7 +55,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     GroupSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorSingleOutput(this)
+        : CSlaveActivity(_container)
     {
         helper = static_cast <IHThorGroupArg *> (queryHelper());
         rolloverEnabled = false;

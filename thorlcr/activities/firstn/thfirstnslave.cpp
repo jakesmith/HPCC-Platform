@@ -25,7 +25,7 @@
 
 #include "thfirstnslave.ipp"
 
-class CFirstNSlaveBase : public CSlaveActivity, public CThorSingleOutput
+class CFirstNSlaveBase : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -43,7 +43,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CFirstNSlaveBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CFirstNSlaveBase(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         stopped = true;
         helper = (IHThorFirstNArg *)container.queryHelper();

@@ -28,7 +28,7 @@
 
 #include "thparseslave.ipp"
 
-class CParseSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IMatchedAction
+class CParseSlaveActivity : public CSlaveActivity, implements IMatchedAction
 {
     typedef CSlaveActivity PARENT;
 
@@ -45,7 +45,7 @@ class CParseSlaveActivity : public CSlaveActivity, public CThorSingleOutput, imp
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CParseSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CParseSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         anyThisGroup = false;
         curSearchTextLen = 0;

@@ -31,7 +31,7 @@
 
 #define NUMSLAVEPORTS 2     // actually should be num MP tags
 
-class SelfJoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class SelfJoinSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -102,7 +102,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     SelfJoinSlaveActivity(CGraphElementBase *_container, bool _isLocal, bool _isLightweight)
-        : CSlaveActivity(_container), CThorSingleOutput(this), spillStats(spillStatistics)
+        : CSlaveActivity(_container), spillStats(spillStatistics)
     {
         isLocal = _isLocal||_isLightweight;
         isLightweight = _isLightweight;

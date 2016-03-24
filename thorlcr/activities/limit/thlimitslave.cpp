@@ -23,7 +23,7 @@
 #include "thormisc.hpp"
 
 
-class CLimitSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
+class CLimitSlaveActivityBase : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -45,7 +45,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CLimitSlaveActivityBase(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CLimitSlaveActivityBase(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = (IHThorLimitArg *)queryHelper();
         resultSent = container.queryLocal(); // i.e. local, so don't send result to master

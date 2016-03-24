@@ -33,7 +33,7 @@
 
 #define _STABLE_MERGE
 
-class GlobalMergeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class GlobalMergeSlaveActivity : public CSlaveActivity
 {
 public:
     IArrayOf<IRowStream> streams; 
@@ -243,7 +243,7 @@ public:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    GlobalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    GlobalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         partitionpos = NULL;
         linkcounter.setown(new CThorRowLinkCounter);
@@ -411,7 +411,7 @@ public:
 
 
 
-class LocalMergeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class LocalMergeSlaveActivity : public CSlaveActivity
 {
     IArrayOf<IRowStream> streams; 
     Owned<IRowStream> out;
@@ -419,7 +419,7 @@ class LocalMergeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    LocalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this) { }
+    LocalMergeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container) { }
 
 // IThorSlaveActivity overloaded methods
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -527,7 +527,7 @@ public:
 };
 
 
-class CNWayMergeActivity : public CThorNarySlaveActivity, public CThorSingleOutput, public CThorSteppable
+class CNWayMergeActivity : public CThorNarySlaveActivity, public CThorSteppable
 {
     IHThorNWayMergeArg *helper;
     CThorStreamMerger merger;
@@ -539,7 +539,7 @@ class CNWayMergeActivity : public CThorNarySlaveActivity, public CThorSingleOutp
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CNWayMergeActivity(CGraphElementBase *container) : CThorNarySlaveActivity(container), CThorSingleOutput(this), CThorSteppable(this)
+    CNWayMergeActivity(CGraphElementBase *container) : CThorNarySlaveActivity(container), CThorSteppable(this)
     {
         helper = (IHThorNWayMergeArg *)queryHelper();
         merger.init(helper->queryCompare(), helper->dedup(), helper->querySteppingMeta()->queryCompare());

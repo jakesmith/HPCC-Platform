@@ -18,7 +18,7 @@
 
 #include "thsampleslave.ipp"
 
-class SampleSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class SampleSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -30,7 +30,7 @@ class SampleSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    SampleSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this) { }
+    SampleSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container) { }
 
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
     {

@@ -28,7 +28,7 @@
 #include "thactivityutil.ipp"
 #include "thspillslave.ipp"
 
-class SpillSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class SpillSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -46,7 +46,7 @@ class SpillSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    SpillSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    SpillSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         compress = false;
         grouped = false;

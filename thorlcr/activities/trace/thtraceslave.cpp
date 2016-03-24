@@ -20,7 +20,7 @@
 #include "slave.ipp"
 #include "thactivityutil.ipp"
 
-class CTraceSlaveActivity : public CSlaveActivity, public CThorSingleOutput, public CThorSteppable
+class CTraceSlaveActivity : public CSlaveActivity, public CThorSteppable
 {
     typedef CSlaveActivity PARENT;
 
@@ -35,7 +35,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CTraceSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorSingleOutput(this), CThorSteppable(this),
+        : CSlaveActivity(_container), CThorSteppable(this),
           keepLimit(0), skip(0), sample(0), traceEnabled(false)
     {
         helper = (IHThorTraceArg *) queryHelper();

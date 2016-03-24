@@ -36,7 +36,7 @@
 //
 
 
-class MSortSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class MSortSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -60,7 +60,7 @@ class MSortSlaveActivity : public CSlaveActivity, public CThorSingleOutput
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    MSortSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this), spillStats(spillStatistics)
+    MSortSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), spillStats(spillStatistics)
     {
         portbase = 0;
         totalrows = RCUNSET;

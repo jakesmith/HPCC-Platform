@@ -137,6 +137,13 @@ CSlaveActivity::~CSlaveActivity()
     ActPrintLog("DESTROYED");
 }
 
+void CSlaveActivity::setOutputStream(unsigned index, IEngineRowStream *stream)
+{
+    while (outputStreams.ordinality()<=index)
+        outputStreams.append(NULL);
+    outputStreams.replace(stream, index);
+}
+
 void CSlaveActivity::setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx)
 {
     CActivityBase::setInput(index, inputActivity, inputOutIdx);
@@ -159,6 +166,7 @@ void CSlaveActivity::setInput(unsigned index, CActivityBase *inputActivity, unsi
         inputStreams.append(NULL);
         inputJunctions.append(NULL);
         inputsStopped.append(false);
+        tracingStreams.append(NULL);
     }
     inputs.replace(outLink.getLink(), index);
     if (!input)
@@ -189,6 +197,15 @@ void CSlaveActivity::setInputStream(unsigned index, IThorDataLink *_input, unsig
 		inputStream = connectSingleStream(*this, _input, inputOutIdx, junction, _input->isInputOrdered(consumerOrdered));
 		inputStreams.replace(LINK(inputStream), index);
 		inputJunctions.replace(junction.getLink(), index);
+
+        if (queryJob().getOptBool("TRACEROWS"))
+        {
+            const unsigned numTraceRows = queryJob().getOptInt("numTraceRows", 10);
+            CTracingStream *tracingStream = new CTracingStream(_input, inputStream, queryHelper(), numTraceRows);
+            tracingStreams.replace(tracingStream, index);
+            inputStream = tracingStream;
+        }
+        _input->setOutputStream(inputOutIdx, LINK(inputStream));
     }
 }
 
@@ -201,7 +218,7 @@ IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsig
     connectInputStreams(inputOrdered);
     // Return a single stream
     // Default activity impl. adds single output as stream
-    streams.append(outputs.item(0)->queryStream());
+    streams.append(this);
     return NULL;
 }
 
@@ -211,15 +228,7 @@ void CSlaveActivity::appendOutput(IThorDataLink *itdl)
     dbgassertex(itdlExt);
     unsigned outputNum = outputs.ordinality();
     itdlExt->setOutputIdx(outputNum);
-
-    if (queryJob().getOptBool("TRACEROWS"))
-    {
-        const unsigned numTraceRows = queryJob().getOptInt("numTraceRows", 10);
-        outputs.append(new CTracingThorDataLink(itdl, queryHelper(), numTraceRows));
-        outputs.append(itdl);
-    }
-    else
-        outputs.append(itdl);
+    outputs.append(itdl);
 }
 
 void CSlaveActivity::appendOutputLinked(IThorDataLink *itdl)
@@ -244,6 +253,12 @@ IEngineRowStream *CSlaveActivity::queryInputStream(unsigned index) const
 {
     if (index>=inputStreams.ordinality()) return NULL;
     return inputStreams.item(index);
+}
+
+IEngineRowStream *CSlaveActivity::queryOutputStream(unsigned index) const
+{
+    if (index>=outputStreams.ordinality()) return NULL;
+    return outputStreams.item(index);
 }
 
 void CSlaveActivity::start()
@@ -320,8 +335,6 @@ void CSlaveActivity::stopInput(unsigned index, const char *extra)
     {
 #endif
         inputStream->stop();
-        resetJunction(junction);
-        itdl->stop();
         if (0 == index)
         {
             inputStopped = true;
@@ -462,8 +475,9 @@ void CSlaveActivity::serializeStats(MemoryBuffer &mb)
 
 void CSlaveActivity::debugRequest(unsigned edgeIdx, MemoryBuffer &msg)
 {
-    IThorDataLink *link = queryOutput(edgeIdx);
-    if (link) link->debugRequest(msg);
+    IEngineRowStream *outputStream = queryOutputStream(edgeIdx);
+    IThorDebug *debug = QUERYINTERFACE(outputStream, IThorDebug); // should probably use an extended IEngineRowStream, or store in separate array instead
+    if (debug) debug->debugRequest(msg);
 }
 
 bool CSlaveActivity::isGrouped() const
@@ -1922,9 +1936,7 @@ IEngineRowStream *connectSingleStream(CActivityBase &activity, IThorDataLink *in
             {
                 junction->setInput(stream, instreams.item(stream));
             }
-            IEngineRowStream *inputSingleOutput = junction->queryOutput(0);
-            input->setOutputStream(inputSingleOutput);
-            return inputSingleOutput;
+            return junction->queryOutput(0);
         }
         else
             return instreams.item(0);

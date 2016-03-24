@@ -25,7 +25,7 @@
 #include "thexception.hpp"
 
 
-class NormalizeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class NormalizeSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -42,7 +42,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     NormalizeSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorSingleOutput(this)
+        : CSlaveActivity(_container)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -108,7 +108,7 @@ public:
 ////////////////////
 
 
-class CNormalizeChildSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CNormalizeChildSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -124,7 +124,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CNormalizeChildSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorSingleOutput(this)
+        : CSlaveActivity(_container)
     { 
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }
@@ -188,7 +188,7 @@ public:
     }
 };
 
-class CNormalizeLinkedChildSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CNormalizeLinkedChildSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -225,7 +225,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CNormalizeLinkedChildSlaveActivity(CGraphElementBase *_container) 
-        : CSlaveActivity(_container), CThorSingleOutput(this)
+        : CSlaveActivity(_container)
     { 
     }
     virtual bool isGrouped() { return inputs.item(0)->isGrouped(); }

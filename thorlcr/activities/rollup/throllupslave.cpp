@@ -285,7 +285,7 @@ public:
     }
 };
 
-class CDedupBaseSlaveActivity : public CDedupRollupBaseActivity, public CThorSingleOutput
+class CDedupBaseSlaveActivity : public CDedupRollupBaseActivity
 {
 protected:
     IHThorDedupArg *ddhelper;
@@ -296,7 +296,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CDedupBaseSlaveActivity(CGraphElementBase *_container, bool global, bool groupOp)
-        : CDedupRollupBaseActivity(_container, false, global, groupOp), CThorSingleOutput(this)
+        : CDedupRollupBaseActivity(_container, false, global, groupOp)
     {
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -461,7 +461,7 @@ public:
     }
 };
 
-class CRollupSlaveActivity : public CDedupRollupBaseActivity, public CThorSingleOutput
+class CRollupSlaveActivity : public CDedupRollupBaseActivity
 {
 private:
     IHThorRollupArg * ruhelper;
@@ -470,7 +470,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CRollupSlaveActivity(CGraphElementBase *_container, bool global, bool groupOp) 
-        : CDedupRollupBaseActivity(_container, true, global, groupOp), CThorSingleOutput(this)
+        : CDedupRollupBaseActivity(_container, true, global, groupOp)
     {
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -567,7 +567,7 @@ public:
     }
 };
 
-class CRollupGroupSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CRollupGroupSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -579,7 +579,7 @@ class CRollupGroupSlaveActivity : public CSlaveActivity, public CThorSingleOutpu
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CRollupGroupSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this), rows(*this, NULL)
+    CRollupGroupSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), rows(*this, NULL)
     {
         eoi = false;
         helper = NULL;

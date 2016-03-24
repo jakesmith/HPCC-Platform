@@ -68,22 +68,6 @@ IRowStream *createSequentialPartHandler(CPartHandler *partHandler, IArrayOf<IPar
     } \
     inline const void *nextRowNoCatch() __attribute__((always_inline))
 
-class CThorSingleOutput : public CSimpleInterfaceOf<IEngineRowStream>
-{
-    CSlaveActivity *owner;
-    unsigned outputId = 0;
-    unsigned outputIdx = 0;
-    bool optStableInput = true; // is the input forced to ordered?
-    bool optUnstableInput = false;  // is the input forced to unordered?
-    bool optUnordered = false; // is the output specified as unordered?
-
-public:
-    CThorSingleOutput(CSlaveActivity *_owner) : owner(_owner) { owner->setOutputStream(this); }
-
-// IEngineRowStream
-    virtual void resetEOF() override { throwUnexpected(); }
-};
-
 void initMetaInfo(ThorDataLinkMetaInfo &info);
 void calcMetaInfoSize(ThorDataLinkMetaInfo &info, IThorDataLink *link);
 void calcMetaInfoSize(ThorDataLinkMetaInfo &info,IThorDataLink **link,unsigned ninputs);

@@ -1938,7 +1938,7 @@ IHashDistributor *createPullHashDistributor(CActivityBase *activity, ICommunicat
 #endif
 
 
-class HashDistributeSlaveBase : public CSlaveActivity, public CThorSingleOutput, implements IStopInput
+class HashDistributeSlaveBase : public CSlaveActivity, implements IStopInput
 {
     typedef CSlaveActivity PARENT;
 
@@ -1956,7 +1956,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     HashDistributeSlaveBase(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorSingleOutput(this)
+        : CSlaveActivity(_container)
     {
         eofin = false;
         mptag = TAG_NULL;
@@ -2754,7 +2754,7 @@ public:
     }
 };
 
-class HashDedupSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
+class HashDedupSlaveActivityBase : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -2810,7 +2810,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     HashDedupSlaveActivityBase(CGraphElementBase *_container, bool _local)
-        : CSlaveActivity(_container), CThorSingleOutput(this), local(_local)
+        : CSlaveActivity(_container), local(_local)
     {
         initialNumBuckets = 0;
         inputstopped = eos = lastEog = extractKey = local = isVariable = grouped = false;
@@ -3523,7 +3523,7 @@ public:
 //===========================================================================
 
 
-class HashJoinSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements IStopInput
+class HashJoinSlaveActivity : public CSlaveActivity, implements IStopInput
 {
     typedef CSlaveActivity PARENT;
 
@@ -3553,7 +3553,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     HashJoinSlaveActivity(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorSingleOutput(this)
+        : CSlaveActivity(_container)
     {
         lhsProgressCount = rhsProgressCount = 0;
         mptag = TAG_NULL;
@@ -3849,7 +3849,7 @@ RowAggregator *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBas
 #pragma warning(push)
 #pragma warning( disable : 4355 ) // 'this' : used in base member initializer list
 #endif
-class CHashAggregateSlave : public CSlaveActivity, public CThorSingleOutput, implements IHThorRowAggregator
+class CHashAggregateSlave : public CSlaveActivity, implements IHThorRowAggregator
 {
     typedef CSlaveActivity PARENT;
 
@@ -3892,7 +3892,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CHashAggregateSlave(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorSingleOutput(this)
+        : CSlaveActivity(_container)
     {
         mptag = TAG_NULL;
         eos = true;
@@ -3976,7 +3976,7 @@ public:
 #endif
 
 
-class CHashDistributeSlavedActivity : public CSlaveActivity, public CThorSingleOutput
+class CHashDistributeSlavedActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -3986,7 +3986,7 @@ class CHashDistributeSlavedActivity : public CSlaveActivity, public CThorSingleO
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CHashDistributeSlavedActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CHashDistributeSlavedActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         IHThorHashDistributeArg *distribargs = (IHThorHashDistributeArg *)queryHelper();
         ihash = distribargs->queryHash();

@@ -17,7 +17,7 @@
 
 #include "thfilterslave.ipp"
 
-class CFilterSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
+class CFilterSlaveActivityBase : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -28,7 +28,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     explicit CFilterSlaveActivityBase(CGraphElementBase *_container)
-        : CSlaveActivity(_container), CThorSingleOutput(this)
+        : CSlaveActivity(_container)
     {
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override

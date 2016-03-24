@@ -272,7 +272,7 @@ void CDiskRecordPartHandler::close(CRC32 &fileCRC)
 
 /////////////////////////////////////////////////
 
-class CDiskReadSlaveActivity : public CDiskReadSlaveActivityRecord, public CThorSingleOutput
+class CDiskReadSlaveActivity : public CDiskReadSlaveActivityRecord
 {
     class CDiskPartHandler : public CDiskRecordPartHandler
     {
@@ -399,7 +399,7 @@ public:
 
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CDiskReadSlaveActivity(CGraphElementBase *_container, IHThorArg *_helper) : CDiskReadSlaveActivityRecord(_container, _helper), CThorSingleOutput(this)
+    CDiskReadSlaveActivity(CGraphElementBase *_container, IHThorArg *_helper) : CDiskReadSlaveActivityRecord(_container, _helper)
     {
         helper = (IHThorDiskReadArg *)queryHelper();
         unsorted = 0 != (TDRunsorted & helper->getFlags());
@@ -526,7 +526,7 @@ CActivityBase *createDiskReadSlave(CGraphElementBase *container, IHThorArg *help
 // CDiskNormalizeSlave
 //
 
-class CDiskNormalizeSlave : public CDiskReadSlaveActivityRecord, public CThorSingleOutput
+class CDiskNormalizeSlave : public CDiskReadSlaveActivityRecord
 {
     class CNormalizePartHandler : public CDiskRecordPartHandler
     {
@@ -593,7 +593,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CDiskNormalizeSlave(CGraphElementBase *_container) 
-        : CDiskReadSlaveActivityRecord(_container), CThorSingleOutput(this)
+        : CDiskReadSlaveActivityRecord(_container)
     {
         helper = (IHThorDiskNormalizeArg *)queryHelper();
         if (helper->getFlags() & TDRlimitskips)
@@ -713,7 +713,7 @@ public:
     }
 };
 
-class CDiskAggregateSlave : public CDiskReadSlaveActivityRecord, public CThorSingleOutput
+class CDiskAggregateSlave : public CDiskReadSlaveActivityRecord
 {
     IHThorDiskAggregateArg *helper;
     Owned<IEngineRowAllocator> allocator;
@@ -724,7 +724,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CDiskAggregateSlave(CGraphElementBase *_container) 
-        : CDiskReadSlaveActivityRecord(_container), aggregator(*this), CThorSingleOutput(this)
+        : CDiskReadSlaveActivityRecord(_container), aggregator(*this)
     {
         helper = (IHThorDiskAggregateArg *)queryHelper();
         eoi = false;
@@ -832,7 +832,7 @@ CActivityBase *createDiskAggregateSlave(CGraphElementBase *container)
 }
 
 
-class CDiskCountSlave : public CDiskReadSlaveActivityRecord, public CThorSingleOutput
+class CDiskCountSlave : public CDiskReadSlaveActivityRecord
 {
     IHThorDiskCountArg *helper;
     rowcount_t stopAfter, preknownTotalCount;
@@ -841,7 +841,7 @@ class CDiskCountSlave : public CDiskReadSlaveActivityRecord, public CThorSingleO
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CDiskCountSlave(CGraphElementBase *_container) : CDiskReadSlaveActivityRecord(_container), CThorSingleOutput(this)
+    CDiskCountSlave(CGraphElementBase *_container) : CDiskReadSlaveActivityRecord(_container)
     {
         helper = (IHThorDiskCountArg *)queryHelper();
         totalCountKnown = eoi = false;
@@ -954,7 +954,7 @@ CActivityBase *createDiskCountSlave(CGraphElementBase *container)
 }
 
 class CDiskGroupAggregateSlave 
-  : public CDiskReadSlaveActivityRecord, public CThorSingleOutput, implements IHThorGroupAggregateCallback
+  : public CDiskReadSlaveActivityRecord, implements IHThorGroupAggregateCallback
 {
     IHThorDiskGroupAggregateArg *helper;
     bool gathered, eoi;
@@ -967,7 +967,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CDiskReadSlaveActivityRecord);
 
     CDiskGroupAggregateSlave(CGraphElementBase *_container) 
-        : CDiskReadSlaveActivityRecord(_container), CThorSingleOutput(this)
+        : CDiskReadSlaveActivityRecord(_container)
     {
         helper = (IHThorDiskGroupAggregateArg *)queryHelper();
         merging = false;

@@ -67,7 +67,7 @@ IRowStream *createFirstNReadSeqVar(IRowStream *input, unsigned limit)
     return new CFirstNReadSeqVar(input, limit);
 }
 
-class TopNSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class TopNSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -84,7 +84,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     TopNSlaveActivity(CGraphElementBase *_container, bool _global, bool _grouped)
-        : CSlaveActivity(_container), CThorSingleOutput(this), global(_global), grouped(_grouped), sortedRows(*this, this)
+        : CSlaveActivity(_container), global(_global), grouped(_grouped), sortedRows(*this, this)
     {
         assertex(!(global && grouped));
         eog = eos = false;

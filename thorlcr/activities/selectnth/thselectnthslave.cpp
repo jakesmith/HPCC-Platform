@@ -19,7 +19,7 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class CSelectNthSlaveActivity : public CSlaveActivity, public CThorSingleOutput, implements ILookAheadStopNotify
+class CSelectNthSlaveActivity : public CSlaveActivity, implements ILookAheadStopNotify
 {
     typedef CSlaveActivity PARENT;
 
@@ -65,7 +65,7 @@ class CSelectNthSlaveActivity : public CSlaveActivity, public CThorSingleOutput,
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CSelectNthSlaveActivity(CGraphElementBase *_container, bool _isLocal) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CSelectNthSlaveActivity(CGraphElementBase *_container, bool _isLocal) : CSlaveActivity(_container)
     {
         isLocal = _isLocal;
         createDefaultIfFail = isLocal || lastNode();

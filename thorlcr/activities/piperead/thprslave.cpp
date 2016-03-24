@@ -176,7 +176,7 @@ public:
 
 //---------------------------------------------------------------------------
 
-class CPipeReadSlaveActivity : public CPipeSlaveBase, public CThorSingleOutput
+class CPipeReadSlaveActivity : public CPipeSlaveBase
 {
 protected:
     IHThorPipeReadArg *helper;
@@ -189,7 +189,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CPipeSlaveBase);
 
     CPipeReadSlaveActivity(CGraphElementBase *_container) 
-        : CPipeSlaveBase(_container), CThorSingleOutput(this)
+        : CPipeSlaveBase(_container)
     {
     }
     CATCH_NEXTROW()
@@ -313,7 +313,7 @@ protected:
 
 //---------------------------------------------------------------------------
 
-class CPipeThroughSlaveActivity : public CPipeSlaveBase, public CThorSingleOutput
+class CPipeThroughSlaveActivity : public CPipeSlaveBase
 {
     typedef CPipeSlaveBase PARENT;
 
@@ -344,7 +344,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CPipeSlaveBase);
 
     CPipeThroughSlaveActivity(CGraphElementBase *_container)
-        : CPipeSlaveBase(_container), CThorSingleOutput(this)
+        : CPipeSlaveBase(_container)
     {
         pipeWriter = NULL;
         grouped = false;

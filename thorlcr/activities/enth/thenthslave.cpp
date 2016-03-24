@@ -19,7 +19,7 @@
 #include "thactivityutil.ipp"
 #include "thbufdef.hpp"
 
-class BaseEnthActivity : public CSlaveActivity, public CThorSingleOutput, implements ILookAheadStopNotify
+class BaseEnthActivity : public CSlaveActivity, implements ILookAheadStopNotify
 {
 	typedef CSlaveActivity PARENT;
 
@@ -83,7 +83,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    BaseEnthActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    BaseEnthActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
     }
     virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)

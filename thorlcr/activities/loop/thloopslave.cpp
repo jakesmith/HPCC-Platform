@@ -28,7 +28,7 @@
 #include "eclrtl_imp.hpp"
 #include "thcompressutil.hpp"
 
-class CLoopSlaveActivityBase : public CSlaveActivity, public CThorSingleOutput
+class CLoopSlaveActivityBase : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -78,7 +78,7 @@ protected:
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CLoopSlaveActivityBase(CGraphElementBase *container) : CSlaveActivity(container), CThorSingleOutput(this)
+    CLoopSlaveActivityBase(CGraphElementBase *container) : CSlaveActivity(container)
     {
         mpTag = TAG_NULL;
         maxEmptyLoopIterations = getOptUInt(THOROPT_LOOP_MAX_EMPTY, 1000);
@@ -518,7 +518,7 @@ activityslaves_decl CActivityBase *createLoopSlave(CGraphElementBase *container)
 
 /////////////// local result read
 
-class CLocalResultReadActivity : public CSlaveActivity, public CThorSingleOutput
+class CLocalResultReadActivity : public CSlaveActivity
 {
     IHThorLocalResultReadArg *helper;
     Owned<IRowStream> resultStream;
@@ -528,7 +528,7 @@ class CLocalResultReadActivity : public CSlaveActivity, public CThorSingleOutput
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CLocalResultReadActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CLocalResultReadActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = (IHThorLocalResultReadArg *)queryHelper();
         curRow = 0;
@@ -593,7 +593,7 @@ activityslaves_decl CActivityBase *createLocalResultReadSlave(CGraphElementBase 
 
 /////////////// local spill write
 
-class CLocalResultSpillActivity : public CSlaveActivity, public CThorSingleOutput
+class CLocalResultSpillActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -613,7 +613,7 @@ class CLocalResultSpillActivity : public CSlaveActivity, public CThorSingleOutpu
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CLocalResultSpillActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CLocalResultSpillActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = (IHThorLocalResultSpillArg *)queryHelper();
     }
@@ -796,14 +796,14 @@ activityslaves_decl CActivityBase *createGraphLoopSlave(CGraphElementBase *conta
 
 /////////////
 
-class CConditionalActivity : public CSlaveActivity, public CThorSingleOutput
+class CConditionalActivity : public CSlaveActivity
 {
     IThorDataLink *selectedInput = NULL;
     IEngineRowStream *selectInputStream = NULL;
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CConditionalActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CConditionalActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
     }
     void init(MemoryBuffer &data, MemoryBuffer &slaveData)
@@ -861,7 +861,7 @@ activityslaves_decl CActivityBase *createCaseSlave(CGraphElementBase *container)
 
 //////////// NewChild acts - move somewhere else..
 
-class CChildNormalizeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CChildNormalizeSlaveActivity : public CSlaveActivity
 {
     IHThorChildNormalizeArg *helper;
     Owned<IEngineRowAllocator> allocator;
@@ -870,7 +870,7 @@ class CChildNormalizeSlaveActivity : public CSlaveActivity, public CThorSingleOu
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CChildNormalizeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CChildNormalizeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = (IHThorChildNormalizeArg *)queryHelper();
     }
@@ -938,7 +938,7 @@ activityslaves_decl CActivityBase *createChildNormalizeSlave(CGraphElementBase *
 
 //=====================================================================================================
 
-class CChildAggregateSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CChildAggregateSlaveActivity : public CSlaveActivity
 {
     IHThorChildAggregateArg *helper;
     bool eos;
@@ -946,7 +946,7 @@ class CChildAggregateSlaveActivity : public CSlaveActivity, public CThorSingleOu
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CChildAggregateSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CChildAggregateSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = (IHThorChildAggregateArg *)queryHelper();
     }
@@ -989,7 +989,7 @@ activityslaves_decl CActivityBase *createChildAggregateSlave(CGraphElementBase *
 
 //=====================================================================================================
 
-class CChildGroupAggregateActivitySlave : public CSlaveActivity, public CThorSingleOutput, implements IHThorGroupAggregateCallback
+class CChildGroupAggregateActivitySlave : public CSlaveActivity, implements IHThorGroupAggregateCallback
 {
     IHThorChildGroupAggregateArg *helper;
     bool eos, gathered;
@@ -999,7 +999,7 @@ class CChildGroupAggregateActivitySlave : public CSlaveActivity, public CThorSin
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CChildGroupAggregateActivitySlave(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this)
+    CChildGroupAggregateActivitySlave(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = (IHThorChildGroupAggregateArg *)queryHelper();
     }
@@ -1059,7 +1059,7 @@ activityslaves_decl CActivityBase *createChildGroupAggregateSlave(CGraphElementB
 
 //=====================================================================================================
 
-class CChildThroughNormalizeSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CChildThroughNormalizeSlaveActivity : public CSlaveActivity
 {
     typedef CSlaveActivity PARENT;
 
@@ -1074,7 +1074,7 @@ class CChildThroughNormalizeSlaveActivity : public CSlaveActivity, public CThorS
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CChildThroughNormalizeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), CThorSingleOutput(this), nextOutput(NULL)
+    CChildThroughNormalizeSlaveActivity(CGraphElementBase *_container) : CSlaveActivity(_container), nextOutput(NULL)
     {
         helper = (IHThorChildThroughNormalizeArg *)queryHelper();
     }
@@ -1151,7 +1151,7 @@ activityslaves_decl CActivityBase *createChildThroughNormalizeSlave(CGraphElemen
 
 ///////////
 
-class CGraphLoopResultReadSlaveActivity : public CSlaveActivity, public CThorSingleOutput
+class CGraphLoopResultReadSlaveActivity : public CSlaveActivity
 {
     IHThorGraphLoopResultReadArg *helper;
     Owned<IRowStream> resultStream;
@@ -1159,7 +1159,7 @@ class CGraphLoopResultReadSlaveActivity : public CSlaveActivity, public CThorSin
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CGraphLoopResultReadSlaveActivity(CGraphElementBase *container) : CSlaveActivity(container), CThorSingleOutput(this)
+    CGraphLoopResultReadSlaveActivity(CGraphElementBase *container) : CSlaveActivity(container)
     {
         helper = (IHThorGraphLoopResultReadArg *)queryHelper();
     }

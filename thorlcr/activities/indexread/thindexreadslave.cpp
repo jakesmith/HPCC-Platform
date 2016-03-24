@@ -286,7 +286,7 @@ interface IRowStreamStepping : extends IRowStream
     virtual const void *nextRowGE(const void *seek, unsigned numFields, bool &wasCompleteMatch, const SmartStepExtra &stepExtra) = 0;
 };
 
-class CIndexReadSlaveActivity : public CIndexReadSlaveBase, public CThorSingleOutput
+class CIndexReadSlaveActivity : public CIndexReadSlaveBase
 {
     IHThorIndexReadArg *helper;
     rowcount_t rowLimit, stopAfter;
@@ -551,7 +551,7 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase, public CThorSingleOu
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CIndexReadSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container), CThorSingleOutput(this)
+    CIndexReadSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container)
     {
         keyedLimitSkips = false;
         first = true;
@@ -759,7 +759,7 @@ CActivityBase *createIndexReadSlave(CGraphElementBase *container)
 
 /////////////////////////////////////////////////////////////
 
-class CIndexGroupAggregateSlaveActivity : public CIndexReadSlaveBase, public CThorSingleOutput, implements IHThorGroupAggregateCallback
+class CIndexGroupAggregateSlaveActivity : public CIndexReadSlaveBase, implements IHThorGroupAggregateCallback
 {
     IHThorIndexGroupAggregateArg *helper;
     bool gathered, eoi, merging;
@@ -770,7 +770,7 @@ class CIndexGroupAggregateSlaveActivity : public CIndexReadSlaveBase, public CTh
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CIndexGroupAggregateSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container), CThorSingleOutput(this)
+    CIndexGroupAggregateSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container)
     {
         helper = (IHThorIndexGroupAggregateArg *)container.queryHelper();
         merging = false;
@@ -870,7 +870,7 @@ CActivityBase *createIndexGroupAggregateSlave(CGraphElementBase *container) { re
 /////////////////////////////////////////////////////////////
 
 
-class CIndexCountSlaveActivity : public CIndexReadSlaveBase, public CThorSingleOutput
+class CIndexCountSlaveActivity : public CIndexReadSlaveBase
 {
     bool eoi;
     IHThorIndexCountArg *helper;
@@ -881,7 +881,7 @@ class CIndexCountSlaveActivity : public CIndexReadSlaveBase, public CThorSingleO
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CIndexCountSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container), CThorSingleOutput(this)
+    CIndexCountSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container)
     {
         helper = static_cast <IHThorIndexCountArg *> (container.queryHelper());
         preknownTotalCount = 0;
@@ -1008,7 +1008,7 @@ CActivityBase *createIndexCountSlave(CGraphElementBase *container)
 }
 
 
-class CIndexNormalizeSlaveActivity : public CIndexReadSlaveBase, public CThorSingleOutput
+class CIndexNormalizeSlaveActivity : public CIndexReadSlaveBase
 {
     bool eoi, expanding;
     IHThorIndexNormalizeArg *helper;
@@ -1034,7 +1034,7 @@ class CIndexNormalizeSlaveActivity : public CIndexReadSlaveBase, public CThorSin
 public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
-    CIndexNormalizeSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container), CThorSingleOutput(this), partHelper(*this)
+    CIndexNormalizeSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container), partHelper(*this)
     {
         helper = (IHThorIndexNormalizeArg *)container.queryHelper();
     }
@@ -1201,7 +1201,7 @@ public:
 
 CActivityBase *createIndexNormalizeSlave(CGraphElementBase *container) { return new CIndexNormalizeSlaveActivity(container); }
 
-class CIndexAggregateSlaveActivity : public CIndexReadSlaveBase, public CThorSingleOutput
+class CIndexAggregateSlaveActivity : public CIndexReadSlaveBase
 {
     bool eoi, hadElement;
     IHThorIndexAggregateArg *helper;
@@ -1232,7 +1232,7 @@ public:
     IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
 
     CIndexAggregateSlaveActivity(CGraphElementBase *_container) 
-        : CIndexReadSlaveBase(_container), CThorSingleOutput(this), partHelper(*this), aggregator(*this)
+        : CIndexReadSlaveBase(_container), partHelper(*this), aggregator(*this)
     {
         helper = (IHThorIndexAggregateArg *)container.queryHelper();
     }
