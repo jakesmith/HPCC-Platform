@@ -185,10 +185,7 @@ public:
     {
         PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
         if (global)
-        {
-            lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), rollup?ROLLUP_SMART_BUFFER_SIZE:DEDUP_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage())); // only allow spill if input can stall
-            inputStream = lookAheadStream;
-        }
+            setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), rollup?ROLLUP_SMART_BUFFER_SIZE:DEDUP_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage())); // only allow spill if input can stall
     }
     virtual void start()
     {

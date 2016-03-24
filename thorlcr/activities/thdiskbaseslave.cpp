@@ -299,10 +299,7 @@ void CDiskWriteSlaveActivityBase::setInputStream(unsigned index, IThorDataLink *
 {
     PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
     if (dlfn.isExternal() && !firstNode())
-    {
-        lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), PROCESS_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
-        inputStream = lookAheadStream;
-    }
+        setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), PROCESS_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), grouped, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
 }
 
 void CDiskWriteSlaveActivityBase::open()

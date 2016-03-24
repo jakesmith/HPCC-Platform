@@ -27,8 +27,9 @@ protected:
     IHThorCountProjectArg *helper;
     rowcount_t count;
 
-    void start()
+    virtual void start() override
     {
+        PARENT::start();
         count = 0;
         dataLinkStart();
     }
@@ -39,12 +40,12 @@ public:
     {
         helper = NULL;
     }
-    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer & data, MemoryBuffer &slaveData) override
     {
         appendOutputLinked(this);
         helper = static_cast <IHThorCountProjectArg *> (queryHelper());
     }
-    virtual void stop()
+    virtual void stop() override
     {
         PARENT::stop();
         dataLinkStop();
@@ -163,8 +164,7 @@ public:
     virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
     {
     	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
-        lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), COUNTPROJECT_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage())); // could spot disk write output here?
-    	inputStream = lookAheadStream;
+    	setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), COUNTPROJECT_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage())); // could spot disk write output here?
     }
     virtual void start()
     {

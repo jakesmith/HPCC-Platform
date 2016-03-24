@@ -96,10 +96,7 @@ public:
         input->getMetaInfo(intoMetaInfo);
         // Need lookahead _unless_ row count pre-known.
         if (numerator && (intoMetaInfo.totalRowsMin != intoMetaInfo.totalRowsMax))
-        {
-			lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), ENTH_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
-			inputStream = lookAheadStream;
-		}
+            setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), ENTH_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
     }
     virtual void start()
     {

@@ -244,7 +244,7 @@ public:
     	totallimit = (rowcount_t)helper->getLimit();
         rowcount_t _skipCount = validRC(helper->numToSkip()); // max
         rowcount_t maxRead = (totallimit>(RCUNBOUND-_skipCount))?RCUNBOUND:totallimit+_skipCount;
-        lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), FIRSTN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false,
+        setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), FIRSTN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false,
                                           maxRead, this, &container.queryJob().queryIDiskUsage())); // if a very large limit don't bother truncating
     }
     virtual void start()

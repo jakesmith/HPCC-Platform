@@ -37,7 +37,7 @@
 #include "traceslave.hpp"
 #include "thorstrand.hpp"
 
-interface ILookAheadEngineRowStream : extends IEngineRowStream
+interface IStartableEngineRowStream : extends IEngineRowStream
 {
     virtual void start() = 0;
 };
@@ -48,7 +48,7 @@ class graphslave_decl CSlaveActivity : public CActivityBase, implements IThorDat
     mutable CriticalSection crit;
 
 protected:
-    Owned<ILookAheadEngineRowStream> lookAheadStream;
+    IPointerArrayOf<IStartableEngineRowStream> lookAheads;
     IPointerArrayOf<IThorDebug> tracingStreams;
     IPointerArrayOf<IThorDataLink> inputs, outputs;
     UnsignedArray inputSourceIdxs;
@@ -143,10 +143,12 @@ public:
     virtual void setInput(unsigned index, CActivityBase *inputActivity, unsigned inputOutIdx) override;
     virtual void connectInputStreams(bool consumerOrdered);
 
+    void setLookAhead(unsigned index, IStartableEngineRowStream *lookAhead);
     IThorDataLink *queryOutput(unsigned index) const;
     IThorDataLink *queryInput(unsigned index) const;
     IEngineRowStream *queryInputStream(unsigned index) const;
     IEngineRowStream *queryOutputStream(unsigned index) const;
+    unsigned queryInputOutputIndex(unsigned inputIndex) const { return inputSourceIdxs.item(inputIndex); }
     unsigned queryNumInputs() const { return inputs.ordinality(); }
     void appendOutput(IThorDataLink *itdl);
     void appendOutputLinked(IThorDataLink *itdl);

@@ -49,10 +49,7 @@ public:
     {
     	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
         if (global) // only want lookahead if global (hence serial)
-        {
-			lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), ENTH_SMART_BUFFER_SIZE, true, false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
-			inputStream = lookAheadStream;
-        }
+            setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), ENTH_SMART_BUFFER_SIZE, true, false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
     }
     const void *getFirst() // for global, not called on 1st slave
     {

@@ -84,10 +84,7 @@ public:
         PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
         rowcount_t rowN = (rowcount_t)helper->getRowToSelect();
         if (!isLocal && rowN)
-        {
-            lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), SELECTN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, rowN, this, &container.queryJob().queryIDiskUsage()));
-            inputStream = lookAheadStream;
-        }
+            setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), SELECTN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, rowN, this, &container.queryJob().queryIDiskUsage()));
     }
     virtual void start()
     {
@@ -206,7 +203,7 @@ public:
         info.canReduceNumRows = true; // not sure what selectNth is doing
         calcMetaInfoSize(info,inputs.item(0));
     }
-// ILookAheadEngineRowStream methods used for global selectn only
+// IStartableEngineRowStream methods used for global selectn only
     virtual void onInputFinished(rowcount_t count)
     {
         SpinBlock b(spin);

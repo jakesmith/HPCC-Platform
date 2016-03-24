@@ -51,7 +51,7 @@
 
 
 
-class CRowStreamLookAhead : public CSimpleInterfaceOf<ILookAheadEngineRowStream>
+class CRowStreamLookAhead : public CSimpleInterfaceOf<IStartableEngineRowStream>
 {
     rowcount_t count;
     Linked<IEngineRowStream> inputStream;
@@ -227,7 +227,7 @@ public:
         return row.getClear();
     }
 
-// ILookAheadEngineRowStream
+// IStartableEngineRowStream
     virtual void start() override
     {
 #ifdef _FULL_TRACE
@@ -262,7 +262,7 @@ public:
 #endif
 
 
-ILookAheadEngineRowStream *createRowStreamLookAhead(CSlaveActivity *activity, IEngineRowStream *inputStream, IRowInterfaces *rowIf, size32_t bufsize, bool allowspill, bool preserveGrouping, rowcount_t maxcount, ILookAheadStopNotify *notify, IDiskUsage *iDiskUsage)
+IStartableEngineRowStream *createRowStreamLookAhead(CSlaveActivity *activity, IEngineRowStream *inputStream, IRowInterfaces *rowIf, size32_t bufsize, bool allowspill, bool preserveGrouping, rowcount_t maxcount, ILookAheadStopNotify *notify, IDiskUsage *iDiskUsage)
 {
     return new CRowStreamLookAhead(*activity, inputStream, rowIf, bufsize, allowspill, preserveGrouping, maxcount, notify, iDiskUsage);
 }

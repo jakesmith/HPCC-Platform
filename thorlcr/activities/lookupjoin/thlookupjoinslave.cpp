@@ -1328,10 +1328,7 @@ public:
     {
         PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
         if (0 == index)
-        {
-            lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), LOOKUPJOINL_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(leftITDL->queryFromActivity()), grouped, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
-            inputStream = lookAheadStream;
-        }
+            setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), LOOKUPJOINL_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(leftITDL->queryFromActivity()), grouped, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
     }
     virtual void start()
     {

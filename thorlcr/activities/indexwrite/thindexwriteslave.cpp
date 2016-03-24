@@ -159,8 +159,7 @@ public:
     virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
     {
     	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
-    	lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
-    	inputStream = lookAheadStream;
+    	setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), INDEXWRITE_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
     }
     void open(IPartDescriptor &partDesc, bool isTopLevel, bool isVariable)
     {

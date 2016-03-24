@@ -161,12 +161,14 @@ void CSlaveActivity::setInput(unsigned index, CActivityBase *inputActivity, unsi
 
     while (inputs.ordinality()<=index)
     {
+        // JCSMORE should use struct/class
     	inputs.append(NULL);
     	inputSourceIdxs.append(NotFound);
         inputStreams.append(NULL);
         inputJunctions.append(NULL);
         inputsStopped.append(false);
         tracingStreams.append(NULL);
+        lookAheads.append(NULL);
     }
     inputs.replace(outLink.getLink(), index);
     if (!input)
@@ -194,9 +196,16 @@ void CSlaveActivity::setInputStream(unsigned index, IThorDataLink *_input, unsig
 {
 	if (input) // will be none if source act.
 	{
-		inputStream = connectSingleStream(*this, _input, inputOutIdx, junction, _input->isInputOrdered(consumerOrdered));
-		inputStreams.replace(LINK(inputStream), index);
+	    Owned<IStrandJunction> inputJunction;
+		IEngineRowStream *_inputStream = connectSingleStream(*this, _input, inputOutIdx, inputJunction, _input->isInputOrdered(consumerOrdered));
+		inputStreams.replace(LINK(_inputStream), index);
 		inputJunctions.replace(junction.getLink(), index);
+
+		if (0 == index)
+		{
+		    inputStream = _inputStream;
+		    junction.setown(inputJunction.getClear());
+		}
 
         if (queryJob().getOptBool("TRACEROWS"))
         {
@@ -209,9 +218,17 @@ void CSlaveActivity::setInputStream(unsigned index, IThorDataLink *_input, unsig
     }
 }
 
+void CSlaveActivity::setLookAhead(unsigned index, IStartableEngineRowStream *lookAhead)
+{
+    lookAheads.replace(lookAhead, index);
+    inputStreams.replace(LINK(lookAhead), index);
+    if (0 == index)
+        inputStream = lookAhead;
+}
+
 IStrandJunction *CSlaveActivity::getOutputStreams(CActivityBase &activity, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered)
 {
-    // Default non-stranded implementation, expects activity to have added a legacy output.
+    // Default non-stranded implementation, expects activity to have 1 output.
     assertex(!idx);
     // By default, activities are assumed NOT to support streams
     bool inputOrdered = isInputOrdered(consumerOrdered);
@@ -292,11 +309,9 @@ void CSlaveActivity::startInput(unsigned index, const char *extra)
 #endif
         itdl->start();
         startJunction(inputJunction);
-        if (lookAheadStream)
-        {
-            dbgassertex(0 == index); // For default activity setInput handling, assumed to only be one lookahead on single input
-            lookAheadStream->start();
-        }
+        IStartableEngineRowStream *lookAhead = lookAheads.item(index);
+        if (lookAhead)
+            lookAhead->start();
         if (0 == index)
         {
             input = itdl;

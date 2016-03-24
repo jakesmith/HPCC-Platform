@@ -165,8 +165,7 @@ public:
     virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
     {
         PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
-    	lookAheadStream.setown(createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), CHOOSESETS_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
-    	inputStream = lookAheadStream;
+        setLookAhead(0, createRowStreamLookAhead(this, inputStream, queryRowInterfaces(input), CHOOSESETS_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(this), false, RCUNBOUND, NULL, &container.queryJob().queryIDiskUsage()));
     }
     virtual void start() override
     {
@@ -302,8 +301,7 @@ public:
     {
     	PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
     	inputCounter->setInputStream(inputStream);
-        lookAheadStream.setown(createRowStreamLookAhead(this, inputCounter.get(), queryRowInterfaces(input), CHOOSESETSPLUS_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage())); // read all input
-    	inputStream = lookAheadStream;
+    	setLookAhead(0, createRowStreamLookAhead(this, inputCounter.get(), queryRowInterfaces(input), CHOOSESETSPLUS_SMART_BUFFER_SIZE, true, false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage())); // read all input
     }
     virtual void start()
     {

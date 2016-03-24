@@ -42,9 +42,8 @@ class JoinSlaveActivity : public CSlaveActivity, implements ILookAheadStopNotify
 {
     typedef CSlaveActivity PARENT;
 
-    IStrandJunction *rightJunction = NULL;
-    IStrandJunction *primaryJunction = NULL;
-    IStrandJunction *secondaryJunction = NULL;
+    unsigned secondaryInputIndex = 0;
+    unsigned primaryInputIndex = 0;
     IEngineRowStream *rightInputStream = NULL;
     IEngineRowStream *primaryInputStream = NULL;
     IEngineRowStream *secondaryInputStream = NULL;
@@ -202,27 +201,29 @@ public:
         rightCompare = helper->queryCompareRight();
         leftKeySerializer = helper->querySerializeLeft();
         rightKeySerializer = helper->querySerializeRight();
+        rightpartition = (container.getKind()==TAKjoin)&&((helper->getJoinFlags()&JFpartitionright)!=0);
     }
     virtual void setInputStream(unsigned index, IThorDataLink *_input, unsigned inputOutIdx, bool consumerOrdered) override
     {
         IEngineRowStream *thisInputStream;
         PARENT::setInputStream(index, _input, inputOutIdx, consumerOrdered);
-        if (1 == index)
-            rightJunction = inputJunctions.item(1);
         if ((rightpartition && (0 == index)) || (!rightpartition && (1 == index)))
         {
-            IEngineRowStream * &stream = rightpartition ? inputStream : rightInputStream;
-            lookAheadStream.setown(createRowStreamLookAhead(this, stream, queryRowInterfaces(_input), JOIN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(secondaryInput->queryFromActivity()),
-                                                        false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage()));
-            stream = lookAheadStream;
-            secondaryInputStream = lookAheadStream;
-            secondaryJunction = rightpartition ? junction.get() : rightJunction;
+            secondaryInputIndex = rightpartition ? 0 : 1;
+            IEngineRowStream *secondaryStream = inputStreams.item(secondaryInputIndex);
+            IThorDataLink *secondaryInput = inputs.item(secondaryInputIndex);
+            IStartableEngineRowStream *lookAhead = createRowStreamLookAhead(this, secondaryStream, queryRowInterfaces(_input), JOIN_SMART_BUFFER_SIZE, isSmartBufferSpillNeeded(secondaryInput->queryFromActivity()),
+                                                        false, RCUNBOUND, this, &container.queryJob().queryIDiskUsage());
+            setLookAhead(secondaryInputIndex, lookAhead),
+            secondaryInputStream = lookAhead;
         }
         else
         {
+            primaryInputIndex = rightpartition ? 1 : 0;
             primaryInputStream = inputStream;
-            primaryJunction = rightpartition ? rightJunction : junction.get();
         }
+        if (1 == index)
+            rightInputStream = inputStreams.item(1);
     }
     virtual void onInputFinished(rowcount_t count)
     {
@@ -255,8 +256,7 @@ public:
     {
         try
         {
-            secondaryInput->start();
-            startJunction(secondaryJunction);
+            startInput(secondaryInputIndex);
         }
         catch (IException *e)
         {
@@ -311,8 +311,7 @@ public:
         asyncSecondaryStart.start();
         try
         {
-            primaryInput->start();
-            startJunction(primaryJunction);
+            startInput(primaryInputIndex);
             *primaryInputStopped = false;
         }
         catch (IException *e)
@@ -499,8 +498,6 @@ public:
     }
     bool doglobaljoin()
     {
-        rightpartition = (container.getKind()==TAKjoin)&&((helper->getJoinFlags()&JFpartitionright)!=0);
-
         Linked<IRowInterfaces> primaryRowIf, secondaryRowIf;
         ICompare *primaryCompare, *secondaryCompare;
         ISortKeySerializer *primaryKeySerializer;

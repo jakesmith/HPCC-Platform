@@ -2003,6 +2003,7 @@ public:
         instrm.set(inputStream);
         Owned<IRowInterfaces> myRowIf = getRowInterfaces(); // avoiding circular link issues
         out.setown(distributor->connect(myRowIf, instrm, ihash, mergecmp));
+        dataLinkStart();
     }
     virtual void stop()
     {
