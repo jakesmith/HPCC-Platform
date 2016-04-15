@@ -230,6 +230,15 @@ void CDiskReadSlaveActivityBase::init(MemoryBuffer &data, MemoryBuffer &slaveDat
     if (parts)
     {
         deserializePartFileDescriptors(data, partDescs);
+        if (helper->getFlags() & TDXtemporary)
+        {
+            StringBuffer mangled;
+            IPartDescriptor &part0 = partDescs.item(0);
+            part0.getDirectory(mangled, 0);
+            addPathSepChar(mandled);
+            mangled.append(slavePort);
+            part0.queryOwner().setDefaultDir(mangled.str());
+        }
         unsigned encryptedKeyLen;
         void *encryptedKey;
         helper->getEncryptKey(encryptedKeyLen, encryptedKey);
@@ -477,6 +486,14 @@ void CDiskWriteSlaveActivityBase::init(MemoryBuffer &data, MemoryBuffer &slaveDa
             fileCRC.reset(~crc);
     }
     partDesc.setown(deserializePartFileDescriptor(data));
+    if (diskHelperBase->getFlags() & TDXtemporary)
+    {
+        StringBuffer mangled;
+        partDesc->getDirectory(mangled, 0);
+        addPathSepChar(mandled);
+        mangled.append(slavePort);
+        partDesc->queryOwner().setDefaultDir(mangled.str());
+    }
     if (dlfn.isExternal())
     {
         mpTag = container.queryJobChannel().deserializeMPTag(data);
