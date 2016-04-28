@@ -397,12 +397,12 @@ public:
                 if (loopAgain) // cannot be 0
                     boundGraph->prepareLoopAgainResult(*this, ownedResults, loopAgain);
 
-                Owned<IThorResult> inputResult = ownedResults->getResult(1);
-                inputResult->setResultStream(loopPending.getClear(), loopPendingCount);
-                boundGraph->execute(*this, condLoopCounter, ownedResults, loopPending.getClear(), loopPendingCount, extractBuilder.size(), extractBuilder.getbytes());
+                Owned<IThorResult> loopInputResult = ownedResults->getResult(1);
+                loopInputResult->setResultStream(loopPending.getClear(), loopPendingCount);
+                boundGraph->execute(*this, ownedResults, extractBuilder.size(), extractBuilder.getbytes());
 
-                Owned<IThorResult> result0 = ownedResults->getResult(0);
-                curInput.setown(result0->getRowStream());
+                Owned<IThorResult> loopOutputResult = ownedResults->getResult(0);
+                curInput.setown(loopOutputResult->getRowStream());
 
                 if (loopAgain)
                 {
@@ -529,42 +529,34 @@ class CLocalResultReadActivity : public CSlaveActivity
 
     IHThorLocalResultReadArg *helper;
     Owned<IRowStream> resultStream;
-    unsigned curRow;
-    mptag_t replyTag;
+    Owned<CGraphBase> resultGraph;
 
 public:
     CLocalResultReadActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = (IHThorLocalResultReadArg *)queryHelper();
-        curRow = 0;
-        replyTag = queryMPServer().createReplyTag();
         appendOutputLinked(this);
-    }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
-    {
-        assertex(container.queryResultsGraph());
-    }
-    virtual void start()
-    {
-        ActivityTimer s(totalCycles, timeActivities);
-        PARENT::start();
-        curRow = 0;
-        abortSoon = false;
         assertex(container.queryResultsGraph());
         graph_id resultGraphId = container.queryXGMML().getPropInt("att[@name=\"_graphId\"]/@value");
         if (!resultGraphId)
             resultGraphId = container.queryResultsGraph()->queryGraphId();
-        Owned<CGraphBase> graph = queryJobChannel().getGraph(resultGraphId);
-        Owned<IThorResult> result = graph->getResult(helper->querySequence(), queryGraph().isLocalChild());
+        resultGraph.setown(queryJobChannel().getGraph(resultGraphId));
+    }
+    virtual void start() override
+    {
+        ActivityTimer s(totalCycles, timeActivities);
+        PARENT::start();
+        abortSoon = false;
+        Owned<IThorResult> result = resultGraph->getResult(helper->querySequence(), queryGraph().isLocalChild());
         resultStream.setown(result->getRowStream());
     }
-    virtual void stop()
+    virtual void stop() override
     {
         abortSoon = true;
         resultStream.clear();
         PARENT::stop();
     }
-    virtual void kill()
+    virtual void kill() override
     {
         CSlaveActivity::kill();
         resultStream.clear();
@@ -584,7 +576,7 @@ public:
         return NULL;
     }
     virtual bool isGrouped() const override { return false; }
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
     }
@@ -673,12 +665,14 @@ public:
 
 class CLocalResultWriteActivityBase : public ProcessSlaveActivity
 {
+    Owned<CGraphBase> resultGraph;
 public:
     CLocalResultWriteActivityBase(CGraphElementBase *_container) : ProcessSlaveActivity(_container)
     {
+        resultGraph.setown(queryJobChannel().getGraph(container.queryResultsGraph()->queryGraphId()));
     }
     virtual IThorResult *createResult() = 0;
-    virtual void process()
+    virtual void process() override
     {
         start();
         processed = THORDATALINK_STARTED;
@@ -699,7 +693,7 @@ public:
             resultWriter->putRow(nextrec.getClear());
         }
     }
-    void endProcess()
+    virtual void endProcess() override
     {
         if (processed & THORDATALINK_STARTED)
         {
@@ -711,15 +705,15 @@ public:
 
 class CLocalResultWriteActivity : public CLocalResultWriteActivityBase
 {
+    IHThorLocalResultWriteArg *helper;
 public:
     CLocalResultWriteActivity(CGraphElementBase *container) : CLocalResultWriteActivityBase(container)
     {
+        helper = (IHThorLocalResultWriteArg *)queryHelper();
     }
-    virtual IThorResult *createResult()
+    virtual IThorResult *createResult() override
     {
-        IHThorLocalResultWriteArg *helper = (IHThorLocalResultWriteArg *)queryHelper();
-        Owned<CGraphBase> graph = queryJobChannel().getGraph(container.queryResultsGraph()->queryGraphId());
-        return graph->createResult(*this, helper->querySequence(), this, !queryGraph().isLocalChild());
+        return resultGraph->createResult(*this, helper->querySequence(), this, !queryGraph().isLocalChild());
     }
 };
 
@@ -742,7 +736,7 @@ public:
     {
         helper = (IHThorDictionaryResultWriteArg *)queryHelper();
     }
-    virtual void process()
+    virtual void process() override
     {
         start();
         processed = THORDATALINK_STARTED;
@@ -772,7 +766,7 @@ public:
             resultWriter->putRow(thisRow);
         }
     }
-    void endProcess()
+    virtual void endProcess() override
     {
         if (processed & THORDATALINK_STARTED)
         {
@@ -1368,15 +1362,15 @@ activityslaves_decl CActivityBase *createGraphLoopResultReadSlave(CGraphElementB
 
 class CGraphLoopResultWriteSlaveActivity : public CLocalResultWriteActivityBase
 {
+    IHThorGraphLoopResultWriteArg *helper;
 public:
     CGraphLoopResultWriteSlaveActivity(CGraphElementBase *container) : CLocalResultWriteActivityBase(container)
     {
+        helper = (IHThorGraphLoopResultWriteArg *)queryHelper();
     }
     virtual IThorResult *createResult()
     {
-        IHThorGraphLoopResultWriteArg *helper = (IHThorGraphLoopResultWriteArg *)queryHelper();
-        Owned<CGraphBase> graph = queryJobChannel().getGraph(container.queryResultsGraph()->queryGraphId());
-        return graph->createGraphLoopResult(*this, input->queryFromActivity(), !queryGraph().isLocalChild());
+        return resultGraph->createGraphLoopResult(*this, input->queryFromActivity(), !queryGraph().isLocalChild());
     }
 };
 

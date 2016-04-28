@@ -246,23 +246,15 @@ public:
         IThorResult *loopResult = results->createResult(activity, 0, resultRowIf, !activity.queryGraph().isLocalChild()); // loop output
         IThorResult *inputResult = results->createResult(activity, 1, resultRowIf, !activity.queryGraph().isLocalChild()); // loop input
     }
-    virtual void execute(CActivityBase &activity, unsigned counter, IThorGraphResults *results, IRowWriterMultiReader *inputStream, rowcount_t rowStreamCount, size32_t parentExtractSz, const byte *parentExtract)
+    virtual void execute(CActivityBase &activity, IThorGraphResults *results, size32_t parentExtractSz, const byte *parentExtract)
     {
-        if (counter)
-            graph->setLoopCounter(counter);
-        Owned<IThorResult> inputResult = results->getResult(1);
-        if (inputStream)
-            inputResult->setResultStream(inputStream, rowStreamCount);
-        graph->executeChild(parentExtractSz, parentExtract, results, NULL);
+        graph->executeChild(parentExtractSz, parentExtract, results, nullptr);
     }
     virtual void execute(CActivityBase &activity, unsigned counter, IThorGraphResults *graphLoopResults, size32_t parentExtractSz, const byte *parentExtract)
     {
         Owned<IThorGraphResults> results = graph->createThorGraphResults(1);
         if (counter)
-        {
             prepareCounterResult(activity, results, counter, 0);
-            graph->setLoopCounter(counter);
-        }
         try
         {
             graph->executeChild(parentExtractSz, parentExtract, results, graphLoopResults);
@@ -821,8 +813,11 @@ void CGraphElementBase::initActivity()
     {
         unsigned loopId = queryXGMML().getPropInt("att[@name=\"_loopid\"]/@value");
         Owned<CGraphBase> childGraph = owner->getChildGraph(loopId);
-        Owned<IThorBoundLoopGraph> boundLoopGraph = createBoundLoopGraph(childGraph, baseHelper->queryOutputMeta(), queryId());
-        setBoundGraph(boundLoopGraph);
+        loopGraph.setown(createBoundLoopGraph(childGraph, baseHelper->queryOutputMeta(), this));
+        ownedResults.setown(queryOwner().createThorGraphResults(3));
+        // ensures remote results are available, via owning activity (i.e. this loop act)
+        // so that when aggregate result is fetched from the master, it will retrieve from the act, not the (already cleaned) graph localresults
+        ownedResults->setOwner(container.queryId());
     }
 }
 
@@ -1054,7 +1049,6 @@ CGraphBase::CGraphBase(CJobChannel &_jobChannel) : jobChannel(_jobChannel), job(
     mpTag = waitBarrierTag = startBarrierTag = doneBarrierTag = TAG_NULL;
     executeReplyTag = TAG_NULL;
     parentExtractSz = 0;
-    counter = 0; // loop/graph counter, will be set by loop/graph activity if needed
     loopBodySubgraph = false;
 }
 
@@ -2810,11 +2804,10 @@ IThorResult *CJobChannel::getOwnedResult(graph_id gid, activity_id ownerId, unsi
     {
         CGraphElementBase *container = graph->queryElement(ownerId);
         assertex(container);
-        CActivityBase *activity = container->queryActivity();
-        IThorGraphResults *results = activity->queryResults();
+        IThorGraphResults *results = container->queryResults();
         if (!results)
             throw MakeGraphException(graph, 0, "GraphGetResult: no results created (requesting: %d)", resultId);
-        result.setown(activity->queryResults()->getResult(resultId));
+        result.setown(results->getResult(resultId));
     }
     else
         result.setown(graph->getResult(resultId));

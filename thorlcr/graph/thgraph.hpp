@@ -146,7 +146,7 @@ interface IThorBoundLoopGraph : extends IInterface
     virtual void prepareLoopResults(CActivityBase &activity, IThorGraphResults *results) = 0;
     virtual void prepareCounterResult(CActivityBase &activity, IThorGraphResults *results, unsigned loopCounter, unsigned pos) = 0;
     virtual void prepareLoopAgainResult(CActivityBase &activity, IThorGraphResults *results, unsigned pos) = 0;
-    virtual void execute(CActivityBase &activity, unsigned counter, IThorGraphResults *results, IRowWriterMultiReader *rowStream, rowcount_t rowStreamCount, size32_t parentExtractSz, const byte * parentExtract) = 0;
+    virtual void execute(CActivityBase &activity, IThorGraphResults *results, size32_t parentExtractSz, const byte * parentExtract) = 0;
     virtual void execute(CActivityBase &activity, unsigned counter, IThorGraphResults * graphLoopResults, size32_t parentExtractSz, const byte * parentExtract) = 0;
     virtual CGraphBase *queryGraph() = 0;
 };
@@ -258,6 +258,7 @@ protected:
     MemoryBuffer createCtxMb, startCtxMb;
     bool haveCreateCtx, haveStartCtx;
     unsigned maxCores;
+    Owned<IThorGraphResults> ownedResults; // NB: probably only to be used by loop results
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -281,6 +282,7 @@ public:
     void clearConnections();
     virtual void connectInput(unsigned which, CGraphElementBase *input, unsigned inputOutIdx);
     void setResultsGraph(CGraphBase *_resultsGraph) { resultsGraph = _resultsGraph; }
+    IThorGraphResults *queryResults() { return ownedResults; }
     void addAssociatedChildGraph(CGraphBase *childGraph);
     void releaseIOs();
     void addDependsOn(CGraphBase *graph, int controlId);
@@ -513,10 +515,6 @@ class graph_decl CGraphBase : public CInterface, implements IEclGraphResults, im
 
         virtual void getRowXML(size32_t & lenResult, char * & result, IOutputMetaData & info, const void * row, unsigned flags) { convertRowToXML(lenResult, result, info, row, flags); }
         virtual void getRowJSON(size32_t & lenResult, char * & result, IOutputMetaData & info, const void * row, unsigned flags) { convertRowToJSON(lenResult, result, info, row, flags); }
-        virtual unsigned getGraphLoopCounter() const
-        {
-            return graph->queryLoopCounter();           // only called if value is valid
-        }
         virtual IConstWUResult *getExternalResult(const char * wuid, const char *name, unsigned sequence) { return ctx->getExternalResult(wuid, name, sequence); }
         virtual IConstWUResult *getResultForGet(const char *name, unsigned sequence) { return ctx->getResultForGet(name, sequence); }
         virtual const void * fromXml(IEngineRowAllocator * _rowAllocator, size32_t len, const char * utf8, IXmlToRowTransformer * xmlTransformer, bool stripWhitespace)
@@ -552,7 +550,6 @@ protected:
     mptag_t executeReplyTag;
     size32_t parentExtractSz; // keep track of sz when passed in, as may need to serialize later
     MemoryBuffer parentExtractMb; // retain copy, used if slave transmits to master (child graph 1st time initialization of global graph)
-    unsigned counter;
     CReplyCancelHandler graphCancelHandler;
     bool loopBodySubgraph;
 
@@ -601,8 +598,6 @@ public:
         return (const byte *)parentExtractMb.toByteArray();
     }
     virtual ICodeContext *queryCodeContext() { return &graphCodeContext; }
-    void setLoopCounter(unsigned _counter) { counter = _counter; }
-    unsigned queryLoopCounter() const { return counter; }
     virtual void setComplete(bool tf=true) { complete=tf; }
     virtual void deserializeCreateContexts(MemoryBuffer &mb);
     virtual void deserializeStartContexts(MemoryBuffer &mb);
@@ -1007,7 +1002,6 @@ protected:
     size32_t parentExtractSz;
     const byte *parentExtract;
     bool receiving, cancelledReceive, reInit;
-    Owned<IThorGraphResults> ownedResults; // NB: probably only to be used by loop results
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -1052,7 +1046,6 @@ public:
     virtual void abort();
     virtual MemoryBuffer &queryInitializationData(unsigned slave) const = 0;
     virtual MemoryBuffer &getInitializationData(unsigned slave, MemoryBuffer &mb) const = 0;
-    virtual IThorGraphResults *queryResults() { return ownedResults; }
 
     void ActPrintLog(const char *format, ...) __attribute__((format(printf, 2, 3)));
     void ActPrintLog(IException *e, const char *format, ...) __attribute__((format(printf, 3, 4)));
