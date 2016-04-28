@@ -137,6 +137,10 @@ class CLoopSlaveActivity : public CLoopSlaveActivityBase
     bool eof, finishedLooping;
     Owned<IBarrier> barrier;
 
+    /* CNextRowFeeder, is similar to a lookahead.
+     * It continues to read the loop output asynchronously, after the upsteam act has asked to stop
+     * until all slaves (in global case) have signalled they are finished looping
+     */
     class CNextRowFeeder : public CSimpleInterface, implements IThreaded, implements IRowStream
     {
         CThreaded threaded;
@@ -232,14 +236,14 @@ class CLoopSlaveActivity : public CLoopSlaveActivityBase
         }
     };
     Owned<CNextRowFeeder> nextRowFeeder;
-
+    IThorBoundLoopGraph *boundGraph = nullptr;
 public:
     CLoopSlaveActivity(CGraphElementBase *container) : CLoopSlaveActivityBase(container)
     {
         helper = (IHThorLoopArg *) queryHelper();
         flags = helper->getFlags();
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         CLoopSlaveActivityBase::init(data, slaveData);
         if (!global && (flags & IHThorLoopArg::LFnewloopagain))
@@ -249,8 +253,13 @@ public:
         }
         if (!container.queryLocalOrGrouped())
             barrier.setown(container.queryJobChannel().createBarrier(mpTag));
+        boundGraph = queryContainer().queryLoopGraph();
+        ownedResults.setown(queryGraph().createThorGraphResults(3));
+        // ensures remote results are available, via owning activity (i.e. this loop act)
+        // so that when aggregate result is fetched from the master, it will retrieve from the act, not the (already cleaned) graph localresults
+        ownedResults->setOwner(container.queryId());
     }
-    virtual void kill()
+    virtual void kill() override
     {
         CLoopSlaveActivityBase::kill();
         loopPending.clear();
@@ -297,6 +306,10 @@ public:
             unsigned emptyIterations = 0;
             while (!abortSoon)
             {
+                /* JCSMORE - certainly for the 1st pass, where curInput is loop's input stream,
+                 * to wrap inputStream with this 'sendToLoop' filtering, rather than push into a spillable container.
+                 * Probably true in general, i.e. for next phase, where reading previous loop output as input.
+                 */
                 while (!abortSoon)
                 {
                     OwnedConstThorRow ret = (void *)curInput->nextRow();
@@ -375,13 +388,8 @@ public:
 
                 loopPending->flush();
 
-                IThorBoundLoopGraph *boundGraph = queryContainer().queryLoopGraph();
                 unsigned condLoopCounter = (flags & IHThorLoopArg::LFcounter) ? loopCounter:0;
                 unsigned loopAgain = (flags & IHThorLoopArg::LFnewloopagain) ? helper->loopAgainResult() : 0;
-                ownedResults.setown(queryGraph().createThorGraphResults(3));
-                // ensures remote results are available, via owning activity (i.e. this loop act)
-                // so that when aggregate result is fetched from the master, it will retrieve from the act, not the (already cleaned) graph localresults
-                ownedResults->setOwner(container.queryId());
 
                 boundGraph->prepareLoopResults(*this, ownedResults);
                 if (condLoopCounter) // cannot be 0
@@ -389,12 +397,14 @@ public:
                 if (loopAgain) // cannot be 0
                     boundGraph->prepareLoopAgainResult(*this, ownedResults, loopAgain);
 
+                Owned<IThorResult> inputResult = ownedResults->getResult(1);
+                inputResult->setResultStream(loopPending.getClear(), loopPendingCount);
                 boundGraph->execute(*this, condLoopCounter, ownedResults, loopPending.getClear(), loopPendingCount, extractBuilder.size(), extractBuilder.getbytes());
 
                 Owned<IThorResult> result0 = ownedResults->getResult(0);
                 curInput.setown(result0->getRowStream());
 
-                if (flags & IHThorLoopArg::LFnewloopagain)
+                if (loopAgain)
                 {
                     if (!container.queryLocalOrGrouped())
                     {
@@ -596,35 +606,33 @@ class CLocalResultSpillActivity : public CSlaveActivity
     bool eoi, lastNull;
     Owned<IRowWriter> resultWriter;
     MemoryBuffer mb;
-
-    void sendResultSoFar()
-    {
-        CMessageBuffer msg;
-        ThorCompress(mb.toByteArray(), mb.length(), msg);
-        queryJobChannel().queryJobComm().send(msg, 0, mpTag, LONGTIMEOUT);
-        mb.clear();
-    }
+    IThorResult *result = nullptr;
+    Owned<CGraphBase> resultGraph;
 
 public:
     CLocalResultSpillActivity(CGraphElementBase *_container) : CSlaveActivity(_container)
     {
         helper = (IHThorLocalResultSpillArg *)queryHelper();
         appendOutputLinked(this);
+        resultGraph.setown(queryJobChannel().getGraph(container.queryResultsGraph()->queryGraphId()));
     }
-    void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         mpTag = container.queryJobChannel().deserializeMPTag(data);
+        assertex(container.queryResultsGraph());
+        result = resultGraph->createResult(*this, helper->querySequence(), this, !queryGraph().isLocalChild());  // NB graph owns result
+        resultWriter.setown(result->getWriter());
     }
-    virtual void start()
+    virtual void reset() override
+    {
+        result->reset();
+    }
+    virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         PARENT::start();
         lastNull = eoi = false;
         abortSoon = false;
-        assertex(container.queryResultsGraph());
-        Owned<CGraphBase> graph = queryJobChannel().getGraph(container.queryResultsGraph()->queryGraphId());
-        IThorResult *result = graph->createResult(*this, helper->querySequence(), this, !queryGraph().isLocalChild());  // NB graph owns result
-        resultWriter.setown(result->getWriter());
     }
     CATCH_NEXTROW()
     {
@@ -649,13 +657,13 @@ public:
         dataLinkIncrement();
         return row.getClear();
     }
-    virtual void stop()
+    virtual void stop() override
     {
         abortSoon = true;
         PARENT::stop();
     }
     virtual bool isGrouped() const override { return queryInput(0)->isGrouped(); }
-    virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
     }

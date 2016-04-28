@@ -122,6 +122,7 @@ interface IThorResult : extends IInterface
     virtual void serialize(MemoryBuffer &mb) = 0;
     virtual void getLinkedResult(unsigned & count, byte * * & ret) = 0;
     virtual const void * getLinkedRowResult() = 0;
+    virtual void reset() = 0;
 };
 
 class CActivityBase;

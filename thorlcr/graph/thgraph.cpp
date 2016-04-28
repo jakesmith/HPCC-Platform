@@ -68,12 +68,12 @@ class CThorGraphResult : public CInterface, implements IThorResult, implements I
         }
 
     //IRowWriterMultiReader
-        virtual void putRow(const void *row)
+        virtual void putRow(const void *row) override
         {
             rows.append(row);
         }
-        virtual void flush() { }
-        virtual IRowStream *getReader()
+        virtual void flush() override { }
+        virtual IRowStream *getReader() override
         {
             return rows.createRowStream(0, (rowidx_t)-1, false);
         }
@@ -91,35 +91,34 @@ public:
     }
 
 // IRowWriter
-    virtual void putRow(const void *row)
+    virtual void putRow(const void *row) override
     {
         assertex(!readers);
         ++rowStreamCount;
         rowBuffer->putRow(row);
     }
-    virtual void flush() { }
-    virtual offset_t getPosition() { UNIMPLEMENTED; return 0; }
+    virtual void flush() override { }
 
 // IThorResult
-    virtual IRowWriter *getWriter()
+    virtual IRowWriter *getWriter() override
     {
         return LINK(this);
     }
-    virtual void setResultStream(IRowWriterMultiReader *stream, rowcount_t count)
+    virtual void setResultStream(IRowWriterMultiReader *stream, rowcount_t count) override
     {
         assertex(!readers);
         rowBuffer.setown(stream);
         rowStreamCount = count;
     }
-    virtual IRowStream *getRowStream()
+    virtual IRowStream *getRowStream() override
     {
         readers = true;
         return rowBuffer->getReader();
     }
-    virtual IThorRowInterfaces *queryRowInterfaces() { return rowIf; }
-    virtual CActivityBase *queryActivity() { return &activity; }
-    virtual bool isDistributed() const { return distributed; }
-    virtual void serialize(MemoryBuffer &mb)
+    virtual IThorRowInterfaces *queryRowInterfaces() override { return rowIf; }
+    virtual CActivityBase *queryActivity() override { return &activity; }
+    virtual bool isDistributed() const override { return distributed; }
+    virtual void serialize(MemoryBuffer &mb) override
     {
         Owned<IRowStream> stream = getRowStream();
         bool grouped = meta->isGrouped();
@@ -160,14 +159,14 @@ public:
             }
         }
     }
-    virtual void getResult(size32_t &len, void * & data)
+    virtual void getResult(size32_t &len, void * & data) override
     {
         MemoryBuffer mb;
         serialize(mb);
         len = mb.length();
         data = mb.detach();
     }
-    virtual void getLinkedResult(unsigned &countResult, byte * * & result)
+    virtual void getLinkedResult(unsigned &countResult, byte * * & result) override
     {
         assertex(rowStreamCount==((unsigned)rowStreamCount)); // catch, just in case
         Owned<IRowStream> stream = getRowStream();
@@ -181,11 +180,14 @@ public:
         }
         result = (byte **)_rowset.getClear();
     }
-    virtual const void * getLinkedRowResult()
+    virtual const void * getLinkedRowResult() override
     {
         assertex(rowStreamCount==1); // catch, just in case
         Owned<IRowStream> stream = getRowStream();
         return stream->nextRow();
+    }
+    virtual void reset() override
+    {
     }
 };
 
@@ -213,6 +215,7 @@ class CThorBoundLoopGraph : public CInterface, implements IThorBoundLoopGraph
     Linked<IOutputMetaData> resultMeta;
     Owned<IOutputMetaData> counterMeta, loopAgainMeta;
     Owned<IThorRowInterfaces> resultRowIf, countRowIf, loopAgainRowIf;
+    roxiemem::IRowManager *rowManager;
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -221,29 +224,25 @@ public:
     {
         counterMeta.setown(createFixedSizeMetaData(sizeof(thor_loop_counter_t)));
         loopAgainMeta.setown(createFixedSizeMetaData(sizeof(bool)));
+        rowManager = graph->queryJobChannel().queryRowManager();
+        countRowIf.setown(createThorRowInterfaces(rowManager, counterMeta, activityId, graph->queryCodeContext()));
+        loopAgainRowIf.setown(createThorRowInterfaces(rowManager, loopAgainMeta, activityId, graph->queryCodeContext()));
+        resultRowIf.setown(createThorRowInterfaces(rowManager, resultMeta, activityId, graph->queryCodeContext()));
     }
     virtual void prepareCounterResult(CActivityBase &activity, IThorGraphResults *results, unsigned loopCounter, unsigned pos)
     {
-        if (!countRowIf)
-            countRowIf.setown(createThorRowInterfaces(activity.queryRowManager(), counterMeta, activityId, activity.queryCodeContext()));
-        RtlDynamicRowBuilder counterRow(countRowIf->queryRowAllocator());
-        thor_loop_counter_t * res = (thor_loop_counter_t *)counterRow.ensureCapacity(sizeof(thor_loop_counter_t),NULL);
-        *res = loopCounter;
-        OwnedConstThorRow counterRowFinal = counterRow.finalizeRowClear(sizeof(thor_loop_counter_t));
+        void * counterRow = rowManager->allocate(sizeof(thor_loop_counter_t), activityId);
+        *((thor_loop_counter_t *)counterRow) = loopCounter;
         IThorResult *counterResult = results->createResult(activity, pos, countRowIf, false, SPILL_PRIORITY_DISABLE);
         Owned<IRowWriter> counterResultWriter = counterResult->getWriter();
-        counterResultWriter->putRow(counterRowFinal.getClear());
+        counterResultWriter->putRow(counterRow);
     }
     virtual void prepareLoopAgainResult(CActivityBase &activity, IThorGraphResults *results, unsigned pos)
     {
-        if (!loopAgainRowIf)
-            loopAgainRowIf.setown(createThorRowInterfaces(activity.queryRowManager(), loopAgainMeta, activityId, activity.queryCodeContext()));
         activity.queryGraph().createResult(activity, pos, results, loopAgainRowIf, !activity.queryGraph().isLocalChild(), SPILL_PRIORITY_DISABLE);
     }
     virtual void prepareLoopResults(CActivityBase &activity, IThorGraphResults *results)
     {
-        if (!resultRowIf)
-            resultRowIf.setown(createThorRowInterfaces(activity.queryRowManager(), resultMeta, activityId, activity.queryCodeContext()));
         IThorResult *loopResult = results->createResult(activity, 0, resultRowIf, !activity.queryGraph().isLocalChild()); // loop output
         IThorResult *inputResult = results->createResult(activity, 1, resultRowIf, !activity.queryGraph().isLocalChild()); // loop input
     }
