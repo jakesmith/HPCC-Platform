@@ -1023,9 +1023,14 @@ public:
     }
 };
 
+typedef CSimpleInterfaceOf<CriticalSection> CLinkedCriticalSection;
+typedef CLinkedCriticalSection * CLinkedCriticalSectionPtr;
+typedef MapBetween<CKeyIdAndPos, CKeyIdAndPos, CLinkedCriticalSectionPtr, CLinkedCriticalSectionPtr> NodeKeyCritMap;
 class CNodeCache : public CInterface
 {
 private:
+    NodeKeyCritMap loadingCritHT;
+
     mutable CriticalSection lock;
     CNodeMRUCache nodeCache;
     CNodeMRUCache leafCache;
@@ -2109,9 +2114,9 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
     if (!pos)
         return NULL;
     { 
+        CKeyIdAndPos key(iD, pos);
         // It's a shame that we don't know the type before we read it. But probably not that big a deal
         CriticalBlock block(lock);
-        CKeyIdAndPos key(iD, pos);
         if (preloadNodes)
         {
             CJHTreeNode *cacheNode = preloadCache.query(key);
@@ -2157,10 +2162,33 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
             }
         }
         CJHTreeNode *node;
+#if 1
         {
             CriticalUnblock block(lock);
             node = keyIndex->loadNode(pos);  // NOTE - don't want cache locked while we load!
         }
+#else
+        {
+            CLinkedCriticalSection **_nodeCrit = loadingCritHT.getValue(key);
+            Owned<CLinkedCriticalSection> nodeCrit;
+            if (_nodeCrit)
+                nodeCrit.set(*_nodeCrit);
+            else
+            {
+                nodeCrit.setown(new CLinkedCriticalSection);
+                loadingCritHT.setValue(key, nodeCrit.get());
+            }
+            {
+                CriticalUnblock block(lock);
+                {
+                    CriticalBlock cb(*nodeCrit);
+                    node = keyIndex->loadNode(pos);  // NOTE - don't want cache locked while we load!]
+                }
+            }
+            if (!_nodeCrit) // so I created/added
+                loadingCritHT.remove(key);
+        }
+#endif
         atomic_inc(&cacheAdds);
         if (node->isBlob())
         {
