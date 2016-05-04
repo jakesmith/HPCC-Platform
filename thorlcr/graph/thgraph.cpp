@@ -2487,7 +2487,11 @@ void CJobBase::endJob()
 {
     stopPerformanceMonitor();
     LOG(MCdebugProgress, thorJob, "Job ended : %s", graphName.get());
-    clearKeyStoreCache(true);
+    if (getOptBool("clearKeyCache", true))
+    {
+        clearKeyStoreCache(true);
+        PROGLOG("Key cache cleared");
+    }
     PrintMemoryStatusLog();
 }
 

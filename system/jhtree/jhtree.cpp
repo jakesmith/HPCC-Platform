@@ -2162,7 +2162,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
             }
         }
         CJHTreeNode *node;
-#if 1
+#if 0
         {
             CriticalUnblock block(lock);
             node = keyIndex->loadNode(pos);  // NOTE - don't want cache locked while we load!
