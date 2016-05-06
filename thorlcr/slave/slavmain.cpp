@@ -755,7 +755,7 @@ public:
     CThorResourceSlave()
     {
         backupHandler.setown(createBackupHandler());
-        fileCache.setown(createFileCache(globals->getPropInt("@fileCacheLimit", 1800)));
+        fileCache.setown(createFileCache(globals->getPropInt("@fileCacheLimit", 1800), globals->getPropBool("@fileCacheRetain", false)));
         fipHandler.setown(new CFileInProgressHandler());
     }
     ~CThorResourceSlave()

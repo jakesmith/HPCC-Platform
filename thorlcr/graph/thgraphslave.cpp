@@ -1083,6 +1083,7 @@ void CSlaveGraph::end()
         getSocketStatisticsString(stats,s);
         GraphPrintLog("Socket statistics : %s\n",s.str());
         resetSocketStatistics();
+        queryThor().queryFileCache().clear();
     }
 }
 
@@ -1474,7 +1475,9 @@ CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, co
 
     init();
 
-    oldNodeCacheMem = 0;
+    if (getOptBool("newkeycaching"))
+        setCachingScheme(1);
+
     mpJobTag = _mpJobTag;
     slavemptag = _slavemptag;
 
@@ -1772,31 +1775,26 @@ public:
 // IFileIO impl.
     virtual size32_t read(offset_t pos, size32_t len, void * data)
     {
-        CriticalBlock b(crit);
         checkOpen();
         return iFileIO->read(pos, len, data);
     }
     virtual offset_t size()
     {
-        CriticalBlock b(crit);
         checkOpen();
         return iFileIO->size();
     }
     virtual size32_t write(offset_t pos, size32_t len, const void * data)
     {
-        CriticalBlock b(crit);
         checkOpen();
         return iFileIO->write(pos, len, data);
     }
     virtual void flush()
     {
-        CriticalBlock b(crit);
         if (iFileIO)
             iFileIO->flush();
     }
     virtual void close()
     {
-        CriticalBlock b(crit);
         if (iFileIO)
         {
             mergeStats(fileStats, iFileIO);
@@ -1806,13 +1804,11 @@ public:
     }
     virtual offset_t appendFile(IFile *file,offset_t pos=0,offset_t len=(offset_t)-1)
     {
-        CriticalBlock b(crit);
         checkOpen();
         return iFileIO->appendFile(file, pos, len);
     }
     virtual void setSize(offset_t size)
     {
-        CriticalBlock b(crit);
         checkOpen();
         iFileIO->setSize(size);
     }
@@ -1841,6 +1837,7 @@ class CFileCache : public CInterface, implements IThorFileCache
     CICopyArrayOf<CLazyFileIO> openFiles;
     unsigned limit, purgeN;
     CriticalSection crit;
+    bool retain;
 
     class CDelayedFileWapper : public CInterface, implements IDelayedFile
     {
@@ -1889,12 +1886,12 @@ class CFileCache : public CInterface, implements IThorFileCache
 public:
     IMPLEMENT_IINTERFACE;
 
-    CFileCache(unsigned _limit) : limit(_limit)
+    CFileCache(unsigned _limit, bool _retain) : limit(_limit), retain(_retain)
     {
         assertex(limit);
         purgeN = globals->getPropInt("@fileCachePurgeN", 10);
         if (purgeN > limit) purgeN=limit; // why would it be, but JIC.
-        PROGLOG("FileCache: limit = %d, purgeN = %d", limit, purgeN);
+        PROGLOG("FileCache: limit = %d, purgeN = %d, retain=%s", limit, purgeN, retain?"on":"off");
     }
 
     void opening(CLazyFileIO &lFile)
@@ -1910,8 +1907,15 @@ public:
     }
 
 // IThorFileCache impl.
+    virtual void clear()
+    {
+        CriticalBlock b(crit);
+        openFiles.kill();
+    }
     virtual bool remove(IDelayedFile &dFile)
     {
+        if (retain)
+            return false;
         CLazyFileIO *lFile = QUERYINTERFACE(&dFile, CLazyFileIO);
         assertex(lFile);
         CriticalBlock b(crit);
@@ -1931,7 +1935,7 @@ public:
             bool compressed = partDesc.queryOwner().isCompressed();
             file.setown(new CLazyFileIO(*this, filename.str(), repFile.getClear(), compressed, expander));
         }
-        files.replace(*LINK(file));
+        files.replace(*LINK(file)); // why is this not in if (!file) block?
         return new CDelayedFileWapper(*this, *file); // to avoid circular dependency and allow destruction to remove from cache
     }
 };
@@ -1953,9 +1957,9 @@ void CLazyFileIO::checkOpen()
         throw MakeThorException(0, "CLazyFileIO: failed to open: %s", filename.get());
 }
 
-IThorFileCache *createFileCache(unsigned limit)
+IThorFileCache *createFileCache(unsigned limit, bool retain)
 {
-    return new CFileCache(limit);
+    return new CFileCache(limit, retain);
 }
 
 /*

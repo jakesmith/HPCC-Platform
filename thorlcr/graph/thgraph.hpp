@@ -1111,6 +1111,7 @@ interface IDelayedFile;
 interface IExpander;
 interface IThorFileCache : extends IInterface
 {
+    virtual void clear() = 0;
     virtual bool remove(IDelayedFile &dFile) = 0;
     virtual IDelayedFile *lookup(CActivityBase &activity, IPartDescriptor &partDesc, IExpander *expander=NULL) = 0;
 };
