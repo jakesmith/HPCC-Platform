@@ -1765,7 +1765,12 @@ void CGraphBase::executeChildGraphs(size32_t parentExtractSz, const byte *parent
 
 void CGraphBase::doExecuteChild(size32_t parentExtractSz, const byte *parentExtract)
 {
-    reset();
+    if (0 == containers.count())
+    {
+        SuperHashIteratorOf<CGraphBase> iter(childGraphsTable);
+        ForEach(iter)
+            iter.query().setCompleteEx(false);
+    }
     if (0 == containers.count())
         executeChildGraphs(parentExtractSz, parentExtract);
     else

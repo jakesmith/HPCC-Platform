@@ -335,5 +335,7 @@ enum KeyExceptionCodes
 interface IKeyException : extends IException { };
 IKeyException *MakeKeyException(int code, const char *format, ...) __attribute__((format(printf, 2, 3)));
 
+jhtree_decl void getNodeStats(unsigned &created, unsigned &destroyed);
+
 
 #endif

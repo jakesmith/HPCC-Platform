@@ -456,8 +456,24 @@ void CNodeHeader::load(NodeHdr &_hdr)
 
 //=========================================================================================================
 
+static std::atomic<unsigned> nodesCreated;
+static std::atomic<unsigned> nodesDestroyed;
+MODULE_INIT(INIT_PRIORITY_STANDARD)
+{
+    nodesCreated = 0;
+    nodesDestroyed = 0;
+    return true;
+}
+
+void getNodeStats(unsigned &created, unsigned &destroyed)
+{
+    created = nodesCreated;
+    destroyed = nodesDestroyed;
+}
+
 CJHTreeNode::CJHTreeNode()
 {
+    nodesCreated++;
     keyBuf = NULL;
     keyRecLen = 0;
     firstSequence = 0;
@@ -472,6 +488,7 @@ void CJHTreeNode::load(CKeyHdr *_keyHdr, const void *rawData, offset_t _fpos, bo
 
 CJHTreeNode::~CJHTreeNode()
 {
+    nodesDestroyed++;
     releaseMem(keyBuf, expandedSize);
 }
 

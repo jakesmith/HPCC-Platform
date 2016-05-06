@@ -221,7 +221,7 @@ interface IKeyManager : public IInterface, extends IIndexReadContext
     virtual bool lookupSkip(const void *seek, size32_t seekGEOffset, size32_t seeklen) = 0;
 };
 
-extern jhtree_decl IKeyManager *createKeyManager(IKeyIndex * _key, unsigned rawSize, IContextLogger *ctx);
+extern jhtree_decl IKeyManager *createKeyManager(IKeyIndexBase * _key, unsigned rawSize, IContextLogger *ctx);
 extern jhtree_decl IKeyManager *createKeyMerger(IKeyIndexSet * _key, unsigned rawSize, unsigned sortFieldOffset, IContextLogger *ctx);
 extern jhtree_decl IKeyManager *createSingleKeyMerger(IKeyIndex * _onekey, unsigned rawSize, unsigned sortFieldOffset, IContextLogger *ctx);
 
@@ -239,5 +239,7 @@ public:
 };
 
 extern jhtree_decl bool isCompressedIndex(const char *filename);
+
+jhtree_decl void setCachingScheme(unsigned s);
 
 #endif

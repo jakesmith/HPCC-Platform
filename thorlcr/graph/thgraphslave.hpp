@@ -402,7 +402,6 @@ class graphslave_decl CJobSlave : public CJobBase
 {
     ISlaveWatchdog *watchdog;
     Owned<IPropertyTree> workUnitInfo;
-    size32_t oldNodeCacheMem;
     unsigned channelMemoryMB;
 
 public:
@@ -485,6 +484,6 @@ public:
 interface IPartDescriptor;
 extern graphslave_decl bool ensurePrimary(CActivityBase *activity, IPartDescriptor &partDesc, OwnedIFile & ifile, unsigned &location, StringBuffer &path);
 extern graphslave_decl IReplicatedFile *createEnsurePrimaryPartFile(CActivityBase &activity, const char *logicalFilename, IPartDescriptor *partDesc);
-extern graphslave_decl IThorFileCache *createFileCache(unsigned limit);
+extern graphslave_decl IThorFileCache *createFileCache(unsigned limit, bool retain);
 
 #endif

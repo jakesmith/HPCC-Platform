@@ -58,6 +58,7 @@ protected:
     bool eoi = false;
     IArrayOf<IKeyManager> keyManagers;
     IKeyManager *currentManager = nullptr;
+    size32_t seekGEOffset = 0;
     Owned<IKeyManager> keyMergerManager;
     Owned<IKeyIndexSet> keyIndexSet;
 
@@ -278,7 +279,7 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
 
     IHThorIndexReadArg *helper;
     rowcount_t rowLimit = RCMAX, stopAfter = 0;
-    bool keyedLimitSkips = false, first = false, needTransform = false, optimizeSteppedPostFilter = false, steppingEnabled = false;
+    bool keyedLimitSkips = false, first = false, eoi = false, needTransform = false, optimizeSteppedPostFilter = false, steppingEnabled = false;
     rowcount_t keyedLimit = RCMAX, helperKeyedLimit = RCMAX;
     rowcount_t keyedLimitCount = RCMAX;
     unsigned keyedProcessed = 0;
@@ -289,7 +290,6 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
     IHThorSteppedSourceExtra *steppedExtra;
     CSteppingMeta steppingMeta;
     UnsignedArray seekSizes;
-    size32_t seekGEOffset = 0;
 
     const void *getNextRow()
     {
@@ -478,7 +478,7 @@ public:
             else
                 steppingMeta.init(rawMeta, hasPostFilter);
         }
-        if ((seekGEOffset || localKey))
+        if ((seekGEOffset || localKey) && (partDescs.ordinality()>1))
             keyMergerManager.setown(createKeyMerger(keyIndexSet, fixedDiskRecordSize, seekGEOffset, NULL));
     }
 
@@ -543,7 +543,8 @@ public:
             if (keyedLimitCount > keyedLimit)
                 helper->onKeyedLimitExceeded(); // should throw exception
         }
-        clearManager();
+        if (partDescs.ordinality())
+            clearManager();
         PARENT::stop();
     }
     CATCH_NEXTROW()
