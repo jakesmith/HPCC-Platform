@@ -478,7 +478,7 @@ public:
             else
                 steppingMeta.init(rawMeta, hasPostFilter);
         }
-        if ((seekGEOffset || localKey) && (partDescs.ordinality()>1))
+        if ((seekGEOffset || localKey))
             keyMergerManager.setown(createKeyMerger(keyIndexSet, fixedDiskRecordSize, seekGEOffset, NULL));
     }
 
@@ -543,8 +543,7 @@ public:
             if (keyedLimitCount > keyedLimit)
                 helper->onKeyedLimitExceeded(); // should throw exception
         }
-        if (partDescs.ordinality())
-            clearManager();
+        clearManager();
         PARENT::stop();
     }
     CATCH_NEXTROW()

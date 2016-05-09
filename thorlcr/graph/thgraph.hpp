@@ -436,6 +436,7 @@ class graph_decl CGraphBase : public CInterface, implements IEclGraphResults, im
     CGraphArrayCopy childGraphs;
     Owned<IGraphTempHandler> tmpHandler;
     bool initialized = false;
+    unsigned numResults = 0;
 
     void clean();
 
