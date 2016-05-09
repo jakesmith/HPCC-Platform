@@ -117,6 +117,8 @@ protected:
         if (currentManager)
         {
             callback.clearManager();
+            if (keyMergerManager)
+                keyMergerManager->reset(); // JCSMORE - not entirely sure why necessary, if not done, resetPending is false. Should releaseSegmentMonitors() handle?
             currentManager->releaseSegmentMonitors();
             currentManager = nullptr;
         }
@@ -153,7 +155,7 @@ protected:
                 noteStats(currentManager->querySeeks(), currentManager->queryScans());
                 ret = (const void *)currentManager->queryKeyBuffer(callback.getFPosRef());
             }
-            if (ret)
+            if (ret || keyMergerManager)
                 break;
             ++currentKM;
             if (currentKM >= keyManagers.ordinality())
@@ -267,18 +269,6 @@ public:
     virtual void reset() override
     {
         clearManager();
-/*
-        if (keyMergerManager)
-            keyMergerManager->releaseSegmentMonitors();
-        else
-        {
-            ForEachItemIn(m, keyManagers)
-            {
-                IKeyManager &keyManager = keyManagers.item(m);
-                keyManager.releaseSegmentMonitors();
-            }
-        }
-*/
     }
     void serializeStats(MemoryBuffer &mb)
     {
@@ -494,7 +484,7 @@ public:
             else
                 steppingMeta.init(rawMeta, hasPostFilter);
         }
-        if ((seekGEOffset || localKey) && (partDescs.ordinality()>1))
+        if ((seekGEOffset || localKey))
             keyMergerManager.setown(createKeyMerger(keyIndexSet, fixedDiskRecordSize, seekGEOffset, NULL));
     }
 
@@ -559,8 +549,7 @@ public:
             if (keyedLimitCount > keyedLimit)
                 helper->onKeyedLimitExceeded(); // should throw exception
         }
-        if (partDescs.ordinality())
-            clearManager();
+        clearManager();
         PARENT::stop();
     }
     CATCH_NEXTROW()

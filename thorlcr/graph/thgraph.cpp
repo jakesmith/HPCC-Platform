@@ -1664,8 +1664,7 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         graphContainer = resultsGraph; // JCSMORE is this right?
     graphCodeContext.setContext(graphContainer, (ICodeContextExt *)&jobChannel.queryCodeContext());
 
-
-    unsigned numResults = xgmml->getPropInt("att[@name=\"_numResults\"]/@value", 0);
+    numResults = xgmml->getPropInt("att[@name=\"_numResults\"]/@value", 0);
     if (numResults)
     {
         localResults.setown(createThorGraphResults(numResults));
@@ -1903,7 +1902,7 @@ const void * CGraphBase::getLinkedRowResult(unsigned id)
 IEclGraphResults *CGraphBase::evaluate(unsigned _parentExtractSz, const byte *parentExtract)
 {
     CriticalBlock block(evaluateCrit);
-    localResults.setown(createThorGraphResults(xgmml->getPropInt("att[@name=\"_numResults\"]/@value", 0)));
+    localResults.setown(createThorGraphResults(numResults));
     parentExtractSz = _parentExtractSz;
     executeChild(parentExtractSz, parentExtract);
     return localResults.getClear();
