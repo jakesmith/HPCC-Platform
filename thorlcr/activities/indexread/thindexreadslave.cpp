@@ -279,7 +279,7 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
 
     IHThorIndexReadArg *helper;
     rowcount_t rowLimit = RCMAX, stopAfter = 0;
-    bool keyedLimitSkips = false, first = false, eoi = false, needTransform = false, optimizeSteppedPostFilter = false, steppingEnabled = false;
+    bool keyedLimitSkips = false, first = false, needTransform = false, optimizeSteppedPostFilter = false, steppingEnabled = false;
     rowcount_t keyedLimit = RCMAX, helperKeyedLimit = RCMAX;
     rowcount_t keyedLimitCount = RCMAX;
     unsigned keyedProcessed = 0;
