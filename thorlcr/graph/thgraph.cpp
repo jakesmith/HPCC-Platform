@@ -2632,7 +2632,7 @@ CJobChannel::~CJobChannel()
     PROGLOG("CJobBase resetting memory manager");
     thorAllocator.clear();
     wait();
-    clean();
+    // clean(); called by beforeDispose
     codeCtx.clear();
     timeReporter->Release();
 }

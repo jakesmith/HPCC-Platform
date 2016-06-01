@@ -155,7 +155,7 @@ public:
                 e->top = e->base + part.queryProperties().getPropInt64("@size");
                 e->index = f;
 
-                Owned<IDelayedFile> lfile = queryThor().queryFileCache().lookup(owner, part);
+                Owned<IDelayedFile> lfile = owner.queryJobChannel().queryFileCache().lookup(owner, part);
                 e->file = lfile.getClear();
             }
         }

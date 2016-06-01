@@ -95,7 +95,6 @@ interface IFileInProgressHandler;
 interface IThorFileCache;
 interface IThorResource
 {
-    virtual IThorFileCache &queryFileCache() = 0;
     virtual IBackup &queryBackup() = 0;
     virtual IFileInProgressHandler &queryFileInProgressHandler() = 0;
 };
@@ -932,7 +931,7 @@ public:
     ~CJobChannel();
 
     CJobBase &queryJob() const { return job; }
-    void clean();
+    virtual void clean();
     void init();
     void wait();
     ITimeReporter &queryTimeReporter() { return *timeReporter; }
@@ -979,6 +978,7 @@ public:
 
     virtual void abort(IException *e);
     virtual IBarrier *createBarrier(mptag_t tag) { UNIMPLEMENTED; return NULL; }
+    virtual IThorFileCache &queryFileCache() { throwUnexpected(); }
 
 // IGraphCallback
     virtual void runSubgraph(CGraphBase &graph, size32_t parentExtractSz, const byte *parentExtract);
@@ -1123,7 +1123,6 @@ public:
     IMPLEMENT_IINTERFACE;
 
 // IThorResource
-    virtual IThorFileCache &queryFileCache() { UNIMPLEMENTED; return *((IThorFileCache *)NULL); }
     virtual IBackup &queryBackup() { UNIMPLEMENTED; return *((IBackup *)NULL); }
     virtual IFileInProgressHandler &queryFileInProgressHandler() { UNIMPLEMENTED; return *((IFileInProgressHandler *)NULL); }
 };

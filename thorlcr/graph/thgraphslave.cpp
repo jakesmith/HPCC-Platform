@@ -1093,7 +1093,7 @@ void CSlaveGraph::end()
         getSocketStatisticsString(stats,s);
         GraphPrintLog("Socket statistics : %s\n",s.str());
         resetSocketStatistics();
-        queryThor().queryFileCache().clear();
+        queryJobChannel().queryFileCache().clear();
     }
 }
 
@@ -1485,8 +1485,8 @@ CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, co
 
     init();
 
-    if (getOptBool("newkeycaching"))
-        setCachingScheme(1);
+    unsigned cs = getOptInt("cachingscheme", 0);
+    setCachingScheme(cs);
 
     mpJobTag = _mpJobTag;
     slavemptag = _slavemptag;
@@ -1606,6 +1606,13 @@ CJobSlaveChannel::CJobSlaveChannel(CJobBase &_job, IMPServer *mpServer, unsigned
 {
     codeCtx.setown(new CThorCodeContextSlave(*this, job.queryDllEntry(), *job.queryUserDescriptor(), job.querySlaveMpTag()));
     sharedMemCodeCtx.setown(new CThorCodeContextSlaveSharedMem(*this, job.querySharedAllocator(), job.queryDllEntry(), *job.queryUserDescriptor(), job.querySlaveMpTag()));
+    fileCache.setown(createFileCache(globals->getPropInt("@fileCacheLimit", 1800), globals->getPropBool("@fileCacheRetain", false)));
+}
+
+void CJobSlaveChannel::clean()
+{
+    CJobChannel::clean();
+    fileCache.clear();
 }
 
 IBarrier *CJobSlaveChannel::createBarrier(mptag_t tag)

@@ -1881,7 +1881,7 @@ public:
                 filePart.getFilename(0, rfn);
                 StringBuffer filename;
                 rfn.getPath(filename);
-                Owned<IDelayedFile> lfile = queryThor().queryFileCache().lookup(*this, filePart);
+                Owned<IDelayedFile> lfile = queryJobChannel().queryFileCache().lookup(*this, filePart);
                 partKeySet->addIndex(createKeyIndex(filename.str(), crc, *lfile, false, false));
             }
             while (ip<numIndexParts);
@@ -1981,7 +1981,7 @@ public:
                 unsigned i=0;
                 for(; i<dataParts.ordinality(); i++)
                 {
-                    Owned<IDelayedFile> dFile = queryThor().queryFileCache().lookup(*this, dataParts.item(i), eexp);
+                    Owned<IDelayedFile> dFile = queryJobChannel().queryFileCache().lookup(*this, dataParts.item(i), eexp);
                     fetchFiles.append(*dFile.getClear());
                 }
             }

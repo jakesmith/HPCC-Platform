@@ -435,14 +435,17 @@ public:
 class graphslave_decl CJobSlaveChannel : public CJobChannel
 {
     CriticalSection graphRunCrit;
+    Owned<IThorFileCache> fileCache;
 public:
     CJobSlaveChannel(CJobBase &job, IMPServer *mpServer, unsigned channel);
+    virtual void clean() override;
 
     virtual IBarrier *createBarrier(mptag_t tag);
     virtual CGraphBase *createGraph()
     {
         return new CSlaveGraph(*this);
     }
+    virtual IThorFileCache &queryFileCache() { return *fileCache.get(); }
  // IGraphCallback
     virtual void runSubgraph(CGraphBase &graph, size32_t parentExtractSz, const byte *parentExtract);
 // IExceptionHandler
