@@ -1882,6 +1882,8 @@ public:
                 StringBuffer filename;
                 rfn.getPath(filename);
                 Owned<IDelayedFile> lfile = queryJobChannel().queryFileCache().lookup(*this, filePart);
+                unsigned ch = queryJobChannelNumber();
+                crc += ch;
                 partKeySet->addIndex(createKeyIndex(filename.str(), crc, *lfile, false, false));
             }
             while (ip<numIndexParts);

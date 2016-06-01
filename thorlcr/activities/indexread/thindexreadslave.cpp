@@ -137,6 +137,8 @@ protected:
         unsigned crc=0;
         partDesc.getCrc(crc);
         Owned<IDelayedFile> lfile = activity->queryJobChannel().queryFileCache().lookup(*activity, partDesc);
+        unsigned ch = queryJobChannelNumber();
+        crc += ch;
         return createKeyIndex(filePath.str(), crc, *lfile, false, false);
     }
     const void *nextKey()
