@@ -222,7 +222,15 @@ public:
         if (spillFile)
             spillFile->remove();
     }
-
+    void reset()
+    {
+        if (spillFile)
+        {
+            spillFile->remove();
+            spillFile.clear();
+        }
+        rows.clearRows();
+    }
 // IBufferedRowCallback
     virtual unsigned getSpillCost() const
     {
@@ -1605,6 +1613,8 @@ protected:
     __uint64 spillCycles;
     __uint64 sortCycles;
     roxiemem::IRowManager *rowManager;
+    bool haveSpillableRowSet = false;
+
 
     bool spillRows(bool critical)
     {
@@ -1740,7 +1750,7 @@ protected:
         }
 
         {
-            if (spillableRowSet)
+            if (haveSpillableRowSet)
                 instrms.append(*spillableRowSet->createRowStream());
             else if (spillableRows.numCommitted())
             {
@@ -1773,7 +1783,9 @@ protected:
                     instrms.append(*spillableRows.createRowStream(spillPriority, spillCompInfo)); // NB: stream will take ownership of rows in spillableRows
                 else
                 {
-                    spillableRowSet.setown(new CSharedSpillableRowSet(activity, spillableRows, rowIf, preserveGrouping, spillPriority));
+                    haveSpillableRowSet = true;
+                    if (!spillableRowSet)
+                        spillableRowSet.setown(new CSharedSpillableRowSet(activity, spillableRows, rowIf, preserveGrouping, spillPriority));
                     instrms.append(*spillableRowSet->createRowStream());
                 }
             }
@@ -1799,7 +1811,8 @@ protected:
     virtual void reset()
     {
         spillableRows.clearRows();
-        spillableRowSet.clear();
+        spillableRowSet->reset();
+        haveSpillableRowSet = false;
         spillFiles.kill();
         totalRows = 0;
         overflowCount = outStreams = 0;
