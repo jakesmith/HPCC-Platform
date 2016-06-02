@@ -61,7 +61,8 @@
 
 static CKeyStore *keyStore = NULL;
 static unsigned defaultKeyIndexLimit = 200;
-static __thread CNodeCache *nodeCache = NULL;
+//static __thread CNodeCache *nodeCache = NULL;
+static CNodeCache *nodeCache = NULL;
 static CriticalSection *initCrit = NULL;
 
 bool useMemoryMappedIndexes = false;
@@ -1026,7 +1027,8 @@ public:
 class CNodeCache : public CInterface
 {
 private:
-    mutable CriticalSection lock;
+//    mutable CriticalSection lock;
+    mutable SpinLock lock;
     CNodeMRUCache nodeCache;
     CNodeMRUCache leafCache;
     CNodeMRUCache blobCache;
@@ -1064,28 +1066,32 @@ public:
 
     inline size32_t setNodeCacheMem(size32_t newSize)
     {
-        CriticalBlock block(lock);
+//        CriticalBlock block(lock);
+        SpinBlock block(lock);
         unsigned oldV = nodeCache.setMemLimit(newSize);
         cacheNodes = (newSize != 0);
         return oldV;
     }
     inline size32_t setLeafCacheMem(size32_t newSize)
     {
-        CriticalBlock block(lock);
+//        CriticalBlock block(lock);
+        SpinBlock block(lock);
         unsigned oldV = leafCache.setMemLimit(newSize);
         cacheLeaves = (newSize != 0); 
         return oldV;
     }
     inline size32_t setBlobCacheMem(size32_t newSize)
     {
-        CriticalBlock block(lock);
+//        CriticalBlock block(lock);
+        SpinBlock block(lock);
         unsigned oldV = blobCache.setMemLimit(newSize);
         cacheBlobs = (newSize != 0); 
         return oldV;
     }
     void clear()
     {
-        CriticalBlock block(lock);
+//        CriticalBlock block(lock);
+        SpinBlock block(lock);
         nodeCache.kill();
         leafCache.kill();
         blobCache.kill();
@@ -2111,7 +2117,8 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         return NULL;
     { 
         // It's a shame that we don't know the type before we read it. But probably not that big a deal
-        CriticalBlock block(lock);
+//        CriticalBlock block(lock);
+        SpinBlock block(lock);
         CKeyIdAndPos key(iD, pos);
         if (preloadNodes)
         {
@@ -2159,7 +2166,8 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         }
         CJHTreeNode *node;
         {
-            CriticalUnblock block(lock);
+//            CriticalUnblock block(lock);
+            SpinUnblock block(lock);
             node = keyIndex->loadNode(pos);  // NOTE - don't want cache locked while we load!
         }
         atomic_inc(&cacheAdds);
@@ -2225,7 +2233,8 @@ void CNodeCache::preload(CJHTreeNode *node, int iD, offset_t pos, IContextLogger
 {
     assertex(pos);
     assertex(preloadNodes);
-    CriticalBlock block(lock);
+//    CriticalBlock block(lock);
+    SpinBlock block(lock);
     CKeyIdAndPos key(iD, pos);
     CJHTreeNode *cacheNode = preloadCache.query(key);
     if (!cacheNode)
@@ -2239,7 +2248,8 @@ void CNodeCache::preload(CJHTreeNode *node, int iD, offset_t pos, IContextLogger
 
 bool CNodeCache::isPreloaded(int iD, offset_t pos)
 {
-    CriticalBlock block(lock);
+//    CriticalBlock block(lock);
+    SpinBlock block(lock);
     CKeyIdAndPos key(iD, pos);
     return NULL != preloadCache.query(key);
 }
