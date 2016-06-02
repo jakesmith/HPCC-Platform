@@ -1035,6 +1035,12 @@ class KeyCrit : public CSimpleInterfaceOf<CriticalSection>
 public:
     Linked<CJHTreeNode> cacheNode;
 };
+
+#define LOCK SpinLock
+#define LOCKBLOCK SpinBlock
+
+static const unsigned numLocks = 8;
+
 typedef KeyCrit * KeyCritPtr;
 typedef MapBetween<CKeyIdAndPos, CKeyIdAndPos, KeyCritPtr, KeyCritPtr> NodeKeyCritMap;
 class CNodeCache : public CInterface
@@ -1042,8 +1048,8 @@ class CNodeCache : public CInterface
 private:
     NodeKeyCritMap loadingCritHT;
 
-//    mutable CriticalSection lock;
-    mutable SpinLock lock;
+    mutable LOCK  lock;
+    LOCK locks[numLocks];
     CNodeMRUCache nodeCache;
     CNodeMRUCache leafCache;
     CNodeMRUCache blobCache;
@@ -2202,13 +2208,15 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
     if (!pos)
         return NULL;
     {
+        LOCK *_lock;
         switch (cachingScheme)
         {
             case 0:
             {
+                _lock = &lock;
                 // It's a shame that we don't know the type before we read it. But probably not that big a deal
-                // CriticalBlock block(lock);
-                SpinBlock block(lock);
+                // CriticalBlock block(*_lock);
+                SpinBlock block(*_lock);
                 CKeyIdAndPos key(iD, pos);
                 if (preloadNodes)
                 {
@@ -2256,7 +2264,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
                 }
                 CJHTreeNode *node;
                 {
-                    CriticalUnblock block(lock);
+                    SpinUnblock block(*_lock);
                     node = keyIndex->loadNode(pos);  // NOTE - don't want cache locked while we load!
                 }
                 atomic_inc(&cacheAdds);
@@ -2318,20 +2326,21 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
             }
             case 1:
             {
+                _lock = &lock;
                 class CEnsureLeaveCB
                 {
-                    CriticalSection *crit;
+                    SpinLock *lock;
                     bool locked;
                 public:
-                    CEnsureLeaveCB(CriticalSection &_crit) : crit(&_crit) { crit->enter(); locked = true;}
-                    ~CEnsureLeaveCB() { if (locked) crit->leave(); }
-                    inline void enter() { dbgassertex(!locked); crit->enter(); locked = true; }
-                    inline void leave() { dbgassertex(locked); locked = false; crit->leave(); }
+                    CEnsureLeaveCB(SpinLock &_lock) : lock(&_lock) { lock->enter(); locked = true;}
+                    ~CEnsureLeaveCB() { if (locked) lock->leave(); }
+                    inline void enter() { dbgassertex(!locked); lock->enter(); locked = true; }
+                    inline void leave() { dbgassertex(locked); locked = false; lock->leave(); }
                 };
                 CKeyIdAndPos key(iD, pos);
                 Owned<KeyCrit> nodeCrit;
                 // It's a shame that we don't know the type before we read it. But probably not that big a deal
-                CEnsureLeaveCB block(lock);
+                CEnsureLeaveCB block(*_lock);
                 CJHTreeNode *cacheNode = getCachedNode(key, ctx);
                 if (cacheNode)
                 {
@@ -2397,6 +2406,267 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
                     }
                 }
                 return cacheNode;
+            }
+            case 2:
+            {
+                _lock = &lock;
+                // It's a shame that we don't know the type before we read it. But probably not that big a deal
+                // CriticalBlock block(*_lock);
+                CKeyIdAndPos key(iD, pos);
+                class CEnsureLeaveCB
+                {
+                    SpinLock *lock;
+                    bool locked;
+                public:
+                    CEnsureLeaveCB(SpinLock &_lock) : lock(&_lock) { lock->enter(); locked = true;}
+                    ~CEnsureLeaveCB() { if (locked) lock->leave(); }
+                    inline void enter() { dbgassertex(!locked); lock->enter(); locked = true; }
+                    inline void leave() { dbgassertex(locked); locked = false; lock->leave(); }
+                } block(*_lock);
+                if (preloadNodes)
+                {
+                    CJHTreeNode *cacheNode = preloadCache.query(key);
+                    if (cacheNode)
+                    {
+                        block.leave();
+                        atomic_inc(&cacheHits);
+                        if (ctx) ctx->noteStatistic(StNumPreloadCacheHits, 1);
+                        atomic_inc(&preloadCacheHits);
+                        return LINK(cacheNode);
+                    }
+                }
+                if (cacheNodes)
+                {
+                    CJHTreeNode *cacheNode = nodeCache.query(key);
+                    if (cacheNode)
+                    {
+                        block.leave();
+                        atomic_inc(&cacheHits);
+                        if (ctx) ctx->noteStatistic(StNumNodeCacheHits, 1);
+                        atomic_inc(&nodeCacheHits);
+                        return LINK(cacheNode);
+                    }
+                }
+                if (cacheLeaves)
+                {
+                    CJHTreeNode *cacheNode = leafCache.query(key);
+                    if (cacheNode)
+                    {
+                        block.leave();
+                        atomic_inc(&cacheHits);
+                        if (ctx) ctx->noteStatistic(StNumLeafCacheHits, 1);
+                        atomic_inc(&leafCacheHits);
+                        return LINK(cacheNode);
+                    }
+                }
+                if (cacheBlobs)
+                {
+                    CJHTreeNode *cacheNode = blobCache.query(key);
+                    if (cacheNode)
+                    {
+                        block.leave();
+                        atomic_inc(&cacheHits);
+                        if (ctx) ctx->noteStatistic(StNumBlobCacheHits, 1);
+                        atomic_inc(&blobCacheHits);
+                        return LINK(cacheNode);
+                    }
+                }
+                block.leave();
+                CJHTreeNode *node = keyIndex->loadNode(pos);  // NOTE - don't want cache locked while we load!
+                block.enter();
+                atomic_inc(&cacheAdds);
+                if (node->isBlob())
+                {
+                    if (cacheBlobs)
+                    {
+                        CJHTreeNode *cacheNode = blobCache.query(key); // check if added to cache while we were reading
+                        if (cacheNode)
+                        {
+                            cacheNode->Link();
+                            block.leave();
+                            ::Release(node);
+                            atomic_inc(&cacheHits);
+                            if (ctx) ctx->noteStatistic(StNumBlobCacheHits, 1);
+                            atomic_inc(&blobCacheHits);
+                            return cacheNode;
+                        }
+                        if (ctx) ctx->noteStatistic(StNumBlobCacheAdds, 1);
+                        atomic_inc(&blobCacheAdds);
+                        blobCache.add(key, *LINK(node));
+                    }
+                }
+                else if (node->isLeaf() && !isTLK) // leaves in TLK are cached as if they were nodes
+                {
+                    if (cacheLeaves)
+                    {
+                        CJHTreeNode *cacheNode = leafCache.query(key); // check if added to cache while we were reading
+                        if (cacheNode)
+                        {
+                            cacheNode->Link();
+                            block.leave();
+                            ::Release(node);
+                            atomic_inc(&cacheHits);
+                            if (ctx) ctx->noteStatistic(StNumLeafCacheHits, 1);
+                            atomic_inc(&leafCacheHits);
+                            return LINK(cacheNode);
+                        }
+                        if (ctx) ctx->noteStatistic(StNumLeafCacheAdds, 1);
+                        atomic_inc(&leafCacheAdds);
+                        leafCache.add(key, *LINK(node));
+                    }
+                }
+                else
+                {
+                    if (cacheNodes)
+                    {
+                        CJHTreeNode *cacheNode = nodeCache.query(key); // check if added to cache while we were reading
+                        if (cacheNode)
+                        {
+                            cacheNode->Link();
+                            block.leave();
+                            ::Release(node);
+                            atomic_inc(&cacheHits);
+                            if (ctx) ctx->noteStatistic(StNumNodeCacheHits, 1);
+                            atomic_inc(&nodeCacheHits);
+                            return LINK(cacheNode);
+                        }
+                        if (ctx) ctx->noteStatistic(StNumNodeCacheAdds, 1);
+                        atomic_inc(&nodeCacheAdds);
+                        nodeCache.add(key, *LINK(node));
+                    }
+                }
+                return node;
+            }
+            case 3:
+            {
+		unsigned lockPos = pos % numLocks;
+		_lock = locks[lockPos];
+                // It's a shame that we don't know the type before we read it. But probably not that big a deal
+                // CriticalBlock block(lock);
+                CKeyIdAndPos key(iD, pos);
+                class CEnsureLeaveCB
+                {
+                    SpinLock *lock;
+                    bool locked;
+                public:
+                    CEnsureLeaveCB(SpinLock &_lock) : lock(&_lock) { lock->enter(); locked = true;}
+                    ~CEnsureLeaveCB() { if (locked) lock->leave(); }
+                    inline void enter() { dbgassertex(!locked); lock->enter(); locked = true; }
+                    inline void leave() { dbgassertex(locked); locked = false; lock->leave(); }
+                } block(lock);
+                if (preloadNodes)
+                {
+                    CJHTreeNode *cacheNode = preloadCache.query(key);
+                    if (cacheNode)
+                    {
+                        block.leave();
+                        atomic_inc(&cacheHits);
+                        if (ctx) ctx->noteStatistic(StNumPreloadCacheHits, 1);
+                        atomic_inc(&preloadCacheHits);
+                        return LINK(cacheNode);
+                    }
+                }
+                if (cacheNodes)
+                {
+                    CJHTreeNode *cacheNode = nodeCache.query(key);
+                    if (cacheNode)
+                    {
+                        block.leave();
+                        atomic_inc(&cacheHits);
+                        if (ctx) ctx->noteStatistic(StNumNodeCacheHits, 1);
+                        atomic_inc(&nodeCacheHits);
+                        return LINK(cacheNode);
+                    }
+                }
+                if (cacheLeaves)
+                {
+                    CJHTreeNode *cacheNode = leafCache.query(key);
+                    if (cacheNode)
+                    {
+                        block.leave();
+                        atomic_inc(&cacheHits);
+                        if (ctx) ctx->noteStatistic(StNumLeafCacheHits, 1);
+                        atomic_inc(&leafCacheHits);
+                        return LINK(cacheNode);
+                    }
+                }
+                if (cacheBlobs)
+                {
+                    CJHTreeNode *cacheNode = blobCache.query(key);
+                    if (cacheNode)
+                    {
+                        block.leave();
+                        atomic_inc(&cacheHits);
+                        if (ctx) ctx->noteStatistic(StNumBlobCacheHits, 1);
+                        atomic_inc(&blobCacheHits);
+                        return LINK(cacheNode);
+                    }
+                }
+                block.leave();
+                CJHTreeNode *node = keyIndex->loadNode(pos);  // NOTE - don't want cache locked while we load!
+                block.enter();
+                atomic_inc(&cacheAdds);
+                if (node->isBlob())
+                {
+                    if (cacheBlobs)
+                    {
+                        CJHTreeNode *cacheNode = blobCache.query(key); // check if added to cache while we were reading
+                        if (cacheNode)
+                        {
+                            cacheNode->Link();
+                            block.leave();
+                            ::Release(node);
+                            atomic_inc(&cacheHits);
+                            if (ctx) ctx->noteStatistic(StNumBlobCacheHits, 1);
+                            atomic_inc(&blobCacheHits);
+                            return cacheNode;
+                        }
+                        if (ctx) ctx->noteStatistic(StNumBlobCacheAdds, 1);
+                        atomic_inc(&blobCacheAdds);
+                        blobCache.add(key, *LINK(node));
+                    }
+                }
+                else if (node->isLeaf() && !isTLK) // leaves in TLK are cached as if they were nodes
+                {
+                    if (cacheLeaves)
+                    {
+                        CJHTreeNode *cacheNode = leafCache.query(key); // check if added to cache while we were reading
+                        if (cacheNode)
+                        {
+                            cacheNode->Link();
+                            block.leave();
+                            ::Release(node);
+                            atomic_inc(&cacheHits);
+                            if (ctx) ctx->noteStatistic(StNumLeafCacheHits, 1);
+                            atomic_inc(&leafCacheHits);
+                            return LINK(cacheNode);
+                        }
+                        if (ctx) ctx->noteStatistic(StNumLeafCacheAdds, 1);
+                        atomic_inc(&leafCacheAdds);
+                        leafCache.add(key, *LINK(node));
+                    }
+                }
+                else
+                {
+                    if (cacheNodes)
+                    {
+                        CJHTreeNode *cacheNode = nodeCache.query(key); // check if added to cache while we were reading
+                        if (cacheNode)
+                        {
+                            cacheNode->Link();
+                            block.leave();
+                            ::Release(node);
+                            atomic_inc(&cacheHits);
+                            if (ctx) ctx->noteStatistic(StNumNodeCacheHits, 1);
+                            atomic_inc(&nodeCacheHits);
+                            return LINK(cacheNode);
+                        }
+                        if (ctx) ctx->noteStatistic(StNumNodeCacheAdds, 1);
+                        atomic_inc(&nodeCacheAdds);
+                        nodeCache.add(key, *LINK(node));
+                    }
+                }
+                return node;
             }
             default:
                 throwUnexpected();
