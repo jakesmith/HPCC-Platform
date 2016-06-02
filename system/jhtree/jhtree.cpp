@@ -61,7 +61,7 @@
 
 static CKeyStore *keyStore = NULL;
 static unsigned defaultKeyIndexLimit = 200;
-static CNodeCache *nodeCache = NULL;
+static __thread CNodeCache *nodeCache = NULL;
 static CriticalSection *initCrit = NULL;
 
 bool useMemoryMappedIndexes = false;
@@ -1097,6 +1097,7 @@ static inline CNodeCache *queryNodeCache()
     if (nodeCache) return nodeCache; // avoid crit
     CriticalBlock b(*initCrit);
     if (!nodeCache) nodeCache = new CNodeCache(100*0x100000, 50*0x100000, 0);
+  PROGLOG("nodeCache created");
     return nodeCache;
 }
 
