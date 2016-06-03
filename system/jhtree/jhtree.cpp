@@ -964,12 +964,31 @@ public:
 class CKeyIdAndPos
 {
 public:
-    unsigned __int64 keyId;
-    offset_t pos;
+#pragma pack(push,1)
+    struct
+    {
+        unsigned __int64 keyId;
+        offset_t pos;
+    } key;
+#pragma pack(pop)
+    unsigned hash;
 
-    CKeyIdAndPos(unsigned __int64 _keyId, offset_t _pos) { keyId = _keyId; pos = _pos; }
+    CKeyIdAndPos(unsigned __int64 _keyId, offset_t _pos)
+    {
+        key.keyId = _keyId; key.pos = _pos;
+        hash = hashc((const unsigned char *) &key, sizeof(key), 0);
+    }
+    CKeyIdAndPos(const CKeyIdAndPos &other)
+    {
+        key = other.key;
+        hash = other.hash;
+    }
 
-    bool operator==(const CKeyIdAndPos &other) { return keyId == other.keyId && pos == other.pos; }
+    bool operator==(const CKeyIdAndPos &other) { return key.keyId == other.key.keyId && key.pos == other.key.pos; }
+    unsigned getHash() const
+    {
+        return hash;
+    }
 };
 
 class CNodeMapping : public HTMapping<CJHTreeNode, CKeyIdAndPos>
@@ -979,7 +998,26 @@ public:
     ~CNodeMapping() { this->et.Release(); }
     CJHTreeNode &query() { return queryElement(); }
 };
-typedef OwningSimpleHashTableOf<CNodeMapping, CKeyIdAndPos> CNodeTable;
+
+class CNodeTable : public OwningSimpleHashTableOf<CNodeMapping, CKeyIdAndPos>
+{
+    typedef OwningSimpleHashTableOf<CNodeMapping, CKeyIdAndPos> PARENT;
+
+public:
+    CNodeTable() : PARENT() { }
+    CNodeTable(unsigned initsize) : PARENT(initsize) { }
+    virtual unsigned getHashFromElement(const void *et) const
+    {
+        CNodeMapping *mapping = (CNodeMapping *)et;
+        const CKeyIdAndPos &key = mapping->queryFindValue();
+        return key.getHash();
+    }
+    virtual unsigned getHashFromFindParam(const void *_fp) const
+    {
+        CKeyIdAndPos *fp = (CKeyIdAndPos *)_fp;
+        return fp->getHash();
+    }
+};
 #define FIXED_NODE_OVERHEAD (sizeof(CJHTreeNode))
 class CNodeMRUCache : public CMRUCacheOf<CKeyIdAndPos, CJHTreeNode, CNodeMapping, CNodeTable>
 {
@@ -995,15 +1033,18 @@ public:
         size32_t oldMemLimit = memLimit;
         memLimit = _memLimit;
         if (full())
-            makeSpace();
+        {
+            CIArrayOf<CNodeMapping> toFree;
+            makeSpace(toFree);
+        }
         return oldMemLimit;
     }
-    virtual void makeSpace()
+    virtual void makeSpace(CIArrayOf<CNodeMapping> &toFree)
     {
         // remove LRU until !full
         do
         {
-            clear(1);
+            clear(1, toFree);
         }
         while (full());
     }
@@ -1024,11 +1065,14 @@ public:
     }
 };
 
+#define LOCK SpinLock
+#define LOCKBLOCK SpinBlock
+#define LOCKUNBLOCK SpinUnblock
+
 class CNodeCache : public CInterface
 {
 private:
-//    mutable CriticalSection lock;
-    mutable SpinLock lock;
+    mutable LOCK lock;
     CNodeMRUCache nodeCache;
     CNodeMRUCache leafCache;
     CNodeMRUCache blobCache;
@@ -1037,6 +1081,8 @@ private:
     bool cacheLeaves;
     bool cacheBlobs;
     bool preloadNodes;
+
+    bool doPromote = true;
 public:
     CNodeCache(size32_t maxNodeMem, size32_t maxLeaveMem, size32_t maxBlobMem)
         : nodeCache(maxNodeMem), leafCache(maxLeaveMem), blobCache(maxBlobMem), preloadCache((unsigned) -1)
@@ -1066,32 +1112,28 @@ public:
 
     inline size32_t setNodeCacheMem(size32_t newSize)
     {
-//        CriticalBlock block(lock);
-        SpinBlock block(lock);
+        LOCKBLOCK block(lock);
         unsigned oldV = nodeCache.setMemLimit(newSize);
         cacheNodes = (newSize != 0);
         return oldV;
     }
     inline size32_t setLeafCacheMem(size32_t newSize)
     {
-//        CriticalBlock block(lock);
-        SpinBlock block(lock);
+        LOCKBLOCK block(lock);
         unsigned oldV = leafCache.setMemLimit(newSize);
         cacheLeaves = (newSize != 0); 
         return oldV;
     }
     inline size32_t setBlobCacheMem(size32_t newSize)
     {
-//        CriticalBlock block(lock);
-        SpinBlock block(lock);
+        LOCKBLOCK block(lock);
         unsigned oldV = blobCache.setMemLimit(newSize);
         cacheBlobs = (newSize != 0); 
         return oldV;
     }
     void clear()
     {
-//        CriticalBlock block(lock);
-        SpinBlock block(lock);
+        LOCKBLOCK block(lock);
         nodeCache.kill();
         leafCache.kill();
         blobCache.kill();
@@ -2117,12 +2159,12 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         return NULL;
     { 
         // It's a shame that we don't know the type before we read it. But probably not that big a deal
-//        CriticalBlock block(lock);
-        SpinBlock block(lock);
         CKeyIdAndPos key(iD, pos);
+//        LOCKBLOCK block(lock);
+        Owned<CJHTreeNode> cacheNode;
         if (preloadNodes)
         {
-            CJHTreeNode *cacheNode = preloadCache.query(key);
+            cacheNode.setown(preloadCache.getByRef(key, doPromote));
             if (cacheNode)
             {
                 atomic_inc(&cacheHits);
@@ -2133,7 +2175,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         }
         if (cacheNodes)
         {
-            CJHTreeNode *cacheNode = nodeCache.query(key);
+            cacheNode.setown(nodeCache.getByRef(key, doPromote));
             if (cacheNode)
             {
                 atomic_inc(&cacheHits);
@@ -2144,7 +2186,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         }
         if (cacheLeaves)
         {
-            CJHTreeNode *cacheNode = leafCache.query(key);
+            cacheNode.setown(leafCache.getByRef(key, doPromote));
             if (cacheNode)
             {
                 atomic_inc(&cacheHits);
@@ -2155,7 +2197,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         }
         if (cacheBlobs)
         {
-            CJHTreeNode *cacheNode = blobCache.query(key);
+            cacheNode.setown(blobCache.getByRef(key, doPromote));
             if (cacheNode)
             {
                 atomic_inc(&cacheHits);
@@ -2166,8 +2208,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         }
         CJHTreeNode *node;
         {
-//            CriticalUnblock block(lock);
-            SpinUnblock block(lock);
+//            LOCKUNBLOCK block(lock);
             node = keyIndex->loadNode(pos);  // NOTE - don't want cache locked while we load!
         }
         atomic_inc(&cacheAdds);
@@ -2175,54 +2216,56 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         {
             if (cacheBlobs)
             {
-                CJHTreeNode *cacheNode = blobCache.query(key); // check if added to cache while we were reading
+                cacheNode.setown(blobCache.getByRef(key, false)); // check if added to cache while we were reading
                 if (cacheNode)
                 {
-                    ::Release(node);
+                    /* it got into cache in time loading
+                     * Is the 2nd lookup worth it? You are saving an add/promote..
+                     * Probably is _just_, as add does a find too..
+                     * BUT means extra contended lock, 1) in get(), 1 in add()
+                     */
                     atomic_inc(&cacheHits);
-                    if (ctx) ctx->noteStatistic(StNumBlobCacheHits, 1);
+                    if (ctx) ctx->noteStatistic(StNumBlobCacheHits, 1); // should be different stat.!
                     atomic_inc(&blobCacheHits);
-                    return LINK(cacheNode);
+                    return node; // pity, have loaded and expanded, but
                 }
                 if (ctx) ctx->noteStatistic(StNumBlobCacheAdds, 1);
                 atomic_inc(&blobCacheAdds);
-                blobCache.add(key, *LINK(node));
+                blobCache.addByRef(key, *LINK(node));
             }
         }
         else if (node->isLeaf() && !isTLK) // leaves in TLK are cached as if they were nodes
         {
             if (cacheLeaves)
             {
-                CJHTreeNode *cacheNode = leafCache.query(key); // check if added to cache while we were reading
+                cacheNode.setown(leafCache.getByRef(key, false)); // check if added to cache while we were reading
                 if (cacheNode)
                 {
-                    ::Release(node);
                     atomic_inc(&cacheHits);
-                    if (ctx) ctx->noteStatistic(StNumLeafCacheHits, 1);
+                    if (ctx) ctx->noteStatistic(StNumLeafCacheHits, 1); // should be different stat.!
                     atomic_inc(&leafCacheHits);
-                    return LINK(cacheNode);
+                    return node; // pity, have loaded and expanded, but
                 }
                 if (ctx) ctx->noteStatistic(StNumLeafCacheAdds, 1);
                 atomic_inc(&leafCacheAdds);
-                leafCache.add(key, *LINK(node));
+                leafCache.addByRef(key, *LINK(node));
             }
         }
         else
         {
             if (cacheNodes)
             {
-                CJHTreeNode *cacheNode = nodeCache.query(key); // check if added to cache while we were reading
+                cacheNode.setown(nodeCache.getByRef(key, false)); // check if added to cache while we were reading
                 if (cacheNode)
                 {
-                    ::Release(node);
                     atomic_inc(&cacheHits);
-                    if (ctx) ctx->noteStatistic(StNumNodeCacheHits, 1);
+                    if (ctx) ctx->noteStatistic(StNumNodeCacheHits, 1); // should be different stat.!
                     atomic_inc(&nodeCacheHits);
-                    return LINK(cacheNode);
+                    return node; // pity, have loaded and expanded, but
                 }
                 if (ctx) ctx->noteStatistic(StNumNodeCacheAdds, 1);
                 atomic_inc(&nodeCacheAdds);
-                nodeCache.add(key, *LINK(node));
+                nodeCache.addByRef(key, *LINK(node));
             }
         }
         return node;
@@ -2233,8 +2276,7 @@ void CNodeCache::preload(CJHTreeNode *node, int iD, offset_t pos, IContextLogger
 {
     assertex(pos);
     assertex(preloadNodes);
-//    CriticalBlock block(lock);
-    SpinBlock block(lock);
+    LOCKBLOCK block(lock);
     CKeyIdAndPos key(iD, pos);
     CJHTreeNode *cacheNode = preloadCache.query(key);
     if (!cacheNode)
@@ -2242,16 +2284,15 @@ void CNodeCache::preload(CJHTreeNode *node, int iD, offset_t pos, IContextLogger
         atomic_inc(&cacheAdds);
         if (ctx) ctx->noteStatistic(StNumPreloadCacheAdds, 1);
         atomic_inc(&preloadCacheAdds);
-        preloadCache.add(key, *LINK(node));
+        preloadCache.addByRef(key, *LINK(node));
     }
 }
 
 bool CNodeCache::isPreloaded(int iD, offset_t pos)
 {
-//    CriticalBlock block(lock);
-    SpinBlock block(lock);
+    LOCKBLOCK block(lock);
     CKeyIdAndPos key(iD, pos);
-    return NULL != preloadCache.query(key);
+    return NULL != preloadCache.queryByRef(key);
 }
 
 atomic_t cacheAdds;

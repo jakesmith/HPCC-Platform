@@ -27,6 +27,7 @@
 template <class KEY, class ENTRY, class MAPPING, class TABLE>
 class CMRUCacheOf : public CInterface, public IInterface
 {
+    SpinLock lock;
 protected:
     class DTABLE : public TABLE
     {
@@ -50,22 +51,33 @@ protected:
                 break;
         }
     }
-public:
-    typedef SuperHashIteratorOf<MAPPING> CMRUIterator;
-
-    IMPLEMENT_IINTERFACE;
-
-    CMRUCacheOf<KEY, ENTRY, MAPPING, TABLE>() : table(*this) { }
-    void add(KEY key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
+    void clear(int count, CIArrayOf<MAPPING> &cleared)
     {
+        loop
+        {
+            MAPPING *tail = mruList.dequeueTail();
+            if (!tail)
+                break;
+            MAPPING &_tail = *LINK(tail);
+            cleared.append(_tail);
+            table.removeExact(tail);
+            if ((-1 != count) && (0 == --count))
+                break;
+        }
+    }
+    void _add(KEY &key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
+    {
+        CIArrayOf<MAPPING> free; // outside of spin, so not locked whilst deleting elements
+        SpinBlock b(lock);
         if (full())
-            makeSpace();
+            makeSpace(free);
 
         MAPPING *mapping = table.find(key);
         if (mapping)
         {
             if (promoteIfAlreadyPresent)
                 promote(mapping);
+            //entry.Release();
         }
         else
         {
@@ -74,7 +86,7 @@ public:
             mruList.enqueueHead(mapping);
         }
     }
-    ENTRY *query(KEY key, bool doPromote=true)
+    ENTRY *_query(KEY &key, bool doPromote=true)
     {
         MAPPING *mapping = table.find(key);
         if (!mapping) return NULL;
@@ -83,9 +95,49 @@ public:
             promote(mapping);
         return &mapping->query(); // MAPPING must impl. query()
     }
+    ENTRY *_get(KEY &key, bool doPromote=true)
+    {
+        SpinBlock b(lock);
+        return LINK(_query(key, doPromote));
+    }
+    bool _remove(KEY &key)
+    {
+        Linked<MAPPING> mapping = table.find(key);
+        if (!mapping)
+            return false;
+        table.removeExact(mapping);
+        mruList.dequeue(mapping);
+        return true;
+    }
+public:
+    typedef SuperHashIteratorOf<MAPPING> CMRUIterator;
+
+    IMPLEMENT_IINTERFACE;
+
+    CMRUCacheOf<KEY, ENTRY, MAPPING, TABLE>() : table(*this) { }
+    void add(KEY key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
+    {
+        _add(key, entry, promoteIfAlreadyPresent);
+    }
+    void addByRef(KEY &key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
+    {
+        _add(key, entry, promoteIfAlreadyPresent);
+    }
+    ENTRY *query(KEY key, bool doPromote=true)
+    {
+        return _query(key, doPromote);
+    }
+    ENTRY *queryByRef(KEY &key, bool doPromote=true)
+    {
+        return _query(key, doPromote);
+    }
     ENTRY *get(KEY key, bool doPromote=true)
     {
-        return LINK(query(key, doPromote));
+        return _get(key, doPromote);
+    }
+    ENTRY *getByRef(KEY &key, bool doPromote=true)
+    {
+        return _get(key, doPromote);
     }
     bool remove(MAPPING *_mapping)
     {   
@@ -97,12 +149,11 @@ public:
     }
     bool remove(KEY key)
     {
-        Linked<MAPPING> mapping = table.find(key);
-        if (!mapping)
-            return false;
-        table.removeExact(mapping);
-        mruList.dequeue(mapping);
-        return true;
+        return _remove(key);
+    }
+    bool removeByRef(KEY &key)
+    {
+        return _remove(key);
     }
     void kill() { clear(-1); }
     void promote(MAPPING *mapping)
@@ -114,7 +165,7 @@ public:
     {
         return new SuperHashIteratorOf<MAPPING>(table);
     }
-    virtual void makeSpace() { }
+    virtual void makeSpace(CIArrayOf<MAPPING> &toFree) { }
     virtual bool full() { return false; }
     virtual void elementAdded(MAPPING *mapping) { }
     virtual void elementRemoved(MAPPING *mapping) { }
@@ -136,9 +187,9 @@ public:
         cacheMax = _cacheMax;
         return oldCacheMax;
     }
-    virtual void makeSpace()
+    virtual void makeSpace(CIArrayOf<MAPPING> &toFree)
     {
-        SELF::clear(cacheOverflow);
+        SELF::clear(cacheOverflow, toFree);
     }
     virtual bool full()
     {
