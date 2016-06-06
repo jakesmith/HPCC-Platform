@@ -37,32 +37,71 @@ protected:
         virtual void onAdd(void *mapping) { owner.elementAdded((MAPPING *)mapping); TABLE::onAdd(mapping); }
         virtual void onRemove(void *mapping) { owner.elementRemoved((MAPPING *)mapping); TABLE::onRemove(mapping); }
     } table;
-    QueueOf<MAPPING, false> mruList;
+    MAPPING *mruHead = nullptr, *mruTail = nullptr;
 
     void clear(int count)
     {
-        loop
+        if (-1 == count)
         {
-            MAPPING *tail = mruList.dequeueTail();
-            if (!tail)
-                break;
-            table.removeExact(tail);
-            if ((-1 != count) && (0 == --count))
-                break;
+            table.kill();
+        }
+        else
+        {
+            if (!mruHead)
+                return;
+            dbgassertex(mruTail);
+            MAPPING *cur = mruTail;
+            MAPPING *prev = mruTail->prev;
+            loop
+            {
+                table.removeExact(cur);
+                cur = prev;
+                if (!cur)
+                {
+                    // no previous, consumed all.
+                    mruHead = mruTail = nullptr;
+                    break;
+                }
+                if (0 == --count)
+                {
+                    mruTail = cur;
+                    mruTail->next = nullptr;
+                    break;
+                }
+                prev = cur->prev;
+            }
         }
     }
     void clear(int count, CIArrayOf<MAPPING> &cleared)
     {
-        loop
+        if (-1 == count)
+            clear(count);
+        else
         {
-            MAPPING *tail = mruList.dequeueTail();
-            if (!tail)
-                break;
-            MAPPING &_tail = *LINK(tail);
-            cleared.append(_tail);
-            table.removeExact(tail);
-            if ((-1 != count) && (0 == --count))
-                break;
+            if (!mruHead)
+                return;
+            dbgassertex(mruTail);
+            MAPPING *cur = mruTail;
+            MAPPING *prev = mruTail->prev;
+            loop
+            {
+                cleared.append(*LINK(cur));
+                table.removeExact(cur);
+                cur = prev;
+                if (!cur)
+                {
+                    // no previous, consumed all.
+                    mruHead = mruTail = nullptr;
+                    break;
+                }
+                if (0 == --count)
+                {
+                    mruTail = cur;
+                    mruTail->next = nullptr;
+                    break;
+                }
+                prev = cur->prev;
+            }
         }
     }
     void _add(KEY &key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
@@ -83,7 +122,14 @@ protected:
         {
             mapping = new MAPPING(key, entry); // owns entry
             table.replace(*mapping);
-            mruList.enqueueHead(mapping);
+            if (mruHead)
+            {
+                mapping->next = mruHead;
+                mruHead->prev = mapping;
+            }
+            else
+                mruTail = mapping;
+            mruHead = mapping;
         }
     }
     ENTRY *_query(KEY &key, bool doPromote=true)
@@ -100,14 +146,29 @@ protected:
         SpinBlock b(lock);
         return LINK(_query(key, doPromote));
     }
+    bool _remove(MAPPING *_mapping)
+    {
+        Linked<MAPPING> mapping = _mapping;
+        if (!table.removeExact(mapping))
+            return false;
+        MAPPING *prev = mapping->prev;
+        MAPPING *next = mapping->next;
+        if (prev)
+            prev->next = next;
+        if (next)
+            next->prev = prev;
+        if (mapping == mruHead)
+            mruHead = next;
+        if (mapping == mruTail)
+            mruTail = prev;
+        return true;
+    }
     bool _remove(KEY &key)
     {
         Linked<MAPPING> mapping = table.find(key);
         if (!mapping)
             return false;
-        table.removeExact(mapping);
-        mruList.dequeue(mapping);
-        return true;
+        return _remove(mapping);
     }
 public:
     typedef SuperHashIteratorOf<MAPPING> CMRUIterator;
@@ -139,13 +200,9 @@ public:
     {
         return _get(key, doPromote);
     }
-    bool remove(MAPPING *_mapping)
-    {   
-        Linked<MAPPING> mapping = _mapping;
-        if (!table.removeExact(_mapping))
-            return false;
-        mruList.dequeue(mapping);
-        return true;
+    bool remove(MAPPING *mapping)
+    {
+        return _remove(mapping);
     }
     bool remove(KEY key)
     {
@@ -158,8 +215,22 @@ public:
     void kill() { clear(-1); }
     void promote(MAPPING *mapping)
     {
-        mruList.dequeue(mapping); // will still be linked in table
-        mruList.enqueueHead(mapping);
+        if (mapping == mruHead)
+            return;
+        MAPPING *prev = mapping->prev;
+        MAPPING *next = mapping->next;
+        if (prev)
+        {
+            if (mapping == mruTail)
+                mruTail = prev;
+            prev->next = next;
+        }
+        if (next)
+            next->prev = prev;
+        mapping->next = mruHead;
+        mapping->prev = nullptr;
+        mruHead->prev = mapping;
+        mruHead = mapping;
     }
     CMRUIterator *getIterator()
     {

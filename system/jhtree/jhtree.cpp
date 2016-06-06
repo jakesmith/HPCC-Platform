@@ -997,6 +997,8 @@ public:
     CNodeMapping(CKeyIdAndPos &fp, CJHTreeNode &et) : HTMapping<CJHTreeNode, CKeyIdAndPos>(et, fp) { }
     ~CNodeMapping() { this->et.Release(); }
     CJHTreeNode &query() { return queryElement(); }
+
+    CNodeMapping *prev = nullptr, *next = nullptr;
 };
 
 class CNodeTable : public OwningSimpleHashTableOf<CNodeMapping, CKeyIdAndPos>

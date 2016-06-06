@@ -25,7 +25,13 @@
 
 #include "jhtree.hpp"
 
-typedef OwningStringHTMapping<IKeyIndex> CKeyIndexMapping;
+class CKeyIndexMapping : public OwningStringHTMapping<IKeyIndex>
+{
+public:
+    CKeyIndexMapping(const char *fp, IKeyIndex &et) : OwningStringHTMapping(fp, et) { }
+
+    CKeyIndexMapping *prev = nullptr, *next = nullptr;
+};
 typedef OwningStringSuperHashTableOf<CKeyIndexMapping> CKeyIndexTable;
 typedef CMRUCacheMaxCountOf<const char *, IKeyIndex, CKeyIndexMapping, CKeyIndexTable> CKeyIndexMRUCache;
 
