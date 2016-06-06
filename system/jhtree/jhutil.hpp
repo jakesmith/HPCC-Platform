@@ -48,7 +48,10 @@ protected:
         else
         {
             if (!mruHead)
+            {
+                WARNLOG("clear(%d) called with mruHead = null", count);
                 return;
+            }
             dbgassertex(mruTail);
             MAPPING *cur = mruTail;
             MAPPING *prev = mruTail->prev;
@@ -58,6 +61,7 @@ protected:
                 cur = prev;
                 if (!cur)
                 {
+                    WARNLOG("mruHead = mruTail = null , tableCount=%d", table.count());
                     // no previous, consumed all.
                     mruHead = mruTail = nullptr;
                     break;
@@ -69,6 +73,9 @@ protected:
                     break;
                 }
                 prev = cur->prev;
+
+                if (mruTail && (mruTail->prev == nullptr))
+                    WARNLOG("... clear() .. mruTail->prev == null");
             }
         }
     }
@@ -79,7 +86,10 @@ protected:
         else
         {
             if (!mruHead)
+            {
+                WARNLOG("clear(%d) called with mruHead = null", count);
                 return;
+            }
             dbgassertex(mruTail);
             MAPPING *cur = mruTail;
             MAPPING *prev = mruTail->prev;
@@ -90,6 +100,7 @@ protected:
                 cur = prev;
                 if (!cur)
                 {
+                    WARNLOG("mruHead = mruTail = null , tableCount=%d", table.count());
                     // no previous, consumed all.
                     mruHead = mruTail = nullptr;
                     break;
@@ -101,13 +112,15 @@ protected:
                     break;
                 }
                 prev = cur->prev;
+
+                if (mruTail && (mruTail->prev == nullptr))
+                    WARNLOG("... clear() .. mruTail->prev == null");
             }
         }
     }
     void _add(KEY &key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
     {
         CIArrayOf<MAPPING> free; // outside of spin, so not locked whilst deleting elements
-        SpinBlock b(lock);
         if (full())
             makeSpace(free);
 
@@ -115,7 +128,7 @@ protected:
         if (mapping)
         {
             if (promoteIfAlreadyPresent)
-                promote(mapping);
+                _promote(mapping);
             //entry.Release();
         }
         else
@@ -131,6 +144,8 @@ protected:
                 mruTail = mapping;
             mruHead = mapping;
         }
+        if (mruTail && (mruTail->prev == nullptr))
+            WARNLOG("::add() ... mruTail->prev == null");
     }
     ENTRY *_query(KEY &key, bool doPromote=true)
     {
@@ -138,16 +153,16 @@ protected:
         if (!mapping) return NULL;
 
         if (doPromote)
-            promote(mapping);
+            _promote(mapping);
         return &mapping->query(); // MAPPING must impl. query()
     }
     ENTRY *_get(KEY &key, bool doPromote=true)
     {
-        SpinBlock b(lock);
         return LINK(_query(key, doPromote));
     }
     bool _remove(MAPPING *_mapping)
     {
+        WARNLOG("_remove() called");
         Linked<MAPPING> mapping = _mapping;
         if (!table.removeExact(mapping))
             return false;
@@ -170,6 +185,30 @@ protected:
             return false;
         return _remove(mapping);
     }
+    void _promote(MAPPING *mapping)
+    {
+        if (mapping->prev == nullptr)
+            return;
+        MAPPING *prev = mapping->prev;
+        MAPPING *next = mapping->next;
+        if (prev)
+        {
+            if (mapping == mruTail)
+            {
+                mruTail = prev;
+                PROGLOG("::promote() mruTail set to prev");
+            }
+            prev->next = next;
+        }
+        if (next)
+            next->prev = prev;
+        mapping->next = mruHead;
+        mapping->prev = nullptr;
+        mruHead->prev = mapping;
+        mruHead = mapping;
+        if (mruTail && (mruTail->prev == nullptr))
+            WARNLOG("::promote() ... mruTail->prev == null");
+    }
 public:
     typedef SuperHashIteratorOf<MAPPING> CMRUIterator;
 
@@ -178,10 +217,12 @@ public:
     CMRUCacheOf<KEY, ENTRY, MAPPING, TABLE>() : table(*this) { }
     void add(KEY key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
     {
+        SpinBlock b(lock);
         _add(key, entry, promoteIfAlreadyPresent);
     }
     void addByRef(KEY &key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
     {
+        SpinBlock b(lock);
         _add(key, entry, promoteIfAlreadyPresent);
     }
     ENTRY *query(KEY key, bool doPromote=true)
@@ -194,43 +235,38 @@ public:
     }
     ENTRY *get(KEY key, bool doPromote=true)
     {
+        SpinBlock b(lock);
         return _get(key, doPromote);
     }
     ENTRY *getByRef(KEY &key, bool doPromote=true)
     {
+        SpinBlock b(lock);
         return _get(key, doPromote);
     }
     bool remove(MAPPING *mapping)
     {
+        SpinBlock b(lock);
         return _remove(mapping);
     }
     bool remove(KEY key)
     {
+        SpinBlock b(lock);
         return _remove(key);
     }
     bool removeByRef(KEY &key)
     {
+        SpinBlock b(lock);
         return _remove(key);
     }
-    void kill() { clear(-1); }
+    void kill()
+    {
+        SpinBlock b(lock);
+        clear(-1);
+    }
     void promote(MAPPING *mapping)
     {
-        if (mapping == mruHead)
-            return;
-        MAPPING *prev = mapping->prev;
-        MAPPING *next = mapping->next;
-        if (prev)
-        {
-            if (mapping == mruTail)
-                mruTail = prev;
-            prev->next = next;
-        }
-        if (next)
-            next->prev = prev;
-        mapping->next = mruHead;
-        mapping->prev = nullptr;
-        mruHead->prev = mapping;
-        mruHead = mapping;
+        SpinBlock b(lock);
+        _promote(mapping);
     }
     CMRUIterator *getIterator()
     {
