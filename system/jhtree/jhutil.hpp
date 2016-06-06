@@ -28,6 +28,7 @@ template <class KEY, class ENTRY, class MAPPING, class TABLE>
 class CMRUCacheOf : public CInterface, public IInterface
 {
     SpinLock lock;
+
 protected:
     class DTABLE : public TABLE
     {
@@ -39,101 +40,52 @@ protected:
     } table;
     MAPPING *mruHead = nullptr, *mruTail = nullptr;
 
-    void clear(int count)
+    void clear(unsigned count, CIArrayOf<MAPPING> &toFree)
     {
-        if (-1 == count)
+        if (!mruHead)
         {
-            table.kill();
+            WARNLOG("clear(%d) called with mruHead = null", count);
+            return;
         }
-        else
+        dbgassertex(mruTail);
+        MAPPING *cur = mruTail;
+        MAPPING *prev = mruTail->prev;
+        loop
         {
-            if (!mruHead)
+            toFree.append(*LINK(cur));
+            table.removeExact(cur);
+            cur = prev;
+            if (!cur)
             {
-                WARNLOG("clear(%d) called with mruHead = null", count);
-                return;
+                WARNLOG("mruHead = mruTail = null , tableCount=%d", table.count());
+                // no previous, consumed all.
+                mruHead = mruTail = nullptr;
+                break;
             }
-            dbgassertex(mruTail);
-            MAPPING *cur = mruTail;
-            MAPPING *prev = mruTail->prev;
-            loop
+            if (((UINT_MAX == count) && !full()) || (0 == --count)) // starting count of UINT_MAX signifies loop until !full()
             {
-                table.removeExact(cur);
-                cur = prev;
-                if (!cur)
-                {
-                    WARNLOG("mruHead = mruTail = null , tableCount=%d", table.count());
-                    // no previous, consumed all.
-                    mruHead = mruTail = nullptr;
-                    break;
-                }
-                if (0 == --count)
-                {
-                    mruTail = cur;
-                    mruTail->next = nullptr;
-                    break;
-                }
-                prev = cur->prev;
+                mruTail = cur;
+                mruTail->next = nullptr;
+                break;
+            }
+            prev = cur->prev;
 
-                if (mruTail && (mruTail->prev == nullptr))
-                    WARNLOG("... clear() .. mruTail->prev == null");
-            }
+            if (mruTail && (mruTail->prev == nullptr))
+                WARNLOG("... clear() .. mruTail->prev == null");
         }
     }
-    void clear(int count, CIArrayOf<MAPPING> &cleared)
+    void _add(KEY &key, ENTRY *entry, bool promoteIfAlreadyPresent=true)
     {
-        if (-1 == count)
-            clear(count);
-        else
-        {
-            if (!mruHead)
-            {
-                WARNLOG("clear(%d) called with mruHead = null", count);
-                return;
-            }
-            dbgassertex(mruTail);
-            MAPPING *cur = mruTail;
-            MAPPING *prev = mruTail->prev;
-            loop
-            {
-                cleared.append(*LINK(cur));
-                table.removeExact(cur);
-                cur = prev;
-                if (!cur)
-                {
-                    WARNLOG("mruHead = mruTail = null , tableCount=%d", table.count());
-                    // no previous, consumed all.
-                    mruHead = mruTail = nullptr;
-                    break;
-                }
-                if (0 == --count)
-                {
-                    mruTail = cur;
-                    mruTail->next = nullptr;
-                    break;
-                }
-                prev = cur->prev;
-
-                if (mruTail && (mruTail->prev == nullptr))
-                    WARNLOG("... clear() .. mruTail->prev == null");
-            }
-        }
-    }
-    void _add(KEY &key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
-    {
-        CIArrayOf<MAPPING> free; // outside of spin, so not locked whilst deleting elements
-        if (full())
-            makeSpace(free);
-
         MAPPING *mapping = table.find(key);
         if (mapping)
         {
             if (promoteIfAlreadyPresent)
                 _promote(mapping);
-            //entry.Release();
+            entry->Release();
         }
         else
         {
-            mapping = new MAPPING(key, entry); // owns entry
+            mapping = new MAPPING(key, *entry); // owns entry
             table.replace(*mapping);
             if (mruHead)
             {
@@ -215,15 +167,17 @@ public:
     IMPLEMENT_IINTERFACE;
 
     CMRUCacheOf<KEY, ENTRY, MAPPING, TABLE>() : table(*this) { }
-    void add(KEY key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
+    void addByRef(KEY &key, ENTRY *entry, bool promoteIfAlreadyPresent=true)
     {
+        CIArrayOf<MAPPING> free;
         SpinBlock b(lock);
+        if (full())
+            makeSpace(free);
         _add(key, entry, promoteIfAlreadyPresent);
     }
-    void addByRef(KEY &key, ENTRY &entry, bool promoteIfAlreadyPresent=true)
+    void add(KEY key, ENTRY *entry, bool promoteIfAlreadyPresent=true)
     {
-        SpinBlock b(lock);
-        _add(key, entry, promoteIfAlreadyPresent);
+        addByRef(key, entry, promoteIfAlreadyPresent);
     }
     ENTRY *query(KEY key, bool doPromote=true)
     {
@@ -233,35 +187,40 @@ public:
     {
         return _query(key, doPromote);
     }
-    ENTRY *get(KEY key, bool doPromote=true)
-    {
-        SpinBlock b(lock);
-        return _get(key, doPromote);
-    }
     ENTRY *getByRef(KEY &key, bool doPromote=true)
     {
         SpinBlock b(lock);
         return _get(key, doPromote);
+    }
+    ENTRY *get(KEY key, bool doPromote=true)
+    {
+        return getByRef(key, doPromote);
     }
     bool remove(MAPPING *mapping)
     {
         SpinBlock b(lock);
         return _remove(mapping);
     }
-    bool remove(KEY key)
-    {
-        SpinBlock b(lock);
-        return _remove(key);
-    }
     bool removeByRef(KEY &key)
     {
         SpinBlock b(lock);
         return _remove(key);
     }
+    bool remove(KEY key)
+    {
+        return removeByRef(key);
+    }
+    void clear(unsigned count)
+    {
+        CIArrayOf<MAPPING> toFree;
+        SpinBlock b(lock);
+        clear(count, toFree);
+    }
     void kill()
     {
         SpinBlock b(lock);
-        clear(-1);
+        table.kill();
+        mruHead = mruTail = nullptr;
     }
     void promote(MAPPING *mapping)
     {

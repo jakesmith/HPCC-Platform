@@ -1044,11 +1044,7 @@ public:
     virtual void makeSpace(CIArrayOf<CNodeMapping> &toFree)
     {
         // remove LRU until !full
-        do
-        {
-            clear(1, toFree);
-        }
-        while (full());
+        clear(UINT_MAX, toFree);
     }
     virtual bool full()
     {
@@ -1237,7 +1233,7 @@ IKeyIndex *CKeyStore::doload(const char *fileName, unsigned crc, IReplicatedFile
                 else
                     throw MakeStringException(0, "Failed to open index file %s", fileName);
             }
-            keyIndexCache.add(fname, *LINK(keyIndex));
+            keyIndexCache.add(fname, LINK(keyIndex));
         }
         else
         {
@@ -2172,7 +2168,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
                 atomic_inc(&cacheHits);
                 if (ctx) ctx->noteStatistic(StNumPreloadCacheHits, 1);
                 atomic_inc(&preloadCacheHits);
-                return LINK(cacheNode);
+                return cacheNode.getClear();
             }
         }
         if (cacheNodes)
@@ -2183,7 +2179,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
                 atomic_inc(&cacheHits);
                 if (ctx) ctx->noteStatistic(StNumNodeCacheHits, 1);
                 atomic_inc(&nodeCacheHits);
-                return LINK(cacheNode);
+                return cacheNode.getClear();
             }
         }
         if (cacheLeaves)
@@ -2194,7 +2190,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
                 atomic_inc(&cacheHits);
                 if (ctx) ctx->noteStatistic(StNumLeafCacheHits, 1);
                 atomic_inc(&leafCacheHits);
-                return LINK(cacheNode);
+                return cacheNode.getClear();
             }
         }
         if (cacheBlobs)
@@ -2205,7 +2201,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
                 atomic_inc(&cacheHits);
                 if (ctx) ctx->noteStatistic(StNumBlobCacheHits, 1);
                 atomic_inc(&blobCacheHits);
-                return LINK(cacheNode);
+                return cacheNode.getClear();
             }
         }
         CJHTreeNode *node;
@@ -2233,7 +2229,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
                 }
                 if (ctx) ctx->noteStatistic(StNumBlobCacheAdds, 1);
                 atomic_inc(&blobCacheAdds);
-                blobCache.addByRef(key, *LINK(node));
+                blobCache.addByRef(key, LINK(node));
             }
         }
         else if (node->isLeaf() && !isTLK) // leaves in TLK are cached as if they were nodes
@@ -2250,7 +2246,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
                 }
                 if (ctx) ctx->noteStatistic(StNumLeafCacheAdds, 1);
                 atomic_inc(&leafCacheAdds);
-                leafCache.addByRef(key, *LINK(node));
+                leafCache.addByRef(key, LINK(node));
             }
         }
         else
@@ -2267,7 +2263,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
                 }
                 if (ctx) ctx->noteStatistic(StNumNodeCacheAdds, 1);
                 atomic_inc(&nodeCacheAdds);
-                nodeCache.addByRef(key, *LINK(node));
+                nodeCache.addByRef(key, LINK(node));
             }
         }
         return node;
@@ -2286,7 +2282,7 @@ void CNodeCache::preload(CJHTreeNode *node, int iD, offset_t pos, IContextLogger
         atomic_inc(&cacheAdds);
         if (ctx) ctx->noteStatistic(StNumPreloadCacheAdds, 1);
         atomic_inc(&preloadCacheAdds);
-        preloadCache.addByRef(key, *LINK(node));
+        preloadCache.addByRef(key, LINK(node));
     }
 }
 
