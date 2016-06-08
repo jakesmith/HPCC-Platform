@@ -2141,7 +2141,7 @@ protected:
                     if (!row)
                         break;
                     unsigned hv = owner.rightHash->hash(row);
-                    unsigned slave = hv % owner.numSlaves;
+                    unsigned slave = hv % owner.numNodes;
                     unsigned channelDst = owner.queryJob().queryJobSlaveChannelNum(slave+1);
                     dbgassertex(NotFound != channelDst); // if 0, slave is not a slave of this process
                     dbgassertex(channelDst < owner.queryJob().queryJobChannels());

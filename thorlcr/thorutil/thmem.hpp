@@ -289,7 +289,7 @@ protected:
     StableSortFlag stableSort;
     rowidx_t maxRows;  // Number of rows that can fit in the allocated memory.
     rowidx_t numRows;  // High water mark of rows added
-    unsigned defaultMaxSpillCost;
+    unsigned defaultMaxSpillCost = roxiemem::SpillAllCost;
 
     const void *allocateRowTable(rowidx_t num);
     const void *allocateRowTable(rowidx_t num, unsigned maxSpillCost);
