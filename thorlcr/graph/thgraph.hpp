@@ -774,11 +774,12 @@ protected:
     OwnedMalloc<unsigned> jobSlaveChannelNum;
     bool crcChecking;
     bool usePackedAllocator;
-    rank_t myNodeRank;
+    unsigned myNode;
     Owned<IPropertyTree> graphXGMML;
     unsigned memorySpillAtPercentage, sharedMemoryLimitPercentage;
     CriticalSection sharedAllocatorCrit;
     Owned<IThorAllocator> sharedAllocator;
+    unsigned numNodes, numSlaves;
 
     class CThorPluginCtx : public SimplePluginCtx
     {
@@ -815,11 +816,30 @@ public:
     virtual void addChannel(IMPServer *mpServer) = 0;
     CJobChannel &queryJobChannel(unsigned c) const;
     CActivityBase &queryChannelActivity(unsigned c, graph_id gid, activity_id id) const;
-    unsigned queryJobChannels() const { return jobChannels.ordinality(); }
-    inline unsigned queryJobChannelSlaveNum(unsigned channelNum) const { dbgassertex(channelNum<queryJobChannels()); return jobChannelSlaveNumbers[channelNum]; }
-    inline unsigned queryJobSlaveChannelNum(unsigned slaveNum) const { dbgassertex(slaveNum && slaveNum<=querySlaves()); return jobSlaveChannelNum[slaveNum-1]; }
+    unsigned queryJobChannels() const { return numChannels; }
+    inline unsigned queryJobChannelSlaveNum(unsigned channelNum) const
+    {
+        dbgassertex(channelNum<numChannels);
+        return querySlaveForNodeChannel(myNode, channelNum);
+    }
+    inline unsigned querySlaveForNodeChannel(unsigned node, unsigned channel) const
+    {
+        dbgassertex(node<numNodes && channel<numChannels);
+        return channel*numNodes + node;
+    }
+    inline unsigned queryNodeForSlave(unsigned slave) const
+    {
+        dbgassertex(slave<numSlaves);
+        return slave % numNodes;
+    }
+    inline unsigned queryChannelForSlave(unsigned slave) const
+    {
+        dbgassertex(slave<numSlaves);
+        return slave / numNodes;
+    }
+    inline unsigned queryJobSlaveChannelNum(unsigned slaveNum) const { dbgassertex(slaveNum<numSlaves); return jobSlaveChannelNum[slaveNum]; }
     ICommunicator &queryNodeComm() const { return ::queryNodeComm(); }
-    const rank_t &queryMyNodeRank() const { return myNodeRank; }
+    const rank_t &queryMyNode() const { return myNode; }
     void init();
     void setXGMML(IPropertyTree *_xgmml) { xgmml.set(_xgmml); }
     IPropertyTree *queryXGMML() { return xgmml; }
@@ -853,8 +873,8 @@ public:
     const offset_t queryMaxDiskUsage() const { return maxDiskUsage; }
     mptag_t querySlaveMpTag() const { return slavemptag; }
     mptag_t queryJobMpTag() const { return mpJobTag; }
-    unsigned querySlaves() const { return slaveGroup->ordinality(); }
-    unsigned queryNodes() const { return nodeGroup->ordinality()-1; }
+    unsigned querySlaves() const { return numSlaves; }
+    unsigned queryNodes() const { return numNodes; }
     IGroup &queryJobGroup() const { return *jobGroup; }
     inline bool queryTimeActivities() const { return timeActivities; }
     unsigned queryMaxDefaultActivityCores() const { return maxActivityCores; }
@@ -910,7 +930,7 @@ protected:
     CGraphTable subGraphs;
     CGraphTableCopy allGraphs; // for lookup, includes all childGraphs
     Owned<ICommunicator> jobComm;
-    rank_t myrank;
+    unsigned mySlave;
     Linked<IMPServer> mpServer;
     bool aborted;
     Owned<CThorCodeContextBase> codeCtx;
@@ -975,7 +995,8 @@ public:
     IThorAllocator *queryThorAllocator() const { return thorAllocator; }
     ICommunicator &queryJobComm() const { return *jobComm; }
     IMPServer &queryMPServer() const { return *mpServer; }
-    const rank_t &queryMyRank() const { return myrank; }
+    rank_t queryMyRank() const { return mySlave+1; }
+    unsigned queryMySlave() const { return mySlave; }
     mptag_t deserializeMPTag(MemoryBuffer &mb);
     IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, activity_id activityId, roxiemem::RoxieHeapFlags flags=roxiemem::RHFnone) const;
     roxiemem::IRowManager *queryRowManager() const;

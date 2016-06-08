@@ -170,7 +170,7 @@ protected:
     OwnedIFile spillFile;
     bool mmRegistered;
 
-    bool spillRows()
+    rowidx_t spillRows()
     {
         // NB: Should always be called whilst 'rows' is locked (with CThorArrayLockBlock)
         rowidx_t numRows = rows.numCommitted();
@@ -185,7 +185,7 @@ protected:
         VStringBuffer spillPrefixStr("SpillableStream(%d)", SPILL_PRIORITY_SPILLABLE_STREAM); // const for now
         rows.save(*spillFile, spillCompInfo, false, spillPrefixStr.str()); // saves committed rows
         rows.kill(); // no longer needed, readers will pull from spillFile. NB: ok to kill array as rows is never written to or expanded
-        return true;
+        return numRows;
     }
     inline void addSpillingCallback()
     {
@@ -237,7 +237,7 @@ public:
         if (spillFile) // i.e. if spilt already. NB: this is thread-safe, as 'spillFile' only set by spillRows() call below and can't be called on multiple threads concurrently.
             return false;
         CThorArrayLockBlock block(rows);
-        return spillRows();
+        return 0 != spillRows();
     }
 friend class CRowsLockBlock;
 };
@@ -1562,35 +1562,37 @@ protected:
     __uint64 sortCycles;
     roxiemem::IRowManager *rowManager;
 
-    bool spillRows(bool critical)
+    rowidx_t spillRows(bool freeArray)
     {
         //This must only be called while a lock is held on spillableRows
         rowidx_t numRows = spillableRows.numCommitted();
-        if (numRows == 0)
-            return false; // cannot shrink(), as requires a flush and only writer thread can do that.
-
-        CCycleTimer spillTimer;
-        totalRows += numRows;
-        StringBuffer tempPrefix, tempName;
-        if (iCompare)
+        if (numRows)
         {
-            ActPrintLog(&activity, "Sorting %" RIPF "d rows", spillableRows.numCommitted());
-            CCycleTimer timer;
-            spillableRows.sort(*iCompare, maxCores); // sorts committed rows
-            sortCycles += timer.elapsedCycles();
-            ActPrintLog(&activity, "Sort took: %f", ((float)timer.elapsedMs())/1000);
-            tempPrefix.append("srt");
+            CCycleTimer spillTimer;
+            totalRows += numRows;
+            StringBuffer tempPrefix, tempName;
+            if (iCompare)
+            {
+                ActPrintLog(&activity, "Sorting %" RIPF "d rows", spillableRows.numCommitted());
+                CCycleTimer timer;
+                spillableRows.sort(*iCompare, maxCores); // sorts committed rows
+                sortCycles += timer.elapsedCycles();
+                ActPrintLog(&activity, "Sort took: %f", ((float)timer.elapsedMs())/1000);
+                tempPrefix.append("srt");
+            }
+            tempPrefix.appendf("spill_%d", activity.queryId());
+            GetTempName(tempName, tempPrefix.str(), true);
+            Owned<IFile> iFile = createIFile(tempName.str());
+            VStringBuffer spillPrefixStr("RowCollector(%d)", spillPriority);
+            spillableRows.save(*iFile, spillCompInfo, false, spillPrefixStr.str()); // saves committed rows
+            spillFiles.append(new CFileOwner(iFile.getLink()));
+            ++overflowCount;
+            sizeSpill += iFile->size();
+            spillCycles += spillTimer.elapsedCycles();
         }
-        tempPrefix.appendf("spill_%d", activity.queryId());
-        GetTempName(tempName, tempPrefix.str(), true);
-        Owned<IFile> iFile = createIFile(tempName.str());
-        VStringBuffer spillPrefixStr("RowCollector(%d)", spillPriority);
-        spillableRows.save(*iFile, spillCompInfo, false, spillPrefixStr.str()); // saves committed rows
-        spillFiles.append(new CFileOwner(iFile.getLink()));
-        ++overflowCount;
-        sizeSpill += iFile->size();
-        spillCycles += spillTimer.elapsedCycles();
-        return true;
+        if (freeArray) // should only be called with freeArray=true, if post write
+            spillableRows.kill();
+        return numRows;
     }
     void setPreserveGrouping(bool _preserveGrouping)
     {
@@ -1895,7 +1897,7 @@ public:
         if (!spillingEnabled())
             return false;
         CThorArrayLockBlock block(spillableRows);
-        return spillRows(critical);
+        return 0 != spillRows(false);
     }
     virtual unsigned __int64 getStatistic(StatisticKind kind)
     {
@@ -2029,6 +2031,7 @@ public:
     virtual void setOptions(unsigned options) { CThorRowCollectorBase::setOptions(options); }
     virtual unsigned __int64 getStatistic(StatisticKind kind) { return CThorRowCollectorBase::getStatistic(kind); }
     virtual bool hasSpilt() const { return CThorRowCollectorBase::hasSpilt(); }
+
 // IThorArrayLock
     virtual void lock() const { CThorRowCollectorBase::lock(); }
     virtual void unlock() const { CThorRowCollectorBase::unlock(); }
@@ -2064,14 +2067,36 @@ public:
     {
         CThorRowCollectorBase::reset();
     }
+    virtual bool addRows(CThorExpandingRowArray &inRows, bool takeOwnership)
+    {
+        if (spillableRows.appendRows(inRows, takeOwnership))
+            return true;
+        if (!spillingEnabled())
+            return false;
+        CThorArrayLockBlock block(spillableRows);
+        //We should have been called back to free any committed rows, but occasionally it may not (e.g., if
+        //the problem is global memory is exhausted) - in which case force a spill here (but add any pending
+        //rows first).
+        if (spillableRows.numCommitted() != 0)
+        {
+            flush();
+            spillRows(false);
+        }
+        // This is a good time to shrink the row table back. shrink() forces a flush.
+        StringBuffer info;
+        if (shrink(&info))
+            activity.ActPrintLog("CThorRowCollectorBase: shrink - %s", info.str());
+
+        return spillableRows.appendRows(inRows, takeOwnership);
+    }
     virtual IRowStream *getStream(bool shared, CThorExpandingRowArray *allMemRows)
     {
         return CThorRowCollectorBase::getStream(allMemRows, NULL, shared);
     }
-    virtual bool spill(bool critical)
+    virtual rowidx_t spill(bool freeArray)
     {
         CThorArrayLockBlock block(spillableRows);
-        return spillRows(critical);
+        return spillRows(freeArray);
     }
     virtual bool flush() { return CThorRowCollectorBase::flush(); }
     virtual bool shrink(StringBuffer *traceInfo) { return CThorRowCollectorBase::shrink(traceInfo); }

@@ -25,6 +25,7 @@
 #include "thormisc.hpp"
 #include "thbufdef.hpp"
 #include "thmem.hpp"
+#include "thorport.hpp"
 
 
 PointerArray createFuncs;
@@ -2360,11 +2361,14 @@ CJobBase::CJobBase(ILoadedDllEntry *_querySo, const char *_graphName) : querySo(
     jobGroup.set(&::queryClusterGroup());
     slaveGroup.setown(jobGroup->remove(0));
     nodeGroup.set(&queryNodeGroup());
-    myNodeRank = nodeGroup->rank(::queryMyNode());
+    numSlaves = slaveGroup->ordinality();
+    numNodes = nodeGroup->ordinality()-1;
+    myNode = ((unsigned)nodeGroup->rank(::queryMyNode()))-1;
 
     unsigned channelsPerSlave = globals->getPropInt("@channelsPerSlave", 1);
     jobChannelSlaveNumbers.allocateN(channelsPerSlave, true); // filled when channels are added.
     jobSlaveChannelNum.allocateN(querySlaves()); // filled when channels are added.
+
     for (unsigned s=0; s<querySlaves(); s++)
         jobSlaveChannelNum[s] = NotFound;
     StringBuffer wuXML;
@@ -2614,7 +2618,8 @@ CJobChannel::CJobChannel(CJobBase &_job, IMPServer *_mpServer, unsigned _channel
     thorAllocator.setown(job.getThorAllocator(channel));
     timeReporter = createStdTimeReporter();
     jobComm.setown(mpServer->createCommunicator(&job.queryJobGroup()));
-    myrank = job.queryJobGroup().rank(queryMyNode());
+    rank_t myrank = job.queryJobGroup().rank(queryMyNode());
+    mySlave = ((unsigned)myrank)-1;
     graphExecutor.setown(new CGraphExecutor(*this));
 }
 
