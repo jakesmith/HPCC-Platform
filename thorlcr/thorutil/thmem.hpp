@@ -111,7 +111,7 @@ public:
     
     inline void clear()                         { const void *temp=ptr; ptr=NULL; ReleaseThorRow(temp); }
     inline const void * get() const             { PARANOIDTESTROW(ptr); return ptr; }
-    inline const void * getClear()              
+    inline const void * getClear()
     { 
         const void * ret = ptr; 
         ptr = NULL; 
@@ -297,7 +297,10 @@ protected:
     void serialize(IRowSerializerTarget &out);
     void doSort(rowidx_t n, void **const rows, ICompare &compare, unsigned maxCores);
     inline rowidx_t getRowsCapacity() const { return rows ? RoxieRowCapacity(rows) / sizeof(void *) : 0; }
+
 public:
+ StringBuffer stack;
+
     CThorExpandingRowArray(CActivityBase &activity);
     CThorExpandingRowArray(CActivityBase &activity, IThorRowInterfaces *rowIf, bool allowNulls=false, StableSortFlag stableSort=stableSort_none, bool throwOnOom=true, rowidx_t initialSize=InitialSortElements);
     ~CThorExpandingRowArray();
@@ -385,6 +388,8 @@ public:
     void partition(ICompare &compare, unsigned num, UnsignedArray &out); // returns num+1 points
 
     offset_t serializedSize();
+    memsize_t getMemUsageRowArray();
+    memsize_t getMemUsageRows();
     memsize_t getMemUsage();
     void serialize(MemoryBuffer &mb);
     void serializeCompress(MemoryBuffer &mb);
@@ -556,9 +561,10 @@ interface IThorRowCollector : extends IThorRowCollectorCommon
 {
     virtual void setPreserveGrouping(bool tf) = 0;
     virtual IRowWriter *getWriter() = 0;
+    virtual bool addRows(CThorExpandingRowArray &inRows, bool takeOwnership) = 0;
     virtual void reset() = 0;
     virtual IRowStream *getStream(bool shared=false, CThorExpandingRowArray *allMemRows=NULL) = 0;
-    virtual bool spill(bool critical) = 0; // manual spill. Returns true if anything spilt
+    virtual rowidx_t spill(bool freeArray) = 0; // manual spill. Returns count of rows spilt
     virtual bool flush() = 0; // manual flush (free array space and potentially ptr table)
     virtual bool shrink(StringBuffer *traceInfo=NULL) = 0; // manual flush + shrink table array
 };

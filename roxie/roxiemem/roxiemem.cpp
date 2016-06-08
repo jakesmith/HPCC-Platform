@@ -61,6 +61,14 @@
 
 namespace roxiemem {
 
+static voidFunc globalArrayFunc;
+void setGlobalArrayFunc(voidFunc f)
+{
+    globalArrayFunc = f;
+}
+
+
+
 #define NOTIFY_UNUSED_PAGES_ON_FREE     // avoid linux swapping 'freed' pages to disk
 
 //The following constants should probably be tuned depending on the architecture - see Tuning Test at the end of the file.
@@ -1248,7 +1256,6 @@ protected:
     Heaplet *next;
     Heaplet *prev;
     const IRowAllocatorCache *allocatorCache;
-    CHeap * const heap;
     memsize_t chunkCapacity;
     atomic_t nextSpace;
     
@@ -1258,6 +1265,8 @@ protected:
     }
 
 public:
+    CHeap * const heap;
+
     Heaplet(CHeap * _heap, const IRowAllocatorCache *_allocatorCache, memsize_t _chunkCapacity) : heap(_heap), chunkCapacity(_chunkCapacity)
     {
         atomic_set(&nextSpace, 0);
@@ -4092,6 +4101,7 @@ public:
                         //Avoid a stack trace if the allocation is optional
                         if (maxSpillCost == SpillAllCost)
                             doOomReport();
+  releaseCallbackMemory(maxSpillCost, true, skipReleaseIfAnotherThreadReleases, lastReleaseSeq);
                         throw MakeStringExceptionDirect(ROXIEMM_MEMORY_LIMIT_EXCEEDED, msg.str());
                     }
                 }
@@ -4135,6 +4145,35 @@ public:
 
     inline unsigned getActiveHeapPages() const { return atomic_read(&totalHeapPages); }
 
+    virtual void reportMemoryUsage(bool peak) const
+    {
+        if (peak)
+        {
+            Owned<IActivityMemoryUsageMap> map;
+            {
+                NonReentrantSpinBlock block(peakSpinLock);
+                map.set(peakUsageMap);
+            }
+            if (map)
+                map->report(logctx, allocatorCache);
+        }
+        else
+        {
+            logctx.CTXLOG("RoxieMemMgr: pageLimit=%u peakPages=%u dataBuffs=%u dataBuffPages=%u possibleGoers=%u rowMgr=%p cnt(%u)",
+                          maxPageLimit, peakPages, dataBuffs, dataBuffPages, atomic_read(&possibleGoers), this, activeRowManagers.load());
+            Owned<IActivityMemoryUsageMap> map = getActivityUsage();
+            map->report(logctx, allocatorCache);
+        }
+        if (globalArrayFunc)
+        {
+            PROGLOG("calling globalArrayFunc");
+            globalArrayFunc();
+        }
+        else
+        {
+            PROGLOG("globalArrayFunc not defined");
+        }
+    }
 
 protected:
     CRoxieFixedRowHeapBase * doCreateFixedRowHeap(size32_t fixedSize, unsigned activityId, unsigned roxieHeapFlags, unsigned maxSpillCost)
@@ -4275,27 +4314,6 @@ protected:
         return state.numPagesEmptied;
     }
 
-    virtual void reportMemoryUsage(bool peak) const
-    {
-        if (peak)
-        {
-            Owned<IActivityMemoryUsageMap> map;
-            {
-                NonReentrantSpinBlock block(peakSpinLock);
-                map.set(peakUsageMap);
-            }
-            if (map)
-                map->report(logctx, allocatorCache);
-        }
-        else
-        {
-            logctx.CTXLOG("RoxieMemMgr: pageLimit=%u peakPages=%u dataBuffs=%u dataBuffPages=%u possibleGoers=%u rowMgr=%p cnt(%u)",
-                          maxPageLimit, peakPages, dataBuffs, dataBuffPages, atomic_read(&possibleGoers), this, activeRowManagers.load());
-            Owned<IActivityMemoryUsageMap> map = getActivityUsage();
-            map->report(logctx, allocatorCache);
-        }
-    }
-
     virtual memsize_t getExpectedCapacity(memsize_t size, unsigned heapFlags)
     {
         if (size > FixedSizeHeaplet::maxHeapSize())
@@ -4343,6 +4361,10 @@ public:
         : CChunkingRowManager(_memLimit, _tl, _logctx, _allocatorCache, _ignoreLeaks, _outputOOMReports), slaveId(_slaveId), globalManager(_globalManager)
     {
     }
+    ~CSlaveRowManager()
+    {
+     PROGLOG("~CSlaveRowManager()");
+    }
 
     virtual bool releaseCallbackMemory(unsigned maxSpillCost, bool critical, bool checkSequence, unsigned prevReleaseSeq);
     virtual unsigned getReleaseSeq() const;
@@ -4353,7 +4375,7 @@ public:
     virtual void setMinimizeFootprint(bool value, bool critical) { throwUnexpected(); }
     virtual void setReleaseWhenModifyCallback(bool value, bool critical) { throwUnexpected(); }
     virtual unsigned querySlaveId() const { return slaveId; }
-
+    virtual void reportMemoryUsage(bool peak) const override;
 protected:
     virtual unsigned getPageLimit() const;
 
@@ -4463,6 +4485,7 @@ public:
     }
     ~CGlobalRowManager()
     {
+     PROGLOG("~CGlobalRowManager()");
         for (unsigned i=0; i < numSlaves; i++)
             slaveRowManagers[i]->Release();
         delete [] slaveRowManagers;
@@ -4563,6 +4586,12 @@ void CSlaveRowManager::removeRowBuffer(IBufferedRowCallback * callback)
 unsigned CSlaveRowManager::getPageLimit() const
 {
     return globalManager->getSlavePageLimit(slaveId);
+}
+
+void CSlaveRowManager::reportMemoryUsage(bool peak) const
+{
+    CChunkingRowManager::reportMemoryUsage(peak);
+    globalManager->reportMemoryUsage(peak);
 }
 
 
@@ -4678,6 +4707,8 @@ void CHugeHeap::expandHeap(void * original, memsize_t copysize, memsize_t oldcap
     unsigned newPages = PAGES(newsize + HugeHeaplet::dataOffset(), HEAP_ALIGNMENT_SIZE);
     unsigned oldPages = PAGES(oldcapacity + HugeHeaplet::dataOffset(), HEAP_ALIGNMENT_SIZE);
     void *oldbase =  (void *) ((memsize_t) original & HEAP_ALIGNMENT_MASK);
+    HugeHeaplet * oldHeap = (HugeHeaplet * )oldbase;
+    assertex(this == oldHeap->heap);
 
     //Check if we are shrinking the number of pages.
     if (newPages <= oldPages)
@@ -4761,6 +4792,7 @@ void CHugeHeap::expandHeap(void * original, memsize_t copysize, memsize_t oldcap
         {
             if (maxSpillCost == SpillAllCost)
                 rowManager->reportMemoryUsage(false);
+ rowManager->releaseCallbackMemory(maxSpillCost, true);
             throwHeapExhausted(activityId, newPages, oldPages);
         }
     }
@@ -7611,7 +7643,6 @@ protected:
     }
 
 };
-
 
 CPPUNIT_TEST_SUITE_REGISTRATION( RoxieMemTests );
 CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( RoxieMemTests, "RoxieMemTests" );

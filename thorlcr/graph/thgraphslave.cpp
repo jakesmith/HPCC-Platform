@@ -1511,7 +1511,7 @@ void CJobSlave::addChannel(IMPServer *mpServer)
     CJobSlaveChannel *channel = new CJobSlaveChannel(*this, mpServer, nextChannelNum);
     jobChannels.append(*channel);
     unsigned slaveNum = channel->queryMyRank();
-    jobChannelSlaveNumbers[nextChannelNum] = slaveNum;
+    jobChannelSlaveNumbers[nextChannelNum] = slaveNum-1;
     jobSlaveChannelNum[slaveNum-1] = nextChannelNum;
 }
 

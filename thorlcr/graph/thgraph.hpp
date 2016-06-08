@@ -775,6 +775,7 @@ protected:
     unsigned memorySpillAtPercentage, sharedMemoryLimitPercentage;
     CriticalSection sharedAllocatorCrit;
     Owned<IThorAllocator> sharedAllocator;
+    unsigned numNodes, numSlaves;
 
     class CThorPluginCtx : public SimplePluginCtx
     {
@@ -811,9 +812,19 @@ public:
     virtual void addChannel(IMPServer *mpServer) = 0;
     CJobChannel &queryJobChannel(unsigned c) const;
     CActivityBase &queryChannelActivity(unsigned c, graph_id gid, activity_id id) const;
-    unsigned queryJobChannels() const { return jobChannels.ordinality(); }
+    unsigned queryJobChannels() const { return numChannels; }
     inline unsigned queryJobChannelSlaveNum(unsigned channelNum) const { dbgassertex(channelNum<queryJobChannels()); return jobChannelSlaveNumbers[channelNum]; }
-    inline unsigned queryJobSlaveChannelNum(unsigned slaveNum) const { dbgassertex(slaveNum && slaveNum<=querySlaves()); return jobSlaveChannelNum[slaveNum-1]; }
+    inline unsigned querySlaveForNodeChannel(unsigned node, unsigned channel) const
+    {
+        dbgassertex(node<queryNodes() && channel<queryJobChannels());
+        return channel*numNodes + node;
+    }
+    inline unsigned queryChannelForSlave(unsigned slave) const
+    {
+        dbgassertex(slave<numSlaves);
+        return slave / numNodes;
+    }
+    inline unsigned queryJobSlaveChannelNum(unsigned slaveNum) const { dbgassertex(slaveNum<numSlaves); return jobSlaveChannelNum[slaveNum]; }
     ICommunicator &queryNodeComm() const { return ::queryNodeComm(); }
     const rank_t &queryMyNodeRank() const { return myNodeRank; }
     void init();
@@ -849,8 +860,8 @@ public:
     const offset_t queryMaxDiskUsage() const { return maxDiskUsage; }
     mptag_t querySlaveMpTag() const { return slavemptag; }
     mptag_t queryJobMpTag() const { return mpJobTag; }
-    unsigned querySlaves() const { return slaveGroup->ordinality(); }
-    unsigned queryNodes() const { return nodeGroup->ordinality()-1; }
+    unsigned querySlaves() const { return numSlaves; }
+    unsigned queryNodes() const { return numNodes; }
     IGroup &queryJobGroup() const { return *jobGroup; }
     inline bool queryTimeActivities() const { return timeActivities; }
     unsigned queryMaxDefaultActivityCores() const { return maxActivityCores; }

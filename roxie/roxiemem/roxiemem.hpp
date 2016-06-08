@@ -520,5 +520,8 @@ extern roxiemem_decl StringBuffer &memstats(StringBuffer &stats);
 extern roxiemem_decl void memstats(unsigned &totalpg, unsigned &freepg, unsigned &maxblk);
 extern roxiemem_decl IPerfMonHook *createRoxieMemStatsPerfMonHook(IPerfMonHook *chain=NULL); // for passing to jdebug startPerformanceMonitor
 
+typedef void (*voidFunc)();
+extern roxiemem_decl void setGlobalArrayFunc(voidFunc f);
+
 } // namespace roxiemem
 #endif

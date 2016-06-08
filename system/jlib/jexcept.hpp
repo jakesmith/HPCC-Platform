@@ -143,6 +143,7 @@ IException jlib_decl * deserializeException(MemoryBuffer & in);
 void jlib_decl serializeException(IException * e, MemoryBuffer & out); 
 
 void  jlib_decl printStackReport();
+jlib_decl StringBuffer &getStackReport(StringBuffer &out);
 // Macro for legacy name of above function
 #define PrintStackReport printStackReport
 

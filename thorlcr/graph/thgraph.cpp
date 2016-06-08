@@ -25,6 +25,7 @@
 #include "thormisc.hpp"
 #include "thbufdef.hpp"
 #include "thmem.hpp"
+#include "thorport.hpp"
 
 
 PointerArray createFuncs;
@@ -2360,11 +2361,14 @@ CJobBase::CJobBase(ILoadedDllEntry *_querySo, const char *_graphName) : querySo(
     jobGroup.set(&::queryClusterGroup());
     slaveGroup.setown(jobGroup->remove(0));
     nodeGroup.set(&queryNodeGroup());
+    numSlaves = slaveGroup->ordinality();
+    numNodes = nodeGroup->ordinality()-1;
     myNodeRank = nodeGroup->rank(::queryMyNode());
 
     unsigned channelsPerSlave = globals->getPropInt("@channelsPerSlave", 1);
     jobChannelSlaveNumbers.allocateN(channelsPerSlave, true); // filled when channels are added.
     jobSlaveChannelNum.allocateN(querySlaves()); // filled when channels are added.
+
     for (unsigned s=0; s<querySlaves(); s++)
         jobSlaveChannelNum[s] = NotFound;
     StringBuffer wuXML;
