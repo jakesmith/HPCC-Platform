@@ -2922,6 +2922,8 @@ public:
                 if (myNodeNum == (hv % numNodes))
                     rHSInRowsTemp.append(inRows.getClear(r));
             }
+            if (0 == rHSInRowsTemp.ordinality())
+                return true;
         }
         CriticalBlock b(rHSRowLock);
         /* NB: If PARENT::addRHSRow fails, it will cause clearAllNonLocalRows() to have been triggered and failedOverToLocal to be set
@@ -2940,6 +2942,8 @@ public:
                     if (myNodeNum == (hv % numNodes))
                         rHSInRowsTemp.append(inRows.getClear(r));
                 }
+                if (0 == rHSInRowsTemp.ordinality())
+                    return true;
             }
             overflowWriteCount += rHSInRowsTemp.ordinality();
             ForEachItemIn(r, rHSInRowsTemp)
@@ -2959,6 +2963,8 @@ public:
                     if (myNodeNum == (hv % numNodes))
                         rHSInRowsTemp.append(inRows.getClear(r));
                 }
+                if (0 == rHSInRowsTemp.ordinality())
+                    return true;
             }
             if (rhsRows.appendRows(rHSInRowsTemp, true))
                 return true;
@@ -2975,6 +2981,8 @@ public:
                 if (myNodeNum == (hv % numNodes))
                     rHSInRowsTemp.append(inRows.getClear(r));
             }
+            if (0 == rHSInRowsTemp.ordinality())
+                return true;
 
             // keep it only if it hashes to my node
             if (rhsRows.appendRows(rHSInRowsTemp, true))
