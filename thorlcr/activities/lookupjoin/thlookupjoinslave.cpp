@@ -42,6 +42,22 @@ enum broadcast_code { bcast_none, bcast_send, bcast_sendStopping, bcast_stop };
 enum broadcast_flags { bcastflag_null=0, bcastflag_spilt=0x100 };
 #define BROADCAST_CODE_MASK 0x00FF
 #define BROADCAST_FLAG_MASK 0xFF00
+
+
+class CCycleAddTimer
+{
+    cycle_t &time;
+    CCycleTimer timer;
+public:
+    inline CCycleAddTimer(cycle_t &_time) : time(_time) { }
+    inline ~CCycleAddTimer()
+    {
+        time += timer.elapsedCycles();
+    }
+};
+
+
+
 class CSendItem : public CSimpleInterface
 {
     CMessageBuffer msg;
@@ -103,6 +119,8 @@ class CBroadcaster : public CSimpleInterface
     unsigned waitingAtAllDoneCount;
     broadcast_flags stopFlag;
     Owned<IBitSet> sendersDone, broadcastersStopping;
+    cycle_t bcastSendHandlingTime = 0;
+    cycle_t receiveMsgTime = 0;
 
     class CRecv : implements IThreaded
     {
@@ -340,10 +358,13 @@ class CBroadcaster : public CSimpleInterface
         while (!stopRecv && !activity.queryAbortSoon())
         {
             rank_t sendRank;
-            if (!receiveMsg(msg, &sendRank))
             {
-                ActPrintLog(&activity, "recvLoop() - receiveMsg cancelled");
-                break;
+                CCycleAddTimer tb(receiveMsgTime);
+                if (!receiveMsg(msg, &sendRank))
+                {
+                    ActPrintLog(&activity, "recvLoop() - receiveMsg cancelled");
+                    break;
+                }
             }
             mptag_t replyTag = msg.getReplyTag();
             CMessageBuffer ackMsg;
@@ -381,6 +402,7 @@ class CBroadcaster : public CSimpleInterface
                 }
                 case bcast_send:
                 {
+                    CCycleAddTimer tb(bcastSendHandlingTime);
                     if (!allRequestStop) // don't care if all stopping
                         recvInterface->bCastReceive(sendItem.getClear(), false);
                     break;
@@ -416,6 +438,11 @@ public:
         broadcastLock = NULL;
         receiving = false;
         nodeBroadcast = false;
+    }
+    void trace()
+    {
+        activity.ActPrintLog("receiveMsgTime = %u", static_cast<unsigned>(cycle_to_millisec(receiveMsgTime)));
+        activity.ActPrintLog("bcastSendHandlingTime = %u", static_cast<unsigned>(cycle_to_millisec(bcastSendHandlingTime)));
     }
     void start(IBCastReceive *_recvInterface, mptag_t _mpTag, bool _stopping, bool _nodeBroadcast)
     {
@@ -782,19 +809,6 @@ public:
         flushMarker = 0;
     }
     rowidx_t flushMarker;
-};
-
-
-class CCycleAddTimer
-{
-    cycle_t &time;
-    CCycleTimer timer;
-public:
-    inline CCycleAddTimer(cycle_t &_time) : time(_time) { }
-    inline ~CCycleAddTimer()
-    {
-        time += timer.elapsedCycles();
-    }
 };
 
 
@@ -1579,6 +1593,7 @@ public:
         totalCompresssionTime += compresssionTime;
         totalAddRHSRowTime += addRHSRowTime;
         totalBroadcastToOthersTime += broadcastToOthersTime;
+        broadcaster->trace();
     }
     void doBroadcastStop(mptag_t tag, broadcast_flags flag) // only called on channel 0
     {
