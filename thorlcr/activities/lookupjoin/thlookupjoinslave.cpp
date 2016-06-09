@@ -855,39 +855,33 @@ protected:
      * It will block if it has > MAX_QUEUE_BLOCKS to process (on the queue)
      * Processing will decompress the incoming blocks and add them to a row array per slave
      */
+
+    Owned<IException> rowProcessorException;
     class CRowProcessor : public CSimpleInterfaceOf<IThreaded>
     {
         CThreadedPersistent threaded;
         CInMemJoinBase &owner;
         bool stopped;
-        SimpleInterThreadQueueOf<CSendItem, true> blockQueue;
+        SimpleInterThreadQueueOf<CSendItem, true> *blockQueue = nullptr;
+        CriticalSection crit;
         Owned<IException> exception;
 
-        void clearQueue()
-        {
-            loop
-            {
-                Owned<CSendItem> sendItem = blockQueue.dequeueNow();
-                if (NULL == sendItem)
-                    break;
-            }
-        }
     public:
         CRowProcessor(CInMemJoinBase &_owner) : threaded("CRowProcessor", this), owner(_owner)
         {
             stopped = false;
-            blockQueue.setLimit(MAX_QUEUE_BLOCKS);
         }
         ~CRowProcessor()
         {
-            blockQueue.stop();
-            clearQueue();
             wait();
+        }
+        void setQueue(SimpleInterThreadQueueOf<CSendItem, true> *_blockQueue)
+        {
+            blockQueue = _blockQueue;
         }
         void start()
         {
             stopped = false;
-            clearQueue();
             exception.clear();
             threaded.start();
         }
@@ -896,24 +890,21 @@ protected:
             if (!stopped)
             {
                 stopped = true;
-                blockQueue.enqueue(NULL);
+                blockQueue->enqueue(NULL);
+                blockQueue->stop();
             }
+        }
+        IException *getException()
+        {
+            CriticalBlock b(crit);
+            return exception.getClear();
         }
         void wait()
         {
             threaded.join();
+            CriticalBlock b(crit);
             if (exception)
                 throw exception.getClear();
-        }
-        void addBlock(CSendItem *sendItem)
-        {
-            if (exception)
-            {
-                if (sendItem)
-                    sendItem->Release();
-                throw exception.getClear();
-            }
-            blockQueue.enqueue(sendItem); // will block if queue full
         }
     // IThreaded
         virtual void main()
@@ -922,7 +913,7 @@ protected:
             {
                 while (!stopped)
                 {
-                    Owned<CSendItem> sendItem = blockQueue.dequeue();
+                    Owned<CSendItem> sendItem = blockQueue->dequeue();
                     if (stopped || (NULL == sendItem))
                         break;
                     MemoryBuffer expandedMb;
@@ -932,7 +923,12 @@ protected:
             }
             catch (IException *e)
             {
-                exception.setown(e);
+                {
+                    CriticalBlock b(crit);
+                    exception.setown(e);
+                    if (!owner.rowProcessorException)
+                        owner.rowProcessorException.set(e);
+                }
                 EXCLOG(e, "CRowProcessor");
             }
         }
@@ -987,6 +983,7 @@ protected:
     InterruptableSemaphore interChannelBarrierSem;
     bool channelActivitiesAssigned;
 
+    SimpleInterThreadQueueOf<CSendItem, true> *processorBlockQueue = nullptr;
 
     cycle_t serializationTime = 0;
     cycle_t compresssionTime = 0;
@@ -1342,7 +1339,6 @@ public:
 
     CInMemJoinBase(CGraphElementBase *_container) : CSlaveActivity(_container), HELPERBASE((HELPER *)queryHelper()), rhs(*this)
     {
-
         totalSerializationTime = 0;
         totalCompresssionTime = 0;
         totalAddRHSRowTime = 0;
@@ -1358,6 +1354,13 @@ public:
         numSlaves = queryJob().querySlaves();
         local = container.queryLocal() || (1 == numSlaves);
         rowProcessor = NULL;
+
+        if (0 == queryJobChannelNumber())
+        {
+            processorBlockQueue = new SimpleInterThreadQueueOf<CSendItem, true>;
+            processorBlockQueue->setLimit(MAX_QUEUE_BLOCKS * queryJob().queryJobChannels());
+        }
+
         atomic_set(&interChannelToNotifyCount, 0);
         rhsTableLen = 0;
         leftITDL = rightITDL = NULL;
@@ -1399,6 +1402,17 @@ public:
     {
         if (isGlobal())
         {
+            if (0 == queryJobChannelNumber())
+            {
+                processorBlockQueue->stop();
+                loop
+                {
+                    Owned<CSendItem> sendItem = processorBlockQueue->dequeueNow();
+                    if (NULL == sendItem)
+                        break;
+                }
+                delete processorBlockQueue;
+            }
             ::Release(rowProcessor);
             ForEachItemIn(a, rhsSlaveRows)
             {
@@ -1413,6 +1427,10 @@ public:
     CriticalSection *queryBroadcastLock()
     {
         return broadcastLock;
+    }
+    SimpleInterThreadQueueOf<CSendItem, true> *queryProcessorQueue()
+    {
+        return processorBlockQueue;
     }
     HTHELPER *queryTable() { return table; }
     void startLeftInput()
@@ -1443,11 +1461,9 @@ public:
                 rhsSlaveRows.append(new CThorRowArrayWithFlushMarker(*this));
             channels.allocateN(queryJob().queryJobChannels());
             broadcaster.setown(new CBroadcaster(*this));
+            rowProcessor = new CRowProcessor(*this);
             if (0 == queryJobChannelNumber())
-            {
-                rowProcessor = new CRowProcessor(*this);
                 broadcastLock = new CriticalSection;
-            }
         }
     }
     virtual void setInputStream(unsigned index, CThorInput &_input, bool consumerOrdered) override
@@ -1487,6 +1503,7 @@ public:
                     channels[c] = &channel;
                 }
                 broadcaster->setBroadcastLock(channels[0]->queryBroadcastLock());
+                rowProcessor->setQueue(channels[0]->queryProcessorQueue());
             }
             channel0Broadcaster = channels[0]->broadcaster;
             // NB: use sharedRightRowInterfaces, so that expanding ptr array is using shared allocator
@@ -1577,19 +1594,27 @@ public:
             channel0Broadcaster->setStopping(myNodeNum);
         if (0 == queryJobChannelNumber())
         {
+            loop
+            {
+                Owned<CSendItem> sendItem = processorBlockQueue->dequeueNow();
+                if (NULL == sendItem)
+                    break;
+            }
             rowProcessor->start();
             broadcaster->start(this, mpTag, stopping, false); // slaves broadcasting
             broadcastRHS();
             broadcaster->end();
-            rowProcessor->wait();
             broadcaster->trace();
         }
         else
         {
+            rowProcessor->start();
             broadcaster->start(NULL, mpTag, stopping, false); // pass NULL for IBCastReceive, since only channel 0 receives
             broadcastRHS();
             channel0Broadcaster->waitReceiverDone(mySlaveNum);
         }
+        rowProcessor->wait();
+
         totalSerializationTime += serializationTime;
         totalCompresssionTime += compresssionTime;
         totalAddRHSRowTime += addRHSRowTime;
@@ -1646,7 +1671,16 @@ public:
             sendItem = NULL; // fall through, base signals stop to rowProcessor
         }
         dbgassertex((sendItem==NULL) == stop); // if sendItem==NULL stop must = true, if sendItem != NULL stop must = false;
-        rowProcessor->addBlock(sendItem);
+        if (rowProcessorException)
+            throw rowProcessorException.getClear();
+        if (nullptr == sendItem)
+        {
+            // a null item for each rowProcessor listening
+            for (unsigned c=0; c<queryJob().queryJobChannels(); c++)
+                processorBlockQueue->enqueue(nullptr);
+        }
+        else
+            processorBlockQueue->enqueue(sendItem);
     }
     virtual void onInputFinished(rowcount_t count)
     {
