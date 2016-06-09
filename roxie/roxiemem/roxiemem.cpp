@@ -4343,6 +4343,10 @@ public:
         : CChunkingRowManager(_memLimit, _tl, _logctx, _allocatorCache, _ignoreLeaks, _outputOOMReports), slaveId(_slaveId), globalManager(_globalManager)
     {
     }
+    ~CSlaveRowManager()
+    {
+     PROGLOG("~CSlaveRowManager()");
+    }
 
     virtual bool releaseCallbackMemory(unsigned maxSpillCost, bool critical, bool checkSequence, unsigned prevReleaseSeq);
     virtual unsigned getReleaseSeq() const;
@@ -4463,6 +4467,7 @@ public:
     }
     ~CGlobalRowManager()
     {
+     PROGLOG("~CGlobalRowManager()");
         for (unsigned i=0; i < numSlaves; i++)
             slaveRowManagers[i]->Release();
         delete [] slaveRowManagers;

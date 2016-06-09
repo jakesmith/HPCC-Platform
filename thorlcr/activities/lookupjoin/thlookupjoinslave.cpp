@@ -2008,6 +2008,9 @@ protected:
                 overflowWriteFile.clear();
                 overflowWriteStream.clear();
                 rightRowManager->addRowBuffer(this);
+        ActPrintLog(">>>handleGlobalRHS ch0");
+        queryRowManager()->reportMemoryUsage(false);
+        ActPrintLog("<<<handleGlobalRHS ch0");
             }
             doBroadcastRHS(stopping);
 
@@ -2125,6 +2128,9 @@ protected:
                  * However, all invoked callbacks need to be handled by ch0
                  */
                 rightRowManager->addRowBuffer(lkJoinCh0);
+        ActPrintLog(">>>handleGlobalRHS other channel");
+        queryRowManager()->reportMemoryUsage(false);
+        ActPrintLog("<<<handleGlobalRHS other channel");
             }
             doBroadcastRHS(stopping);
             InterChannelBarrier(); // wait for channel 0, which will have marked rhsCollated and broadcast spilt status to all others
@@ -2273,7 +2279,7 @@ protected:
             }
             virtual bool spill(bool critical) // called from OOM callback
             {
-                atomic_set(&spilt, 1);
+//                atomic_set(&spilt, 1);
                 return channelCollector->spill(critical);
             }
             virtual roxiemem::IBufferedRowCallback *queryCallback() { return this; }

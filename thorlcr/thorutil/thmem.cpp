@@ -2302,6 +2302,7 @@ public:
     }
     ~CThorAllocator()
     {
+ PROGLOG("~CThorAllocator");
         rowManager.clear();
         allocatorMetaCache.clear();
     }
