@@ -810,7 +810,6 @@ class CInMemJoinBase : public CSlaveActivity, public CAllOrLookupHelper<HELPER>,
     Owned<IException> leftexception;
 
     bool eos, eog, someSinceEog;
-    SpinLock rHSRowSpinLock;
 
 protected:
     typedef CAllOrLookupHelper<HELPER> HELPERBASE;
@@ -911,6 +910,7 @@ protected:
         }
     } *rowProcessor;
 
+    SpinLock rHSRowSpinLock;
     Owned<CBroadcaster> broadcaster;
     CBroadcaster *channel0Broadcaster;
     CriticalSection *broadcastLock;
@@ -1685,6 +1685,7 @@ protected:
     using PARENT::tableProxy;
     using PARENT::gatheredRHSNodeStreams;
     using PARENT::queryInput;
+    using PARENT::rHSRowSpinLock;
 
     IHash *leftHash, *rightHash;
     ICompare *compareRight, *compareLeftRight;
@@ -1705,7 +1706,6 @@ protected:
     Owned<IJoinHelper> joinHelper;
 
     // NB: Only used by channel 0
-    CriticalSection overflowCrit;
     Owned<CFileOwner> overflowWriteFile;
     Owned<IRowWriter> overflowWriteStream;
     rowcount_t overflowWriteCount;
@@ -1908,18 +1908,6 @@ protected:
                      */
                     gatheredRHSNodeStreams.append(* rows.createRowStream(SPILL_PRIORITY_LOOKUPJOIN+10, spillCompInfo)); // NB: default SPILL_PRIORITY_SPILLABLE_STREAM is lower than SPILL_PRIORITY_LOOKUPJOIN
                 }
-            }
-            if (overflowWriteFile)
-            {
-                unsigned rwFlags = DEFAULT_RWFLAGS;
-                if (spillCompInfo)
-                {
-                    rwFlags |= rw_compress;
-                    rwFlags |= spillCompInfo;
-                }
-                ActPrintLog("Reading overflow RHS broadcast rows : %" RCPF "d", overflowWriteCount);
-                Owned<IRowStream> overflowStream = createRowStream(&overflowWriteFile->queryIFile(), queryRowInterfaces(rightITDL), rwFlags);
-                gatheredRHSNodeStreams.append(* overflowStream.getClear());
             }
             if (gatheredRHSNodeStreams.ordinality())
                 return createConcatRowStream(gatheredRHSNodeStreams.ordinality(), gatheredRHSNodeStreams.getArray());
@@ -2141,11 +2129,29 @@ protected:
                     if (!row)
                         break;
                     unsigned hv = owner.rightHash->hash(row);
-                    unsigned slave = hv % owner.numNodes;
+                    unsigned slave = hv % owner.numSlaves;
                     unsigned channelDst = owner.queryJob().queryJobSlaveChannelNum(slave+1);
                     dbgassertex(NotFound != channelDst); // if 0, slave is not a slave of this process
                     dbgassertex(channelDst < owner.queryJob().queryJobChannels());
                     channelDistributors[channelDst]->putRow(row.getClear());
+                }
+            }
+            void processOverflow(IRowStream *overflow)
+            {
+                loop
+                {
+                    OwnedConstThorRow row = overflow->nextRow();
+                    if (!row)
+                        break;
+                    unsigned hv = owner.rightHash->hash(row);
+                    if (owner.myNodeNum == (hv % owner.numNodes))
+                    {
+                        unsigned slave = hv % owner.numSlaves;
+                        unsigned channelDst = owner.queryJob().queryJobSlaveChannelNum(slave+1);
+                        dbgassertex(NotFound != channelDst); // if 0, slave is not a slave of this process
+                        dbgassertex(channelDst < owner.queryJob().queryJobChannels());
+                        channelDistributors[channelDst]->putRow(row.getClear());
+                    }
                 }
             }
             void processDistRight(IRowStream *right)
@@ -2228,6 +2234,18 @@ protected:
                 Owned<IRowStream> gatheredRHSStream = getGatheredRHSStream();
                 if (gatheredRHSStream)
                     channelDistributor.process(gatheredRHSStream);
+                if (overflowWriteFile)
+                {
+                    unsigned rwFlags = DEFAULT_RWFLAGS;
+                    if (spillCompInfo)
+                    {
+                        rwFlags |= rw_compress;
+                        rwFlags |= spillCompInfo;
+                    }
+                    ActPrintLog("Reading overflow RHS broadcast rows : %" RCPF "d", overflowWriteCount);
+                    Owned<IRowStream> overflowStream = createRowStream(&overflowWriteFile->queryIFile(), queryRowInterfaces(rightITDL), rwFlags);
+                    channelDistributor.processOverflow(overflowStream);
+                }
             }
             InterChannelBarrier(); // wait for channel[0] to process in mem rows 1st
 
@@ -2693,19 +2711,27 @@ public:
     // NB: addRHSRow only called on channel 0
     virtual bool addRHSRow(CThorSpillableRowArray &rhsRows, const void *row)
     {
+        LinkThorRow(row);
+        SpinBlock b(rHSRowSpinLock);
         /* NB: If PARENT::addRHSRow fails, it will cause clearAllNonLocalRows() to have been triggered and failedOverToLocal to be set
          * When all is done, a last pass is needed to clear out non-locals
          */
         if (!overflowWriteFile)
         {
-            if (!hasFailedOverToLocal() && PARENT::addRHSRow(rhsRows, row))
-                return true;
+            if (!hasFailedOverToLocal())
+            {
+                if (rhsRows.append(row))
+                    return true;
+            }
             dbgassertex(hasFailedOverToLocal());
             // keep it only if it hashes to my node
             unsigned hv = rightHash->hash(row);
             if (myNodeNum != (hv % numNodes))
+            {
+                ReleaseThorRow(row);
                 return true; // throw away non-local row
-            if (PARENT::addRHSRow(rhsRows, row))
+            }
+            if (rhsRows.append(row))
                 return true;
 
             /* Could OOM whilst still failing over to local lookup again, dealing with last row, or trailing
@@ -2714,7 +2740,6 @@ public:
              *
              * Need to stash away somewhere to allow it to continue.
              */
-            CriticalBlock b(overflowCrit); // could be coming from broadcaster or receiver
             if (!overflowWriteFile)
             {
                 unsigned rwFlags = DEFAULT_RWFLAGS;
@@ -2732,8 +2757,6 @@ public:
             }
         }
         ++overflowWriteCount;
-        LinkThorRow(row);
-        CriticalBlock b(overflowCrit); // could be coming from broadcaster or receiver
         overflowWriteStream->putRow(row);
         return true;
     }
