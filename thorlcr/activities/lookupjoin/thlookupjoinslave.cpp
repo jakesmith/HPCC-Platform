@@ -863,27 +863,38 @@ protected:
         CInMemJoinBase &owner;
         bool stopped;
         CInMemJoinBase *targetChannel = nullptr;
-        SimpleInterThreadQueueOf<CSendItem, true> *blockQueue = nullptr;
-        CriticalSection crit;
+        SimpleInterThreadQueueOf<CSendItem, true> blockQueue;
         Owned<IException> exception;
 
+        void clearQueue()
+        {
+            loop
+            {
+                Owned<CSendItem> sendItem = blockQueue.dequeueNow();
+                if (NULL == sendItem)
+                    break;
+            }
+        }
     public:
         CRowProcessor(CInMemJoinBase &_owner) : threaded("CRowProcessor", this), owner(_owner)
         {
             stopped = false;
+            blockQueue.setLimit(MAX_QUEUE_BLOCKS);
         }
         ~CRowProcessor()
         {
+            blockQueue.stop();
+            clearQueue();
             wait();
         }
         void setTargetChannel(CInMemJoinBase &_targetChannel)
         {
             targetChannel = &_targetChannel;
-            blockQueue = targetChannel->queryProcessorQueue();
         }
         void start()
         {
             stopped = false;
+            clearQueue();
             exception.clear();
             threaded.start();
         }
@@ -892,16 +903,24 @@ protected:
             if (!stopped)
             {
                 stopped = true;
-                blockQueue->enqueue(NULL);
-                blockQueue->stop();
+                blockQueue.enqueue(NULL);
             }
         }
         void wait()
         {
             threaded.join();
-            CriticalBlock b(crit);
             if (exception)
                 throw exception.getClear();
+        }
+        void addBlock(CSendItem *sendItem)
+        {
+            if (exception)
+            {
+                if (sendItem)
+                    sendItem->Release();
+                throw exception.getClear();
+            }
+            blockQueue.enqueue(sendItem); // will block if queue full
         }
     // IThreaded
         virtual void main()
@@ -910,7 +929,7 @@ protected:
             {
                 while (!stopped)
                 {
-                    Owned<CSendItem> sendItem = blockQueue->dequeue();
+                    Owned<CSendItem> sendItem = blockQueue.dequeue();
                     if (stopped || (NULL == sendItem))
                         break;
                     MemoryBuffer expandedMb;
@@ -920,12 +939,7 @@ protected:
             }
             catch (IException *e)
             {
-                {
-                    CriticalBlock b(crit);
-                    exception.setown(e);
-                    if (!owner.rowProcessorException)
-                        owner.rowProcessorException.set(e);
-                }
+                exception.setown(e);
                 EXCLOG(e, "CRowProcessor");
             }
         }
@@ -975,12 +989,11 @@ protected:
     rank_t myNodeNum, mySlaveNum;
     unsigned numNodes, numSlaves;
     OwnedMalloc<CInMemJoinBase *> channels;
+    unsigned currentRowProcessor = 0;
 
     atomic_t interChannelToNotifyCount; // only used on channel 0
     InterruptableSemaphore interChannelBarrierSem;
     bool channelActivitiesAssigned;
-
-    SimpleInterThreadQueueOf<CSendItem, true> *processorBlockQueue = nullptr;
 
     cycle_t serializationTime = 0;
     cycle_t compresssionTime = 0;
@@ -1352,12 +1365,6 @@ public:
         local = container.queryLocal() || (1 == numSlaves);
         rowProcessor = NULL;
 
-        if (0 == queryJobChannelNumber())
-        {
-            processorBlockQueue = new SimpleInterThreadQueueOf<CSendItem, true>;
-            processorBlockQueue->setLimit(MAX_QUEUE_BLOCKS * queryJob().queryJobChannels());
-        }
-
         atomic_set(&interChannelToNotifyCount, 0);
         rhsTableLen = 0;
         leftITDL = rightITDL = NULL;
@@ -1399,17 +1406,6 @@ public:
     {
         if (isGlobal())
         {
-            if (0 == queryJobChannelNumber())
-            {
-                processorBlockQueue->stop();
-                loop
-                {
-                    Owned<CSendItem> sendItem = processorBlockQueue->dequeueNow();
-                    if (NULL == sendItem)
-                        break;
-                }
-                delete processorBlockQueue;
-            }
             ::Release(rowProcessor);
             ForEachItemIn(a, rhsSlaveRows)
             {
@@ -1425,9 +1421,9 @@ public:
     {
         return broadcastLock;
     }
-    SimpleInterThreadQueueOf<CSendItem, true> *queryProcessorQueue()
+    CRowProcessor *queryRowProcessor()
     {
-        return processorBlockQueue;
+        return rowProcessor;
     }
     HTHELPER *queryTable() { return table; }
     void startLeftInput()
@@ -1591,12 +1587,6 @@ public:
             channel0Broadcaster->setStopping(myNodeNum);
         if (0 == queryJobChannelNumber())
         {
-            loop
-            {
-                Owned<CSendItem> sendItem = processorBlockQueue->dequeueNow();
-                if (NULL == sendItem)
-                    break;
-            }
             rowProcessor->start();
             broadcaster->start(this, mpTag, stopping, false); // slaves broadcasting
             broadcastRHS();
@@ -1675,10 +1665,15 @@ public:
         {
             // a null item for each rowProcessor listening
             for (unsigned c=0; c<queryJob().queryJobChannels(); c++)
-                processorBlockQueue->enqueue(nullptr);
+                channels[c]->queryRowProcessor()->addBlock(nullptr);
         }
         else
-            processorBlockQueue->enqueue(sendItem);
+        {
+            channels[currentRowProcessor]->queryRowProcessor()->addBlock(sendItem);
+            ++currentRowProcessor;
+            if (currentRowProcessor >= queryJob().queryJobChannels())
+                currentRowProcessor = 0;
+        }
     }
     virtual void onInputFinished(rowcount_t count)
     {
