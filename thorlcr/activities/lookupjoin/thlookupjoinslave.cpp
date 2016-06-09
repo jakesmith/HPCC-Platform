@@ -945,7 +945,7 @@ protected:
         }
     } *rowProcessor;
 
-    SpinLock rHSRowSpinLock;
+    CriticalSection rHSRowLock;
     Owned<CBroadcaster> broadcaster;
     CBroadcaster *channel0Broadcaster;
     CriticalSection *broadcastLock;
@@ -1106,14 +1106,25 @@ protected:
          * if it never spills, but will make flushing non-locals simpler if spilling occurs.
          */
         CThorSpillableRowArray &rows = *rhsSlaveRows.item(slave);
+        CThorExpandingRowArray rHSInRowsTemp(*this, sharedRightRowInterfaces);
+        CThorExpandingRowArray pending(*this, sharedRightRowInterfaces);
         RtlDynamicRowBuilder rowBuilder(rightAllocator); // NB: rightAllocator is the shared allocator
         CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
         while (!memDeserializer.eos())
         {
             size32_t sz = rightDeserializer->deserialize(rowBuilder, memDeserializer);
-            OwnedConstThorRow fRow = rowBuilder.finalizeRowClear(sz);
+            pending.append(rowBuilder.finalizeRowClear(sz));
+            if (pending.ordinality() >= 100)
+            {
+                // NB: If spilt, addRHSRow will filter out non-locals
+                if (!addRHSRows(rows, pending, rHSInRowsTemp)) // NB: in SMART case, must succeed
+                    throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
+            }
+        }
+        if (pending.ordinality())
+        {
             // NB: If spilt, addRHSRow will filter out non-locals
-            if (!addRHSRow(rows, fRow)) // NB: in SMART case, must succeed
+            if (!addRHSRows(rows, pending, rHSInRowsTemp)) // NB: in SMART case, must succeed
                 throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
         }
     }
@@ -1122,6 +1133,8 @@ protected:
         ActPrintLog("start broadcastRHS()");
         Owned<CSendItem> sendItem = broadcaster->newSendItem(bcast_send);
         MemoryBuffer mb;
+        CThorExpandingRowArray rHSInRowsTemp(*this, sharedRightRowInterfaces);
+        CThorExpandingRowArray pending(*this, sharedRightRowInterfaces);
         try
         {
             CThorSpillableRowArray &localRhsRows = *rhsSlaveRows.item(mySlaveNum);
@@ -1137,26 +1150,45 @@ protected:
                     /* Add all locally read right rows to channel0 directly
                      * NB: these rows remain on their channel allocator.
                      */
-                    if (0 == queryJobChannelNumber())
-                    {
-                        if (!addRHSRow(localRhsRows, row)) // may cause broadcaster to be told to stop (for isStopping() to become true)
-                            throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
-                    }
-                    else
-                    {
-                        if (!channels[0]->addRHSRow(mySlaveNum, row))
-                            throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
-                    }
                     if (numNodes>1)
                     {
                         serializationTimer.reset();
                         rightSerializer->serialize(mbser, (const byte *)row.get());
                         serializationTime += serializationTimer.elapsedCycles();
+                        pending.append(row.getClear());
                         if (mb.length() >= MAX_SEND_SIZE || channel0Broadcaster->stopRequested())
                             break;
                     }
+                    else
+                        pending.append(row.getClear());
+                    if (pending.ordinality() >= 100)
+                    {
+                        if (0 == queryJobChannelNumber())
+                        {
+                            if (!addRHSRows(localRhsRows, pending, rHSInRowsTemp)) // may cause broadcaster to be told to stop (for isStopping() to become true)
+                                throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
+                        }
+                        else
+                        {
+                            if (!channels[0]->addRHSRows(mySlaveNum, pending, rHSInRowsTemp))
+                                throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
+                        }
+                    }
                     if (channel0Broadcaster->stopRequested())
                         break;
+                }
+                if (pending.ordinality())
+                {
+                    if (0 == queryJobChannelNumber())
+                    {
+                        if (!addRHSRows(localRhsRows, pending, rHSInRowsTemp)) // may cause broadcaster to be told to stop (for isStopping() to become true)
+                            throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
+                    }
+                    else
+                    {
+                        if (!channels[0]->addRHSRows(mySlaveNum, pending, rHSInRowsTemp))
+                            throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
+                    }
                 }
                 if (0 == mb.length()) // will always be true if numNodes = 1
                     break;
@@ -1640,12 +1672,22 @@ public:
     {
         LinkThorRow(row);
         {
-            SpinBlock b(rHSRowSpinLock);
+            CriticalBlock b(rHSRowLock);
             if (rhsRows.append(row))
                 return true;
         }
         ReleaseThorRow(row);
         return false;
+    }
+    bool addRHSRows(unsigned slave, CThorExpandingRowArray &inRows, CThorExpandingRowArray &rHSInRowsTemp)
+    {
+        CThorSpillableRowArray &rows = *rhsSlaveRows.item(slave);
+        return addRHSRows(rows, inRows, rHSInRowsTemp);
+    }
+    virtual bool addRHSRows(CThorSpillableRowArray &rhsRows, CThorExpandingRowArray &inRows, CThorExpandingRowArray &rHSInRowsTemp)
+    {
+        CriticalBlock b(rHSRowLock);
+        return rhsRows.appendRows(inRows, true);
     }
 
 // IBCastReceive (only used if global)
@@ -1774,7 +1816,7 @@ protected:
     using PARENT::tableProxy;
     using PARENT::gatheredRHSNodeStreams;
     using PARENT::queryInput;
-    using PARENT::rHSRowSpinLock;
+    using PARENT::rHSRowLock;
 
 
     using PARENT::totalSerializationTime;
@@ -2005,6 +2047,18 @@ protected:
                      */
                     gatheredRHSNodeStreams.append(* rows.createRowStream(SPILL_PRIORITY_LOOKUPJOIN+10, spillCompInfo)); // NB: default SPILL_PRIORITY_SPILLABLE_STREAM is lower than SPILL_PRIORITY_LOOKUPJOIN
                 }
+            }
+            if (overflowWriteFile)
+            {
+                unsigned rwFlags = DEFAULT_RWFLAGS;
+                if (spillCompInfo)
+                {
+                    rwFlags |= rw_compress;
+                    rwFlags |= spillCompInfo;
+                }
+                ActPrintLog("Reading overflow RHS broadcast rows : %" RCPF "d", overflowWriteCount);
+                Owned<IRowStream> overflowStream = createRowStream(&overflowWriteFile->queryIFile(), queryRowInterfaces(rightITDL), rwFlags);
+                gatheredRHSNodeStreams.append(* overflowStream.getClear());
             }
             if (gatheredRHSNodeStreams.ordinality())
                 return createConcatRowStream(gatheredRHSNodeStreams.ordinality(), gatheredRHSNodeStreams.getArray());
@@ -2249,24 +2303,6 @@ protected:
                     channelDistributors[channelDst]->putRow(row.getClear());
                 }
             }
-            void processOverflow(IRowStream *overflow)
-            {
-                loop
-                {
-                    OwnedConstThorRow row = overflow->nextRow();
-                    if (!row)
-                        break;
-                    unsigned hv = owner.rightHash->hash(row);
-                    if (owner.myNodeNum == (hv % owner.numNodes))
-                    {
-                        unsigned slave = hv % owner.numSlaves;
-                        unsigned channelDst = owner.queryJob().queryJobSlaveChannelNum(slave+1);
-                        dbgassertex(NotFound != channelDst); // if 0, slave is not a slave of this process
-                        dbgassertex(channelDst < owner.queryJob().queryJobChannels());
-                        channelDistributors[channelDst]->putRow(row.getClear());
-                    }
-                }
-            }
             void processDistRight(IRowStream *right)
             {
                 loop
@@ -2348,18 +2384,6 @@ protected:
                 Owned<IRowStream> gatheredRHSStream = getGatheredRHSStream();
                 if (gatheredRHSStream)
                     channelDistributor.process(gatheredRHSStream);
-                if (overflowWriteFile)
-                {
-                    unsigned rwFlags = DEFAULT_RWFLAGS;
-                    if (spillCompInfo)
-                    {
-                        rwFlags |= rw_compress;
-                        rwFlags |= spillCompInfo;
-                    }
-                    ActPrintLog("Reading overflow RHS broadcast rows : %" RCPF "d", overflowWriteCount);
-                    Owned<IRowStream> overflowStream = createRowStream(&overflowWriteFile->queryIFile(), queryRowInterfaces(rightITDL), rwFlags);
-                    channelDistributor.processOverflow(overflowStream);
-                }
                 ActPrintLog("TIME: %s - channelDistributorTime = %u ms", queryJob().queryWuid(), timer.elapsedMs());
             }
             InterChannelBarrier(); // wait for channel[0] to process in mem rows 1st
@@ -2837,7 +2861,7 @@ public:
     virtual bool addRHSRow(CThorSpillableRowArray &rhsRows, const void *row)
     {
         LinkThorRow(row);
-        SpinBlock b(rHSRowSpinLock);
+        CriticalBlock b(rHSRowLock);
         CCycleAddTimer tb(addRHSRowTime);
         /* NB: If PARENT::addRHSRow fails, it will cause clearAllNonLocalRows() to have been triggered and failedOverToLocal to be set
          * When all is done, a last pass is needed to clear out non-locals
@@ -2884,6 +2908,100 @@ public:
         }
         ++overflowWriteCount;
         overflowWriteStream->putRow(row);
+        return true;
+    }
+    virtual bool addRHSRows(CThorSpillableRowArray &rhsRows, CThorExpandingRowArray &inRows, CThorExpandingRowArray &rHSInRowsTemp)
+    {
+        assertex(0 == rHSInRowsTemp.ordinality());
+        CCycleAddTimer tb(addRHSRowTime);
+        if (hasFailedOverToLocal())
+        {
+            ForEachItemIn(r, inRows)
+            {
+                unsigned hv = rightHash->hash(inRows.query(r));
+                if (myNodeNum == (hv % numNodes))
+                    rHSInRowsTemp.append(inRows.getClear(r));
+            }
+        }
+        CriticalBlock b(rHSRowLock);
+        /* NB: If PARENT::addRHSRow fails, it will cause clearAllNonLocalRows() to have been triggered and failedOverToLocal to be set
+         * When all is done, a last pass is needed to clear out non-locals
+         */
+        if (overflowWriteFile)
+        {
+            /* Tried to do outside crit above, but if empty, and now overflow, need to inside
+             * Will be one off if at all
+             */
+            if (0 == rHSInRowsTemp.ordinality())
+            {
+                ForEachItemIn(r, inRows)
+                {
+                    unsigned hv = rightHash->hash(inRows.query(r));
+                    if (myNodeNum == (hv % numNodes))
+                        rHSInRowsTemp.append(inRows.getClear(r));
+                }
+            }
+            overflowWriteCount += rHSInRowsTemp.ordinality();
+            ForEachItemIn(r, rHSInRowsTemp)
+                overflowWriteStream->putRow(rHSInRowsTemp.getClear(r));
+            return true;
+        }
+        if (hasFailedOverToLocal())
+        {
+            /* Tried to do outside crit above, but hasFailedOverToLocal() could be true, since gaining lock
+             * Will be one off if at all
+             */
+            if (0 == rHSInRowsTemp.ordinality())
+            {
+                ForEachItemIn(r, inRows)
+                {
+                    unsigned hv = rightHash->hash(inRows.query(r));
+                    if (myNodeNum == (hv % numNodes))
+                        rHSInRowsTemp.append(inRows.getClear(r));
+                }
+            }
+            if (rhsRows.appendRows(rHSInRowsTemp, true))
+                return true;
+        }
+        else
+        {
+            if (rhsRows.appendRows(inRows, true))
+                return true;
+            dbgassertex(hasFailedOverToLocal());
+
+            ForEachItemIn(r, inRows)
+            {
+                unsigned hv = rightHash->hash(inRows.query(r));
+                if (myNodeNum == (hv % numNodes))
+                    rHSInRowsTemp.append(inRows.getClear(r));
+            }
+
+            // keep it only if it hashes to my node
+            if (rhsRows.appendRows(rHSInRowsTemp, true))
+                return true;
+        }
+        /* Could OOM whilst still failing over to local lookup again, dealing with last row, or trailing
+         * few rows being received. Unlikely since all local rows will have been cleared, but possible,
+         * particularly if last rows end up causing row ptr table expansion here.
+         *
+         * Need to stash away somewhere to allow it to continue.
+         */
+        unsigned rwFlags = DEFAULT_RWFLAGS;
+        if (spillCompInfo)
+        {
+            rwFlags |= rw_compress;
+            rwFlags |= spillCompInfo;
+        }
+        StringBuffer tempFilename;
+        GetTempName(tempFilename, "lookup_local", true);
+        ActPrintLog("Overflowing RHS broadcast rows to spill file: %s", tempFilename.str());
+        OwnedIFile iFile = createIFile(tempFilename.str());
+        overflowWriteFile.setown(new CFileOwner(iFile.getLink()));
+        overflowWriteStream.setown(createRowWriter(iFile, queryRowInterfaces(rightITDL), rwFlags));
+
+        overflowWriteCount += rHSInRowsTemp.ordinality();
+        ForEachItemIn(r, rHSInRowsTemp)
+            overflowWriteStream->putRow(rHSInRowsTemp.getClear(r));
         return true;
     }
 };
