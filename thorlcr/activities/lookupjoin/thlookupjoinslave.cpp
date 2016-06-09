@@ -862,6 +862,7 @@ protected:
         CThreadedPersistent threaded;
         CInMemJoinBase &owner;
         bool stopped;
+        CInMemJoinBase *targetChannel = nullptr;
         SimpleInterThreadQueueOf<CSendItem, true> *blockQueue = nullptr;
         CriticalSection crit;
         Owned<IException> exception;
@@ -875,9 +876,10 @@ protected:
         {
             wait();
         }
-        void setQueue(SimpleInterThreadQueueOf<CSendItem, true> *_blockQueue)
+        void setTargetChannel(CInMemJoinBase &_targetChannel)
         {
-            blockQueue = _blockQueue;
+            targetChannel = &_targetChannel;
+            blockQueue = targetChannel->queryProcessorQueue();
         }
         void start()
         {
@@ -893,11 +895,6 @@ protected:
                 blockQueue->enqueue(NULL);
                 blockQueue->stop();
             }
-        }
-        IException *getException()
-        {
-            CriticalBlock b(crit);
-            return exception.getClear();
         }
         void wait()
         {
@@ -918,7 +915,7 @@ protected:
                         break;
                     MemoryBuffer expandedMb;
                     ThorExpand(sendItem->queryMsg(), expandedMb);
-                    owner.processRHSRows(sendItem->querySlave(), expandedMb);
+                    targetChannel->processRHSRows(sendItem->querySlave(), expandedMb);
                 }
             }
             catch (IException *e)
@@ -1503,7 +1500,7 @@ public:
                     channels[c] = &channel;
                 }
                 broadcaster->setBroadcastLock(channels[0]->queryBroadcastLock());
-                rowProcessor->setQueue(channels[0]->queryProcessorQueue());
+                rowProcessor->setTargetChannel((CInMemJoinBase &)queryChannelActivity(0));
             }
             channel0Broadcaster = channels[0]->broadcaster;
             // NB: use sharedRightRowInterfaces, so that expanding ptr array is using shared allocator
@@ -1614,6 +1611,7 @@ public:
             channel0Broadcaster->waitReceiverDone(mySlaveNum);
         }
         rowProcessor->wait();
+        InterChannelBarrier();
 
         totalSerializationTime += serializationTime;
         totalCompresssionTime += compresssionTime;
