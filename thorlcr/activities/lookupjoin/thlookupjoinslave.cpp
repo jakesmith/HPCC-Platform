@@ -441,8 +441,8 @@ public:
     }
     void trace()
     {
-        activity.ActPrintLog("receiveMsgTime = %u", static_cast<unsigned>(cycle_to_millisec(receiveMsgTime)));
-        activity.ActPrintLog("bcastSendHandlingTime = %u", static_cast<unsigned>(cycle_to_millisec(bcastSendHandlingTime)));
+        activity.ActPrintLog("TIME: %s - receiveMsgTime = %u", activity.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(receiveMsgTime)));
+        activity.ActPrintLog("TIME: %s - bcastSendHandlingTime = %u", activity.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(bcastSendHandlingTime)));
     }
     void start(IBCastReceive *_recvInterface, mptag_t _mpTag, bool _stopping, bool _nodeBroadcast)
     {
@@ -1582,6 +1582,7 @@ public:
             broadcastRHS();
             broadcaster->end();
             rowProcessor->wait();
+            broadcaster->trace();
         }
         else
         {
@@ -1593,7 +1594,6 @@ public:
         totalCompresssionTime += compresssionTime;
         totalAddRHSRowTime += addRHSRowTime;
         totalBroadcastToOthersTime += broadcastToOthersTime;
-        broadcaster->trace();
     }
     void doBroadcastStop(mptag_t tag, broadcast_flags flag) // only called on channel 0
     {
