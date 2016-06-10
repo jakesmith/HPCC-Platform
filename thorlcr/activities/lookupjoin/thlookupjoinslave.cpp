@@ -291,7 +291,6 @@ class CBroadcaster : public CSimpleInterface
         unsigned pseudoNode = (myNode<origin) ? nodes-origin+myNode : myNode-origin;
         CMessageBuffer replyMsg;
         // sends to all in 1st pass, then waits for ack from all
-        CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
         for (unsigned sendRecv=0; sendRecv<2 && !activity.queryAbortSoon(); sendRecv++)
         {
             unsigned i = 0;
@@ -307,6 +306,7 @@ class CBroadcaster : public CSimpleInterface
                 unsigned sendLen = sendItem->length();
                 if (0 == sendRecv) // send
                 {
+                    CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
 #ifdef _TRACEBROADCAST
                     ActPrintLog(&activity, "Broadcast node %d Sending to node %d, origin node %d, origin slave %d, size %d, code=%d", myNode+1, t, origin+1, sendItem->querySlave()+1, sendLen, (unsigned)sendItem->queryCode());
 #endif
