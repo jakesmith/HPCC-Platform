@@ -996,10 +996,10 @@ protected:
     bool channelActivitiesAssigned;
 
     cycle_t serializationTime = 0;
-    cycle_t compresssionTime = 0;
+    cycle_t compressionTime = 0;
     cycle_t addRHSRowTime = 0;
     cycle_t broadcastToOthersTime = 0;
-    CCycleTimer serializationTimer, compresssionTimer, addRHSRowTimer, broadcastToOthersTimer;
+    CCycleTimer serializationTimer, compressionTimer, addRHSRowTimer, broadcastToOthersTimer;
 
     std::atomic<cycle_t> totalSerializationTime, totalCompresssionTime, totalAddRHSRowTime, totalBroadcastToOthersTime;
     cycle_t nextRowTime = 0;
@@ -1194,9 +1194,9 @@ protected:
                     break;
                 if (channel0Broadcaster->stopRequested())
                     sendItem->setFlag(channel0Broadcaster->queryStopFlag());
-                compresssionTimer.reset();
+                compressionTimer.reset();
                 ThorCompress(mb, sendItem->queryMsg());
-                compresssionTime += compresssionTimer.elapsedCycles();
+                compressionTime += compressionTimer.elapsedCycles();
                 broadcastToOthersTimer.reset();
                 if (!broadcaster->send(sendItem))
                     break;
@@ -1636,7 +1636,7 @@ public:
         InterChannelBarrier();
 
         totalSerializationTime += serializationTime;
-        totalCompresssionTime += compresssionTime;
+        totalCompresssionTime += compressionTime;
         totalAddRHSRowTime += addRHSRowTime;
         totalBroadcastToOthersTime += broadcastToOthersTime;
     }
@@ -2202,7 +2202,10 @@ protected:
 
                 ActPrintLog("Broadcasting final spilt status: %s", hasFailedOverToLocal() ? "spilt" : "did not spill");
                 // NB: Will cause other slaves to flush non-local if any have and failedOverToLocal will be set on all
+
+                CCycleTimer timer;
                 doBroadcastStop(broadcast2MpTag, hasFailedOverToLocal() ? bcastflag_spilt : bcastflag_null);
+                ActPrintLog("TIME: %s - doBroadcastStop() = %u ms", queryJob().queryWuid(), timer.elapsedMs());
                 ActPrintLog("Done broadcasting final spilt status: %s", hasFailedOverToLocal() ? "spilt" : "did not spill");
             }
             InterChannelBarrier();
@@ -2211,7 +2214,7 @@ protected:
             ActPrintLog("End of shared manager memory report");
 
             ActPrintLog("TIME: %s - serializationTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(totalSerializationTime)));
-            ActPrintLog("TIME: %s - compresssionTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(totalCompresssionTime)));
+            ActPrintLog("TIME: %s - compressionTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(totalCompresssionTime)));
             ActPrintLog("TIME: %s - addRHSRowTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(totalAddRHSRowTime)));
             ActPrintLog("TIME: %s - broadcastToOthersTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(totalBroadcastToOthersTime)));
         }
@@ -2228,7 +2231,9 @@ protected:
         queryRowManager()->reportMemoryUsage(false);
         ActPrintLog("<<<handleGlobalRHS other channel");
             }
+            CCycleTimer timer;
             doBroadcastRHS(stopping);
+            ActPrintLog("TIME: %s - doBroadcastRHS(stopping) = %u ms", queryJob().queryWuid(), timer.elapsedMs());
             InterChannelBarrier(); // wait for channel 0, which will have marked rhsCollated and broadcast spilt status to all others
             if (isSmart())
                 rightRowManager->removeRowBuffer(lkJoinCh0);
@@ -2397,7 +2402,7 @@ protected:
                 CCycleTimer timer;
                 distChannelStream.setown(rhsDistributor->connect(queryRowInterfaces(rightITDL), right.getClear(), rightHash, NULL));
                 channelDistributor.processDistRight(distChannelStream);
-                ActPrintLog("TIME %s - channelDistributorRemoteTime = %u ms", queryJob().queryWuid(), timer.elapsedMs());
+                ActPrintLog("TIME: %s - channelDistributorRemoteTime = %u ms", queryJob().queryWuid(), timer.elapsedMs());
             }
             stream.setown(channelDistributor.getStream(&rhs));
         }
@@ -2500,7 +2505,9 @@ protected:
                 /* All slaves on all channels now know whether any one spilt or not, i.e. whether to perform local hash join or not
                  * If any have spilt, still need to distribute rest of RHS..
                  */
+                CCycleTimer timer;
                 bool ok = handleGlobalRHS(marker, helper->isRightAlreadySorted(), stopping);
+                ActPrintLog("TIME: %s - handleGlobalRHS = %u ms", queryJob().queryWuid(), timer.elapsedMs());
                 if (stopping)
                 {
                     ActPrintLog("Global getRHS stopped");
@@ -2524,7 +2531,9 @@ protected:
                     }
 
                     ICompare *cmp = rhsCollated ? NULL : compareRight; // if rhsCollated=true, then sorted, otherwise can't rely on any previous order.
+                    CCycleTimer timer;
                     rightStream.setown(handleFailoverToLocalRHS(rhs, cmp));
+                    ActPrintLog("TIME: %s - handleFailoverToLocalRHS = %u ms", queryJob().queryWuid(), timer.elapsedMs());
                     if (rightStream)
                     {
                         ActPrintLog("Global SMART JOIN spilt to disk during Distributed Local Lookup handling. Failing over to Standard Join");
@@ -2532,7 +2541,9 @@ protected:
                     }
 
                     // start LHS distributor, needed by local lookup or full join
+                    CCycleTimer timer2;
                     left.setown(lhsDistributor->connect(queryRowInterfaces(leftITDL), left.getClear(), leftHash, NULL));
+                    ActPrintLog("TIME: %s - left distribute connect = %u ms", queryJob().queryWuid(), timer2.elapsedMs());
 
                     // NB: Some channels in this or other slave processes may have fallen over to hash join
                 }
@@ -2562,6 +2573,7 @@ protected:
                 {
                     if (hasFailedOverToLocal())
                         marker.reset();
+                    CCycleTimer timer;
                     if (!prepareLocalHT(marker))
                     {
                         ActPrintLog("Out of memory trying to prepare [LOCAL] hashtable for a SMART join (%" RIPF "d rows), will now failover to a std hash join", rhs.ordinality());
@@ -2569,6 +2581,7 @@ protected:
                         collector->transferRowsIn(rhs); // can spill after this
                         rightStream.setown(collector->getStream());
                     }
+                    ActPrintLog("TIME: %s - prepareLocalHT = %u ms", queryJob().queryWuid(), timer.elapsedMs());
                 }
             }
             if (rightStream)
