@@ -2922,6 +2922,7 @@ public:
                 if (myNodeNum == (hv % numNodes))
                     rHSInRowsTemp.append(inRows.getClear(r));
             }
+            inRows.clearRows();
             if (0 == rHSInRowsTemp.ordinality())
                 return true;
         }
@@ -2942,6 +2943,7 @@ public:
                     if (myNodeNum == (hv % numNodes))
                         rHSInRowsTemp.append(inRows.getClear(r));
                 }
+                inRows.clearRows();
                 if (0 == rHSInRowsTemp.ordinality())
                     return true;
             }
@@ -2963,6 +2965,7 @@ public:
                     if (myNodeNum == (hv % numNodes))
                         rHSInRowsTemp.append(inRows.getClear(r));
                 }
+                inRows.clearRows();
                 if (0 == rHSInRowsTemp.ordinality())
                     return true;
             }
@@ -2981,6 +2984,7 @@ public:
                 if (myNodeNum == (hv % numNodes))
                     rHSInRowsTemp.append(inRows.getClear(r));
             }
+            inRows.clearRows();
             if (0 == rHSInRowsTemp.ordinality())
                 return true;
 
