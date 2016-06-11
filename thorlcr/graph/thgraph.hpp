@@ -776,6 +776,7 @@ protected:
     unsigned memorySpillAtPercentage, sharedMemoryLimitPercentage;
     CriticalSection sharedAllocatorCrit;
     Owned<IThorAllocator> sharedAllocator;
+    unsigned numNodes, numSlaves;
 
     class CThorPluginCtx : public SimplePluginCtx
     {
@@ -817,7 +818,7 @@ public:
     inline unsigned querySlaveForNodeChannel(unsigned node, unsigned channel) const
     {
         dbgassertex(node<queryNodes() && channel<queryJobChannels());
-        return jobNodeChannelSlaveNum[channel*numChannels + node];
+        return jobNodeChannelSlaveNum[channel*numNodes + node];
     }
     inline unsigned queryJobSlaveChannelNum(unsigned slaveNum) const { dbgassertex(slaveNum && slaveNum<=querySlaves()); return jobSlaveChannelNum[slaveNum-1]; }
     ICommunicator &queryNodeComm() const { return ::queryNodeComm(); }
@@ -855,8 +856,8 @@ public:
     const offset_t queryMaxDiskUsage() const { return maxDiskUsage; }
     mptag_t querySlaveMpTag() const { return slavemptag; }
     mptag_t queryJobMpTag() const { return mpJobTag; }
-    unsigned querySlaves() const { return slaveGroup->ordinality(); }
-    unsigned queryNodes() const { return nodeGroup->ordinality()-1; }
+    unsigned querySlaves() const { return numSlaves; }
+    unsigned queryNodes() const { return numNodes; }
     IGroup &queryJobGroup() const { return *jobGroup; }
     inline bool queryTimeActivities() const { return timeActivities; }
     unsigned queryMaxDefaultActivityCores() const { return maxActivityCores; }
