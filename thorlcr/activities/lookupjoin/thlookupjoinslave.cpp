@@ -298,8 +298,13 @@ class CBroadcaster : public CSimpleInterface
                     t -= nodes;
                 t += 1; // adjust 0 based to 1 based, i.e. excluding master at 0
                 unsigned sendLen = sendItem->length();
+                unsigned ot=t;
                 if (!nodeBroadcast)
                     t = activity.queryJob().querySlaveForNodeChannel(t-1, activity.queryJobChannelNumber()) + 1;
+                if (1 == loopCnt)
+                {
+                    activity.ActPrintLog("broadcastToOthers: sending stop - ot=%u, t=%u, sendItem->node=%u, sendItem->slave=%u", ot, t, sendItem->queryNode(), sendItem->querySlave());
+                }
                 if (0 == sendRecv) // send
                 {
 #ifdef _TRACEBROADCAST
@@ -543,6 +548,9 @@ public:
                 unsigned dst = activity.queryJob().querySlaveForNodeChannel(myNodeNum, ch) + 1;
                 CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
                 comm->send(stopSendItem->queryMsg(), dst, mpTag);
+
+                activity.ActPrintLog("sendLocalStop(%u, %u): myNodeNum=%u, ch=%u, dst=%u", sendItem->queryNode(), sendItem->querySlave(), myNodeNum, ch, dst);
+                PrintStackReport();
             }
         }
     }
