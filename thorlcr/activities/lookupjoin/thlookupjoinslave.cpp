@@ -39,7 +39,7 @@ enum join_t { JT_Undefined, JT_Inner, JT_LeftOuter, JT_RightOuter, JT_LeftOnly, 
 #define MAX_QUEUE_BLOCKS 5
 
 enum broadcast_code { bcast_none, bcast_send, bcast_sendStopping, bcast_stop };
-enum broadcast_flags { bcastflag_null=0, bcastflag_spilt=0x100 };
+enum broadcast_flags { bcastflag_null=0, bcastflag_spilt=0x100, bcastflag_stop=0x200 };
 #define BROADCAST_CODE_MASK 0x00FF
 #define BROADCAST_FLAG_MASK 0xFF00
 
@@ -107,16 +107,14 @@ interface IBCastReceive
  */
 class CBroadcaster : public CSimpleInterface
 {
-    ICommunicator &comm;
+    ICommunicator *comm = nullptr;
     CActivityBase &activity;
     mptag_t mpTag;
     unsigned myNode, nodes, mySlave, slaves, senders, mySender;
     IBCastReceive *recvInterface;
-    InterruptableSemaphore allDoneSem;
-    CriticalSection allDoneLock, stopCrit;
+    CriticalSection stopCrit;
     CriticalSection *broadcastLock;
     bool allRequestStop, stopping, stopRecv, receiving, nodeBroadcast;
-    unsigned waitingAtAllDoneCount;
     broadcast_flags stopFlag;
     Owned<IBitSet> sendersDone, broadcastersStopping;
     cycle_t bcastSendHandlingTime = 0;
@@ -250,18 +248,12 @@ class CBroadcaster : public CSimpleInterface
     // NB: returns true if all done. Sets allDoneExceptSelf if all except this sender are done
     bool senderStop(unsigned sender)
     {
+        activity.ActPrintLog("senderStop(sender=%u", sender);
         bool done = sendersDone->testSet(sender, true);
         assertex(false == done);
         unsigned which = sendersDone->scan(0, false);
         if (which != senders)
             return false;
-        // all have signalled stop
-        activity.ActPrintLog("CBroadcaster::senderStop() all done - waitingAtAllDoneCount=%u", waitingAtAllDoneCount);
-        if (waitingAtAllDoneCount)
-        {
-            allDoneSem.signal(waitingAtAllDoneCount);
-            waitingAtAllDoneCount = 0;
-        }
         return true;
     }
     bool senderStop(CSendItem &sendItem)
@@ -286,12 +278,14 @@ class CBroadcaster : public CSimpleInterface
     void broadcastToOthers(CSendItem *sendItem)
     {
         dbgassertex(broadcastLock);
-        mptag_t rt = ::createReplyTag();
+        mptag_t rt = activity.queryMPServer().createReplyTag();
         unsigned origin = sendItem->queryNode();
         unsigned pseudoNode = (myNode<origin) ? nodes-origin+myNode : myNode-origin;
         CMessageBuffer replyMsg;
         // sends to all in 1st pass, then waits for ack from all
-        for (unsigned sendRecv=0; sendRecv<2 && !activity.queryAbortSoon(); sendRecv++)
+
+        bool loopCnt = bcast_stop == sendItem->queryCode() ? 1 : 2; // all but stop wait for ack relpy.
+        for (unsigned sendRecv=0; sendRecv<loopCnt && !activity.queryAbortSoon(); sendRecv++)
         {
             unsigned i = 0;
             while (!activity.queryAbortSoon())
@@ -304,22 +298,28 @@ class CBroadcaster : public CSimpleInterface
                     t -= nodes;
                 t += 1; // adjust 0 based to 1 based, i.e. excluding master at 0
                 unsigned sendLen = sendItem->length();
+                if (!nodeBroadcast)
+                    t = activity.queryJob().querySlaveForNodeChannel(t-1, activity.queryJobChannelNumber()) + 1;
                 if (0 == sendRecv) // send
                 {
-                    CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
 #ifdef _TRACEBROADCAST
                     ActPrintLog(&activity, "Broadcast node %d Sending to node %d, origin node %d, origin slave %d, size %d, code=%d", myNode+1, t, origin+1, sendItem->querySlave()+1, sendLen, (unsigned)sendItem->queryCode());
 #endif
                     CMessageBuffer &msg = sendItem->queryMsg();
                     msg.setReplyTag(rt); // simulate sendRecv
-                    comm.send(msg, t, mpTag);
+
+                    /* send to slave on node t, on my channel #
+                     * It doesn't matter which channel receives, but this is spreading the load
+                     */
+                    CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
+                    comm->send(msg, t, mpTag);
                 }
                 else // recv reply
                 {
 #ifdef _TRACEBROADCAST
                     ActPrintLog(&activity, "Broadcast node %d Waiting for reply from node %d, origin node %d, origin slave %d, size %d, code=%d, replyTag=%d", myNode+1, t, origin+1, sendItem->querySlave()+1, sendLen, (unsigned)sendItem->queryCode(), (unsigned)rt);
 #endif
-                    if (!activity.receiveMsg(comm, replyMsg, t, rt))
+                    if (!activity.receiveMsg(*comm, replyMsg, t, rt))
                         break;
 #ifdef _TRACEBROADCAST
                     ActPrintLog(&activity, "Broadcast node %d Sent to node %d, origin node %d, origin slave %d, size %d, code=%d - received ack", myNode+1, t, origin+1, sendItem->querySlave()+1, sendLen, (unsigned)sendItem->queryCode());
@@ -332,7 +332,7 @@ class CBroadcaster : public CSimpleInterface
     {
         stopRecv = true;
         if (receiving)
-            comm.cancel(RANK_ALL, mpTag);
+            comm->cancel(RANK_ALL, mpTag);
     }
     bool receiveMsg(CMessageBuffer &mb, rank_t *sender)
     {
@@ -340,7 +340,7 @@ class CBroadcaster : public CSimpleInterface
         // check 'cancelledReceive' every 10 secs
         while (!stopRecv)
         {
-            if (comm.recv(mb, RANK_ALL, mpTag, sender, 10000))
+            if (comm->recv(mb, RANK_ALL, mpTag, sender, 10000))
                 return true;
         }
         return false;
@@ -349,10 +349,7 @@ class CBroadcaster : public CSimpleInterface
     {
         // my sender is implicitly stopped (never sends to self)
         if (senderStop(mySender))
-        {
-            recvInterface->bCastReceive(NULL, true);
             return;
-        }
         ActPrintLog(&activity, "Start of recvLoop()");
         CMessageBuffer msg;
         while (!stopRecv && !activity.queryAbortSoon())
@@ -367,23 +364,21 @@ class CBroadcaster : public CSimpleInterface
                 }
             }
             mptag_t replyTag = msg.getReplyTag();
-            CMessageBuffer ackMsg;
             Owned<CSendItem> sendItem = new CSendItem(msg);
 #ifdef _TRACEBROADCAST
             ActPrintLog(&activity, "Broadcast node %d received from node %d, origin node %d, origin slave %d, size %d, code=%d", myNode+1, (unsigned)sendRank, sendItem->queryNode()+1, sendItem->querySlave()+1, sendItem->length(), (unsigned)sendItem->queryCode());
 #endif
-            comm.send(ackMsg, sendRank, replyTag); // send ack
 #ifdef _TRACEBROADCAST
             ActPrintLog(&activity, "Broadcast node %d, sent ack to node %d, replyTag=%d", myNode+1, (unsigned)sendRank, (unsigned)replyTag);
 #endif
-            sender.addBlock(sendItem.getLink());
-            assertex(myNode != sendItem->queryNode());
+//            assertex(mySlave != sendItem->querySlave());
             switch (sendItem->queryCode())
             {
                 case bcast_stop:
                 {
-                    CriticalBlock b(allDoneLock);
                     ActPrintLog(&activity, "recvLoop - received bcast_stop, from : node=%u, slave=%u", sendItem->queryNode()+1, sendItem->querySlave()+1);
+                    if (0 == (sendItem->queryFlags() & bcastflag_stop))
+                        sender.addBlock(sendItem.getLink());
                     bool stop = senderStop(*sendItem);
                     recvInterface->bCastReceive(sendItem.getLink(), stop);
                     if (stop)
@@ -402,6 +397,9 @@ class CBroadcaster : public CSimpleInterface
                 }
                 case bcast_send:
                 {
+                    CMessageBuffer ackMsg;
+                    comm->send(ackMsg, sendRank, replyTag); // send ack
+                    sender.addBlock(sendItem.getLink());
                     CCycleAddTimer tb(bcastSendHandlingTime);
                     if (!allRequestStop) // don't care if all stopping
                         recvInterface->bCastReceive(sendItem.getClear(), false);
@@ -420,10 +418,9 @@ class CBroadcaster : public CSimpleInterface
         allRequestStop = broadcastersStopping->scan(0, false) == nodes;
     }
 public:
-    CBroadcaster(CActivityBase &_activity) : activity(_activity), receiver(*this), sender(*this), comm(_activity.queryJob().queryNodeComm())
+    CBroadcaster(CActivityBase &_activity) : activity(_activity), receiver(*this), sender(*this)
     {
         allRequestStop = stopping = stopRecv = false;
-        waitingAtAllDoneCount = 0;
         myNode = activity.queryJob().queryMyNodeRank()-1; // 0 based
         mySlave = activity.queryJobChannel().queryMyRank()-1; // 0 based
         nodes = activity.queryJob().queryNodes();
@@ -451,11 +448,13 @@ public:
         {
             mySender = myNode;
             senders = nodes;
+            comm = &activity.queryJob().queryNodeComm();
         }
         else
         {
             mySender = mySlave;
             senders = slaves;
+            comm = &activity.queryJobChannel().queryJobComm();
         }
         stopping = _stopping;
         recvInterface = _recvInterface;
@@ -470,7 +469,6 @@ public:
     void reset()
     {
         allRequestStop = stopping = false;
-        waitingAtAllDoneCount = 0;
         stopFlag = bcastflag_null;
         sendersDone->reset();
         broadcastersStopping->reset();
@@ -489,20 +487,6 @@ public:
     {
         sendItem->reset();
     }
-    void waitReceiverDone(unsigned sender)
-    {
-        {
-            CriticalBlock b(allDoneLock);
-            if (senderStop(sender))
-            {
-                receiver.abort(false);
-                recvInterface->bCastReceive(NULL, true);
-                return;
-            }
-            waitingAtAllDoneCount++;
-        }
-        allDoneSem.wait();
-    }
     void end()
     {
         receiver.wait(); // terminates when received stop from all others
@@ -513,16 +497,12 @@ public:
         receiver.abort(true);
         sender.abort(true);
         if (e)
-        {
-            allDoneSem.interrupt(LINK(e), waitingAtAllDoneCount);
             activity.fireException(e);
-        }
-        else
-            allDoneSem.signal(waitingAtAllDoneCount);
-        waitingAtAllDoneCount = 0;
     }
     bool send(CSendItem *sendItem)
     {
+        if (bcast_stop == sendItem->queryCode())
+            sendLocalStop(sendItem);
         broadcastToOthers(sendItem);
         return !allRequestStop;
     }
@@ -547,6 +527,24 @@ public:
         CriticalBlock b(stopCrit); // multiple channels could call
         _setStopping(node);
         stopFlag = flag;
+    }
+    void sendLocalStop(CSendItem *sendItem)
+    {
+        if (nodeBroadcast)
+            return;
+        dbgassertex(broadcastLock);
+        Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->queryNode(), sendItem->querySlave());
+        stopSendItem->setFlag(bcastflag_stop);
+        unsigned myNodeNum = activity.queryJob().queryMyNodeRank()-1;
+        for (unsigned ch=0; ch<activity.queryJob().queryJobChannels(); ch++)
+        {
+            if (ch != activity.queryJobChannelNumber())
+            {
+                unsigned dst = activity.queryJob().querySlaveForNodeChannel(myNodeNum, ch) + 1;
+                CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
+                comm->send(stopSendItem->queryMsg(), dst, mpTag);
+            }
+        }
     }
 };
 
@@ -856,7 +854,6 @@ protected:
      * Processing will decompress the incoming blocks and add them to a row array per slave
      */
 
-    Owned<IException> rowProcessorException;
     class CRowProcessor : public CSimpleInterfaceOf<IThreaded>
     {
         CThreadedPersistent threaded;
@@ -989,7 +986,6 @@ protected:
     rank_t myNodeNum, mySlaveNum;
     unsigned numNodes, numSlaves;
     OwnedMalloc<CInMemJoinBase *> channels;
-    unsigned currentRowProcessor = 0;
 
     atomic_t interChannelToNotifyCount; // only used on channel 0
     InterruptableSemaphore interChannelBarrierSem;
@@ -1617,21 +1613,10 @@ public:
     {
         if (stopping)
             channel0Broadcaster->setStopping(myNodeNum);
-        if (0 == queryJobChannelNumber())
-        {
-            rowProcessor->start();
-            broadcaster->start(this, mpTag, stopping, false); // slaves broadcasting
-            broadcastRHS();
-            broadcaster->end();
-            broadcaster->trace();
-        }
-        else
-        {
-            rowProcessor->start();
-            broadcaster->start(NULL, mpTag, stopping, false); // pass NULL for IBCastReceive, since only channel 0 receives
-            broadcastRHS();
-            channel0Broadcaster->waitReceiverDone(mySlaveNum);
-        }
+        rowProcessor->start();
+        broadcaster->start(this, mpTag, stopping, false); // slaves broadcasting
+        broadcastRHS();
+        broadcaster->end();
         rowProcessor->wait();
         InterChannelBarrier();
 
@@ -1693,29 +1678,20 @@ public:
 // IBCastReceive (only used if global)
     virtual void bCastReceive(CSendItem *sendItem, bool stop)
     {
-        if (sendItem && (bcast_stop == sendItem->queryCode()))
+        if (sendItem)
         {
-            sendItem->Release();
-            if (!stop)
-                return;
-            sendItem = NULL; // fall through, base signals stop to rowProcessor
+            if (bcast_stop == sendItem->queryCode())
+            {
+                if (0 == (sendItem->queryFlags() & bcastflag_stop))
+                    broadcaster->sendLocalStop(sendItem);
+                sendItem->Release();
+                if (!stop)
+                    return;
+                sendItem = NULL; // fall through, base signals stop to rowProcessor
+            }
         }
         dbgassertex((sendItem==NULL) == stop); // if sendItem==NULL stop must = true, if sendItem != NULL stop must = false;
-        if (rowProcessorException)
-            throw rowProcessorException.getClear();
-        if (nullptr == sendItem)
-        {
-            // a null item for each rowProcessor listening
-            for (unsigned c=0; c<queryJob().queryJobChannels(); c++)
-                channels[c]->queryRowProcessor()->addBlock(nullptr);
-        }
-        else
-        {
-            channels[currentRowProcessor]->queryRowProcessor()->addBlock(sendItem);
-            ++currentRowProcessor;
-            if (currentRowProcessor >= queryJob().queryJobChannels())
-                currentRowProcessor = 0;
-        }
+        rowProcessor->addBlock(sendItem);
     }
     virtual void onInputFinished(rowcount_t count)
     {
@@ -2851,7 +2827,8 @@ public:
             if (0 != (sendItem->queryFlags() & bcastflag_spilt))
             {
                 VStringBuffer msg("Notification that node %d spilt", sendItem->queryNode());
-                clearAllNonLocalRows(msg.str());
+                CLookupJoinActivityBase *lkJoinCh0 = (CLookupJoinActivityBase *)channels[0];
+                lkJoinCh0->clearAllNonLocalRows(msg.str());
             }
         }
         PARENT::bCastReceive(sendItem, stop);

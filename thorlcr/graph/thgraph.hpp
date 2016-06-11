@@ -767,6 +767,7 @@ protected:
     Owned<IPerfMonHook> perfmonhook;
     CIArrayOf<CJobChannel> jobChannels;
     OwnedMalloc<unsigned> jobChannelSlaveNumbers;
+    OwnedMalloc<unsigned> jobNodeChannelSlaveNum;
     OwnedMalloc<unsigned> jobSlaveChannelNum;
     bool crcChecking;
     bool usePackedAllocator;
@@ -811,8 +812,13 @@ public:
     virtual void addChannel(IMPServer *mpServer) = 0;
     CJobChannel &queryJobChannel(unsigned c) const;
     CActivityBase &queryChannelActivity(unsigned c, graph_id gid, activity_id id) const;
-    unsigned queryJobChannels() const { return jobChannels.ordinality(); }
+    unsigned queryJobChannels() const { return numChannels; }
     inline unsigned queryJobChannelSlaveNum(unsigned channelNum) const { dbgassertex(channelNum<queryJobChannels()); return jobChannelSlaveNumbers[channelNum]; }
+    inline unsigned querySlaveForNodeChannel(unsigned node, unsigned channel) const
+    {
+        dbgassertex(node<queryNodes() && channel<queryJobChannels());
+        return jobNodeChannelSlaveNum[channel*numChannels + node];
+    }
     inline unsigned queryJobSlaveChannelNum(unsigned slaveNum) const { dbgassertex(slaveNum && slaveNum<=querySlaves()); return jobSlaveChannelNum[slaveNum-1]; }
     ICommunicator &queryNodeComm() const { return ::queryNodeComm(); }
     const rank_t &queryMyNodeRank() const { return myNodeRank; }
