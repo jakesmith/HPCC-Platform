@@ -1139,8 +1139,10 @@ protected:
         CThorExpandingRowArray rHSInRowsTemp(*this, sharedRightRowInterfaces);
         CThorExpandingRowArray pending(*this, sharedRightRowInterfaces);
 
-        CCycleTimer addRHSRowsTimer;
+        CCycleTimer broadcastRHSTime;
+        CCycleTimer addRHSRowsTimer, rightNextRowTimer;
         cycle_t addRHSRowsTime = 0;
+        cycle_t rightNextRowTime = 0;
         try
         {
             CThorSpillableRowArray &localRhsRows = *rhsSlaveRows.item(mySlaveNum);
@@ -1149,9 +1151,11 @@ protected:
             {
                 while (!abortSoon)
                 {
+                    rightNextRowTimer.reset();
                     OwnedConstThorRow row = right->ungroupedNextRow();
                     if (!row)
                         break;
+                    rightNextRowTime += rightNextRowTimer.elapsedCycles();
 
                     /* Add all locally read right rows to channel0 directly
                      * NB: these rows remain on their channel allocator.
@@ -1223,7 +1227,9 @@ protected:
             throw;
         }
 
+        ActPrintLog("TIME: %s - rightNextRowTime = %u ms", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rightNextRowTime)));
         ActPrintLog("TIME: %s - addRHSRowsTime = %u ms", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(addRHSRowsTime)));
+        ActPrintLog("TIME: %s - broadcastRHSTime = %u ms", queryJob().queryWuid(), broadcastRHSTime.elapsedMs());
 
         sendItem.setown(broadcaster->newSendItem(bcast_stop));
         if (channel0Broadcaster->stopRequested())
