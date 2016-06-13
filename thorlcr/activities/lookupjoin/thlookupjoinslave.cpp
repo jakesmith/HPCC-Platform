@@ -838,6 +838,107 @@ public:
 
 
 
+class RtlDynamicRowBuilder2 : implements RtlRowBuilderBase
+{
+    cycle_t &c;
+public:
+    inline RtlDynamicRowBuilder2(cycle_t &_c, IEngineRowAllocator * _rowAllocator) : rowAllocator(_rowAllocator), c(_c)
+    {
+        if (rowAllocator)
+            create();
+        else
+        {
+            self = NULL;
+            maxLength = 0;
+        }
+    }
+    virtual IEngineRowAllocator *queryAllocator() const
+    {
+        return rowAllocator;
+    }
+    inline RtlDynamicRowBuilder2(cycle_t &_c, IEngineRowAllocator * _rowAllocator, bool createInitial) : rowAllocator(_rowAllocator), c(_c)
+    {
+        if (rowAllocator && createInitial)
+            create();
+        else
+        {
+            self = NULL;
+            maxLength = 0;
+        }
+    }
+    //This is here to allow group aggregates to perform resizing.
+    inline RtlDynamicRowBuilder2(cycle_t &_c, IEngineRowAllocator * _rowAllocator, size32_t _maxLength, void * _self) : rowAllocator(_rowAllocator), c(_c)
+    {
+        self = static_cast<byte *>(_self);
+        maxLength = _maxLength;
+    }
+    inline ~RtlDynamicRowBuilder2() { clear(); }
+
+    virtual byte * ensureCapacity(size32_t required, const char * fieldName);
+
+    inline RtlDynamicRowBuilder2 & ensureRow() { if (!self) create(); return *this; }
+    inline bool exists() { return (self != NULL); }
+    inline const void * finalizeRowClear(size32_t len)
+    {
+        const unsigned finalMaxLength = maxLength;
+        maxLength = 0;
+        return rowAllocator->finalizeRow(len, getUnfinalizedClear(), finalMaxLength);
+    }
+    inline size32_t getMaxLength() const { return maxLength; }
+    inline void * getUnfinalizedClear() { void * ret = self; self = NULL; return ret; }
+
+    inline void clear() { if (self) { rowAllocator->releaseRow(self); self = NULL; } }
+    inline RtlDynamicRowBuilder2 & setAllocator(IEngineRowAllocator * _rowAllocator) { rowAllocator = _rowAllocator; return *this; }
+    inline void setown(size32_t _maxLength, void * _self) { self = static_cast<byte *>(_self); maxLength = _maxLength; }
+
+    void swapWith(RtlDynamicRowBuilder2 & other);
+
+protected:
+    inline byte * create()
+    {
+        CCycleTimer timer;
+        self = static_cast<byte *>(rowAllocator->createRow(maxLength));
+        c += timer.elapsedCycles();
+        return self;
+    }
+    virtual byte * createSelf() { return create(); }
+
+protected:
+    IEngineRowAllocator * rowAllocator;     // does this need to be linked???
+    size32_t maxLength;
+};
+
+
+byte * RtlDynamicRowBuilder2::ensureCapacity(size32_t required, const char * fieldName)
+{
+    if (required > maxLength)
+    {
+        if (!self)
+            create();
+
+        if (required > maxLength)
+        {
+            void * next = rowAllocator->resizeRow(required, self, maxLength);
+            if (!next)
+            {
+                rtlReportFieldOverflow(required, maxLength, fieldName);
+                return NULL;
+            }
+            self = static_cast<byte *>(next);
+        }
+    }
+    return self;
+}
+
+void RtlDynamicRowBuilder2::swapWith(RtlDynamicRowBuilder2 & other)
+{
+    size32_t savedMaxLength = maxLength;
+    void * savedSelf = getUnfinalizedClear();
+    setown(other.getMaxLength(), other.getUnfinalizedClear());
+    other.setown(savedMaxLength, savedSelf);
+}
+
+
 struct HtEntry { rowidx_t index, count; };
 
 /* 
@@ -898,6 +999,7 @@ protected:
         cycle_t addRHSRowsTime2 = 0;
         cycle_t deserializationTime = 0;
         cycle_t processRHSRowsSetupTime = 0;
+        cycle_t createTime = 0;
 
         void clearQueue()
         {
@@ -965,9 +1067,11 @@ protected:
              * It also might be better to use hash the rows now and assign to rhsSlaveRows arrays, it's a waste of hash() calls
              * if it never spills, but will make flushing non-locals simpler if spilling occurs.
              */
+
+
             processRHSRowsSetupTimer.reset();
             CThorSpillableRowArray &rows = *targetChannel->rhsSlaveRows.item(slave);
-            RtlDynamicRowBuilder rowBuilder(owner.rightAllocator); // NB: rightAllocator is the shared allocator
+            RtlDynamicRowBuilder2 rowBuilder(createTime, owner.rightAllocator); // NB: rightAllocator is the shared allocator
             CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
             processRHSRowsSetupTime += processRHSRowsSetupTimer.elapsedCycles();
             while (!memDeserializer.eos())
@@ -1035,6 +1139,7 @@ protected:
             owner.ActPrintLog("TIME: %s - deserializationTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(deserializationTime)));
             owner.ActPrintLog("TIME: %s - rowProcessor-addRHSRowsTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(addRHSRowsTime2)));
             owner.ActPrintLog("TIME: %s - processRHSRowsSetupTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(processRHSRowsSetupTime)));
+            owner.ActPrintLog("TIME: %s - createTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(createTime)));
 
         }
     } *rowProcessor;
