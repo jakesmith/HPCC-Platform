@@ -767,7 +767,6 @@ protected:
     Owned<IPerfMonHook> perfmonhook;
     CIArrayOf<CJobChannel> jobChannels;
     OwnedMalloc<unsigned> jobChannelSlaveNumbers;
-    OwnedMalloc<unsigned> jobNodeChannelSlaveNum;
     OwnedMalloc<unsigned> jobSlaveChannelNum;
     bool crcChecking;
     bool usePackedAllocator;
@@ -818,7 +817,7 @@ public:
     inline unsigned querySlaveForNodeChannel(unsigned node, unsigned channel) const
     {
         dbgassertex(node<queryNodes() && channel<queryJobChannels());
-        return jobNodeChannelSlaveNum[channel*numNodes + node];
+        return channel*numNodes + node;
     }
     inline unsigned queryJobSlaveChannelNum(unsigned slaveNum) const { dbgassertex(slaveNum && slaveNum<=querySlaves()); return jobSlaveChannelNum[slaveNum-1]; }
     ICommunicator &queryNodeComm() const { return ::queryNodeComm(); }
