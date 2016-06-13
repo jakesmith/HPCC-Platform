@@ -113,7 +113,7 @@ class CBroadcaster : public CSimpleInterface
     unsigned myNode, nodes, mySlave, slaves, senders, mySender;
     IBCastReceive *recvInterface;
     CriticalSection stopCrit;
-    CriticalSection *broadcastLock;
+    CriticalSection broadcastLock;
     bool allRequestStop, stopping, stopRecv, receiving, nodeBroadcast;
     broadcast_flags stopFlag;
     Owned<IBitSet> sendersDone, broadcastersStopping;
@@ -277,7 +277,7 @@ class CBroadcaster : public CSimpleInterface
     }
     void broadcastToOthers(CSendItem *sendItem)
     {
-        dbgassertex(broadcastLock);
+//        dbgassertex(broadcastLock);
         mptag_t rt = activity.queryMPServer().createReplyTag();
         unsigned origin = sendItem->queryNode();
         unsigned pseudoNode = (myNode<origin) ? nodes-origin+myNode : myNode-origin;
@@ -316,7 +316,7 @@ class CBroadcaster : public CSimpleInterface
                     /* send to slave on node t, on my channel #
                      * It doesn't matter which channel receives, but this is spreading the load
                      */
-                    CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
+                    CriticalBlock b(broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
                     comm->send(msg, t, mpTag);
                 }
                 else // recv reply
@@ -438,7 +438,7 @@ public:
         mpTag = TAG_NULL;
         recvInterface = NULL;
         stopFlag = bcastflag_null;
-        broadcastLock = NULL;
+//        broadcastLock = NULL;
         receiving = false;
         nodeBroadcast = false;
     }
@@ -485,10 +485,12 @@ public:
             code = bcast_sendStopping;
         return new CSendItem(code, myNode, mySlave);
     }
+/*
     void setBroadcastLock(CriticalSection *_broadcastLock)
     {
         broadcastLock = _broadcastLock;
     }
+*/
     void resetSendItem(CSendItem *sendItem)
     {
         sendItem->reset();
@@ -538,7 +540,7 @@ public:
     {
         if (nodeBroadcast)
             return;
-        dbgassertex(broadcastLock);
+//        dbgassertex(broadcastLock);
         Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->queryNode(), sendItem->querySlave());
         stopSendItem->setFlag(bcastflag_stop);
         unsigned myNodeNum = activity.queryJob().queryMyNodeRank()-1;
@@ -548,7 +550,7 @@ public:
             {
                 unsigned dst = activity.queryJob().querySlaveForNodeChannel(myNodeNum, ch) + 1;
                 activity.ActPrintLog("sendLocalStop(%u, %u): myNodeNum=%u, ch=%u, dst=%u", sendItem->queryNode(), sendItem->querySlave(), myNodeNum, ch, dst);
-                CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
+                CriticalBlock b(broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
                 comm->send(stopSendItem->queryMsg(), dst, mpTag);
             }
         }
@@ -952,7 +954,7 @@ protected:
     CriticalSection rHSRowLock;
     Owned<CBroadcaster> broadcaster;
     CBroadcaster *channel0Broadcaster;
-    CriticalSection *broadcastLock;
+//    CriticalSection *broadcastLock;
     rowidx_t rhsTableLen;
     Owned<HTHELPER> table; // NB: only channel 0 uses table, unless failing over to local lookup join
     Linked<HTHELPER> tableProxy; // Channels >1 will reference channel 0 table unless failed over
@@ -1140,9 +1142,11 @@ protected:
         CThorExpandingRowArray pending(*this, sharedRightRowInterfaces);
 
         CCycleTimer broadcastRHSTime;
-        CCycleTimer addRHSRowsTimer, rightNextRowTimer;
+        CCycleTimer addRHSRowsTimer, rightNextRowTimer, pendingAddTimer;
         cycle_t addRHSRowsTime = 0;
         cycle_t rightNextRowTime = 0;
+        cycle_t pendingAddTime = 0;
+
         try
         {
             CThorSpillableRowArray &localRhsRows = *rhsSlaveRows.item(mySlaveNum);
@@ -1170,7 +1174,11 @@ protected:
                             break;
                     }
                     else
+                    {
+                        pendingAddTimer.reset();
                         pending.append(row.getClear());
+                        pendingAddTime += pendingAddTimer.elapsedCycles();
+                    }
                     if (pending.ordinality() >= 100)
                     {
                         addRHSRowsTimer.reset();
@@ -1229,6 +1237,8 @@ protected:
 
         ActPrintLog("TIME: %s - LOCALserializationTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(serializationTime)));
         ActPrintLog("TIME: %s - LOCALcompressionTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(compressionTime)));
+        ActPrintLog("TIME: %s - LOCALbroadcastToOthersTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(broadcastToOthersTime)));
+        ActPrintLog("TIME: %s - pendingAddTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(pendingAddTime)));
         ActPrintLog("TIME: %s - rightNextRowTime = %u ms", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rightNextRowTime)));
         ActPrintLog("TIME: %s - addRHSRowsTime = %u ms", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(addRHSRowsTime)));
         ActPrintLog("TIME: %s - broadcastRHSTime = %u ms", queryJob().queryWuid(), broadcastRHSTime.elapsedMs());
@@ -1451,7 +1461,7 @@ public:
         else
             rightThorAllocator = queryJobChannel().queryThorAllocator();
         rightRowManager = rightThorAllocator->queryRowManager();
-        broadcastLock = NULL;
+//        broadcastLock = NULL;
         appendOutputLinked(this);
     }
     ~CInMemJoinBase()
@@ -1465,14 +1475,16 @@ public:
                 if (rows)
                     delete rows;
             }
-            if (broadcastLock)
-                delete broadcastLock;
+//            if (broadcastLock)
+//                delete broadcastLock;
         }
     }
+/*
     CriticalSection *queryBroadcastLock()
     {
         return broadcastLock;
     }
+*/
     CRowProcessor *queryRowProcessor()
     {
         return rowProcessor;
@@ -1507,8 +1519,8 @@ public:
             channels.allocateN(queryJob().queryJobChannels());
             broadcaster.setown(new CBroadcaster(*this));
             rowProcessor = new CRowProcessor(*this);
-            if (0 == queryJobChannelNumber())
-                broadcastLock = new CriticalSection;
+//            if (0 == queryJobChannelNumber())
+//                broadcastLock = new CriticalSection;
         }
     }
     virtual void setInputStream(unsigned index, CThorInput &_input, bool consumerOrdered) override
@@ -1547,7 +1559,7 @@ public:
                     CInMemJoinBase &channel = (CInMemJoinBase &)queryChannelActivity(c);
                     channels[c] = &channel;
                 }
-                broadcaster->setBroadcastLock(channels[0]->queryBroadcastLock());
+//                broadcaster->setBroadcastLock(channels[0]->queryBroadcastLock());
                 rowProcessor->setTargetChannel((CInMemJoinBase &)queryChannelActivity(0));
             }
             channel0Broadcaster = channels[0]->broadcaster;
