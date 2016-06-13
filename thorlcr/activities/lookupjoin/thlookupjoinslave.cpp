@@ -277,7 +277,6 @@ class CBroadcaster : public CSimpleInterface
     }
     void broadcastToOthers(CSendItem *sendItem)
     {
-//        dbgassertex(broadcastLock);
         mptag_t rt = activity.queryMPServer().createReplyTag();
         unsigned origin = sendItem->queryNode();
         unsigned pseudoNode = (myNode<origin) ? nodes-origin+myNode : myNode-origin;
@@ -453,7 +452,6 @@ public:
         mpTag = TAG_NULL;
         recvInterface = NULL;
         stopFlag = bcastflag_null;
-//        broadcastLock = NULL;
         receiving = false;
         nodeBroadcast = false;
     }
@@ -558,7 +556,6 @@ public:
     {
         if (nodeBroadcast)
             return;
-//        dbgassertex(broadcastLock);
         Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->queryNode(), sendItem->querySlave());
         stopSendItem->setFlag(bcastflag_stop);
         unsigned myNodeNum = activity.queryJob().queryMyNodeRank()-1;
@@ -1003,6 +1000,7 @@ protected:
         cycle_t pendingAppendTime = 0;
         rowcount_t rowCount = 0;
 
+
         void clearQueue()
         {
             loop
@@ -1013,6 +1011,8 @@ protected:
             }
         }
     public:
+        CriticalSection *rowProcessorLock = nullptr;
+
         CRowProcessor(CInMemJoinBase &_owner, SimpleInterThreadQueueOf<CSendItem, true> &_blockQueue)
             : threaded("CRowProcessor", this), owner(_owner), blockQueue(_blockQueue), pending(_owner), rHSInRowsTemp(_owner)
         {
@@ -1026,9 +1026,10 @@ protected:
             clearQueue();
             wait();
         }
-        void setTargetChannel(CInMemJoinBase &_targetChannel)
+        void setTargetChannel(CInMemJoinBase &_targetChannel, CriticalSection *_rowProcessorLock)
         {
             targetChannel = &_targetChannel;
+            rowProcessorLock = _rowProcessorLock;
         }
         void start()
         {
@@ -1076,6 +1077,8 @@ protected:
             RtlDynamicRowBuilder2 rowBuilder(createTime, owner.rightAllocator); // NB: rightAllocator is the shared allocator
             CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
             processRHSRowsSetupTime += processRHSRowsSetupTimer.elapsedCycles();
+
+            CriticalBlock b(*rowProcessorLock);
             while (!memDeserializer.eos())
             {
                 deserializationTimer.reset();
@@ -1086,6 +1089,7 @@ protected:
                 pendingAppendTime += pendingAppendTimer.elapsedCycles();
                 if (pending.ordinality() >= 100)
                 {
+                    CriticalUnblock ub(*rowProcessorLock);
                     addRHSRowsTimer2.reset();
                     // NB: If spilt, addRHSRow will filter out non-locals
                     if (!targetChannel->addRHSRows(rows, pending, rHSInRowsTemp)) // NB: in SMART case, must succeed
@@ -1096,6 +1100,7 @@ protected:
             }
             if (pending.ordinality())
             {
+                CriticalUnblock ub(*rowProcessorLock);
                 rowCount += pending.ordinality();
                 addRHSRowsTimer2.reset();
                 // NB: If spilt, addRHSRow will filter out non-locals
@@ -1156,7 +1161,7 @@ protected:
     CriticalSection rHSRowLock;
     Owned<CBroadcaster> broadcaster;
     CBroadcaster *channel0Broadcaster;
-//    CriticalSection *broadcastLock;
+    CriticalSection *rowProcessorLock;
     rowidx_t rhsTableLen;
     Owned<HTHELPER> table; // NB: only channel 0 uses table, unless failing over to local lookup join
     Linked<HTHELPER> tableProxy; // Channels >1 will reference channel 0 table unless failed over
@@ -1666,7 +1671,7 @@ public:
         else
             rightThorAllocator = queryJobChannel().queryThorAllocator();
         rightRowManager = rightThorAllocator->queryRowManager();
-//        broadcastLock = NULL;
+        rowProcessorLock = NULL;
         appendOutputLinked(this);
     }
     ~CInMemJoinBase()
@@ -1680,16 +1685,10 @@ public:
                 if (rows)
                     delete rows;
             }
-//            if (broadcastLock)
-//                delete broadcastLock;
+            if (rowProcessorLock)
+                delete rowProcessorLock;
         }
     }
-/*
-    CriticalSection *queryBroadcastLock()
-    {
-        return broadcastLock;
-    }
-*/
     CRowProcessor *queryRowProcessor()
     {
         return rowProcessor;
@@ -1726,8 +1725,8 @@ public:
             rowProcessor = new CRowProcessor(*this, rowBlockQueue);
             rowBlockQueue.setLimit(MAX_QUEUE_BLOCKS * queryJob().queryJobChannels());
 
-//            if (0 == queryJobChannelNumber())
-//                broadcastLock = new CriticalSection;
+            if (0 == queryJobChannelNumber())
+                rowProcessorLock = new CriticalSection;
         }
     }
     virtual void setInputStream(unsigned index, CThorInput &_input, bool consumerOrdered) override
@@ -1766,8 +1765,7 @@ public:
                     CInMemJoinBase &channel = (CInMemJoinBase &)queryChannelActivity(c);
                     channels[c] = &channel;
                 }
-//                broadcaster->setBroadcastLock(channels[0]->queryBroadcastLock());
-                rowProcessor->setTargetChannel((CInMemJoinBase &)queryChannelActivity(0));
+                rowProcessor->setTargetChannel((CInMemJoinBase &)queryChannelActivity(0), ((CInMemJoinBase &)queryChannelActivity(0)).rowProcessorLock);
             }
             channel0Broadcaster = channels[0]->broadcaster;
             // NB: use sharedRightRowInterfaces, so that expanding ptr array is using shared allocator
