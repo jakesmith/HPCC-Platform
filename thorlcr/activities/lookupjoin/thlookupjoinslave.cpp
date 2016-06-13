@@ -887,7 +887,7 @@ protected:
         CInMemJoinBase &owner;
         bool stopped;
         CInMemJoinBase *targetChannel = nullptr;
-        SimpleInterThreadQueueOf<CSendItem, true> blockQueue;
+        SimpleInterThreadQueueOf<CSendItem, true> &blockQueue;
         Owned<IException> exception;
 
         void clearQueue()
@@ -900,10 +900,9 @@ protected:
             }
         }
     public:
-        CRowProcessor(CInMemJoinBase &_owner) : threaded("CRowProcessor", this), owner(_owner)
+        CRowProcessor(CInMemJoinBase &_owner, SimpleInterThreadQueueOf<CSendItem, true> &_blockQueue) : threaded("CRowProcessor", this), owner(_owner), blockQueue(_blockQueue)
         {
             stopped = false;
-            blockQueue.setLimit(MAX_QUEUE_BLOCKS);
         }
         ~CRowProcessor()
         {
@@ -936,6 +935,7 @@ protected:
             if (exception)
                 throw exception.getClear();
         }
+/*
         void addBlock(CSendItem *sendItem)
         {
             if (exception)
@@ -946,6 +946,7 @@ protected:
             }
             blockQueue.enqueue(sendItem); // will block if queue full
         }
+*/
     // IThreaded
         virtual void main()
         {
@@ -963,11 +964,15 @@ protected:
             }
             catch (IException *e)
             {
-                exception.setown(e);
+                if (!owner.rowProcessorException)
+                    owner.rowProcessorException.setown(e);
+//                exception.setown(e);
                 EXCLOG(e, "CRowProcessor");
             }
         }
     } *rowProcessor;
+    SimpleInterThreadQueueOf<CSendItem, true> rowBlockQueue;
+    Owned<IException> rowProcessorException;
 
     CriticalSection rHSRowLock;
     Owned<CBroadcaster> broadcaster;
@@ -1537,7 +1542,9 @@ public:
                 rhsSlaveRows.append(new CThorRowArrayWithFlushMarker(*this));
             channels.allocateN(queryJob().queryJobChannels());
             broadcaster.setown(new CBroadcaster(*this));
-            rowProcessor = new CRowProcessor(*this);
+            rowProcessor = new CRowProcessor(*this, rowBlockQueue);
+            rowBlockQueue.setLimit(MAX_QUEUE_BLOCKS * queryJob().queryJobChannels());
+
 //            if (0 == queryJobChannelNumber())
 //                broadcastLock = new CriticalSection;
         }
@@ -1753,7 +1760,9 @@ public:
         }
         dbgassertex((sendItem==NULL) == stop); // if sendItem==NULL stop must = true, if sendItem != NULL stop must = false;
         rowProcessorAddBlockTimer.reset();
-        rowProcessor->addBlock(sendItem);
+        if (rowProcessorException)
+            throw rowProcessorException.getClear();
+        rowBlockQueue.enqueue(sendItem);
         rowProcessorAddBlockTime += rowProcessorAddBlockTimer.elapsedCycles();
     }
     virtual void onInputFinished(rowcount_t count)
