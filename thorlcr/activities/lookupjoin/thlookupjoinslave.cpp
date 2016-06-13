@@ -890,6 +890,15 @@ protected:
         SimpleInterThreadQueueOf<CSendItem, true> &blockQueue;
         Owned<IException> exception;
 
+        CThorExpandingRowArray pending;
+        CThorExpandingRowArray rHSInRowsTemp;
+
+
+        CCycleTimer addRHSRowsTimer2, deserializationTimer, processRHSRowsSetupTimer;
+        cycle_t addRHSRowsTime2 = 0;
+        cycle_t deserializationTime = 0;
+        cycle_t processRHSRowsSetupTime = 0;
+
         void clearQueue()
         {
             loop
@@ -900,9 +909,12 @@ protected:
             }
         }
     public:
-        CRowProcessor(CInMemJoinBase &_owner, SimpleInterThreadQueueOf<CSendItem, true> &_blockQueue) : threaded("CRowProcessor", this), owner(_owner), blockQueue(_blockQueue)
+        CRowProcessor(CInMemJoinBase &_owner, SimpleInterThreadQueueOf<CSendItem, true> &_blockQueue)
+            : threaded("CRowProcessor", this), owner(_owner), blockQueue(_blockQueue), pending(_owner), rHSInRowsTemp(_owner)
         {
             stopped = false;
+            pending.setup(owner.sharedRightRowInterfaces);
+            rHSInRowsTemp.setup(owner.sharedRightRowInterfaces);
         }
         ~CRowProcessor()
         {
@@ -947,6 +959,41 @@ protected:
             blockQueue.enqueue(sendItem); // will block if queue full
         }
 */
+        void processRHSRows(unsigned slave, MemoryBuffer &mb)
+        {
+            /* JCSMORE - I wonder if this should be done asynchronously on a few threads (<=1 per target)
+             * It also might be better to use hash the rows now and assign to rhsSlaveRows arrays, it's a waste of hash() calls
+             * if it never spills, but will make flushing non-locals simpler if spilling occurs.
+             */
+            processRHSRowsSetupTimer.reset();
+            CThorSpillableRowArray &rows = *targetChannel->rhsSlaveRows.item(slave);
+            RtlDynamicRowBuilder rowBuilder(owner.rightAllocator); // NB: rightAllocator is the shared allocator
+            CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
+            processRHSRowsSetupTime += processRHSRowsSetupTimer.elapsedCycles();
+            while (!memDeserializer.eos())
+            {
+                deserializationTimer.reset();
+                size32_t sz = owner.rightDeserializer->deserialize(rowBuilder, memDeserializer);
+                pending.append(rowBuilder.finalizeRowClear(sz));
+                deserializationTime += deserializationTimer.elapsedCycles();
+                if (pending.ordinality() >= 100)
+                {
+                    addRHSRowsTimer2.reset();
+                    // NB: If spilt, addRHSRow will filter out non-locals
+                    if (!targetChannel->addRHSRows(rows, pending, rHSInRowsTemp)) // NB: in SMART case, must succeed
+                        throw MakeActivityException(&owner, 0, "Out of memory: Unable to add any more rows to RHS");
+                    addRHSRowsTime2 += addRHSRowsTimer2.elapsedCycles();
+                }
+            }
+            if (pending.ordinality())
+            {
+                addRHSRowsTimer2.reset();
+                // NB: If spilt, addRHSRow will filter out non-locals
+                if (!targetChannel->addRHSRows(rows, pending, rHSInRowsTemp)) // NB: in SMART case, must succeed
+                    throw MakeActivityException(&owner, 0, "Out of memory: Unable to add any more rows to RHS");
+                addRHSRowsTime2 += addRHSRowsTimer2.elapsedCycles();
+            }
+        }
     // IThreaded
         virtual void main()
         {
@@ -969,7 +1016,7 @@ protected:
                     ThorExpand(sendItem->queryMsg(), expandedMb);
                     rpExpandTime += timer.elapsedCycles();
                     timer.reset();
-                    targetChannel->processRHSRows(sendItem->querySlave(), expandedMb);
+                    processRHSRows(sendItem->querySlave(), expandedMb);
                     rpProcessRHSRowsTime += timer.elapsedCycles();
                     ++blocks;
                 }
@@ -984,6 +1031,11 @@ protected:
             owner.ActPrintLog("TIME: %s - rpDequeueTime (blocks=%u) = %u", owner.queryJob().queryWuid(), blocks, static_cast<unsigned>(cycle_to_millisec(rpDequeueTime)));
             owner.ActPrintLog("TIME: %s - rpExpandTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rpExpandTime)));
             owner.ActPrintLog("TIME: %s - rpProcessRHSRowsTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rpProcessRHSRowsTime)));
+
+            owner.ActPrintLog("TIME: %s - deserializationTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(deserializationTime)));
+            owner.ActPrintLog("TIME: %s - rowProcessor-addRHSRowsTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(addRHSRowsTime2)));
+            owner.ActPrintLog("TIME: %s - processRHSRowsSetupTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(processRHSRowsSetupTime)));
+
         }
     } *rowProcessor;
     SimpleInterThreadQueueOf<CSendItem, true> rowBlockQueue;
@@ -1043,10 +1095,7 @@ protected:
     cycle_t addRHSRowTime = 0;
     cycle_t broadcastToOthersTime = 0;
     cycle_t rowProcessorAddBlockTime = 0;
-    CCycleTimer serializationTimer, compressionTimer, addRHSRowTimer, broadcastToOthersTimer, rowProcessorAddBlockTimer, addRHSRowsTimer2, deserializationTimer;
-    cycle_t addRHSRowsTime2 = 0;
-    cycle_t deserializationTime = 0;
-
+    CCycleTimer serializationTimer, compressionTimer, addRHSRowTimer, broadcastToOthersTimer, rowProcessorAddBlockTimer;
 
 
     std::atomic<cycle_t> totalSerializationTime, totalCompresssionTime, totalAddRHSRowTime, totalBroadcastToOthersTime;
@@ -1161,26 +1210,20 @@ protected:
         CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
         while (!memDeserializer.eos())
         {
-            deserializationTimer.reset();
             size32_t sz = rightDeserializer->deserialize(rowBuilder, memDeserializer);
             pending.append(rowBuilder.finalizeRowClear(sz));
-            deserializationTime += deserializationTimer.elapsedCycles();
             if (pending.ordinality() >= 100)
             {
-                addRHSRowsTimer2.reset();
                 // NB: If spilt, addRHSRow will filter out non-locals
                 if (!addRHSRows(rows, pending, rHSInRowsTemp)) // NB: in SMART case, must succeed
                     throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
-                addRHSRowsTime2 += addRHSRowsTimer2.elapsedCycles();
             }
         }
         if (pending.ordinality())
         {
-            addRHSRowsTimer2.reset();
             // NB: If spilt, addRHSRow will filter out non-locals
             if (!addRHSRows(rows, pending, rHSInRowsTemp)) // NB: in SMART case, must succeed
                 throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
-            addRHSRowsTime2 += addRHSRowsTimer2.elapsedCycles();
         }
     }
     void broadcastRHS() // broadcasting local rhs
@@ -1717,9 +1760,6 @@ public:
  ActPrintLog("Waiting for rowProcessor to finish");
         rowProcessor->wait();
  ActPrintLog("rowProcessor finished");
-
- ActPrintLog("TIME: %s - deserializationTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(deserializationTime)));
- ActPrintLog("TIME: %s - rowProcessor-addRHSRowsTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(addRHSRowsTime2)));
 
  ActPrintLog("waiting for interchannelbarrier2");
         InterChannelBarrier();
