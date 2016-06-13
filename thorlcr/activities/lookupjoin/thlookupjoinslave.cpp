@@ -995,11 +995,13 @@ protected:
         CThorExpandingRowArray rHSInRowsTemp;
 
 
-        CCycleTimer addRHSRowsTimer2, deserializationTimer, processRHSRowsSetupTimer;
+        CCycleTimer addRHSRowsTimer2, deserializationTimer, processRHSRowsSetupTimer, pendingAppendTimer;
         cycle_t addRHSRowsTime2 = 0;
         cycle_t deserializationTime = 0;
         cycle_t processRHSRowsSetupTime = 0;
         cycle_t createTime = 0;
+        cycle_t pendingAppendTime = 0;
+        rowcount_t rowCount = 0;
 
         void clearQueue()
         {
@@ -1078,8 +1080,10 @@ protected:
             {
                 deserializationTimer.reset();
                 size32_t sz = owner.rightDeserializer->deserialize(rowBuilder, memDeserializer);
-                pending.append(rowBuilder.finalizeRowClear(sz));
                 deserializationTime += deserializationTimer.elapsedCycles();
+                pendingAppendTimer.reset();
+                pending.append(rowBuilder.finalizeRowClear(sz));
+                pendingAppendTime += pendingAppendTimer.elapsedCycles();
                 if (pending.ordinality() >= 100)
                 {
                     addRHSRowsTimer2.reset();
@@ -1087,10 +1091,12 @@ protected:
                     if (!targetChannel->addRHSRows(rows, pending, rHSInRowsTemp)) // NB: in SMART case, must succeed
                         throw MakeActivityException(&owner, 0, "Out of memory: Unable to add any more rows to RHS");
                     addRHSRowsTime2 += addRHSRowsTimer2.elapsedCycles();
+                    rowCount += 100;
                 }
             }
             if (pending.ordinality())
             {
+                rowCount += pending.ordinality();
                 addRHSRowsTimer2.reset();
                 // NB: If spilt, addRHSRow will filter out non-locals
                 if (!targetChannel->addRHSRows(rows, pending, rHSInRowsTemp)) // NB: in SMART case, must succeed
@@ -1132,7 +1138,7 @@ protected:
 //                exception.setown(e);
                 EXCLOG(e, "CRowProcessor");
             }
-            owner.ActPrintLog("TIME: %s - rpDequeueTime (blocks=%u) = %u", owner.queryJob().queryWuid(), blocks, static_cast<unsigned>(cycle_to_millisec(rpDequeueTime)));
+            owner.ActPrintLog("TIME: %s - rpDequeueTime (blocks=%u, rowCount=%" I64F "d) = %u", owner.queryJob().queryWuid(), blocks, rowCount, static_cast<unsigned>(cycle_to_millisec(rpDequeueTime)));
             owner.ActPrintLog("TIME: %s - rpExpandTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rpExpandTime)));
             owner.ActPrintLog("TIME: %s - rpProcessRHSRowsTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rpProcessRHSRowsTime)));
 
@@ -1140,6 +1146,7 @@ protected:
             owner.ActPrintLog("TIME: %s - rowProcessor-addRHSRowsTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(addRHSRowsTime2)));
             owner.ActPrintLog("TIME: %s - processRHSRowsSetupTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(processRHSRowsSetupTime)));
             owner.ActPrintLog("TIME: %s - createTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(createTime)));
+            owner.ActPrintLog("TIME: %s - pendingAppendTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(pendingAppendTime)));
 
         }
     } *rowProcessor;
