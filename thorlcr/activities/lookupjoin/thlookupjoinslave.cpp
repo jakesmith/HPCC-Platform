@@ -36,7 +36,7 @@ enum join_t { JT_Undefined, JT_Inner, JT_LeftOuter, JT_RightOuter, JT_LeftOnly, 
 
 
 #define MAX_SEND_SIZE 0x100000 // 1MB
-#define MAX_QUEUE_BLOCKS 5
+#define MAX_QUEUE_BLOCKS 500
 
 enum broadcast_code { bcast_none, bcast_send, bcast_sendStopping, bcast_stop };
 enum broadcast_flags { bcastflag_null=0, bcastflag_spilt=0x100, bcastflag_stop=0x200 };
@@ -325,8 +325,16 @@ class CBroadcaster : public CSimpleInterface
 #ifdef _TRACEBROADCAST
                     ActPrintLog(&activity, "Broadcast node %d Waiting for reply from node %d, origin node %d, origin slave %d, size %d, code=%d, replyTag=%d", myNode+1, t, origin+1, sendItem->querySlave()+1, sendLen, (unsigned)sendItem->queryCode(), (unsigned)rt);
 #endif
+                if (bcast_stop == sendItem->queryCode())
+                {
+                    activity.ActPrintLog("broadcastToOthers: receiving stop ACK - ot=%u, t=%u, sendItem->node=%u, sendItem->slave=%u", ot, t, sendItem->queryNode(), sendItem->querySlave());
+                }
                     if (!activity.receiveMsg(*comm, replyMsg, t, rt))
                         break;
+                if (bcast_stop == sendItem->queryCode())
+                {
+                    activity.ActPrintLog("broadcastToOthers: received stop ACK - ot=%u, t=%u, sendItem->node=%u, sendItem->slave=%u", ot, t, sendItem->queryNode(), sendItem->querySlave());
+                }
 #ifdef _TRACEBROADCAST
                     ActPrintLog(&activity, "Broadcast node %d Sent to node %d, origin node %d, origin slave %d, size %d, code=%d - received ack", myNode+1, t, origin+1, sendItem->querySlave()+1, sendLen, (unsigned)sendItem->queryCode());
 #endif
@@ -504,8 +512,11 @@ public:
     }
     void end()
     {
+ ActPrintLog(&activity, "Waiting for receiver to finish");
         receiver.wait(); // terminates when received stop from all others
+ ActPrintLog(&activity, "Waiting for sender to finish");
         sender.wait(); // terminates when any remaining packets, including final stop packets have been re-broadcast
+ ActPrintLog(&activity, "Sender finished");
     }
     void cancel(IException *e=NULL)
     {
@@ -1011,7 +1022,8 @@ protected:
     cycle_t compressionTime = 0;
     cycle_t addRHSRowTime = 0;
     cycle_t broadcastToOthersTime = 0;
-    CCycleTimer serializationTimer, compressionTimer, addRHSRowTimer, broadcastToOthersTimer;
+    cycle_t rowProcessorAddBlockTime = 0;
+    CCycleTimer serializationTimer, compressionTimer, addRHSRowTimer, broadcastToOthersTimer, rowProcessorAddBlockTimer;
 
     std::atomic<cycle_t> totalSerializationTime, totalCompresssionTime, totalAddRHSRowTime, totalBroadcastToOthersTime;
     cycle_t nextRowTime = 0;
@@ -1660,9 +1672,14 @@ public:
         broadcaster->start(this, mpTag, stopping, false); // slaves broadcasting
         broadcastRHS();
         broadcaster->end();
+ ActPrintLog("Waiting for rowProcessor to finish");
         rowProcessor->wait();
+ ActPrintLog("rowProcessor finished");
+ ActPrintLog("waiting for interchannelbarrier");
         InterChannelBarrier();
+ ActPrintLog("interchannelbarrier done");
         broadcaster->trace();
+        ActPrintLog("TIME: %s - rowProcessorAddBlockTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rowProcessorAddBlockTime)));
 
         totalSerializationTime += serializationTime;
         totalCompresssionTime += compressionTime;
@@ -1735,7 +1752,9 @@ public:
             }
         }
         dbgassertex((sendItem==NULL) == stop); // if sendItem==NULL stop must = true, if sendItem != NULL stop must = false;
+        rowProcessorAddBlockTimer.reset();
         rowProcessor->addBlock(sendItem);
+        rowProcessorAddBlockTime += rowProcessorAddBlockTimer.elapsedCycles();
     }
     virtual void onInputFinished(rowcount_t count)
     {
