@@ -1762,7 +1762,14 @@ public:
         rowProcessorAddBlockTimer.reset();
         if (rowProcessorException)
             throw rowProcessorException.getClear();
-        rowBlockQueue.enqueue(sendItem);
+        if (nullptr == sendItem)
+        {
+            // a nullptr for each rowProcessor to stop them
+            for (unsigned c=0; c<queryJob().queryJobChannels(); c++)
+                rowBlockQueue.enqueue(nullptr);
+        }
+        else
+            rowBlockQueue.enqueue(sendItem);
         rowProcessorAddBlockTime += rowProcessorAddBlockTimer.elapsedCycles();
     }
     virtual void onInputFinished(rowcount_t count)
