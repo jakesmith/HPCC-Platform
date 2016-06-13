@@ -284,7 +284,8 @@ class CBroadcaster : public CSimpleInterface
         CMessageBuffer replyMsg;
         // sends to all in 1st pass, then waits for ack from all
 
-        unsigned loopCnt = (bcast_stop == sendItem->queryCode()) ? 1 : 2; // all but stop wait for ack relpy.
+//        unsigned loopCnt = 1; // (bcast_stop == sendItem->queryCode()) ? 1 : 2; // all but stop wait for ack relpy.
+        unsigned loopCnt = (bcast_stop == sendItem->queryCode()) ? 2 : 1;
         for (unsigned sendRecv=0; sendRecv<loopCnt && !activity.queryAbortSoon(); sendRecv++)
         {
             unsigned i = 0;
@@ -382,6 +383,12 @@ class CBroadcaster : public CSimpleInterface
                 case bcast_stop:
                 {
                     bool stopResent = (0 != (sendItem->queryFlags() & bcastflag_stop));
+                    if (!stopResent)
+                    {
+                        ActPrintLog(&activity, "recvLoop (SENDING ACK) - received bcast_stop(stopResent=%s), from : node=%u, slave=%u", stopResent?"true":"false", sendItem->queryNode()+1, sendItem->querySlave()+1);
+                        CMessageBuffer ackMsg;
+                        comm->send(ackMsg, sendRank, replyTag); // send ack
+                    }
                     ActPrintLog(&activity, "recvLoop - received bcast_stop(stopResent=%s), from : node=%u, slave=%u", stopResent?"true":"false", sendItem->queryNode()+1, sendItem->querySlave()+1);
                     if (0 == (sendItem->queryFlags() & bcastflag_stop))
                         sender.addBlock(sendItem.getLink());
@@ -403,8 +410,8 @@ class CBroadcaster : public CSimpleInterface
                 }
                 case bcast_send:
                 {
-                    CMessageBuffer ackMsg;
-                    comm->send(ackMsg, sendRank, replyTag); // send ack
+//                    CMessageBuffer ackMsg;
+//                    comm->send(ackMsg, sendRank, replyTag); // send ack
                     sender.addBlock(sendItem.getLink());
                     CCycleAddTimer tb(bcastSendHandlingTime);
                     if (!allRequestStop) // don't care if all stopping
