@@ -1227,6 +1227,8 @@ protected:
             throw;
         }
 
+        ActPrintLog("TIME: %s - LOCALserializationTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(serializationTime)));
+        ActPrintLog("TIME: %s - LOCALcompressionTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(compressionTime)));
         ActPrintLog("TIME: %s - rightNextRowTime = %u ms", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rightNextRowTime)));
         ActPrintLog("TIME: %s - addRHSRowsTime = %u ms", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(addRHSRowsTime)));
         ActPrintLog("TIME: %s - broadcastRHSTime = %u ms", queryJob().queryWuid(), broadcastRHSTime.elapsedMs());
