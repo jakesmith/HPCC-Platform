@@ -1138,6 +1138,9 @@ protected:
         MemoryBuffer mb;
         CThorExpandingRowArray rHSInRowsTemp(*this, sharedRightRowInterfaces);
         CThorExpandingRowArray pending(*this, sharedRightRowInterfaces);
+
+        CCycleTimer addRHSRowsTimer;
+        cycle_t addRHSRowsTime = 0;
         try
         {
             CThorSpillableRowArray &localRhsRows = *rhsSlaveRows.item(mySlaveNum);
@@ -1166,6 +1169,7 @@ protected:
                         pending.append(row.getClear());
                     if (pending.ordinality() >= 100)
                     {
+                        addRHSRowsTimer.reset();
                         if (0 == queryJobChannelNumber())
                         {
                             if (!addRHSRows(localRhsRows, pending, rHSInRowsTemp)) // may cause broadcaster to be told to stop (for isStopping() to become true)
@@ -1176,12 +1180,14 @@ protected:
                             if (!channels[0]->addRHSRows(mySlaveNum, pending, rHSInRowsTemp))
                                 throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
                         }
+                        addRHSRowsTime += addRHSRowsTimer.elapsedCycles();
                     }
                     if (channel0Broadcaster->stopRequested())
                         break;
                 }
                 if (pending.ordinality())
                 {
+                    addRHSRowsTimer.reset();
                     if (0 == queryJobChannelNumber())
                     {
                         if (!addRHSRows(localRhsRows, pending, rHSInRowsTemp)) // may cause broadcaster to be told to stop (for isStopping() to become true)
@@ -1192,6 +1198,7 @@ protected:
                         if (!channels[0]->addRHSRows(mySlaveNum, pending, rHSInRowsTemp))
                             throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
                     }
+                    addRHSRowsTime += addRHSRowsTimer.elapsedCycles();
                 }
                 if (0 == mb.length()) // will always be true if numNodes = 1
                     break;
@@ -1215,6 +1222,8 @@ protected:
             ActPrintLog(e, "CInMemJoinBase::broadcastRHS: exception");
             throw;
         }
+
+        ActPrintLog("TIME: %s - addRHSRowsTime = %u ms", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(addRHSRowsTime)));
 
         sendItem.setown(broadcaster->newSendItem(bcast_stop));
         if (channel0Broadcaster->stopRequested())
