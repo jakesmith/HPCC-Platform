@@ -284,7 +284,7 @@ class CBroadcaster : public CSimpleInterface
         CMessageBuffer replyMsg;
         // sends to all in 1st pass, then waits for ack from all
 
-        bool loopCnt = bcast_stop == sendItem->queryCode() ? 1 : 2; // all but stop wait for ack relpy.
+        unsigned loopCnt = (bcast_stop == sendItem->queryCode()) ? 1 : 2; // all but stop wait for ack relpy.
         for (unsigned sendRecv=0; sendRecv<loopCnt && !activity.queryAbortSoon(); sendRecv++)
         {
             unsigned i = 0;
@@ -539,16 +539,15 @@ public:
         if (nodeBroadcast)
             return;
         dbgassertex(broadcastLock);
+        Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->queryNode(), sendItem->querySlave());
+        stopSendItem->setFlag(bcastflag_stop);
         unsigned myNodeNum = activity.queryJob().queryMyNodeRank()-1;
         for (unsigned ch=0; ch<activity.queryJob().queryJobChannels(); ch++)
         {
             if (ch != activity.queryJobChannelNumber())
             {
                 unsigned dst = activity.queryJob().querySlaveForNodeChannel(myNodeNum, ch) + 1;
-                Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->queryNode(), sendItem->querySlave());
-                stopSendItem->setFlag(bcastflag_stop);
                 activity.ActPrintLog("sendLocalStop(%u, %u): myNodeNum=%u, ch=%u, dst=%u", sendItem->queryNode(), sendItem->querySlave(), myNodeNum, ch, dst);
-                PrintStackReport();
                 CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
                 comm->send(stopSendItem->queryMsg(), dst, mpTag);
             }
@@ -1627,6 +1626,7 @@ public:
         broadcaster->end();
         rowProcessor->wait();
         InterChannelBarrier();
+        broadcaster->trace();
 
         totalSerializationTime += serializationTime;
         totalCompresssionTime += compressionTime;
