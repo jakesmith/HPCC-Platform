@@ -381,7 +381,8 @@ class CBroadcaster : public CSimpleInterface
             {
                 case bcast_stop:
                 {
-                    ActPrintLog(&activity, "recvLoop - received bcast_stop, from : node=%u, slave=%u", sendItem->queryNode()+1, sendItem->querySlave()+1);
+                    bool stopResent = (0 != (sendItem->queryFlags() & bcastflag_stop));
+                    ActPrintLog(&activity, "recvLoop - received bcast_stop(stopResent=%s), from : node=%u, slave=%u", stopResent?"true":"false", sendItem->queryNode()+1, sendItem->querySlave()+1);
                     if (0 == (sendItem->queryFlags() & bcastflag_stop))
                         sender.addBlock(sendItem.getLink());
                     bool stop = senderStop(*sendItem);
@@ -538,19 +539,18 @@ public:
         if (nodeBroadcast)
             return;
         dbgassertex(broadcastLock);
-        Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->queryNode(), sendItem->querySlave());
-        stopSendItem->setFlag(bcastflag_stop);
         unsigned myNodeNum = activity.queryJob().queryMyNodeRank()-1;
         for (unsigned ch=0; ch<activity.queryJob().queryJobChannels(); ch++)
         {
             if (ch != activity.queryJobChannelNumber())
             {
                 unsigned dst = activity.queryJob().querySlaveForNodeChannel(myNodeNum, ch) + 1;
-                CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
-                comm->send(stopSendItem->queryMsg(), dst, mpTag);
-
+                Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->queryNode(), sendItem->querySlave());
+                stopSendItem->setFlag(bcastflag_stop);
                 activity.ActPrintLog("sendLocalStop(%u, %u): myNodeNum=%u, ch=%u, dst=%u", sendItem->queryNode(), sendItem->querySlave(), myNodeNum, ch, dst);
                 PrintStackReport();
+                CriticalBlock b(*broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
+                comm->send(stopSendItem->queryMsg(), dst, mpTag);
             }
         }
     }

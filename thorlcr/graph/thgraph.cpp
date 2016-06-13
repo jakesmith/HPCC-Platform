@@ -2373,12 +2373,15 @@ CJobBase::CJobBase(ILoadedDllEntry *_querySo, const char *_graphName) : querySo(
     unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", 200);
     for (unsigned c=0; c<queryJobChannels(); c++)
     {
-        for (unsigned n=1; n<numNodes; n++)
+        for (unsigned n=1; n<=numNodes; n++)
         {
             SocketEndpoint ep = nodeGroup->queryNode(n).endpoint();
             ep.port += c * localThorPortInc;
             unsigned slave = jobGroup->rank(ep);
             jobNodeChannelSlaveNum[c*numNodes + (n-1)] = slave-1;
+            StringBuffer epStr;
+            ep.getUrlStr(epStr);
+            PROGLOG("jobNodeChannelSlaveNum[%u] = %u (%u, %u, %u, %u, %s)", c*numNodes + (n-1), slave-1, c, numNodes, n, slave, epStr.str());
         }
     }
     for (unsigned s=0; s<querySlaves(); s++)
