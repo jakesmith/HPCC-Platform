@@ -950,16 +950,28 @@ protected:
     // IThreaded
         virtual void main()
         {
+            CCycleTimer timer;
+            cycle_t rpDequeueTime = 0;
+            cycle_t rpExpandTime = 0;
+            cycle_t rpProcessRHSRowsTime = 0;
+            unsigned blocks = 0;
             try
             {
                 while (!stopped)
                 {
+                    timer.reset();
                     Owned<CSendItem> sendItem = blockQueue.dequeue();
+                    rpDequeueTime += timer.elapsedCycles();
                     if (stopped || (NULL == sendItem))
                         break;
+                    timer.reset();
                     MemoryBuffer expandedMb;
                     ThorExpand(sendItem->queryMsg(), expandedMb);
+                    rpExpandTime += timer.elapsedCycles();
+                    timer.reset();
                     targetChannel->processRHSRows(sendItem->querySlave(), expandedMb);
+                    rpProcessRHSRowsTime += timer.elapsedCycles();
+                    ++blocks;
                 }
             }
             catch (IException *e)
@@ -969,6 +981,9 @@ protected:
 //                exception.setown(e);
                 EXCLOG(e, "CRowProcessor");
             }
+            owner.ActPrintLog("TIME: %s - rpDequeueTime (blocks=%u) = %u", owner.queryJob().queryWuid(), blocks, static_cast<unsigned>(cycle_to_millisec(rpDequeueTime)));
+            owner.ActPrintLog("TIME: %s - rpExpandTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rpExpandTime)));
+            owner.ActPrintLog("TIME: %s - rpProcessRHSRowsTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rpProcessRHSRowsTime)));
         }
     } *rowProcessor;
     SimpleInterThreadQueueOf<CSendItem, true> rowBlockQueue;
@@ -1679,13 +1694,26 @@ public:
         broadcaster->start(this, mpTag, stopping, false); // slaves broadcasting
         broadcastRHS();
         broadcaster->end();
- ActPrintLog("Waiting for rowProcessor to finish");
-        rowProcessor->wait();
- ActPrintLog("rowProcessor finished");
+
  ActPrintLog("waiting for interchannelbarrier");
         InterChannelBarrier();
  ActPrintLog("interchannelbarrier done");
-        broadcaster->trace();
+
+        // a nullptr for each rowProcessor to stop them
+//        for (unsigned c=0; c<queryJob().queryJobChannels(); c++)
+            rowBlockQueue.enqueue(nullptr);
+
+ ActPrintLog("Waiting for rowProcessor to finish");
+        rowProcessor->wait();
+ ActPrintLog("rowProcessor finished");
+
+ ActPrintLog("waiting for interchannelbarrier2");
+        InterChannelBarrier();
+ ActPrintLog("interchannelbarrier done2");
+
+
+
+ broadcaster->trace();
         ActPrintLog("TIME: %s - rowProcessorAddBlockTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rowProcessorAddBlockTime)));
 
         totalSerializationTime += serializationTime;
@@ -1762,13 +1790,7 @@ public:
         rowProcessorAddBlockTimer.reset();
         if (rowProcessorException)
             throw rowProcessorException.getClear();
-        if (nullptr == sendItem)
-        {
-            // a nullptr for each rowProcessor to stop them
-            for (unsigned c=0; c<queryJob().queryJobChannels(); c++)
-                rowBlockQueue.enqueue(nullptr);
-        }
-        else
+        if (nullptr != sendItem)
             rowBlockQueue.enqueue(sendItem);
         rowProcessorAddBlockTime += rowProcessorAddBlockTimer.elapsedCycles();
     }
