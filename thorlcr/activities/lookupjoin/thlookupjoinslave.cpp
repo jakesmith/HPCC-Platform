@@ -302,7 +302,7 @@ class CBroadcaster : public CSimpleInterface
                 unsigned ot=t;
                 if (!nodeBroadcast)
                     t = activity.queryJob().querySlaveForNodeChannel(t-1, activity.queryJobChannelNumber()) + 1;
-                if (1 == loopCnt)
+                if (bcast_stop == sendItem->queryCode())
                 {
                     activity.ActPrintLog("broadcastToOthers: sending stop - ot=%u, t=%u, sendItem->node=%u, sendItem->slave=%u", ot, t, sendItem->queryNode(), sendItem->querySlave());
                 }
