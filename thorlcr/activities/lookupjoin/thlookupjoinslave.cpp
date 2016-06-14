@@ -1078,7 +1078,7 @@ protected:
             CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
             processRHSRowsSetupTime += processRHSRowsSetupTimer.elapsedCycles();
 
-            CriticalBlock b(*rowProcessorLock);
+//            CriticalBlock b(*rowProcessorLock);
             while (!memDeserializer.eos())
             {
                 deserializationTimer.reset();
@@ -1089,7 +1089,7 @@ protected:
                 pendingAppendTime += pendingAppendTimer.elapsedCycles();
                 if (pending.ordinality() >= 100)
                 {
-                    CriticalUnblock ub(*rowProcessorLock);
+//                    CriticalUnblock ub(*rowProcessorLock);
                     addRHSRowsTimer2.reset();
                     // NB: If spilt, addRHSRow will filter out non-locals
                     if (!targetChannel->addRHSRows(rows, pending, rHSInRowsTemp)) // NB: in SMART case, must succeed
@@ -1100,7 +1100,7 @@ protected:
             }
             if (pending.ordinality())
             {
-                CriticalUnblock ub(*rowProcessorLock);
+//                CriticalUnblock ub(*rowProcessorLock);
                 rowCount += pending.ordinality();
                 addRHSRowsTimer2.reset();
                 // NB: If spilt, addRHSRow will filter out non-locals
