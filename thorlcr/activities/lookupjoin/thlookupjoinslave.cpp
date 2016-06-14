@@ -1084,7 +1084,8 @@ protected:
     {
         Owned<CSendItem> sendItem = broadcaster->newSendItem(bcast_send);
         MemoryBuffer mb;
-        try
+        CThorExpandingRowArray rHSInRowsTemp(*this, sharedRightRowInterfaces);
+        CThorExpandingRowArray pending(*this, sharedRightRowInterfaces);        try
         {
             CMemoryRowSerializer mbser(mb);
             while (!abortSoon)
@@ -2695,7 +2696,6 @@ public:
     virtual bool addRHSRows(CThorSpillableRowArray &rhsRows, CThorExpandingRowArray &inRows, CThorExpandingRowArray &rHSInRowsTemp)
     {
         dbgassertex(0 == rHSInRowsTemp.ordinality());
-        CCycleAddTimer tb(addRHSRowTime);
         if (hasFailedOverToLocal())
         {
             ForEachItemIn(r, inRows)
