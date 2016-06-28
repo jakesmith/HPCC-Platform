@@ -1050,44 +1050,6 @@ offset_t CThorExpandingRowArray::serializedSize()
     return total;
 }
 
-memsize_t CThorExpandingRowArray::getMemUsageRowArray()
-{
-    memsize_t total = 0;
-    // NB: worst case, when expanding (see resize method)
-    memsize_t sz = rowManager->getExpectedFootprint(maxRows * sizeof(void *), 0);
-    memsize_t szE = sz / 100 * 125; // don't care if sz v. small
-    if (stableSort_none == stableSort)
-        total += sz + szE;
-    else
-        total += sz + szE * 2;
-    return total;
-}
-
-memsize_t CThorExpandingRowArray::getMemUsageRows()
-{
-    if (!rowIf)
-    {
-        return (memsize_t)999;
-    }
-    IOutputMetaData *meta = rowIf->queryRowMetaData();
-    IOutputMetaData *diskMeta = meta->querySerializedDiskMeta(); // GH->JCS - really I want a internalMeta here.
-    rowidx_t c = ordinality();
-    memsize_t total = 0;
-    if (diskMeta->isFixedSize())
-        total = c * rowManager->getExpectedFootprint(diskMeta->getFixedSize(), 0);
-    else
-    {
-        CSizingSerializer ssz;
-        for (rowidx_t i=0; i<c; i++)
-        {
-            serializer->serialize(ssz, (const byte *)rows[i]);
-            total += rowManager->getExpectedFootprint(ssz.size(), 0);
-            ssz.reset();
-        }
-    }
-    return total;
-}
-
 
 memsize_t CThorExpandingRowArray::getMemUsage()
 {

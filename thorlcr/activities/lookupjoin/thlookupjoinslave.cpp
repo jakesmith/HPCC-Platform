@@ -302,9 +302,7 @@ class CBroadcaster : public CSimpleInterface
                 if (!nodeBroadcast)
                     t = activity.queryJob().querySlaveForNodeChannel(t-1, activity.queryJobChannelNumber()) + 1;
                 if (bcast_stop == sendItem->queryCode())
-                {
                     activity.ActPrintLog("broadcastToOthers: sending stop - ot=%u, t=%u, sendItem->node=%u, sendItem->slave=%u", ot, t, sendItem->queryNode(), sendItem->querySlave());
-                }
                 if (0 == sendRecv) // send
                 {
 #ifdef _TRACEBROADCAST
@@ -324,16 +322,8 @@ class CBroadcaster : public CSimpleInterface
 #ifdef _TRACEBROADCAST
                     ActPrintLog(&activity, "Broadcast node %d Waiting for reply from node %d, origin node %d, origin slave %d, size %d, code=%d, replyTag=%d", myNode+1, t, origin+1, sendItem->querySlave()+1, sendLen, (unsigned)sendItem->queryCode(), (unsigned)rt);
 #endif
-                if (bcast_stop == sendItem->queryCode())
-                {
-                    activity.ActPrintLog("broadcastToOthers: receiving stop ACK - ot=%u, t=%u, sendItem->node=%u, sendItem->slave=%u", ot, t, sendItem->queryNode(), sendItem->querySlave());
-                }
                     if (!activity.receiveMsg(*comm, replyMsg, t, rt))
                         break;
-                if (bcast_stop == sendItem->queryCode())
-                {
-                    activity.ActPrintLog("broadcastToOthers: received stop ACK - ot=%u, t=%u, sendItem->node=%u, sendItem->slave=%u", ot, t, sendItem->queryNode(), sendItem->querySlave());
-                }
 #ifdef _TRACEBROADCAST
                     ActPrintLog(&activity, "Broadcast node %d Sent to node %d, origin node %d, origin slave %d, size %d, code=%d - received ack", myNode+1, t, origin+1, sendItem->querySlave()+1, sendLen, (unsigned)sendItem->queryCode());
 #endif
@@ -384,7 +374,7 @@ class CBroadcaster : public CSimpleInterface
 #ifdef _TRACEBROADCAST
             ActPrintLog(&activity, "Broadcast node %d, sent ack to node %d, replyTag=%d", myNode+1, (unsigned)sendRank, (unsigned)replyTag);
 #endif
-//            assertex(mySlave != sendItem->querySlave());
+            assertex(mySlave != sendItem->querySlave());
             switch (sendItem->queryCode())
             {
                 case bcast_stop:
@@ -417,8 +407,6 @@ class CBroadcaster : public CSimpleInterface
                 }
                 case bcast_send:
                 {
-//                    CMessageBuffer ackMsg;
-//                    comm->send(ackMsg, sendRank, replyTag); // send ack
                     sender.addBlock(sendItem.getLink());
                     CCycleAddTimer tb(bcastSendHandlingTime);
                     if (!allRequestStop) // don't care if all stopping
@@ -500,11 +488,8 @@ public:
     }
     void end()
     {
- ActPrintLog(&activity, "Waiting for receiver to finish");
         receiver.wait(); // terminates when received stop from all others
- ActPrintLog(&activity, "Waiting for sender to finish");
         sender.wait(); // terminates when any remaining packets, including final stop packets have been re-broadcast
- ActPrintLog(&activity, "Sender finished");
     }
     void cancel(IException *e=NULL)
     {
@@ -690,7 +675,7 @@ public:
         else
         {
             size32_t bitSetMemSz = getBitSetMemoryRequirement(rowCount);
-            void *pBitSetMem = rowManager->allocate(bitSetMemSz, activity.queryContainer().queryId(), SPILL_PRIORITY_LOOKUPJOIN);
+            void *pBitSetMem = rowManager->allocate(bitSetMemSz, activity.queryContainer().queryId(), SPILL_PRIORITY_LOW);
             if (!pBitSetMem)
                 return false;
 
@@ -781,106 +766,6 @@ public:
 #define InterChannelBarrier() interChannelBarrier();
 #endif
 
-class RtlDynamicRowBuilder2 : implements RtlRowBuilderBase
-{
-    cycle_t &c;
-public:
-    inline RtlDynamicRowBuilder2(cycle_t &_c, IEngineRowAllocator * _rowAllocator) : rowAllocator(_rowAllocator), c(_c)
-    {
-        if (rowAllocator)
-            create();
-        else
-        {
-            self = NULL;
-            maxLength = 0;
-        }
-    }
-    virtual IEngineRowAllocator *queryAllocator() const
-    {
-        return rowAllocator;
-    }
-    inline RtlDynamicRowBuilder2(cycle_t &_c, IEngineRowAllocator * _rowAllocator, bool createInitial) : rowAllocator(_rowAllocator), c(_c)
-    {
-        if (rowAllocator && createInitial)
-            create();
-        else
-        {
-            self = NULL;
-            maxLength = 0;
-        }
-    }
-    //This is here to allow group aggregates to perform resizing.
-    inline RtlDynamicRowBuilder2(cycle_t &_c, IEngineRowAllocator * _rowAllocator, size32_t _maxLength, void * _self) : rowAllocator(_rowAllocator), c(_c)
-    {
-        self = static_cast<byte *>(_self);
-        maxLength = _maxLength;
-    }
-    inline ~RtlDynamicRowBuilder2() { clear(); }
-
-    virtual byte * ensureCapacity(size32_t required, const char * fieldName);
-
-    inline RtlDynamicRowBuilder2 & ensureRow() { if (!self) create(); return *this; }
-    inline bool exists() { return (self != NULL); }
-    inline const void * finalizeRowClear(size32_t len)
-    {
-        const unsigned finalMaxLength = maxLength;
-        maxLength = 0;
-        return rowAllocator->finalizeRow(len, getUnfinalizedClear(), finalMaxLength);
-    }
-    inline size32_t getMaxLength() const { return maxLength; }
-    inline void * getUnfinalizedClear() { void * ret = self; self = NULL; return ret; }
-
-    inline void clear() { if (self) { rowAllocator->releaseRow(self); self = NULL; } }
-    inline RtlDynamicRowBuilder2 & setAllocator(IEngineRowAllocator * _rowAllocator) { rowAllocator = _rowAllocator; return *this; }
-    inline void setown(size32_t _maxLength, void * _self) { self = static_cast<byte *>(_self); maxLength = _maxLength; }
-
-    void swapWith(RtlDynamicRowBuilder2 & other);
-
-protected:
-    inline byte * create()
-    {
-        CCycleTimer timer;
-        self = static_cast<byte *>(rowAllocator->createRow(maxLength));
-        c += timer.elapsedCycles();
-        return self;
-    }
-    virtual byte * createSelf() { return create(); }
-
-protected:
-    IEngineRowAllocator * rowAllocator;     // does this need to be linked???
-    size32_t maxLength;
-};
-
-
-byte * RtlDynamicRowBuilder2::ensureCapacity(size32_t required, const char * fieldName)
-{
-    if (required > maxLength)
-    {
-        if (!self)
-            create();
-
-        if (required > maxLength)
-        {
-            void * next = rowAllocator->resizeRow(required, self, maxLength);
-            if (!next)
-            {
-                rtlReportFieldOverflow(required, maxLength, fieldName);
-                return NULL;
-            }
-            self = static_cast<byte *>(next);
-        }
-    }
-    return self;
-}
-
-void RtlDynamicRowBuilder2::swapWith(RtlDynamicRowBuilder2 & other)
-{
-    size32_t savedMaxLength = maxLength;
-    void * savedSelf = getUnfinalizedClear();
-    setown(other.getMaxLength(), other.getUnfinalizedClear());
-    other.setown(savedMaxLength, savedSelf);
-}
-
 
 struct HtEntry { rowidx_t index, count; };
 
@@ -953,8 +838,6 @@ protected:
         CThorExpandingRowArray pending;
 
 
-
-
         CCycleTimer addRHSRowsTimer2, deserializationTimer, processRHSRowsSetupTimer, pendingAppendTimer;
         cycle_t addRHSRowsTime2 = 0;
         cycle_t deserializationTime = 0;
@@ -1019,7 +902,7 @@ protected:
         void processRHSRows(MemoryBuffer &mb)
         {
             processRHSRowsSetupTimer.reset();
-            RtlDynamicRowBuilder2 rowBuilder(createTime, owner.rightAllocator); // NB: rightAllocator is the shared allocator
+            RtlDynamicRowBuilder rowBuilder(owner.rightAllocator); // NB: rightAllocator is the shared allocator
             CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
             processRHSRowsSetupTime += processRHSRowsSetupTimer.elapsedCycles();
 
@@ -1125,7 +1008,7 @@ protected:
     CThorExpandingRowArray rhs;
     Owned<IOutputMetaData> outputMeta;
     IOutputMetaData *rightOutputMeta;
-    CriticalSection rhsRowLock;
+    CriticalSection rhsRowLock, clearNonLocalLock;
     Owned<IThorRowCollector> rightCollector;
     IArrayOf<IRowStream> gatheredRHSNodeStreams;
 
@@ -1633,10 +1516,6 @@ public:
         if (isGlobal())
             ::Release(rowProcessor);
     }
-    CRowProcessor *queryRowProcessor()
-    {
-        return rowProcessor;
-    }
     ITableLookup *queryTable() { return table; }
     void startLeftInput()
     {
@@ -1800,17 +1679,9 @@ public:
         broadcastRHS();
         broadcaster->end();
 
- ActPrintLog("waiting for interchannelbarrier");
         InterChannelBarrier();
- ActPrintLog("interchannelbarrier done");
-
- ActPrintLog("Waiting for rowProcessor to finish");
         rowProcessor->wait();
- ActPrintLog("rowProcessor finished");
-
- ActPrintLog("waiting for interchannelbarrier2");
         InterChannelBarrier();
- ActPrintLog("interchannelbarrier done2");
 
         broadcaster->trace();
 
@@ -1970,32 +1841,36 @@ protected:
         if (allInMemory)
             return false; // if here, implies CB was called, whilst final handover was being done and CB being removed.
         ActPrintLog("Clearing non-local rows - cause: %s, allowSpill=%s", msg, allowSpill?"true":"false");
-        if (((CLookupJoinActivityBase *)channels[0])->checkFailedOverToLocal()) // I have flagged channel0 failover
+        CLookupJoinActivityBase *lkjoinCh0 = (CLookupJoinActivityBase *)channels[0];
         {
-            // JCSMORE: As all need clearing, would benefit from doing in parallel
-            unsigned myChannelNum = queryJobChannelNumber();
-            std::atomic<rowidx_t> clearedRows(0);
-
-            class CClearChannelRows : public CAsyncFor
+            CriticalBlock b(lkjoinCh0->clearNonLocalLock);
+            if (lkjoinCh0->checkFailedOverToLocal()) // I have flagged channel0 failover
             {
-                CLookupJoinActivityBase &activity;
-                std::atomic<rowidx_t> &clearedRows;
-            public:
-                CClearChannelRows(CLookupJoinActivityBase &_activity, std::atomic<rowidx_t> &_clearedRows) : activity(_activity), clearedRows(_clearedRows)
-                {
-                }
-                void Do(unsigned i)
-                {
-                    clearedRows += ((CLookupJoinActivityBase *)activity.queryChannel(i))->clearMyNonLocals();
-                }
-            } afor(*this, clearedRows);
+                // JCSMORE: As all need clearing, would benefit from doing in parallel
+                unsigned myChannelNum = queryJobChannelNumber();
+                std::atomic<rowidx_t> clearedRows(0);
 
-            unsigned numThreads = queryJob().queryJobChannels(); // not sure you'll ever want to change this
-            CCycleTimer timer;
-            afor.For(queryJob().queryJobChannels(), numThreads);
-            ActPrintLog("TIME: %s - Cleared %" RIPF "u on %u threads = %u ms", queryJob().queryWuid(), clearedRows.load(), numThreads, timer.elapsedMs());
-            if (clearedRows)
-                return clearedRows;
+                class CClearChannelRows : public CAsyncFor
+                {
+                    CLookupJoinActivityBase &activity;
+                    std::atomic<rowidx_t> &clearedRows;
+                public:
+                    CClearChannelRows(CLookupJoinActivityBase &_activity, std::atomic<rowidx_t> &_clearedRows) : activity(_activity), clearedRows(_clearedRows)
+                    {
+                    }
+                    void Do(unsigned i)
+                    {
+                        clearedRows += ((CLookupJoinActivityBase *)activity.queryChannel(i))->clearMyNonLocals();
+                    }
+                } afor(*this, clearedRows);
+
+                unsigned numThreads = queryJob().queryJobChannels(); // not sure you'll ever want to change this
+                CCycleTimer timer;
+                afor.For(queryJob().queryJobChannels(), numThreads);
+                ActPrintLog("TIME: %s - Cleared %" RIPF "u on %u threads = %u ms", queryJob().queryWuid(), clearedRows.load(), numThreads, timer.elapsedMs());
+                if (clearedRows)
+                    return clearedRows;
+            }
         }
         if (!allowSpill)
             return 0;

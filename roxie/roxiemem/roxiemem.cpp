@@ -4155,15 +4155,6 @@ public:
             Owned<IActivityMemoryUsageMap> map = getActivityUsage();
             map->report(logctx, allocatorCache);
         }
-        if (globalArrayFunc)
-        {
-            PROGLOG("calling globalArrayFunc");
-            globalArrayFunc();
-        }
-        else
-        {
-            PROGLOG("globalArrayFunc not defined");
-        }
     }
 
 protected:

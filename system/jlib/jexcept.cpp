@@ -1380,22 +1380,6 @@ void printStackReport()
     queryLogMsgManager()->flushQueue(10*1000);
 }
 
-StringBuffer &getStackReport(StringBuffer &out)
-{
-#ifdef _WIN32
-    throwUnimplemented();
-#elif defined(__linux__)
-    out.append("Backtrace:").newline();
-    void *btarray[100];
-    unsigned btn = backtrace (btarray, 100);
-    char **strings = backtrace_symbols (btarray, btn);
-    for (unsigned i=0; i<btn; i++)
-        out.appendf("  %s", strings[i]).newline();
-    free (strings);
-#endif
-    return out;
-}
-
 //---------------------------------------------------------------------------------------------------------------------
 
 class jlib_decl CError : public CInterfaceOf<IError>
