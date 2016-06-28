@@ -36,7 +36,7 @@ enum join_t { JT_Undefined, JT_Inner, JT_LeftOuter, JT_RightOuter, JT_LeftOnly, 
 
 
 #define MAX_SEND_SIZE 0x100000 // 1MB
-#define MAX_QUEUE_BLOCKS 500
+#define MAX_QUEUE_BLOCKS 10
 
 enum broadcast_code { bcast_none, bcast_send, bcast_sendStopping, bcast_stop };
 enum broadcast_flags { bcastflag_null=0, bcastflag_spilt=0x100, bcastflag_stop=0x200 };
@@ -61,13 +61,18 @@ public:
 class CSendItem : public CSimpleInterface
 {
     CMessageBuffer msg;
-    unsigned info, node, slave, headerLen;
+    unsigned node, slave, headerLen;
+    unsigned short info;
+    unsigned short targetChannel;
 public:
-    CSendItem(broadcast_code _code, unsigned _node, unsigned _slave) : info((unsigned)_code), node(_node), slave(_slave)
+    CSendItem(broadcast_code _code, unsigned _node, unsigned _slave, unsigned _targetChannel) : info((unsigned short)_code), node(_node), slave(_slave)
     {
+        targetChannel = (unsigned short)_targetChannel;
+        dbgassertex(targetChannel==(unsigned)_targetChannel);
         msg.append(info);
         msg.append(node);
         msg.append(slave);
+        msg.append(targetChannel);
         headerLen = msg.length();
     }
     CSendItem(CMessageBuffer &_msg)
@@ -76,6 +81,7 @@ public:
         msg.read(info);
         msg.read(node);
         msg.read(slave);
+        msg.read(targetChannel);
         headerLen = msg.getPos();
     }
     unsigned length() const { return msg.length(); }
@@ -84,7 +90,8 @@ public:
     broadcast_code queryCode() const { return (broadcast_code)(info & BROADCAST_CODE_MASK); }
     unsigned queryNode() const { return node; } // 0 based
     unsigned querySlave() const { return slave; } // 0 based
-    void setSlave(unsigned _slave) { slave = _slave; }
+    unsigned queryTargetChannel() const { return targetChannel; } // 0 based
+    void setTargetChannel(unsigned _targetChannel) { targetChannel = (unsigned short)_targetChannel; dbgassertex(targetChannel==(unsigned)_targetChannel); }
     broadcast_flags queryFlags() const { return (broadcast_flags)(info & BROADCAST_FLAG_MASK); }
     void setFlag(broadcast_flags _flag)
     {
@@ -300,7 +307,7 @@ class CBroadcaster : public CSimpleInterface
                 unsigned sendLen = sendItem->length();
                 unsigned ot=t;
                 if (!nodeBroadcast)
-                    t = activity.queryJob().querySlaveForNodeChannel(t-1, activity.queryJobChannelNumber()) + 1;
+                    t = activity.queryJob().querySlaveForNodeChannel(t-1, sendItem->queryTargetChannel()) + 1;
                 if (bcast_stop == sendItem->queryCode())
                     activity.ActPrintLog("broadcastToOthers: sending stop - ot=%u, t=%u, sendItem->node=%u, sendItem->slave=%u", ot, t, sendItem->queryNode(), sendItem->querySlave());
                 if (0 == sendRecv) // send
@@ -484,7 +491,7 @@ public:
     {
         if (stopping && (bcast_send==code))
             code = bcast_sendStopping;
-        return new CSendItem(code, myNode, mySlave);
+        return new CSendItem(code, myNode, mySlave, activity.queryJobChannelNumber());
     }
     void end()
     {
@@ -531,7 +538,7 @@ public:
     {
         if (nodeBroadcast)
             return;
-        Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->queryNode(), sendItem->querySlave());
+        Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->queryNode(), sendItem->querySlave(), sendItem->queryTargetChannel());
         stopSendItem->setFlag(bcastflag_stop);
         unsigned myNodeNum = activity.queryJob().queryMyNodeRank()-1;
         for (unsigned ch=0; ch<activity.queryJob().queryJobChannels(); ch++)
@@ -979,7 +986,6 @@ protected:
         }
     } *rowProcessor;
 
-    CriticalSection rhsRowLock;
     Owned<CBroadcaster> broadcaster;
     CBroadcaster *channel0Broadcaster;
     rowidx_t rhsTableLen;
@@ -1186,9 +1192,6 @@ protected:
                     MemoryBuffer &mb = *serializationBuffers[channelDst];
                     CMemoryRowSerializer &mbser = *rowSerializers[channelDst];
 
-                    /* Add all locally read right rows to channel0 directly
-                     * NB: these rows remain on their channel allocator.
-                     */
                     if (numNodes>1)
                     {
                         serializationTimer.reset();
@@ -1214,13 +1217,6 @@ protected:
                             throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
                         addRHSRowsTime += addRHSRowsTimer.elapsedCycles();
                     }
-                    else
-                        pending.append(row.getClear());
-                    if (pending.ordinality() >= 100)
-                    {
-                        if (!channels[0]->addRHSRows(mySlaveNum, pending, rhsInRowsTemp)) // may cause broadcaster to be told to stop (for isStopping() to become true)
-                            throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
-                    }
                     if (channel0Broadcaster->stopRequested())
                         break;
                 }
@@ -1230,10 +1226,13 @@ protected:
                 {
                     ForEachItemIn(p, pendingPerChannel)
                     {
-                        addRHSRowsTimer.reset();
-                        if (!channels[p]->addRHSRows(*pendingChannels[p], rhsInRowsTemp))
-                            throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
-                        addRHSRowsTime += addRHSRowsTimer.elapsedCycles();
+                        if (pendingChannels[p]->ordinality())
+                        {
+                            addRHSRowsTimer.reset();
+                            if (!channels[p]->addRHSRows(*pendingChannels[p], rhsInRowsTemp))
+                                throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
+                            addRHSRowsTime += addRHSRowsTimer.elapsedCycles();
+                        }
                         MemoryBuffer &mb = *serializationBuffers[p];
                         if (mb.length())
                         {
@@ -1242,9 +1241,7 @@ protected:
                             compressionTime += compressionTimer.elapsedCycles();
                             broadcastToOthersTimer.reset();
 
-                            // fake coming from local channel, so broadcaster propagates on that channel
-                            unsigned slave = queryJob().querySlaveForNodeChannel(myNodeNum, p);
-                            sendItem->setSlave(slave);
+                            sendItem->setTargetChannel(p);
                             if (!broadcaster->send(sendItem))
                                 break;
                             broadcastToOthersTime += broadcastToOthersTimer.elapsedCycles();
@@ -1266,9 +1263,7 @@ protected:
                     compressionTime += compressionTimer.elapsedCycles();
                     broadcastToOthersTimer.reset();
 
-                    // fake coming from local channel, so broadcaster propagates on that channel
-                    unsigned slave = queryJob().querySlaveForNodeChannel(myNodeNum, channelToSend);
-                    sendItem->setSlave(slave);
+                    sendItem->setTargetChannel(channelToSend);
                     if (!broadcaster->send(sendItem))
                         break;
                     broadcastToOthersTime += broadcastToOthersTimer.elapsedCycles();
@@ -1813,7 +1808,8 @@ protected:
     inline bool hasFailedOverToStandard() const { return 0 != atomic_read(&failedOverToStandard); }
     rowidx_t clearMyNonLocals()
     {
-        CThorArrayLockBlock b(*rightCollector);
+        CriticalBlock b(rhsRowLock); // must prevent this interfering with writers. NB: could be re-entrant if addRHSRows caused resize that cause this callback to be called.
+        CThorArrayLockBlock b2(*rightCollector);
         setFailoverToLocal(true); // ensure it is
         if (!broadcaster->stopRequested())
             broadcaster->stop(myNodeNum, bcastflag_spilt); // signals to broadcast to start stopping immediately and to signal spilt to others
@@ -1833,17 +1829,17 @@ protected:
         rowidx_t preCompactCount = channelRows.ordinality();
         channelRows.compact();
         rightCollector->transferRowsIn(channelRows);
-        ActPrintLog("Channel cleared %" RIPF "u, compacted from %u to %u", clearedRows, preCompactCount, (rowidx_t)rightCollector->numRows());
+        ActPrintLog("Channel cleared %" RIPF "u, compacted from %" RIPF "u to %" RIPF "u", clearedRows, preCompactCount, (rowidx_t)rightCollector->numRows());
         return clearedRows;
     }
     rowidx_t clearNonLocalRows(const char *msg, bool allowSpill)
     {
         if (allInMemory)
             return false; // if here, implies CB was called, whilst final handover was being done and CB being removed.
-        ActPrintLog("Clearing non-local rows - cause: %s, allowSpill=%s", msg, allowSpill?"true":"false");
-        CLookupJoinActivityBase *lkjoinCh0 = (CLookupJoinActivityBase *)channels[0];
         {
+            CLookupJoinActivityBase *lkjoinCh0 = (CLookupJoinActivityBase *)channels[0];
             CriticalBlock b(lkjoinCh0->clearNonLocalLock);
+            ActPrintLog("Clearing non-local rows - cause: %s, allowSpill=%s", msg, allowSpill?"true":"false");
             if (lkjoinCh0->checkFailedOverToLocal()) // I have flagged channel0 failover
             {
                 // JCSMORE: As all need clearing, would benefit from doing in parallel
@@ -1934,13 +1930,13 @@ protected:
             writer->putRow(next);
         }
     }
-    virtual unsigned queryDestination(const void *row)
+    virtual unsigned queryDestination(const void *row) override
     {
         unsigned hv = rightHash->hash(row);
-        unsigned slave = hv % numSlaves;
-        return queryJob().queryChannelForSlave(slave);
+        unsigned slaveDst = hv % numSlaves;
+        return queryJob().queryChannelForSlave(slaveDst);
     }
-    bool prepareLocalHT(CMarker &marker, IThorRowCollector &rightCollector)
+    bool prepareLocalHT(CMarker &marker)
     {
         CCycleTimer timer;
         try
@@ -2017,8 +2013,7 @@ protected:
             }
             // For testing purposes only
             if (isSmart() && !hasFailedOverToLocal() && getOptBool(THOROPT_LKJOIN_LOCALFAILOVER, getOptBool(THOROPT_LKJOIN_HASHJOINFAILOVER)))
-                clearNonLocalRows("testing", false); // NB: trigggers on all channels
-
+                clearNonLocalRows("testing", false);
         }
         rowidx_t uniqueKeys = 0;
         {
@@ -2216,7 +2211,6 @@ protected:
 
             CMarker marker(*this);
             Owned<IRowStream> rightStream;
-            Owned<IThorRowCollector> rightCollector;
             if (isGlobal())
             {
                 /* All slaves on all channels now know whether any one spilt or not, i.e. whether to perform local hash join or not
@@ -2635,7 +2629,7 @@ lkjStateSwitch:
     virtual bool freeBufferedRows(bool critical)
     {
         if (isGlobal())
-            return clearNonLocalRows("Out of memory callback", true) > 0;
+            return clearNonLocalRows("Out of memory callback", critical) > 0;
         else
             return rightCollector->spill(false) > 0;
     }
@@ -2707,7 +2701,7 @@ public:
         memsize_t sz = (memsize_t)_sz;
         if (sz != _sz) // treat as OOM exception for handling purposes.
             throw MakeStringException(ROXIEMM_MEMORY_LIMIT_EXCEEDED, "Unsigned overflow, trying to allocate hash table of size: %" I64F "d ", _sz);
-        void *ht = rowManager->allocate(sz, activity->queryContainer().queryId(), SPILL_PRIORITY_LOOKUPJOIN);
+        void *ht = rowManager->allocate(sz, activity->queryContainer().queryId(), SPILL_PRIORITY_LOW);
         memset(ht, 0, sz);
         htMemory.setown(ht);
         tableSize = size;
