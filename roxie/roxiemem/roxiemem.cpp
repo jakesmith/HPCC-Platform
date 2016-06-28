@@ -61,14 +61,6 @@
 
 namespace roxiemem {
 
-static voidFunc globalArrayFunc;
-void setGlobalArrayFunc(voidFunc f)
-{
-    globalArrayFunc = f;
-}
-
-
-
 #define NOTIFY_UNUSED_PAGES_ON_FREE     // avoid linux swapping 'freed' pages to disk
 
 //The following constants should probably be tuned depending on the architecture - see Tuning Test at the end of the file.
@@ -4101,7 +4093,6 @@ public:
                         //Avoid a stack trace if the allocation is optional
                         if (maxSpillCost == SpillAllCost)
                             doOomReport();
-  releaseCallbackMemory(maxSpillCost, true, skipReleaseIfAnotherThreadReleases, lastReleaseSeq);
                         throw MakeStringExceptionDirect(ROXIEMM_MEMORY_LIMIT_EXCEEDED, msg.str());
                     }
                 }
@@ -4361,10 +4352,6 @@ public:
         : CChunkingRowManager(_memLimit, _tl, _logctx, _allocatorCache, _ignoreLeaks, _outputOOMReports), slaveId(_slaveId), globalManager(_globalManager)
     {
     }
-    ~CSlaveRowManager()
-    {
-     PROGLOG("~CSlaveRowManager()");
-    }
 
     virtual bool releaseCallbackMemory(unsigned maxSpillCost, bool critical, bool checkSequence, unsigned prevReleaseSeq);
     virtual unsigned getReleaseSeq() const;
@@ -4485,7 +4472,6 @@ public:
     }
     ~CGlobalRowManager()
     {
-     PROGLOG("~CGlobalRowManager()");
         for (unsigned i=0; i < numSlaves; i++)
             slaveRowManagers[i]->Release();
         delete [] slaveRowManagers;
@@ -4792,7 +4778,6 @@ void CHugeHeap::expandHeap(void * original, memsize_t copysize, memsize_t oldcap
         {
             if (maxSpillCost == SpillAllCost)
                 rowManager->reportMemoryUsage(false);
- rowManager->releaseCallbackMemory(maxSpillCost, true);
             throwHeapExhausted(activityId, newPages, oldPages);
         }
     }
@@ -7643,6 +7628,7 @@ protected:
     }
 
 };
+
 
 CPPUNIT_TEST_SUITE_REGISTRATION( RoxieMemTests );
 CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( RoxieMemTests, "RoxieMemTests" );

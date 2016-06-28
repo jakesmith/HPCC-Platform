@@ -612,21 +612,11 @@ inline bool CThorExpandingRowArray::_resize(rowidx_t requiredRows, unsigned maxS
     return true;
 }
 
-CriticalSection globalArraysCS;
-static PointerArrayOf<CThorExpandingRowArray> globalArrays;
-
 CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity)
     : activity(_activity)
 {
     initCommon();
     setup(NULL, false, stableSort_none, true);
-
-#if 1
-    getStackReport(stack);
-
-    CriticalBlock b(globalArraysCS);
-    globalArrays.append(this);
-#endif
 }
 
 CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IThorRowInterfaces *_rowIf, bool _allowNulls, StableSortFlag _stableSort, bool _throwOnOom, rowidx_t initialSize)
@@ -642,12 +632,6 @@ CThorExpandingRowArray::CThorExpandingRowArray(CActivityBase &_activity, IThorRo
         if (stableSort_earlyAlloc == stableSort)
             stableTable = static_cast<void **>(rowManager->allocate(maxRows * sizeof(void*), activity.queryContainer().queryId(), defaultMaxSpillCost));
     }
-#if 1
-    getStackReport(stack);
-
-    CriticalBlock b(globalArraysCS);
-    globalArrays.append(this);
-#endif
 }
 
 CThorExpandingRowArray::~CThorExpandingRowArray()
@@ -655,9 +639,6 @@ CThorExpandingRowArray::~CThorExpandingRowArray()
     clearRows();
     ReleaseThorRow(rows);
     ReleaseThorRow(stableTable);
-
-    CriticalBlock b(globalArraysCS);
-    globalArrays.zap(this);
 }
 
 void CThorExpandingRowArray::initCommon()
@@ -2088,6 +2069,7 @@ public:
     virtual void setOptions(unsigned options) { CThorRowCollectorBase::setOptions(options); }
     virtual unsigned __int64 getStatistic(StatisticKind kind) { return CThorRowCollectorBase::getStatistic(kind); }
     virtual bool hasSpilt() const { return CThorRowCollectorBase::hasSpilt(); }
+
 // IThorArrayLock
     virtual void lock() const { CThorRowCollectorBase::lock(); }
     virtual void unlock() const { CThorRowCollectorBase::unlock(); }
@@ -2377,7 +2359,6 @@ public:
     }
     ~CThorAllocator()
     {
- PROGLOG("~CThorAllocator");
         rowManager.clear();
         allocatorMetaCache.clear();
     }
@@ -2442,15 +2423,6 @@ public:
     }
 };
 
-void listGlobalArrayUsage()
-{
-    CriticalBlock b(globalArraysCS);
-    ForEachItemIn(i, globalArrays)
-    {
-        CThorExpandingRowArray *a = globalArrays.item(i);
-        PROGLOG("CThorExpandingRowArray(%p), count=%u, row mem usage=%lu, row array mem usage=%lu\nStack:\n%s", a, a->ordinality(), a->getMemUsageRows(), a->getMemUsageRowArray(), a->stack.str());
-    }
-}
 CThorAllocator::CThorAllocator(unsigned memLimitMB, unsigned sharedMemLimitMB, unsigned _numChannels, unsigned memorySpillAtPercentage, IContextLogger &_logctx, bool crcChecking, roxiemem::RoxieHeapFlags _defaultFlags)
     : numChannels(_numChannels), logctx(&_logctx), defaultFlags(_defaultFlags)
 {
@@ -2470,7 +2442,6 @@ CThorAllocator::CThorAllocator(unsigned memLimitMB, unsigned sharedMemLimitMB, u
             slaveAllocatorMetaCaches.append(*slaveAllocator->getAllocatorCache());
         }
         rowManager.setown(roxiemem::createGlobalRowManager(memLimit, sharedMemLimit, numChannels, NULL, *logctx, allocatorMetaCache, (const roxiemem::IRowAllocatorCache **)slaveAllocatorMetaCaches.getArray(), false, true));
-        roxiemem::setGlobalArrayFunc(listGlobalArrayUsage);
         for (unsigned c=0; c<numChannels; c++)
             slaveAllocators.item(c).setRowManager(rowManager->querySlaveRowManager(c));
     }

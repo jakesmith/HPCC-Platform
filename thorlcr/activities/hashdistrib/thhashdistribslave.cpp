@@ -63,7 +63,7 @@
 #endif
 
 // JCSMORE should really use JLog trace levels and make configurable
-#if 0 //#ifdef _DEBUG
+#ifdef _DEBUG
 #define HDSendPrintLog(M) PROGLOG(M)
 #define HDSendPrintLog2(M,P1) PROGLOG(M,P1)
 #define HDSendPrintLog3(M,P1,P2) PROGLOG(M,P1,P2)

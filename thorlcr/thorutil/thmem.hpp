@@ -297,10 +297,7 @@ protected:
     void serialize(IRowSerializerTarget &out);
     void doSort(rowidx_t n, void **const rows, ICompare &compare, unsigned maxCores);
     inline rowidx_t getRowsCapacity() const { return rows ? RoxieRowCapacity(rows) / sizeof(void *) : 0; }
-
 public:
- StringBuffer stack;
-
     CThorExpandingRowArray(CActivityBase &activity);
     CThorExpandingRowArray(CActivityBase &activity, IThorRowInterfaces *rowIf, bool allowNulls=false, StableSortFlag stableSort=stableSort_none, bool throwOnOom=true, rowidx_t initialSize=InitialSortElements);
     ~CThorExpandingRowArray();
@@ -388,8 +385,6 @@ public:
     void partition(ICompare &compare, unsigned num, UnsignedArray &out); // returns num+1 points
 
     offset_t serializedSize();
-    memsize_t getMemUsageRowArray();
-    memsize_t getMemUsageRows();
     memsize_t getMemUsage();
     void serialize(MemoryBuffer &mb);
     void serializeCompress(MemoryBuffer &mb);
