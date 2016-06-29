@@ -1141,12 +1141,12 @@ protected:
         rhsTableLen = 0;
         table->reset();
     }
-    virtual unsigned queryDestination(const void *row)
+    virtual unsigned queryChannelDestination(const void *row)
     {
         /* default (for ALL join). Could send to any remote channel, but
          * choose to send to slave on same channel as me.
          */
-        return queryJob().queryChannelForSlave(mySlaveNum);
+        return mySlaveNum / numNodes;
     }
     void broadcastRHS() // broadcasting local rhs
     {
@@ -1186,7 +1186,7 @@ protected:
                         break;
                     rightNextRowTime += rightNextRowTimer.elapsedCycles();
 
-                    unsigned channelDst = queryDestination(row);
+                    unsigned channelDst = queryChannelDestination(row);
 
                     CThorExpandingRowArray &pendingChannel = *pendingChannels[channelDst];
                     MemoryBuffer &mb = *serializationBuffers[channelDst];
@@ -1930,11 +1930,11 @@ protected:
             writer->putRow(next);
         }
     }
-    virtual unsigned queryDestination(const void *row) override
+    virtual unsigned queryChannelDestination(const void *row) override
     {
         unsigned hv = rightHash->hash(row);
         unsigned slaveDst = hv % numSlaves;
-        return queryJob().queryChannelForSlave(slaveDst);
+        return slaveDst / numNodes;
     }
     bool prepareLocalHT(CMarker &marker)
     {
@@ -2719,15 +2719,19 @@ public:
 class CTableGlobalBase : public CSimpleInterfaceOf<ITableLookup>
 {
 protected:
-    CInMemJoinBase *activity;
+    CInMemJoinBase *activity = nullptr;
     unsigned numChannels = 0;
     unsigned myChannel = 0;
+    unsigned numNodes = 0;
+    unsigned numSlaves = 0;
     OwnedMalloc<ITableLookup *> hTables;
     unsigned currentTableChannel = NotFound;
 
 public:
     CTableGlobalBase(CInMemJoinBase *_activity) : activity(_activity)
     {
+        numNodes = activity->queryJob().queryNodes();
+        numSlaves = activity->queryJob().querySlaves();
         myChannel = activity->queryJobChannelNumber();
         numChannels = activity->queryJob().queryJobChannels();
         hTables.allocateN(numChannels, true);
@@ -2853,7 +2857,8 @@ public:
     {
         failRow = nullptr;
         unsigned hv = leftHash->hash(leftRow);
-        unsigned c = hv%numChannels;
+        unsigned s = hv % numSlaves;
+        unsigned c = s / numNodes;
         return ((CLookupHT *)hTables[c])->findFirst(hv, leftRow);
     }
 };
@@ -3012,7 +3017,8 @@ public:
     virtual const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry) override
     {
         unsigned hv = leftHash->hash(leftRow);
-        unsigned c = hv%numChannels;
+        unsigned s = hv % numSlaves;
+        unsigned c = s / numNodes;
         const void *right = ((CLookupManyHT *)hTables[c])->findFirst(hv, leftRow, currentHashEntry);
         if (right)
         {
