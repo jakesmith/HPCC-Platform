@@ -450,11 +450,8 @@ public:
         receiving = false;
         nodeBroadcast = false;
     }
-    void trace()
-    {
-        activity.ActPrintLog("TIME: %s - receiveMsgTime = %u", activity.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(receiveMsgTime)));
-        activity.ActPrintLog("TIME: %s - bcastSendHandlingTime = %u", activity.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(bcastSendHandlingTime)));
-    }
+    cycle_t getReceiveMsgTime() const { return receiveMsgTime; }
+    cycle_t getBCastSendHandlingTime() const { return bcastSendHandlingTime; }
     void start(IBCastReceive *_recvInterface, mptag_t _mpTag, bool _stopping, bool _nodeBroadcast)
     {
         nodeBroadcast = _nodeBroadcast;
@@ -697,7 +694,6 @@ public:
     }
     rowidx_t calculate(CThorExpandingRowArray &rows, ICompare *_cmp, bool doSort)
     {
-        CCycleTimer timer;
         assertex(bitSet);
         cmp = _cmp;
         if (doSort)
@@ -756,7 +752,6 @@ public:
         ++uniqueTotal;
         mark(rowCount-1); // last row is implicitly end of group
         cmp = NULL;
-        activity.ActPrintLog("TIME: %s - CMarker::calculate - uniqueTotal=%" RIPF "d, took=%d ms", activity.queryJob().queryWuid(), uniqueTotal, timer.elapsedMs());
         return uniqueTotal;
     }
     rowidx_t findNextBoundary(rowidx_t start)
@@ -973,15 +968,16 @@ protected:
                 exception.setown(e);
                 EXCLOG(e, "CRowProcessor");
             }
-            owner.ActPrintLog("TIME: %s - rpDequeueTime (blocks=%u, rowCount=%" I64F "d) = %u", owner.queryJob().queryWuid(), blocks, rowCount, static_cast<unsigned>(cycle_to_millisec(rpDequeueTime)));
-            owner.ActPrintLog("TIME: %s - rpExpandTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rpExpandTime)));
-            owner.ActPrintLog("TIME: %s - rpProcessRHSRowsTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rpProcessRHSRowsTime)));
+            VStringBuffer msg("rpDequeueTime (blocks=%u, rowCount=%" I64F "u)", blocks, rowCount);
+            owner.logTiming(msg, rpDequeueTime);
+            owner.logTiming("rpExpandTime", rpExpandTime);
+            owner.logTiming("rpProcessRHSRowsTime", rpProcessRHSRowsTime);
 
-            owner.ActPrintLog("TIME: %s - deserializationTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(deserializationTime)));
-            owner.ActPrintLog("TIME: %s - rowProcessor-addRHSRowsTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(addRHSRowsTime2)));
-            owner.ActPrintLog("TIME: %s - processRHSRowsSetupTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(processRHSRowsSetupTime)));
-            owner.ActPrintLog("TIME: %s - createTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(createTime)));
-            owner.ActPrintLog("TIME: %s - pendingAppendTime = %u", owner.queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(pendingAppendTime)));
+            owner.logTiming("deserializationTime", deserializationTime);
+            owner.logTiming("rowProcessor-addRHSRowsTime", addRHSRowsTime2);
+            owner.logTiming("processRHSRowsSetupTime", processRHSRowsSetupTime);
+            owner.logTiming("createTime", createTime);
+            owner.logTiming("pendingAppendTime", pendingAppendTime);
 
         }
     } *rowProcessor;
@@ -1048,7 +1044,7 @@ protected:
     CCycleTimer serializationTimer, compressionTimer, addRHSRowTimer, broadcastToOthersTimer, rowProcessorAddBlockTimer;
 
 
-    std::atomic<cycle_t> totalSerializationTime, totalCompresssionTime, totalAddRHSRowTime, totalBroadcastToOthersTime;
+    std::atomic<cycle_t> totalSerializationTime, totalCompressionTime, totalAddRHSRowTime, totalBroadcastToOthersTime;
     cycle_t nextRowTime = 0;
 
 
@@ -1129,6 +1125,10 @@ protected:
             case JT_RightOnly:  return str.append("RIGHT ONLY");
         }
         return str.append("---> Unknown Join Type <---");
+    }
+    void logTiming(const char *msg, cycle_t cycles) 
+    {
+        ActPrintLog("TIME: %s - %s = %u", queryJob().queryWuid(), msg, static_cast<unsigned>(cycle_to_millisec(cycles)));
     }
     bool inline gotRHS() const { return lkjState >= lkj_gotrhs; }
     void clearRHS()
@@ -1278,13 +1278,14 @@ protected:
             throw;
         }
 
-        ActPrintLog("TIME: %s - LOCALserializationTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(serializationTime)));
-        ActPrintLog("TIME: %s - LOCALcompressionTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(compressionTime)));
-        ActPrintLog("TIME: %s - LOCALbroadcastToOthersTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(broadcastToOthersTime)));
-        ActPrintLog("TIME: %s - pendingAddTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(pendingAddTime)));
-        ActPrintLog("TIME: %s - rightNextRowTime = %u ms", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rightNextRowTime)));
-        ActPrintLog("TIME: %s - addRHSRowsTime = %u ms", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(addRHSRowsTime)));
-        ActPrintLog("TIME: %s - broadcastRHSTime = %u ms", queryJob().queryWuid(), broadcastRHSTime.elapsedMs());
+
+        logTiming("LOCALserializationTime", serializationTime);
+        logTiming("LOCALcompressionTime", compressionTime);
+        logTiming("LOCALbroadcastToOthersTime", broadcastToOthersTime);
+        logTiming("pendingAddTime", pendingAddTime);
+        logTiming("rightNextRowTime", rightNextRowTime);
+        logTiming("addRHSRowsTime", addRHSRowsTime);
+        logTiming("broadcastRHSTime", broadcastRHSTime.elapsedCycles());
 
         sendItem.setown(broadcaster->newSendItem(bcast_stop));
         if (channel0Broadcaster->stopRequested())
@@ -1457,7 +1458,7 @@ public:
         helper = static_cast <IHThorAnyJoinBaseArg *> (queryHelper());
 
         totalSerializationTime = 0;
-        totalCompresssionTime = 0;
+        totalCompressionTime = 0;
         totalAddRHSRowTime = 0;
         totalBroadcastToOthersTime = 0;
 
@@ -1654,7 +1655,7 @@ public:
             broadcaster->reset();
         stopInput(0, "(L)");
         left.clear();
-        ActPrintLog("TIME: %s - nextRow = %u ms", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(nextRowTime)));
+        logTiming("nextRow", nextRowTime);
         dataLinkStop();
     }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)
@@ -1678,14 +1679,15 @@ public:
         rowProcessor->wait();
         InterChannelBarrier();
 
-        broadcaster->trace();
+        logTiming("receiveMsgTime", broadcaster->getReceiveMsgTime());
+        logTiming("bcastSendHandlingTime", broadcaster->getBCastSendHandlingTime());
 
         rightCollector->flush();
 
-        ActPrintLog("TIME: %s - rowProcessorAddBlockTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(rowProcessorAddBlockTime)));
+        logTiming("rowProcessorAddBlockTime", rowProcessorAddBlockTime);
 
         totalSerializationTime += serializationTime;
-        totalCompresssionTime += compressionTime;
+        totalCompressionTime += compressionTime;
         totalAddRHSRowTime += addRHSRowTime;
         totalBroadcastToOthersTime += broadcastToOthersTime;
     }
@@ -1808,8 +1810,11 @@ protected:
     inline bool hasFailedOverToStandard() const { return 0 != atomic_read(&failedOverToStandard); }
     rowidx_t clearMyNonLocals()
     {
+        ActPrintLog("#3 clearMyNonLocals");
         CriticalBlock b(rhsRowLock); // must prevent this interfering with writers. NB: could be re-entrant if addRHSRows caused resize that cause this callback to be called.
+        ActPrintLog("#4 clearMyNonLocals");
         CThorArrayLockBlock b2(*rightCollector);
+        ActPrintLog("#5 clearMyNonLocals");
         setFailoverToLocal(true); // ensure it is
         if (!broadcaster->stopRequested())
             broadcaster->stop(myNodeNum, bcastflag_spilt); // signals to broadcast to start stopping immediately and to signal spilt to others
@@ -1817,16 +1822,30 @@ protected:
         rightCollector->transferRowsOut(channelRows);
         rowidx_t clearedRows = 0;
         rowidx_t numRows = channelRows.ordinality();
+
+        ActPrintLog("#6 clearMyNonLocals");
+        CCycleTimer timer;
+        cycle_t hashCycles = 0;
+        cycle_t releaseRowCycles = 0;
         for (rowidx_t r=0; r<numRows; r++)
         {
+            timer.reset();
             unsigned hv = rightHash->hash(channelRows.query(r));
+            hashCycles += timer.elapsedCycles();
             if (myNodeNum != (hv % numNodes))
             {
-                OwnedConstThorRow row = channelRows.getClear(r); // dispose of
+                timer.reset();
+                {
+                    OwnedConstThorRow row = channelRows.getClear(r); // dispose of
+                }
+                releaseRowCycles += timer.elapsedCycles(); 
                 ++clearedRows;
             }
         }
         rowidx_t preCompactCount = channelRows.ordinality();
+        ActPrintLog("Channel cleared %" RIPF "u, about to compacted from %" RIPF "u", clearedRows, preCompactCount);
+        logTiming("Channel clear hashTime", hashCycles);
+        logTiming("Channel clear rowRelease", releaseRowCycles);
         channelRows.compact();
         rightCollector->transferRowsIn(channelRows);
         ActPrintLog("Channel cleared %" RIPF "u, compacted from %" RIPF "u to %" RIPF "u", clearedRows, preCompactCount, (rowidx_t)rightCollector->numRows());
@@ -1837,9 +1856,10 @@ protected:
         if (allInMemory)
             return false; // if here, implies CB was called, whilst final handover was being done and CB being removed.
         {
+            ActPrintLog("#1 Clearing non-local rows - cause: %s, allowSpill=%s", msg, allowSpill?"true":"false");
             CLookupJoinActivityBase *lkjoinCh0 = (CLookupJoinActivityBase *)channels[0];
             CriticalBlock b(lkjoinCh0->clearNonLocalLock);
-            ActPrintLog("Clearing non-local rows - cause: %s, allowSpill=%s", msg, allowSpill?"true":"false");
+            ActPrintLog("#2 Clearing non-local rows - cause: %s, allowSpill=%s", msg, allowSpill?"true":"false");
             if (lkjoinCh0->checkFailedOverToLocal()) // I have flagged channel0 failover
             {
                 // JCSMORE: As all need clearing, would benefit from doing in parallel
@@ -1863,7 +1883,8 @@ protected:
                 unsigned numThreads = queryJob().queryJobChannels(); // not sure you'll ever want to change this
                 CCycleTimer timer;
                 afor.For(queryJob().queryJobChannels(), numThreads);
-                ActPrintLog("TIME: %s - Cleared %" RIPF "u on %u threads = %u ms", queryJob().queryWuid(), clearedRows.load(), numThreads, timer.elapsedMs());
+                VStringBuffer msg("Cleared %" RIPF "u on %u threads", clearedRows.load(), numThreads);
+                logTiming(msg, timer.elapsedCycles());
                 if (clearedRows)
                     return clearedRows;
             }
@@ -1961,7 +1982,10 @@ protected:
              */
             CThorExpandingRowArray temp(*this, sharedRightRowInterfaces);
             rightCollector->transferRowsOut(temp);
+            CCycleTimer timer;
             uniqueKeys = marker.calculate(temp, compareRight, false);
+            VStringBuffer msg("CMarker::calculate - uniqueKeys=%" RIPF "u", uniqueKeys);
+            logTiming(msg, timer.elapsedCycles());
             rightCollector->transferRowsIn(temp);
         }
         if (!setupHT(uniqueKeys)) // could cause spilling
@@ -1970,7 +1994,7 @@ protected:
                 throw MakeActivityException(this, 0, "Failed to allocate [LOCAL] hash table");
             return false;
         }
-        ActPrintLog("TIME: %s - prepareLocalHT = %u ms", queryJob().queryWuid(), timer.elapsedMs());
+        logTiming("prepareLocalHT", timer.elapsedCycles());
         return true;
     }
     /*
@@ -1983,7 +2007,7 @@ protected:
     {
         CCycleTimer timer;
         doBroadcastRHS(stopping);
-        ActPrintLog("TIME: %s - doBroadcastRHS(stopping) = %u ms", queryJob().queryWuid(), timer.elapsedMs());
+        logTiming("doBroadcastRHS", timer.elapsedCycles());
         postBroadcast = true;
         if (!hasFailedOverToLocal())
         {
@@ -2025,7 +2049,10 @@ protected:
             {
                 CThorExpandingRowArray channelRows(*this, sharedRightRowInterfaces);
                 rightCollector->transferRowsOut(channelRows);
+                CCycleTimer timer;
                 uniqueKeys = marker.calculate(channelRows, compareRight, true);
+                VStringBuffer msg("CMarker::calculate - uniqueKeys=%" RIPF "u", uniqueKeys);
+                logTiming(msg, timer.elapsedCycles());
                 rightCollector->transferRowsIn(channelRows);
                 localGatheredAndSorted = true;
             }
@@ -2063,7 +2090,7 @@ protected:
 
                     CCycleTimer timer;
                     doBroadcastStop(broadcast2MpTag, hasFailedOverToLocal() ? bcastflag_spilt : bcastflag_null);
-                    ActPrintLog("TIME: %s - doBroadcastStop() = %u ms", queryJob().queryWuid(), timer.elapsedMs());
+                    logTiming("doBroadcastStop()", timer.elapsedCycles());
                     ActPrintLog("Done broadcasting final spilt status: %s", hasFailedOverToLocal() ? "spilt" : "did not spill");
                 }
                 InterChannelBarrier();
@@ -2074,20 +2101,11 @@ protected:
             }
         }
 
-        if (0 == queryJobChannelNumber())
-        {
-            ActPrintLog("Shared memory manager memory report");
-            rightRowManager->reportMemoryUsage(false);
-            ActPrintLog("End of shared manager memory report");
-        }
-        ActPrintLog("TIME: %s - serializationTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(totalSerializationTime)));
-        ActPrintLog("TIME: %s - compressionTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(totalCompresssionTime)));
-        ActPrintLog("TIME: %s - addRHSRowTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(totalAddRHSRowTime)));
-        ActPrintLog("TIME: %s - broadcastToOthersTime = %u", queryJob().queryWuid(), static_cast<unsigned>(cycle_to_millisec(totalBroadcastToOthersTime)));
+        logTiming("totalSerializationTime", totalSerializationTime);
+        logTiming("totalCompressionTime", totalCompressionTime);
+        logTiming("totalAddRHSRowTime", totalAddRHSRowTime);
+        logTiming("totalBroadcastToOthersTime", totalBroadcastToOthersTime);
 
-        ActPrintLog("Channel memory manager report");
-        queryRowManager()->reportMemoryUsage(false);
-        ActPrintLog("End of channel memory manager report");
         return !hasFailedOverToLocal();
     }
     /*
@@ -2100,7 +2118,7 @@ protected:
         CCycleTimer timer;
         Owned<IRowStream> rightDistStream = rhsDistributor->connect(queryRowInterfaces(rightITDL), right.getClear(), rightHash, NULL);
         load(rightDistStream, writer, false);
-        ActPrintLog("TIME: %s - load right distribute = %u ms", queryJob().queryWuid(), timer.elapsedMs());
+        logTiming("load right distribute time", timer.elapsedCycles());
 
         if (getOptBool(THOROPT_LKJOIN_HASHJOINFAILOVER)) // for testing only (force to disk, as if spilt)
             rightCollector->spill(false);
@@ -2202,12 +2220,7 @@ protected:
         try
         {
             if (isSmart())
-            {
                 installOOMCallback();
-
-                ActPrintLog("getRHS mem report");
-                queryRowManager()->reportMemoryUsage(false);
-            }
 
             CMarker marker(*this);
             Owned<IRowStream> rightStream;
@@ -2218,7 +2231,7 @@ protected:
                  */
                 CCycleTimer timer;
                 bool ok = handleGlobalRHS(marker, stopping);
-                ActPrintLog("TIME: %s - handleGlobalRHS = %u ms", queryJob().queryWuid(), timer.elapsedMs());
+                logTiming("handleGlobalRHS", timer.elapsedCycles());
                 if (stopping)
                 {
                     ActPrintLog("Global getRHS stopped");
@@ -2241,7 +2254,7 @@ protected:
                     CCycleTimer timer;
                     handleFailoverToLocalRHS();
                     localGathered = true;
-                    ActPrintLog("TIME: %s - handleFailoverToLocalRHS = %u ms", queryJob().queryWuid(), timer.elapsedMs());
+                    logTiming("handlFailoverToLocalRHS", timer.elapsedCycles());
                     if (rightCollector->hasSpilt())
                     {
                         ActPrintLog("Global SMART JOIN spilt to disk during Distributed Local Lookup handling. Failing over to Standard Join");
@@ -2252,7 +2265,6 @@ protected:
                     // start LHS distributor, needed by local lookup or full join
                     CCycleTimer timer2;
                     left.setown(lhsDistributor->connect(queryRowInterfaces(leftITDL), left.getClear(), leftHash, NULL));
-                    ActPrintLog("TIME: %s - left distribute connect = %u ms", queryJob().queryWuid(), timer2.elapsedMs());
 
                     // NB: Some channels in this or other slave processes may have fallen over to hash join
                 }
@@ -2322,7 +2334,7 @@ protected:
                 {
                     CCycleTimer timer;
                     table->addRows(rhs, &marker);
-                    ActPrintLog("TIME: %s - addHTTime = %u ms", queryJob().queryWuid(), timer.elapsedMs());
+                    logTiming("addHTTime", timer.elapsedCycles());
                 }
 
                 // NB: No spilling from here on in
