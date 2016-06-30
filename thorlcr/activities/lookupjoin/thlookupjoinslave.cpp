@@ -44,17 +44,20 @@ enum broadcast_flags { bcastflag_null=0, bcastflag_spilt=0x100, bcastflag_stop=0
 #define BROADCAST_FLAG_MASK 0xFF00
 
 
-class CCycleAddTimer
+template <typename T>
+class CCycleAddTimerType
 {
-    cycle_t &time;
+    T &time;
     CCycleTimer timer;
 public:
-    inline CCycleAddTimer(cycle_t &_time) : time(_time) { }
-    inline ~CCycleAddTimer()
+    inline CCycleAddTimerType(T &_time) : time(_time) { }
+    inline ~CCycleAddTimerType()
     {
         time += timer.elapsedCycles();
     }
 };
+typedef CCycleAddTimerType<cycle_t> CCycleAddTimer;
+typedef CCycleAddTimerType<std::atomic<cycle_t>> CAtomicCycleAddTimer;
 
 
 
@@ -125,7 +128,6 @@ class CBroadcaster : public CSimpleInterface
     bool allRequestStop, stopping, stopRecv, receiving, nodeBroadcast;
     broadcast_flags stopFlag;
     Owned<IBitSet> sendersDone, broadcastersStopping;
-    cycle_t bcastSendHandlingTime = 0;
     cycle_t receiveMsgTime = 0;
 
     class CRecv : implements IThreaded
@@ -357,6 +359,7 @@ class CBroadcaster : public CSimpleInterface
     }
     void recvLoop()
     {
+        receiveMsgTime = 0;
         // my sender is implicitly stopped (never sends to self)
         if (senderStop(mySender))
             return;
@@ -389,11 +392,9 @@ class CBroadcaster : public CSimpleInterface
                     bool stopResent = (0 != (sendItem->queryFlags() & bcastflag_stop));
                     if (!stopResent)
                     {
-                        ActPrintLog(&activity, "recvLoop (SENDING ACK) - received bcast_stop(stopResent=%s), from : node=%u, slave=%u", stopResent?"true":"false", sendItem->queryNode()+1, sendItem->querySlave()+1);
                         CMessageBuffer ackMsg;
                         comm->send(ackMsg, sendRank, replyTag); // send ack
                     }
-                    ActPrintLog(&activity, "recvLoop - received bcast_stop(stopResent=%s), from : node=%u, slave=%u", stopResent?"true":"false", sendItem->queryNode()+1, sendItem->querySlave()+1);
                     if (0 == (sendItem->queryFlags() & bcastflag_stop))
                         sender.addBlock(sendItem.getLink());
                     bool stop = senderStop(*sendItem);
@@ -415,7 +416,6 @@ class CBroadcaster : public CSimpleInterface
                 case bcast_send:
                 {
                     sender.addBlock(sendItem.getLink());
-                    CCycleAddTimer tb(bcastSendHandlingTime);
                     if (!allRequestStop) // don't care if all stopping
                         recvInterface->bCastReceive(sendItem.getClear(), false);
                     break;
@@ -451,7 +451,6 @@ public:
         nodeBroadcast = false;
     }
     cycle_t getReceiveMsgTime() const { return receiveMsgTime; }
-    cycle_t getBCastSendHandlingTime() const { return bcastSendHandlingTime; }
     void start(IBCastReceive *_recvInterface, mptag_t _mpTag, bool _stopping, bool _nodeBroadcast)
     {
         nodeBroadcast = _nodeBroadcast;
@@ -543,7 +542,6 @@ public:
             if (ch != activity.queryJobChannelNumber())
             {
                 unsigned dst = activity.queryJob().querySlaveForNodeChannel(myNodeNum, ch) + 1;
-                activity.ActPrintLog("sendLocalStop(%u, %u): myNodeNum=%u, ch=%u, dst=%u", sendItem->queryNode(), sendItem->querySlave(), myNodeNum, ch, dst);
                 CriticalBlock b(broadcastLock); // prevent other channels overlapping, otherwise causes queue ordering issues with MP multi packet messages to same dst.
                 comm->send(stopSendItem->queryMsg(), dst, mpTag);
             }
@@ -840,12 +838,8 @@ protected:
         CThorExpandingRowArray pending;
 
 
-        CCycleTimer addRHSRowsTimer2, deserializationTimer, processRHSRowsSetupTimer, pendingAppendTimer;
-        cycle_t addRHSRowsTime2 = 0;
+        CCycleTimer deserializationTimer;
         cycle_t deserializationTime = 0;
-        cycle_t processRHSRowsSetupTime = 0;
-        cycle_t createTime = 0;
-        cycle_t pendingAppendTime = 0;
         rowcount_t rowCount = 0;
 
 
@@ -863,6 +857,8 @@ protected:
         {
             stopped = false;
             blockQueue.setLimit(MAX_QUEUE_BLOCKS);
+            deserializationTime = 0;
+            rowCount = 0;
         }
         ~CRowProcessor()
         {
@@ -903,37 +899,29 @@ protected:
         }
         void processRHSRows(MemoryBuffer &mb)
         {
-            processRHSRowsSetupTimer.reset();
             RtlDynamicRowBuilder rowBuilder(owner.rightAllocator); // NB: rightAllocator is the shared allocator
             CThorStreamDeserializerSource memDeserializer(mb.length(), mb.toByteArray());
-            processRHSRowsSetupTime += processRHSRowsSetupTimer.elapsedCycles();
 
             while (!memDeserializer.eos())
             {
                 deserializationTimer.reset();
                 size32_t sz = owner.rightDeserializer->deserialize(rowBuilder, memDeserializer);
                 deserializationTime += deserializationTimer.elapsedCycles();
-                pendingAppendTimer.reset();
                 pending.append(rowBuilder.finalizeRowClear(sz));
-                pendingAppendTime += pendingAppendTimer.elapsedCycles();
                 if (pending.ordinality() >= 100)
                 {
-                    addRHSRowsTimer2.reset();
                     // NB: If spilt, addRHSRows will filter out non-locals
                     if (!owner.addRHSRows(pending, rhsInRowsTemp)) // NB: in SMART case, must succeed
                         throw MakeActivityException(&owner, 0, "Out of memory: Unable to add any more rows to RHS");
-                    addRHSRowsTime2 += addRHSRowsTimer2.elapsedCycles();
                     rowCount += 100;
                 }
             }
             if (pending.ordinality())
             {
                 rowCount += pending.ordinality();
-                addRHSRowsTimer2.reset();
                 // NB: If spilt, addRHSRows will filter out non-locals
                 if (!owner.addRHSRows(pending, rhsInRowsTemp)) // NB: in SMART case, must succeed
                     throw MakeActivityException(&owner, 0, "Out of memory: Unable to add any more rows to RHS");
-                addRHSRowsTime2 += addRHSRowsTimer2.elapsedCycles();
             }
         }
     // IThreaded
@@ -972,13 +960,7 @@ protected:
             owner.logTiming(msg, rpDequeueTime);
             owner.logTiming("rpExpandTime", rpExpandTime);
             owner.logTiming("rpProcessRHSRowsTime", rpProcessRHSRowsTime);
-
             owner.logTiming("deserializationTime", deserializationTime);
-            owner.logTiming("rowProcessor-addRHSRowsTime", addRHSRowsTime2);
-            owner.logTiming("processRHSRowsSetupTime", processRHSRowsSetupTime);
-            owner.logTiming("createTime", createTime);
-            owner.logTiming("pendingAppendTime", pendingAppendTime);
-
         }
     } *rowProcessor;
 
@@ -1036,15 +1018,7 @@ protected:
     InterruptableSemaphore interChannelBarrierSem;
     bool channelActivitiesAssigned;
 
-    cycle_t serializationTime = 0;
-    cycle_t compressionTime = 0;
-    cycle_t addRHSRowTime = 0;
-    cycle_t broadcastToOthersTime = 0;
-    cycle_t rowProcessorAddBlockTime = 0;
-    CCycleTimer serializationTimer, compressionTimer, addRHSRowTimer, broadcastToOthersTimer, rowProcessorAddBlockTimer;
-
-
-    std::atomic<cycle_t> totalSerializationTime, totalCompressionTime, totalAddRHSRowTime, totalBroadcastToOthersTime;
+    std::atomic<cycle_t> addRHSRowTime = {0}; // avoid hitting deleted copy constructor
     cycle_t nextRowTime = 0;
 
 
@@ -1167,12 +1141,8 @@ protected:
 
         CThorExpandingRowArray **pendingChannels = pendingPerChannel.getArray();
 
-        CCycleTimer broadcastRHSTime;
-        CCycleTimer addRHSRowsTimer, rightNextRowTimer, pendingAddTimer;
-        cycle_t addRHSRowsTime = 0;
-        cycle_t rightNextRowTime = 0;
-        cycle_t pendingAddTime = 0;
-
+        cycle_t serializationTime = 0, compressionTime = 0, broadcastToOthersTime = 0, rightNextRowTime = 0;
+        CCycleTimer serializationTimer, compressionTimer, broadcastToOthersTimer, rightNextRowTimer, broadcastRHSTime;
         try
         {
             while (!abortSoon)
@@ -1205,17 +1175,11 @@ protected:
                         }
                     }
                     else
-                    {
-                        pendingAddTimer.reset();
                         pendingChannel.append(row.getClear());
-                        pendingAddTime += pendingAddTimer.elapsedCycles();
-                    }
                     if (pendingChannel.ordinality() >= 100)
                     {
-                        addRHSRowsTimer.reset();
                         if (!channels[channelDst]->addRHSRows(pendingChannel, rhsInRowsTemp))
                             throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
-                        addRHSRowsTime += addRHSRowsTimer.elapsedCycles();
                     }
                     if (channel0Broadcaster->stopRequested())
                         break;
@@ -1228,10 +1192,8 @@ protected:
                     {
                         if (pendingChannels[p]->ordinality())
                         {
-                            addRHSRowsTimer.reset();
                             if (!channels[p]->addRHSRows(*pendingChannels[p], rhsInRowsTemp))
                                 throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
-                            addRHSRowsTime += addRHSRowsTimer.elapsedCycles();
                         }
                         MemoryBuffer &mb = *serializationBuffers[p];
                         if (mb.length())
@@ -1253,10 +1215,8 @@ protected:
                 }
                 else
                 {
-                    addRHSRowsTimer.reset();
                     if (!channels[channelToSend]->addRHSRows(*pendingChannels[channelToSend], rhsInRowsTemp))
                         throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
-                    addRHSRowsTime += addRHSRowsTimer.elapsedCycles();
                     compressionTimer.reset();
                     MemoryBuffer &mb = *serializationBuffers[channelToSend];
                     ThorCompress(mb, sendItem->queryMsg());
@@ -1279,12 +1239,10 @@ protected:
         }
 
 
-        logTiming("LOCALserializationTime", serializationTime);
-        logTiming("LOCALcompressionTime", compressionTime);
-        logTiming("LOCALbroadcastToOthersTime", broadcastToOthersTime);
-        logTiming("pendingAddTime", pendingAddTime);
+        logTiming("serializationTime", serializationTime);
+        logTiming("compressionTime", compressionTime);
+        logTiming("broadcastToOthersTime", broadcastToOthersTime);
         logTiming("rightNextRowTime", rightNextRowTime);
-        logTiming("addRHSRowsTime", addRHSRowsTime);
         logTiming("broadcastRHSTime", broadcastRHSTime.elapsedCycles());
 
         sendItem.setown(broadcaster->newSendItem(bcast_stop));
@@ -1456,11 +1414,6 @@ public:
     CInMemJoinBase(CGraphElementBase *_container) : CSlaveActivity(_container), rhs(*this)
     {
         helper = static_cast <IHThorAnyJoinBaseArg *> (queryHelper());
-
-        totalSerializationTime = 0;
-        totalCompressionTime = 0;
-        totalAddRHSRowTime = 0;
-        totalBroadcastToOthersTime = 0;
 
         nextRhsRow = 0;
         rhsNext = NULL;
@@ -1679,17 +1632,9 @@ public:
         rowProcessor->wait();
         InterChannelBarrier();
 
-        logTiming("receiveMsgTime", broadcaster->getReceiveMsgTime());
-        logTiming("bcastSendHandlingTime", broadcaster->getBCastSendHandlingTime());
-
         rightCollector->flush();
 
-        logTiming("rowProcessorAddBlockTime", rowProcessorAddBlockTime);
-
-        totalSerializationTime += serializationTime;
-        totalCompressionTime += compressionTime;
-        totalAddRHSRowTime += addRHSRowTime;
-        totalBroadcastToOthersTime += broadcastToOthersTime;
+        logTiming("receiveMsgTime", broadcaster->getReceiveMsgTime());
     }
     void doBroadcastStop(mptag_t tag, broadcast_flags flag) // only called on channel 0
     {
@@ -1739,9 +1684,7 @@ public:
             }
         }
         dbgassertex((sendItem==NULL) == stop); // if sendItem==NULL stop must = true, if sendItem != NULL stop must = false;
-        rowProcessorAddBlockTimer.reset();
         rowProcessor->addBlock(sendItem);
-        rowProcessorAddBlockTime += rowProcessorAddBlockTimer.elapsedCycles();
     }
     virtual void onInputFinished(rowcount_t count)
     {
@@ -1816,14 +1759,18 @@ protected:
         CThorArrayLockBlock b2(*rightCollector);
         ActPrintLog("#5 clearMyNonLocals");
         setFailoverToLocal(true); // ensure it is
+        ActPrintLog("#6 clearMyNonLocals");
         if (!broadcaster->stopRequested())
             broadcaster->stop(myNodeNum, bcastflag_spilt); // signals to broadcast to start stopping immediately and to signal spilt to others
+        ActPrintLog("#7 clearMyNonLocals");
         CThorExpandingRowArray channelRows(*this, sharedRightRowInterfaces);
-        rightCollector->transferRowsOut(channelRows);
+        ActPrintLog("#8 clearMyNonLocals");
+        rightCollector->transferRowsOut(channelRows, false); // don't sort
+        ActPrintLog("#9 clearMyNonLocals");
         rowidx_t clearedRows = 0;
         rowidx_t numRows = channelRows.ordinality();
 
-        ActPrintLog("#6 clearMyNonLocals");
+        ActPrintLog("#10 clearMyNonLocals");
         CCycleTimer timer;
         cycle_t hashCycles = 0;
         cycle_t releaseRowCycles = 0;
@@ -1981,7 +1928,7 @@ protected:
              * so that a request to spill, will block delay, but can still proceed after calculate is done
              */
             CThorExpandingRowArray temp(*this, sharedRightRowInterfaces);
-            rightCollector->transferRowsOut(temp);
+            rightCollector->transferRowsOut(temp, false);
             CCycleTimer timer;
             uniqueKeys = marker.calculate(temp, compareRight, false);
             VStringBuffer msg("CMarker::calculate - uniqueKeys=%" RIPF "u", uniqueKeys);
@@ -2005,6 +1952,7 @@ protected:
      */
     bool handleGlobalRHS(CMarker &marker, bool stopping)
     {
+        addRHSRowTime = 0;
         CCycleTimer timer;
         doBroadcastRHS(stopping);
         logTiming("doBroadcastRHS", timer.elapsedCycles());
@@ -2048,7 +1996,7 @@ protected:
             if (!hasFailedOverToLocal())
             {
                 CThorExpandingRowArray channelRows(*this, sharedRightRowInterfaces);
-                rightCollector->transferRowsOut(channelRows);
+                rightCollector->transferRowsOut(channelRows, false);
                 CCycleTimer timer;
                 uniqueKeys = marker.calculate(channelRows, compareRight, true);
                 VStringBuffer msg("CMarker::calculate - uniqueKeys=%" RIPF "u", uniqueKeys);
@@ -2101,10 +2049,7 @@ protected:
             }
         }
 
-        logTiming("totalSerializationTime", totalSerializationTime);
-        logTiming("totalCompressionTime", totalCompressionTime);
-        logTiming("totalAddRHSRowTime", totalAddRHSRowTime);
-        logTiming("totalBroadcastToOthersTime", totalBroadcastToOthersTime);
+        logTiming("addRHSRowTime", addRHSRowTime);
 
         return !hasFailedOverToLocal();
     }
@@ -2659,7 +2604,8 @@ lkjStateSwitch:
     virtual bool addRHSRows(CThorExpandingRowArray &inRows, CThorExpandingRowArray &rhsInRowsTemp)
     {
         assertex(0 == rhsInRowsTemp.ordinality());
-        CCycleAddTimer tb(addRHSRowTime);
+        
+        CAtomicCycleAddTimer tb(addRHSRowTime);
         if (hasFailedOverToLocal())
         {
             if (0 == keepLocal(inRows, rhsInRowsTemp))
@@ -3161,7 +3107,7 @@ protected:
 
                 InterChannelBarrier(); // wait for all to setup rhs, since global helper will access all
                 totalRHSCount = getGlobalRHSTotal();
-                rightCollector->transferRowsOut(rhs);
+                rightCollector->transferRowsOut(rhs, false);
                 tableProxy.setown(new CAllTableGlobal(this));
            }
            else
