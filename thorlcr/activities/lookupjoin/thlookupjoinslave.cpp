@@ -64,16 +64,12 @@ typedef CCycleAddTimerType<std::atomic<cycle_t>> CAtomicCycleAddTimer;
 class CSendItem : public CSimpleInterface
 {
     CMessageBuffer msg;
-    unsigned node, slave, headerLen;
+    unsigned slave, targetChannel, headerLen;
     unsigned short info;
-    unsigned short targetChannel;
 public:
-    CSendItem(broadcast_code _code, unsigned _node, unsigned _slave, unsigned _targetChannel) : info((unsigned short)_code), node(_node), slave(_slave)
+    CSendItem(broadcast_code _code, unsigned _slave, unsigned _targetChannel) : info((unsigned short)_code), slave(_slave), targetChannel(_targetChannel)
     {
-        targetChannel = (unsigned short)_targetChannel;
-        dbgassertex(targetChannel==(unsigned)_targetChannel);
         msg.append(info);
-        msg.append(node);
         msg.append(slave);
         msg.append(targetChannel);
         headerLen = msg.length();
@@ -82,7 +78,6 @@ public:
     {
         msg.swapWith(_msg);
         msg.read(info);
-        msg.read(node);
         msg.read(slave);
         msg.read(targetChannel);
         headerLen = msg.getPos();
@@ -91,10 +86,9 @@ public:
     void reset() { msg.setLength(headerLen); }
     CMessageBuffer &queryMsg() { return msg; }
     broadcast_code queryCode() const { return (broadcast_code)(info & BROADCAST_CODE_MASK); }
-    unsigned queryNode() const { return node; } // 0 based
     unsigned querySlave() const { return slave; } // 0 based
     unsigned queryTargetChannel() const { return targetChannel; } // 0 based
-    void setTargetChannel(unsigned _targetChannel) { targetChannel = (unsigned short)_targetChannel; dbgassertex(targetChannel==(unsigned)_targetChannel); }
+    void setTargetChannel(unsigned _targetChannel) { targetChannel = _targetChannel; }
     broadcast_flags queryFlags() const { return (broadcast_flags)(info & BROADCAST_FLAG_MASK); }
     void setFlag(broadcast_flags _flag)
     {
@@ -268,7 +262,9 @@ class CBroadcaster : public CSimpleInterface
     }
     bool senderStop(CSendItem &sendItem)
     {
-        unsigned sender = nodeBroadcast?sendItem.queryNode():sendItem.querySlave();
+        unsigned sender = sendItem.querySlave();
+        if (nodeBroadcast)
+            sender = sender % nodes;
         return senderStop(sender);
     }
     unsigned target(unsigned i, unsigned node)
@@ -288,7 +284,7 @@ class CBroadcaster : public CSimpleInterface
     void broadcastToOthers(CSendItem *sendItem)
     {
         mptag_t rt = activity.queryMPServer().createReplyTag();
-        unsigned origin = sendItem->queryNode();
+        unsigned origin = sendItem->querySlave() % nodes;
         unsigned pseudoNode = (myNode<origin) ? nodes-origin+myNode : myNode-origin;
         CMessageBuffer replyMsg;
         // sends to all in 1st pass, then waits for ack from all
@@ -309,9 +305,12 @@ class CBroadcaster : public CSimpleInterface
                 unsigned sendLen = sendItem->length();
                 unsigned ot=t;
                 if (!nodeBroadcast)
+                {
+                    // map target node+channel to slave #, to propagate to other nodes on same channel
                     t = activity.queryJob().querySlaveForNodeChannel(t-1, sendItem->queryTargetChannel()) + 1;
+                }
                 if (bcast_stop == sendItem->queryCode())
-                    activity.ActPrintLog("broadcastToOthers: sending stop - ot=%u, t=%u, sendItem->node=%u, sendItem->slave=%u", ot, t, sendItem->queryNode(), sendItem->querySlave());
+                    activity.ActPrintLog("broadcastToOthers: sending stop - ot=%u, t=%u, origin node=%u, sendItem->slave=%u", ot, t, origin, sendItem->querySlave());
                 if (0 == sendRecv) // send
                 {
 #ifdef _TRACEBROADCAST
@@ -378,8 +377,9 @@ class CBroadcaster : public CSimpleInterface
             }
             mptag_t replyTag = msg.getReplyTag();
             Owned<CSendItem> sendItem = new CSendItem(msg);
+            unsigned origin = sendItem->querySlave() % nodes;
 #ifdef _TRACEBROADCAST
-            ActPrintLog(&activity, "Broadcast node %d received from node %d, origin node %d, origin slave %d, size %d, code=%d", myNode+1, (unsigned)sendRank, sendItem->queryNode()+1, sendItem->querySlave()+1, sendItem->length(), (unsigned)sendItem->queryCode());
+            ActPrintLog(&activity, "Broadcast node %d received from node %d, origin node %d, origin slave %d, size %d, code=%d", myNode+1, (unsigned)sendRank, origin+1, sendItem->querySlave()+1, sendItem->length(), (unsigned)sendItem->queryCode());
 #endif
 #ifdef _TRACEBROADCAST
             ActPrintLog(&activity, "Broadcast node %d, sent ack to node %d, replyTag=%d", myNode+1, (unsigned)sendRank, (unsigned)replyTag);
@@ -401,7 +401,7 @@ class CBroadcaster : public CSimpleInterface
                     recvInterface->bCastReceive(sendItem.getLink(), stop);
                     if (stop)
                     {
-                        ActPrintLog(&activity, "recvLoop, received last senderStop, node=%u, slave=%u", sendItem->queryNode()+1, sendItem->querySlave()+1);
+                        ActPrintLog(&activity, "recvLoop, received last senderStop, node=%u, slave=%u", origin+1, sendItem->querySlave()+1);
                         // NB: this slave has nothing more to receive.
                         // However the sender will still be re-broadcasting some packets, including these stop packets
                         return;
@@ -410,7 +410,7 @@ class CBroadcaster : public CSimpleInterface
                 }
                 case bcast_sendStopping:
                 {
-                    setStopping(sendItem->queryNode());
+                    setStopping(sendItem->querySlave());
                     // fall through
                 }
                 case bcast_send:
@@ -426,18 +426,18 @@ class CBroadcaster : public CSimpleInterface
         }
         ActPrintLog(&activity, "End of recvLoop()");
     }
-    inline void _setStopping(unsigned node)
+    inline void _setStopping(unsigned sender)
     {
-        broadcastersStopping->set(node, true);
+        broadcastersStopping->set(sender, true);
         // allRequestStop=true, if I'm stopping and all others have requested also
-        allRequestStop = broadcastersStopping->scan(0, false) == nodes;
+        allRequestStop = broadcastersStopping->scan(0, false) == senders;
     }
 public:
     CBroadcaster(CActivityBase &_activity) : activity(_activity), receiver(*this), sender(*this)
     {
         allRequestStop = stopping = stopRecv = false;
-        myNode = activity.queryJob().queryMyNodeRank()-1; // 0 based
-        mySlave = activity.queryJobChannel().queryMyRank()-1; // 0 based
+        myNode = activity.queryJob().queryMyNode();
+        mySlave = activity.queryJobChannel().queryMySlave();
         nodes = activity.queryJob().queryNodes();
         slaves = activity.queryJob().querySlaves();
         mySender = mySlave;
@@ -487,7 +487,7 @@ public:
     {
         if (stopping && (bcast_send==code))
             code = bcast_sendStopping;
-        return new CSendItem(code, myNode, mySlave, activity.queryJobChannelNumber());
+        return new CSendItem(code, mySlave, activity.queryJobChannelNumber());
     }
     void end()
     {
@@ -508,10 +508,6 @@ public:
         broadcastToOthers(sendItem);
         return !allRequestStop;
     }
-    bool isStopping()
-    {
-        return broadcastersStopping->test(myNode);
-    }
     broadcast_flags queryStopFlag() { return stopFlag; }
     bool stopRequested()
     {
@@ -519,24 +515,28 @@ public:
             return true;
         return allRequestStop; // if not, if all have request to stop
     }
-    void setStopping(unsigned node)
+    void setStopping(unsigned sender)
     {
+        if (nodeBroadcast)
+            sender = sender % nodes;
         CriticalBlock b(stopCrit); // multiple channels could call
-        _setStopping(node);
+        _setStopping(sender);
     }
-    void stop(unsigned node, broadcast_flags flag)
+    void stop(unsigned sender, broadcast_flags flag)
     {
+        if (nodeBroadcast)
+            sender = sender % nodes;
         CriticalBlock b(stopCrit); // multiple channels could call
-        _setStopping(node);
+        _setStopping(sender);
         stopFlag = flag;
     }
     void sendLocalStop(CSendItem *sendItem)
     {
         if (nodeBroadcast)
             return;
-        Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->queryNode(), sendItem->querySlave(), sendItem->queryTargetChannel());
+        Owned<CSendItem> stopSendItem = new CSendItem(bcast_stop, sendItem->querySlave(), sendItem->queryTargetChannel());
         stopSendItem->setFlag(bcastflag_stop);
-        unsigned myNodeNum = activity.queryJob().queryMyNodeRank()-1;
+        unsigned myNodeNum = activity.queryJob().queryMyNode();
         for (unsigned ch=0; ch<activity.queryJob().queryJobChannels(); ch++)
         {
             if (ch != activity.queryJobChannelNumber())
@@ -823,7 +823,7 @@ protected:
 
     /* Utility class, that is called from the broadcaster to queue up received blocks
      * It will block if it has > MAX_QUEUE_BLOCKS to process (on the queue)
-     * Processing will decompress the incoming blocks and add them to a row array per slave
+     * Processing will decompress the incoming blocks and add them to the local channel row array
      */
 
     class CRowProcessor : public CSimpleInterfaceOf<IThreaded>
@@ -965,7 +965,6 @@ protected:
     } *rowProcessor;
 
     Owned<CBroadcaster> broadcaster;
-    CBroadcaster *channel0Broadcaster;
     rowidx_t rhsTableLen;
     Owned<CTableCommon> table;
     Owned<ITableLookup> tableProxy; // will be used if global
@@ -1004,7 +1003,7 @@ protected:
 
     bool leftMatch, grouped;
     bool fuzzyMatch, returnMany;
-    rank_t myNodeNum, mySlaveNum;
+    unsigned myNodeNum, mySlaveNum;
     unsigned myChannelNum;
     unsigned numNodes, numSlaves;
     OwnedMalloc<CInMemJoinBase *> channels;
@@ -1168,7 +1167,7 @@ protected:
                         rightSerializer->serialize(mbser, (const byte *)row.get());
                         serializationTime += serializationTimer.elapsedCycles();
                         pendingChannel.append(row.getClear());
-                        if (mb.length() >= MAX_SEND_SIZE || channel0Broadcaster->stopRequested())
+                        if (mb.length() >= MAX_SEND_SIZE || broadcaster->stopRequested())
                         {
                             channelToSend = channelDst;
                             break;
@@ -1181,12 +1180,10 @@ protected:
                         if (!channels[channelDst]->addRHSRows(pendingChannel, rhsInRowsTemp))
                             throw MakeActivityException(this, 0, "Out of memory: Unable to add any more rows to RHS");
                     }
-                    if (channel0Broadcaster->stopRequested())
+                    if (broadcaster->stopRequested())
                         break;
                 }
-                if (channel0Broadcaster->stopRequested())
-                    break;
-                if (NotFound == channelToSend) // all / end
+                if (NotFound == channelToSend) // either at end or stopRequested
                 {
                     ForEachItemIn(p, pendingPerChannel)
                     {
@@ -1246,8 +1243,8 @@ protected:
         logTiming("broadcastRHSTime", broadcastRHSTime.elapsedCycles());
 
         sendItem.setown(broadcaster->newSendItem(bcast_stop));
-        if (channel0Broadcaster->stopRequested())
-            sendItem->setFlag(channel0Broadcaster->queryStopFlag());
+        if (broadcaster->stopRequested())
+            sendItem->setFlag(broadcaster->queryStopFlag());
         ActPrintLog("Sending final RHS broadcast packet");
         broadcaster->send(sendItem); // signals stop to others
         ActPrintLog("end broadcastRHS()");
@@ -1417,8 +1414,8 @@ public:
 
         nextRhsRow = 0;
         rhsNext = NULL;
-        myNodeNum = queryJob().queryMyNodeRank()-1; // 0 based
-        mySlaveNum = queryJobChannel().queryMyRank()-1; // 0 based
+        myNodeNum = queryJob().queryMyNode();
+        mySlaveNum = queryJobChannel().queryMySlave();
         myChannelNum = queryJobChannelNumber();
         numNodes = queryJob().queryNodes();
         numSlaves = queryJob().querySlaves();
@@ -1447,7 +1444,6 @@ public:
             joinType = exclude ? JT_LeftOnly : JT_LeftOuter;
         else
             joinType = JT_Inner;
-        channel0Broadcaster = NULL;
         channelActivitiesAssigned = false;
         rightOutputMeta = NULL;
         if (isGlobal() && getOptBool("lkjoinUseSharedAllocator", true))
@@ -1539,7 +1535,6 @@ public:
                     channels[c] = &channel;
                 }
             }
-            channel0Broadcaster = channels[0]->broadcaster;
         }
         allocator.set(queryRowAllocator());
         leftAllocator.set(::queryRowAllocator(leftITDL));
@@ -1622,7 +1617,7 @@ public:
     void doBroadcastRHS(bool stopping)
     {
         if (stopping)
-            channel0Broadcaster->setStopping(myNodeNum);
+            broadcaster->setStopping(myNodeNum);
         rowProcessor->start();
         broadcaster->start(this, mpTag, stopping, false); // slaves broadcasting
         broadcastRHS();
@@ -1761,7 +1756,7 @@ protected:
         setFailoverToLocal(true); // ensure it is
         ActPrintLog("#6 clearMyNonLocals");
         if (!broadcaster->stopRequested())
-            broadcaster->stop(myNodeNum, bcastflag_spilt); // signals to broadcast to start stopping immediately and to signal spilt to others
+            broadcaster->stop(mySlaveNum, bcastflag_spilt); // signals to broadcast to start stopping immediately and to signal spilt to others
         ActPrintLog("#7 clearMyNonLocals");
         CThorExpandingRowArray channelRows(*this, sharedRightRowInterfaces);
         ActPrintLog("#8 clearMyNonLocals");
@@ -2568,7 +2563,7 @@ lkjStateSwitch:
         {
             if (0 != (sendItem->queryFlags() & bcastflag_spilt))
             {
-                VStringBuffer msg("Notification that node %d spilt", sendItem->queryNode());
+                VStringBuffer msg("Notification that slave %d spilt", sendItem->querySlave());
                 clearNonLocalRows(msg.str(), false); // NB: triggers on all channels
             }
         }
@@ -2604,7 +2599,7 @@ lkjStateSwitch:
     virtual bool addRHSRows(CThorExpandingRowArray &inRows, CThorExpandingRowArray &rhsInRowsTemp)
     {
         assertex(0 == rhsInRowsTemp.ordinality());
-        
+
         CAtomicCycleAddTimer tb(addRHSRowTime);
         if (hasFailedOverToLocal())
         {

@@ -2363,7 +2363,7 @@ CJobBase::CJobBase(ILoadedDllEntry *_querySo, const char *_graphName) : querySo(
     nodeGroup.set(&queryNodeGroup());
     numSlaves = slaveGroup->ordinality();
     numNodes = nodeGroup->ordinality()-1;
-    myNodeRank = nodeGroup->rank(::queryMyNode());
+    myNode = ((unsigned)nodeGroup->rank(::queryMyNode()))-1;
 
     unsigned channelsPerSlave = globals->getPropInt("@channelsPerSlave", 1);
     jobChannelSlaveNumbers.allocateN(channelsPerSlave, true); // filled when channels are added.
@@ -2618,7 +2618,8 @@ CJobChannel::CJobChannel(CJobBase &_job, IMPServer *_mpServer, unsigned _channel
     thorAllocator.setown(job.getThorAllocator(channel));
     timeReporter = createStdTimeReporter();
     jobComm.setown(mpServer->createCommunicator(&job.queryJobGroup()));
-    myrank = job.queryJobGroup().rank(queryMyNode());
+    rank_t myrank = job.queryJobGroup().rank(queryMyNode());
+    mySlave = ((unsigned)myrank)-1;
     graphExecutor.setown(new CGraphExecutor(*this));
 }
 
