@@ -665,6 +665,8 @@ public:
         threadCount = activity.getOptInt(THOROPT_JOINHELPER_THREADS, 0);
         if (0 == threadCount)
             threadCount = activity.queryMaxCores();
+
+        activity.ActPrintLog("CMarker: threadCount = %u", threadCount);
     }
     bool init(rowidx_t rowCount, roxiemem::IRowManager *rowManager)
     {
@@ -1167,7 +1169,7 @@ protected:
                         rightSerializer->serialize(mbser, (const byte *)row.get());
                         serializationTime += serializationTimer.elapsedCycles();
                         pendingChannel.append(row.getClear());
-                        if (mb.length() >= MAX_SEND_SIZE || broadcaster->stopRequested())
+                        if (mb.length() >= MAX_SEND_SIZE)
                         {
                             channelToSend = channelDst;
                             break;
@@ -1788,7 +1790,8 @@ protected:
         ActPrintLog("Channel cleared %" RIPF "u, about to compacted from %" RIPF "u", clearedRows, preCompactCount);
         logTiming("Channel clear hashTime", hashCycles);
         logTiming("Channel clear rowRelease", releaseRowCycles);
-        channelRows.compact();
+        if (clearedRows)
+            channelRows.compact();
         rightCollector->transferRowsIn(channelRows);
         ActPrintLog("Channel cleared %" RIPF "u, compacted from %" RIPF "u to %" RIPF "u", clearedRows, preCompactCount, (rowidx_t)rightCollector->numRows());
         return clearedRows;
@@ -1805,7 +1808,6 @@ protected:
             if (lkjoinCh0->checkFailedOverToLocal()) // I have flagged channel0 failover
             {
                 // JCSMORE: As all need clearing, would benefit from doing in parallel
-                unsigned myChannelNum = queryJobChannelNumber();
                 std::atomic<rowidx_t> clearedRows(0);
 
                 class CClearChannelRows : public CAsyncFor
