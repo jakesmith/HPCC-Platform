@@ -3809,7 +3809,7 @@ public:
         catch (IException *e)
         {
             EXCLOG(e, "CChunkingRowManager::allocate(memsize_t _size, unsigned activityId, unsigned maxSpillCost)");
-            if (maxSpillCost == SpillAllCost)
+//            if (maxSpillCost == SpillAllCost)
                 doOomReport();
             throw;
         }
@@ -3916,7 +3916,7 @@ public:
             catch (IException *e)
             {
                 EXCLOG(e, "CChunkingRowManager::resizeRow(void * original, memsize_t copysize, memsize_t newsize, unsigned activityId, unsigned maxSpillCost, IRowResizeCallback & callback)");
-                if (maxSpillCost == SpillAllCost)
+//                if (maxSpillCost == SpillAllCost)
                     doOomReport();
                 throw;
             }
@@ -4091,7 +4091,7 @@ public:
                         logctx.CTXLOG("%s", msg.str());
 
                         //Avoid a stack trace if the allocation is optional
-                        if (maxSpillCost == SpillAllCost)
+//                        if (maxSpillCost == SpillAllCost)
                             doOomReport();
                         throw MakeStringExceptionDirect(ROXIEMM_MEMORY_LIMIT_EXCEEDED, msg.str());
                     }

@@ -43,6 +43,16 @@ enum broadcast_flags { bcastflag_null=0, bcastflag_spilt=0x100, bcastflag_stop=0
 #define BROADCAST_CODE_MASK 0x00FF
 #define BROADCAST_FLAG_MASK 0xFF00
 
+//#define HIGHFREQ_TIMING
+#ifdef HIGHFREQ_TIMING
+#define ADDHFTIME(base, inc) base += inc
+#define ADDHFTIMERRESET(timer) timer.reset()
+#define INCHFSTATE(stat) ++stat;
+#else
+#define ADDHFTIME(base, inc)
+#define ADDHFTIMERRESET(timer)
+#define INCHFSTATE(stat)
+#endif
 
 template <typename T>
 class CCycleAddTimerType
@@ -769,7 +779,7 @@ public:
 #endif
 
 
-struct HtEntry { rowidx_t index, count; };
+struct HtEntry { rowidx_t index, count; unsigned hash; };
 
 interface ITableLookup : extends IInterface
 {
@@ -781,6 +791,7 @@ class CTableCommon : public CSimpleInterfaceOf<ITableLookup>
 {
 protected:
     rowidx_t tableSize = 0;
+    rowidx_t tableMask = 0;
 public:
     virtual void reset()
     {
@@ -1464,6 +1475,7 @@ public:
         ActPrintLog("TIME: %s - %s = %u", queryJob().queryWuid(), msg, static_cast<unsigned>(cycle_to_millisec(cycles)));
     }
     ITableLookup *queryTable() { return table; }
+    IThorRowCollector *queryRightCollector() { return rightCollector; }
     void startLeftInput()
     {
         try
@@ -1546,6 +1558,7 @@ public:
         atomic_set(&interChannelToNotifyCount, 0);
         currentHashEntry.index = 0;
         currentHashEntry.count = 0;
+        currentHashEntry.hash = 0;
 
         rightSerializer.set(::queryRowSerializer(rightITDL));
         rightDeserializer.set(::queryRowDeserializer(rightITDL));
@@ -1859,7 +1872,13 @@ protected:
         else
         {
 //            rowcount_t res = size/3*4; // make HT 1/3 bigger than # rows
-            rowcount_t res = size*2; // make HT 1/3 bigger than # rows
+            double htFactor = ((float)getOptInt("htperc", 133)) / 100.0;
+            rowcount_t res = size*htFactor;
+            rowcount_t roundedRes = 1;
+            while (roundedRes < res)
+                roundedRes <<= 1;
+            ActPrintLog("htFactor = %f, size=%u, htsize=%" I64F "u, roundedRes=%" I64F "u", htFactor, size, res, roundedRes);
+            res = roundedRes;
             if ((res < size) || (res > RIMAX)) // check for overflow, or result bigger than rowidx_t size
                 throw MakeActivityException(this, 0, "Too many rows on RHS for hash table: %" RCPF "d", res);
             size = (rowidx_t)res;
@@ -2049,7 +2068,7 @@ protected:
 
         logTiming("addRHSRowTime", addRHSRowTime);
 
-        return !hasFailedOverToLocal();
+        return allInMemory;
     }
     /*
      * NB: if global attempt fails.
@@ -2234,7 +2253,6 @@ protected:
             {
                 /* All RHS rows fitted in memory
                  * NB: rightCollector callback only enabled if local.
-                 * If global, global callback spills rightCollector directly, but callback removed by now (see removeRowBuffer(this); above)
                  */
                 if (isLocal() || hasFailedOverToLocal())
                 {
@@ -2290,6 +2308,7 @@ protected:
                 {
                     ActPrintLog("Performing GLOBAL LOOKUP JOIN: rhs size=%u, my channel lookup table size = %" RIPF "u", rhs.ordinality(), rhsTableLen);
                     InterChannelBarrier(); // wait for all channels to prep. their table
+
                     tableProxy.setown(createGlobalProxy());
                 }
                 lkjState = lkj_locallookup;
@@ -2533,7 +2552,7 @@ lkjStateSwitch:
         {
             if (gotRHS())
             {
-                // Other channels sharing HT. So do not reset until all here
+                // Other channels using HT's. So do not reset until all here
                 if (!hasFailedOverToLocal() && queryJob().queryJobChannels()>1)
                     InterChannelBarrier();
             }
@@ -2584,7 +2603,7 @@ lkjStateSwitch:
     virtual bool freeBufferedRows(bool critical)
     {
         if (isGlobal())
-            return clearNonLocalRows("Out of memory callback", critical) > 0;
+            return clearNonLocalRows("Out of memory callback", true) > 0;
         else
             return rightCollector->spill(false) > 0;
     }
@@ -2639,6 +2658,7 @@ protected:
     OwnedConstThorRow htMemory;
     IHash *leftHash, *rightHash;
     ICompare *compareLeftRight;
+    size32_t elementSize = sizeof(const void *);
 
     void _reset()
     {
@@ -2653,7 +2673,7 @@ public:
     }
     virtual void setup(roxiemem::IRowManager *rowManager, rowidx_t size, IHash *_leftHash, IHash *_rightHash, ICompare *_compareLeftRight) override
     {
-        unsigned __int64 _sz = sizeof(const void *) * ((unsigned __int64)size);
+        unsigned __int64 _sz = elementSize * ((unsigned __int64)size);
         memsize_t sz = (memsize_t)_sz;
         if (sz != _sz) // treat as OOM exception for handling purposes.
             throw MakeStringException(ROXIEMM_MEMORY_LIMIT_EXCEEDED, "Unsigned overflow, trying to allocate hash table of size: %" I64F "d ", _sz);
@@ -2661,6 +2681,7 @@ public:
         memset(ht, 0, sz);
         htMemory.setown(ht);
         tableSize = size;
+        tableMask = size-1; // size if always a power of 2
         leftHash = _leftHash;
         rightHash = _rightHash;
         compareLeftRight = _compareLeftRight;
@@ -2845,35 +2866,58 @@ class CLookupManyHT : public CHTBase
 {
     typedef CHTBase PARENT;
 
-    HtEntry *ht;
-    const void **rows;
+#ifdef HIGHFREQ_TIMING
     unsigned __int64 misses = 0, lookupMisses = 0;
     CCycleTimer timer, timer2;
     cycle_t findFirstTime = 0;
     cycle_t findFirstCompareTime = 0;
+#endif
 
-    inline HtEntry *lookup(unsigned hash)
+    HtEntry *ht = nullptr;
+    const void **rows = nullptr;
+
+    inline const void *lookup(const void *left, unsigned hash, HtEntry &currentHashEntry)
     {
-        HtEntry *e = ht+hash;
-        if (0 == e->count)
-            return NULL;
-        return e;
+        unsigned h = hash & tableMask;
+        loop
+        {
+            HtEntry &e = ht[h];
+            if (0 == e.count)
+                return nullptr;
+            if (hash == e.hash)
+            {
+                const void *right = rows[e.index];
+                ADDHFTIMERRESET(timer2);
+                bool res = (0 == compareLeftRight->docompare(left, right));
+                ADDHFTIME(findFirstCompareTime, timer2.elapsedCycles());
+                if (res)
+                {
+                    currentHashEntry = e;
+                    ADDHFTIME(findFirstTime, timer.elapsedCycles());
+                    return right;
+                }
+            }
+            h++;
+            if (h >= tableSize)
+                h = 0;
+        }
     }
     inline void addEntry(const void *row, unsigned hash, rowidx_t index, rowidx_t count)
     {
+        unsigned h = hash & tableMask;
         loop
         {
-            HtEntry &e = ht[hash];
+            HtEntry &e = ht[h];
             if (!e.count)
             {
                 e.index = index;
                 e.count = count;
+                e.hash = hash;
                 break;
             }
-            ++misses;
-            hash++;
-            if (hash>=tableSize)
-                hash = 0;
+            h++;
+            if (h >= tableSize)
+                h = 0;
         }
     }
     void _reset()
@@ -2884,40 +2928,26 @@ class CLookupManyHT : public CHTBase
 public:
     CLookupManyHT(CLookupJoinActivityBase *_activity) : PARENT(_activity)
     {
+        elementSize = sizeof(HtEntry);
         _reset();
     }
     ~CLookupManyHT()
     {
+#ifdef HIGHFREQ_TIMING
         activity->logTiming("findFirstTime", findFirstTime);
         VStringBuffer msg("lookupMisses = %" I64F "u, findFirstCompareTime:", lookupMisses);
         activity->logTiming(msg, findFirstCompareTime);
+#endif
     }
-    const void *findFirst(unsigned hv, const void *left, HtEntry &currentHashEntry)
+    const void *findFirst(unsigned hash, const void *left, HtEntry &currentHashEntry)
     {
-        timer.reset();
-        unsigned h = hv%tableSize;
-        loop
-        {
-            HtEntry *e = lookup(h);
-            if (!e)
-                break;
-            const void *right = rows[e->index];
-            timer2.reset();
-            bool res = (0 == compareLeftRight->docompare(left, right));
-            findFirstCompareTime += timer2.elapsedCycles();
-            if (res)
-            {
-                currentHashEntry = *e;
-                findFirstTime += timer.elapsedCycles();
-                return right;
-            }
-            ++lookupMisses;
-            h++;
-            if (h>=tableSize)
-                h = 0;
-        }
-        findFirstTime += timer.elapsedCycles();
-        return NULL;
+        ADDHFTIMERRESET(timer);
+        const void *right = lookup(left, hash, currentHashEntry);
+        if (right)
+            return right;
+        INCHFSTATE(lookupMisses);
+        ADDHFTIME(findFirstTime, timer.elapsedCycles());
+        return nullptr;
     }
     virtual void setup(roxiemem::IRowManager *rowManager, rowidx_t size, IHash *leftHash, IHash *rightHash, ICompare *compareLeftRight) override
     {
@@ -2931,16 +2961,18 @@ public:
     }
     virtual void addRows(CThorExpandingRowArray &_rows, CMarker *marker) override
     {
+#ifdef HIGHFREQ_TIMING
         cycle_t findNextBoundaryTime = 0, addRowsHashTime = 0, addEntryTime = 0;
         CCycleTimer timer;
+#endif
         rows = _rows.getRowArray();
         rowidx_t pos=0;
         rowidx_t pos2;
         loop
         {
-            timer.reset();
+            ADDHFTIMERRESET(timer);
             pos2 = marker->findNextBoundary(pos);
-            findNextBoundaryTime += timer.elapsedCycles();
+            ADDHFTIME(findNextBoundaryTime, timer.elapsedCycles());
             if (0 == pos2)
                 break;
             rowidx_t count = pos2-pos;
@@ -2949,19 +2981,21 @@ public:
              * i.e. feels like LOOKUP without MANY should be deprecated..
             */
             const void *row = rows[pos];
-            timer.reset();
-            unsigned h = rightHash->hash(row)%tableSize;
-            addRowsHashTime += timer.elapsedCycles();
+            ADDHFTIMERRESET(timer);
+            unsigned hash = rightHash->hash(row);
+            ADDHFTIME(addRowsHashTime, timer.elapsedCycles());
             // NB: 'pos' and 'count' won't be used if dedup variety
-            timer.reset();
-            addEntry(row, h, pos, count);
-            addEntryTime += timer.elapsedCycles();
+            ADDHFTIMERRESET(timer);
+            addEntry(row, hash, pos, count);
+            ADDHFTIME(addEntryTime, timer.elapsedCycles());
             pos = pos2;
         }
+#ifdef HIGHFREQ_TIMING
         activity->logTiming("addRows boundaryTime", findNextBoundaryTime);
         activity->logTiming("addRows hashTime", addRowsHashTime);
         activity->logTiming("addRows addEntryTime", addEntryTime);
         activity->ActPrintLog("addRows rows = %u, add misses = %" I64F "u", _rows.ordinality(), misses);
+#endif
     }
 // ITableLookup
     virtual const void *getNextRHS(HtEntry &currentHashEntry) override
@@ -2986,12 +3020,15 @@ public:
 
 class CLookupManyHTGlobal : public CTableGlobalBase
 {
+protected:
     typedef CTableGlobalBase PARENT;
 
     CLookupJoinActivityBase *activity;
     IHash *leftHash = nullptr;
+#ifdef HIGHFREQ_TIMING
     CCycleTimer timer;
     cycle_t getFirstRHSMatchTime = 0, getNextRHSTime = 0;
+#endif
 
 public:
     CLookupManyHTGlobal(CLookupJoinActivityBase *_activity) : PARENT(_activity), activity(_activity)
@@ -3000,23 +3037,24 @@ public:
     }
     ~CLookupManyHTGlobal()
     {
+#ifdef HIGHFREQ_TIMING
         activity->logTiming("getFirstRHSMatchTime", getFirstRHSMatchTime);
         activity->logTiming("getNextRHSTime", getNextRHSTime);
+#endif
     }
     virtual const void *getNextRHS(HtEntry &currentHashEntry) override
     {
-        timer.reset();
+        ADDHFTIMERRESET(timer);
         dbgassertex(NotFound != currentTableChannel);
         const void *ret = hTables[currentTableChannel]->getNextRHS(currentHashEntry);
-        getNextRHSTime += timer.elapsedCycles();
+        ADDHFTIME(getNextRHSTime, timer.elapsedCycles());
         return ret;
     }
     virtual const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry) override
     {
-        timer.reset();
+        ADDHFTIMERRESET(timer);
         unsigned hv = leftHash->hash(leftRow);
-        unsigned s = hv % numSlaves;
-        unsigned c = s / numNodes;
+        unsigned c = (hv % numSlaves) >> 1;
         const void *right = ((CLookupManyHT *)hTables[c])->findFirst(hv, leftRow, currentHashEntry);
         if (right)
         {
@@ -3026,7 +3064,37 @@ public:
         }
         else
             currentTableChannel = NotFound;
-        getFirstRHSMatchTime += timer.elapsedCycles();
+        ADDHFTIME(getFirstRHSMatchTime, timer.elapsedCycles());
+        return right;
+    }
+};
+
+class CLookupManyHTGlobalMask : public CLookupManyHTGlobal
+{
+    typedef CLookupManyHTGlobal PARENT;
+    unsigned slavesMask = 0;
+
+public:
+    CLookupManyHTGlobalMask(CLookupJoinActivityBase *_activity) : PARENT(_activity)
+    {
+        slavesMask = numSlaves-1;
+        activity->ActPrintLog("Using numSlaves mask: %u", slavesMask);
+    }
+    virtual const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry) override
+    {
+        ADDHFTIMERRESET(timer);
+        unsigned hv = leftHash->hash(leftRow);
+        unsigned c = (hv & slavesMask) / numNodes;
+        const void *right = ((CLookupManyHT *)hTables[c])->findFirst(hv, leftRow, currentHashEntry);
+        if (right)
+        {
+            currentTableChannel = c;
+            if (activity->exceedsLimit(currentHashEntry.count, leftRow, right, failRow))
+                return nullptr;
+        }
+        else
+            currentTableChannel = NotFound;
+        ADDHFTIME(getFirstRHSMatchTime, timer.elapsedCycles());
         return right;
     }
 };
@@ -3043,7 +3111,10 @@ public:
     }
     virtual ITableLookup *createGlobalProxy() override
     {
-        return new CLookupManyHTGlobal(this);
+        if (0 == (numSlaves & (numSlaves -1)))
+            return new CLookupManyHTGlobalMask(this);
+        else
+            return new CLookupManyHTGlobal(this);
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
