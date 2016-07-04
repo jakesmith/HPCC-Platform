@@ -1475,6 +1475,7 @@ public:
         ActPrintLog("TIME: %s - %s = %u", queryJob().queryWuid(), msg, static_cast<unsigned>(cycle_to_millisec(cycles)));
     }
     ITableLookup *queryTable() { return table; }
+    IThorRowCollector *queryRightCollector() { return rightCollector; }
     void startLeftInput()
     {
         try
@@ -2066,7 +2067,105 @@ protected:
 
         logTiming("addRHSRowTime", addRHSRowTime);
 
-        return !hasFailedOverToLocal();
+        return allInMemory;
+    }
+    bool handleGlobalRHS2(CMarker &marker, bool stopping)
+    {
+        CCycleTimer timer;
+        doBroadcastRHS(stopping);
+        logTiming("doBroadcastRHS", timer.elapsedCycles());
+        postBroadcast = true;
+        if (isSmart())
+        {
+            /* NB: Potentially one of the slaves spilt late after broadcast and rowprocessor finished, in final phase above
+             * So remove callback, sync channels and check again, then broadcast state to everyone.
+             */
+
+            // don't re-sort (if there's a spill event) if already gathered and sorted (during calculate above)
+            ICompare *cmp = localGatheredAndSorted ? nullptr : compareRight;
+            rightCollector->setup(cmp, stableSort_none, rc_mixed, SPILL_PRIORITY_DISABLE);
+
+            InterChannelBarrier(); // keep window informing other nodes of state to a minimum
+            {
+                ActPrintLog("Blocking rightCollector and synching channels to determine global spill state");
+                CThorArrayLockBlock b(*rightCollector);
+                ActPrintLog("synching channels to determine global spill state");
+                InterChannelBarrier(); // Intentional, all channels blocking spill handling whilst communicating if all succeeded without spilling
+                ActPrintLog("All channels now blocking rightCollector");
+                if (0 == queryJobChannelNumber()) // All channels broadcast, but only channel 0 receives
+                {
+                    ActPrintLog("Broadcasting final spilt status: %s", hasFailedOverToLocal() ? "spilt" : "did not spill");
+                    // NB: Will cause other slaves to flush non-local if any have and failedOverToLocal will be set on all
+
+                    CCycleTimer timer;
+                    doBroadcastStop(broadcast2MpTag, hasFailedOverToLocal() ? bcastflag_spilt : bcastflag_null);
+                    logTiming("doBroadcastStop()", timer.elapsedCycles());
+                    ActPrintLog("Done broadcasting final spilt status: %s", hasFailedOverToLocal() ? "spilt" : "did not spill");
+                }
+                InterChannelBarrier();
+
+                // Before releasing the lock mark allInMemory=true, which will make any clearNonLocalRows callback in progress a NOP
+                if (!hasFailedOverToLocal()) // NB: all channels will have marked failover if any node sent bcastflag_spilt
+                    allInMemory = true;
+            }
+        }
+        if (!allInMemory)
+            return false;
+        if (0 == queryJobChannelNumber())
+        {
+            timer.reset();
+            totalRHSCount = getGlobalRHSTotal();
+            for (unsigned ch=1; ch<queryJob().queryJobChannels(); ch++)
+            {
+                channels[ch]->queryRightCollector()->transferRowsOut(rhs, false);
+                if (!rightCollector->addRows(rhs, true))
+                {
+                    // need to handle failover
+                    UNIMPLEMENTED;
+                }
+            }
+            VStringBuffer msg("handleGlobalRHS2: add all rows to ch0, totalRHSCount = %u", totalRHSCount);
+            logTiming(msg, timer.elapsedCycles());
+            bool success=false;
+            timer.reset();
+            try
+            {
+                if (marker.init(totalRHSCount, rightRowManager)) // May fail if insufficient memory available
+                    success = true;
+            }
+            catch (IException *e)
+            {
+                // need to handle failover
+                UNIMPLEMENTED;
+                e->Release();
+            }
+            logTiming("handleGlobalRHS2: init marker", timer.elapsedCycles());
+            rowidx_t uniqueKeys = 0;
+            timer.reset();
+            CThorExpandingRowArray channelRows(*this, sharedRightRowInterfaces);
+            rightCollector->transferRowsOut(channelRows, false);
+            logTiming("handleGlobalRHS2: transferRowsOut", timer.elapsedCycles());
+            timer.reset();
+            uniqueKeys = marker.calculate(channelRows, compareRight, true);
+            msg.clear().appendf("CMarker::calculate - uniqueKeys=%" RIPF "u", uniqueKeys);
+            logTiming(msg, timer.elapsedCycles());
+            timer.reset();
+            rightCollector->transferRowsIn(channelRows);
+            logTiming("handleGlobalRHS2: transferRowsIn", timer.elapsedCycles());
+            localGatheredAndSorted = true;
+            timer.reset();
+            if (!setupHT(uniqueKeys)) // NB: Sizing can cause spilling callback to be triggered or OOM in case of !smart
+            {
+                // need to handle failover
+                UNIMPLEMENTED;
+            }
+            logTiming("handleGlobalRHS2: setupHT", timer.elapsedCycles());
+            InterChannelBarrier();
+        }
+        else
+            InterChannelBarrier();
+
+        return true;
     }
     /*
      * NB: if global attempt fails.
@@ -2177,6 +2276,7 @@ protected:
          * A regular join helper is created to perform a local join against the two hash distributed sorted sides.
          */
 
+        unsigned strategy = 2;
         try
         {
             if (isSmart())
@@ -2190,7 +2290,11 @@ protected:
                  * If any have spilt, still need to distribute rest of RHS..
                  */
                 CCycleTimer timer;
-                bool ok = handleGlobalRHS(marker, stopping);
+                bool ok = true;
+                if (1 == strategy)
+                    ok = handleGlobalRHS(marker, stopping);
+                else
+                    ok = handleGlobalRHS2(marker, stopping);
                 logTiming("handleGlobalRHS", timer.elapsedCycles());
                 if (stopping)
                 {
@@ -2307,7 +2411,11 @@ protected:
                 {
                     ActPrintLog("Performing GLOBAL LOOKUP JOIN: rhs size=%u, my channel lookup table size = %" RIPF "u", rhs.ordinality(), rhsTableLen);
                     InterChannelBarrier(); // wait for all channels to prep. their table
-                    tableProxy.setown(createGlobalProxy());
+
+                    if (1 == strategy)
+                        tableProxy.setown(createGlobalProxy());
+                    else
+                        tableProxy.set(channels[0]->queryTable());
                 }
                 lkjState = lkj_locallookup;
             }
