@@ -1101,10 +1101,6 @@ protected:
         }
         return str.append("---> Unknown Join Type <---");
     }
-    void logTiming(const char *msg, cycle_t cycles) 
-    {
-        ActPrintLog("TIME: %s - %s = %u", queryJob().queryWuid(), msg, static_cast<unsigned>(cycle_to_millisec(cycles)));
-    }
     bool inline gotRHS() const { return lkjState >= lkj_gotrhs; }
     void clearRHS()
     {
@@ -1462,6 +1458,10 @@ public:
     {
         if (isGlobal())
             ::Release(rowProcessor);
+    }
+    void logTiming(const char *msg, cycle_t cycles)
+    {
+        ActPrintLog("TIME: %s - %s = %u", queryJob().queryWuid(), msg, static_cast<unsigned>(cycle_to_millisec(cycles)));
     }
     ITableLookup *queryTable() { return table; }
     void startLeftInput()
@@ -1858,7 +1858,8 @@ protected:
             size = 16;
         else
         {
-            rowcount_t res = size/3*4; // make HT 1/3 bigger than # rows
+//            rowcount_t res = size/3*4; // make HT 1/3 bigger than # rows
+            rowcount_t res = size*2; // make HT 1/3 bigger than # rows
             if ((res < size) || (res > RIMAX)) // check for overflow, or result bigger than rowidx_t size
                 throw MakeActivityException(this, 0, "Too many rows on RHS for hash table: %" RCPF "d", res);
             size = (rowidx_t)res;
@@ -2814,7 +2815,8 @@ public:
         unsigned hv = leftHash->hash(leftRow);
         unsigned s = hv % numSlaves;
         unsigned c = s / numNodes;
-        return ((CLookupHT *)hTables[c])->findFirst(hv, leftRow);
+        const void *ret = ((CLookupHT *)hTables[c])->findFirst(hv, leftRow);
+        return ret;
     }
 };
 
@@ -2845,6 +2847,10 @@ class CLookupManyHT : public CHTBase
 
     HtEntry *ht;
     const void **rows;
+    unsigned __int64 misses = 0, lookupMisses = 0;
+    CCycleTimer timer, timer2;
+    cycle_t findFirstTime = 0;
+    cycle_t findFirstCompareTime = 0;
 
     inline HtEntry *lookup(unsigned hash)
     {
@@ -2864,6 +2870,7 @@ class CLookupManyHT : public CHTBase
                 e.count = count;
                 break;
             }
+            ++misses;
             hash++;
             if (hash>=tableSize)
                 hash = 0;
@@ -2879,8 +2886,15 @@ public:
     {
         _reset();
     }
+    ~CLookupManyHT()
+    {
+        activity->logTiming("findFirstTime", findFirstTime);
+        VStringBuffer msg("lookupMisses = %" I64F "u, findFirstCompareTime:", lookupMisses);
+        activity->logTiming(msg, findFirstCompareTime);
+    }
     const void *findFirst(unsigned hv, const void *left, HtEntry &currentHashEntry)
     {
+        timer.reset();
         unsigned h = hv%tableSize;
         loop
         {
@@ -2888,15 +2902,21 @@ public:
             if (!e)
                 break;
             const void *right = rows[e->index];
-            if (0 == compareLeftRight->docompare(left, right))
+            timer2.reset();
+            bool res = (0 == compareLeftRight->docompare(left, right));
+            findFirstCompareTime += timer2.elapsedCycles();
+            if (res)
             {
                 currentHashEntry = *e;
+                findFirstTime += timer.elapsedCycles();
                 return right;
             }
+            ++lookupMisses;
             h++;
             if (h>=tableSize)
                 h = 0;
         }
+        findFirstTime += timer.elapsedCycles();
         return NULL;
     }
     virtual void setup(roxiemem::IRowManager *rowManager, rowidx_t size, IHash *leftHash, IHash *rightHash, ICompare *compareLeftRight) override
@@ -2911,12 +2931,16 @@ public:
     }
     virtual void addRows(CThorExpandingRowArray &_rows, CMarker *marker) override
     {
+        cycle_t findNextBoundaryTime = 0, addRowsHashTime = 0, addEntryTime = 0;
+        CCycleTimer timer;
         rows = _rows.getRowArray();
         rowidx_t pos=0;
         rowidx_t pos2;
         loop
         {
+            timer.reset();
             pos2 = marker->findNextBoundary(pos);
+            findNextBoundaryTime += timer.elapsedCycles();
             if (0 == pos2)
                 break;
             rowidx_t count = pos2-pos;
@@ -2925,11 +2949,19 @@ public:
              * i.e. feels like LOOKUP without MANY should be deprecated..
             */
             const void *row = rows[pos];
+            timer.reset();
             unsigned h = rightHash->hash(row)%tableSize;
+            addRowsHashTime += timer.elapsedCycles();
             // NB: 'pos' and 'count' won't be used if dedup variety
+            timer.reset();
             addEntry(row, h, pos, count);
+            addEntryTime += timer.elapsedCycles();
             pos = pos2;
         }
+        activity->logTiming("addRows boundaryTime", findNextBoundaryTime);
+        activity->logTiming("addRows hashTime", addRowsHashTime);
+        activity->logTiming("addRows addEntryTime", addEntryTime);
+        activity->ActPrintLog("addRows rows = %u, add misses = %" I64F "u", _rows.ordinality(), misses);
     }
 // ITableLookup
     virtual const void *getNextRHS(HtEntry &currentHashEntry) override
@@ -2958,19 +2990,30 @@ class CLookupManyHTGlobal : public CTableGlobalBase
 
     CLookupJoinActivityBase *activity;
     IHash *leftHash = nullptr;
+    CCycleTimer timer;
+    cycle_t getFirstRHSMatchTime = 0, getNextRHSTime = 0;
 
 public:
     CLookupManyHTGlobal(CLookupJoinActivityBase *_activity) : PARENT(_activity), activity(_activity)
     {
         leftHash = activity->queryLeftHash();
     }
+    ~CLookupManyHTGlobal()
+    {
+        activity->logTiming("getFirstRHSMatchTime", getFirstRHSMatchTime);
+        activity->logTiming("getNextRHSTime", getNextRHSTime);
+    }
     virtual const void *getNextRHS(HtEntry &currentHashEntry) override
     {
+        timer.reset();
         dbgassertex(NotFound != currentTableChannel);
-        return hTables[currentTableChannel]->getNextRHS(currentHashEntry);
+        const void *ret = hTables[currentTableChannel]->getNextRHS(currentHashEntry);
+        getNextRHSTime += timer.elapsedCycles();
+        return ret;
     }
     virtual const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry) override
     {
+        timer.reset();
         unsigned hv = leftHash->hash(leftRow);
         unsigned s = hv % numSlaves;
         unsigned c = s / numNodes;
@@ -2983,6 +3026,7 @@ public:
         }
         else
             currentTableChannel = NotFound;
+        getFirstRHSMatchTime += timer.elapsedCycles();
         return right;
     }
 };
