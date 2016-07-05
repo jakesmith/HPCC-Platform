@@ -2005,14 +2005,14 @@ protected:
                 clearNonLocalRows("testing", false);
         }
         rowidx_t uniqueKeys = 0;
+        CThorExpandingRowArray channelRows(*this, sharedRightRowInterfaces);
         {
             /* NB: This does not allocate/will not provoke spilling, but spilling callback still active
-             * and need to protect access
+             * so need to protect access
              */
             CThorArrayLockBlock b(*rightCollector);
             if (!hasFailedOverToLocal())
             {
-                CThorExpandingRowArray channelRows(*this, sharedRightRowInterfaces);
                 rightCollector->transferRowsOut(channelRows, false);
                 CCycleTimer timer;
                 uniqueKeys = marker.calculate(channelRows, compareRight, true);
@@ -2030,6 +2030,37 @@ protected:
                 clearNonLocalRows("OOM on sizing global hash table", false); // NB: setupHT should have provoked callback already
                 dbgassertex(hasFailedOverToLocal());
             }
+            {
+                CThorArrayLockBlock b(*rightCollector);
+                if (!hasFailedOverToLocal())
+                    rightCollector->transferRowsOut(channelRows, false);
+            }
+            bool addRowsSuccess = true;
+            {
+                CThorArrayLockBlock b(*rightCollector);
+                if (!hasFailedOverToLocal())
+                {
+                    try
+                    {
+                        CCycleTimer timer;
+                        table->addRows(channelRows, &marker);
+                        logTiming("addHTTime", timer.elapsedCycles());
+                    }
+                    catch (IException *e)
+                    {
+                        if (!isOOMException(e))
+                            throw e;
+                        addRowsSuccess = false;
+                    }
+                    if (!addRowsSuccess)
+                    {
+                        clearHT();
+                        rightCollector->transferRowsIn(channelRows);
+                    }
+                }
+            }
+            if (!addRowsSuccess)
+                clearNonLocalRows("OOM on table->addRows for global hash table", false);
         }
         if (isSmart())
         {
@@ -2068,105 +2099,12 @@ protected:
 
         logTiming("addRHSRowTime", addRHSRowTime);
 
-        return allInMemory;
-    }
-    bool handleGlobalRHS2(CMarker &marker, bool stopping)
-    {
-        CCycleTimer timer;
-        doBroadcastRHS(stopping);
-        logTiming("doBroadcastRHS", timer.elapsedCycles());
-        postBroadcast = true;
-        if (isSmart())
-        {
-            /* NB: Potentially one of the slaves spilt late after broadcast and rowprocessor finished, in final phase above
-             * So remove callback, sync channels and check again, then broadcast state to everyone.
-             */
-
-            // don't re-sort (if there's a spill event) if already gathered and sorted (during calculate above)
-            ICompare *cmp = localGatheredAndSorted ? nullptr : compareRight;
-            rightCollector->setup(cmp, stableSort_none, rc_mixed, SPILL_PRIORITY_DISABLE);
-
-            InterChannelBarrier(); // keep window informing other nodes of state to a minimum
-            {
-                ActPrintLog("Blocking rightCollector and synching channels to determine global spill state");
-                CThorArrayLockBlock b(*rightCollector);
-                ActPrintLog("synching channels to determine global spill state");
-                InterChannelBarrier(); // Intentional, all channels blocking spill handling whilst communicating if all succeeded without spilling
-                ActPrintLog("All channels now blocking rightCollector");
-                if (0 == queryJobChannelNumber()) // All channels broadcast, but only channel 0 receives
-                {
-                    ActPrintLog("Broadcasting final spilt status: %s", hasFailedOverToLocal() ? "spilt" : "did not spill");
-                    // NB: Will cause other slaves to flush non-local if any have and failedOverToLocal will be set on all
-
-                    CCycleTimer timer;
-                    doBroadcastStop(broadcast2MpTag, hasFailedOverToLocal() ? bcastflag_spilt : bcastflag_null);
-                    logTiming("doBroadcastStop()", timer.elapsedCycles());
-                    ActPrintLog("Done broadcasting final spilt status: %s", hasFailedOverToLocal() ? "spilt" : "did not spill");
-                }
-                InterChannelBarrier();
-
-                // Before releasing the lock mark allInMemory=true, which will make any clearNonLocalRows callback in progress a NOP
-                if (!hasFailedOverToLocal()) // NB: all channels will have marked failover if any node sent bcastflag_spilt
-                    allInMemory = true;
-            }
-        }
         if (!allInMemory)
-            return false;
-        if (0 == queryJobChannelNumber())
         {
-            timer.reset();
-            totalRHSCount = getGlobalRHSTotal();
-            for (unsigned ch=1; ch<queryJob().queryJobChannels(); ch++)
-            {
-                channels[ch]->queryRightCollector()->transferRowsOut(rhs, false);
-                if (!rightCollector->addRows(rhs, true))
-                {
-                    // need to handle failover
-                    UNIMPLEMENTED;
-                }
-            }
-            VStringBuffer msg("handleGlobalRHS2: add all rows to ch0, totalRHSCount = %u", totalRHSCount);
-            logTiming(msg, timer.elapsedCycles());
-            bool success=false;
-            timer.reset();
-            try
-            {
-                if (marker.init(totalRHSCount, rightRowManager)) // May fail if insufficient memory available
-                    success = true;
-            }
-            catch (IException *e)
-            {
-                // need to handle failover
-                UNIMPLEMENTED;
-                e->Release();
-            }
-            logTiming("handleGlobalRHS2: init marker", timer.elapsedCycles());
-            rowidx_t uniqueKeys = 0;
-            timer.reset();
-            CThorExpandingRowArray channelRows(*this, sharedRightRowInterfaces);
-            rightCollector->transferRowsOut(channelRows, false);
-            logTiming("handleGlobalRHS2: transferRowsOut", timer.elapsedCycles());
-            timer.reset();
-            uniqueKeys = marker.calculate(channelRows, compareRight, true);
-            msg.clear().appendf("CMarker::calculate - uniqueKeys=%" RIPF "u", uniqueKeys);
-            logTiming(msg, timer.elapsedCycles());
-            timer.reset();
-            rightCollector->transferRowsIn(channelRows);
-            logTiming("handleGlobalRHS2: transferRowsIn", timer.elapsedCycles());
-            localGatheredAndSorted = true;
-            timer.reset();
-            if (!setupHT(uniqueKeys)) // NB: Sizing can cause spilling callback to be triggered or OOM in case of !smart
-            {
-                // need to handle failover
-                UNIMPLEMENTED;
-            }
-            logTiming("handleGlobalRHS2: setupHT", timer.elapsedCycles());
-            InterChannelBarrier();
+            clearHT();
+            marker.reset();
         }
-        else
-            InterChannelBarrier();
-
-        return true;
+        return allInMemory;
     }
     /*
      * NB: if global attempt fails.
@@ -2277,7 +2215,6 @@ protected:
          * A regular join helper is created to perform a local join against the two hash distributed sorted sides.
          */
 
-        unsigned strategy = 2;
         try
         {
             if (isSmart())
@@ -2291,11 +2228,7 @@ protected:
                  * If any have spilt, still need to distribute rest of RHS..
                  */
                 CCycleTimer timer;
-                bool ok = true;
-                if (1 == strategy)
-                    ok = handleGlobalRHS(marker, stopping);
-                else
-                    ok = handleGlobalRHS2(marker, stopping);
+                bool ok = handleGlobalRHS(marker, stopping);
                 logTiming("handleGlobalRHS", timer.elapsedCycles());
                 if (stopping)
                 {
@@ -2311,10 +2244,6 @@ protected:
                     // NB: lhs ordering and grouping lost from here on..
                     if (grouped)
                         throw MakeActivityException(this, 0, "Degraded to Distributed Local Lookup, but input is marked as grouped and cannot preserve LHS order");
-
-                    // If HT sized already and now spilt, it's too big. Clear for re-use by handleLocalRHS()
-                    clearHT();
-                    marker.reset();
 
                     CCycleTimer timer;
                     handleFailoverToLocalRHS();
@@ -2356,18 +2285,35 @@ protected:
             {
                 /* All RHS rows fitted in memory
                  * NB: rightCollector callback only enabled if local.
-                 * If global, global callback spills rightCollector directly, but callback removed by now (see removeRowBuffer(this); above)
                  */
                 if (isLocal() || hasFailedOverToLocal())
                 {
                     ActPrintLog("Preparing [LOCAL] hashtable for a SMART join (%" RCPF "u rows)", rightCollector->numRows());
-                    if (hasFailedOverToLocal())
-                        marker.reset();
                     if (prepareLocalHT(marker))
                     {
                         rightStream.setown(rightCollector->getStream(false, &rhs));
                         if (!rightStream)
+                        {
                             totalRHSCount = rhs.ordinality();
+                            bool addRowsSuccess = true;
+                            try
+                            {
+                                CCycleTimer timer;
+                                table->addRows(rhs, &marker);
+                                logTiming("addHTTime", timer.elapsedCycles());
+                            }
+                            catch (IException *e)
+                            {
+                                if (!isOOMException(e))
+                                    throw e;
+                                addRowsSuccess = false;
+                            }
+                            if (!addRowsSuccess)
+                            {
+                                rightCollector->transferRowsIn(rhs);
+                                rightStream.setown(rightCollector->getStream(false));
+                            }
+                        }
                         else
                             ActPrintLog("Preparing [LOCAL] hashtable succeeded, but caused spill, will now failover to a std hash join");
                     }
@@ -2396,11 +2342,6 @@ protected:
                 // NB: No spilling here on in
                 if (isSmart())
                     removeOOMCallback();
-                {
-                    CCycleTimer timer;
-                    table->addRows(rhs, &marker);
-                    logTiming("addHTTime", timer.elapsedCycles());
-                }
 
                 // NB: No spilling from here on in
                 if (isLocal() || hasFailedOverToLocal())
@@ -2413,10 +2354,7 @@ protected:
                     ActPrintLog("Performing GLOBAL LOOKUP JOIN: rhs size=%u, my channel lookup table size = %" RIPF "u", rhs.ordinality(), rhsTableLen);
                     InterChannelBarrier(); // wait for all channels to prep. their table
 
-                    if (1 == strategy)
-                        tableProxy.setown(createGlobalProxy());
-                    else
-                        tableProxy.set(channels[0]->queryTable());
+                    tableProxy.setown(createGlobalProxy());
                 }
                 lkjState = lkj_locallookup;
             }
@@ -2584,7 +2522,6 @@ public:
         localGathered = false;
         postBroadcast = false;
         localGatheredAndSorted = false;
-        allInMemory = false;
         totalRHSCount = 0;
         if (isSmart())
         {
@@ -2710,7 +2647,7 @@ lkjStateSwitch:
     virtual bool freeBufferedRows(bool critical)
     {
         if (isGlobal())
-            return clearNonLocalRows("Out of memory callback", critical) > 0;
+            return clearNonLocalRows("Out of memory callback", true) > 0;
         else
             return rightCollector->spill(false) > 0;
     }
@@ -2978,6 +2915,7 @@ class CLookupManyHT : public CHTBase
     const void **rows = nullptr;
     rowidx_t nextClashIdx = 0, clashTableSize = 0;
     memsize_t clashTableMemSz = 0;
+ rowidx_t fake = 10000;
 
 #ifdef HIGHFREQ_TIMING
     unsigned __int64 misses = 0, lookupMisses = 0;
@@ -3033,8 +2971,28 @@ class CLookupManyHT : public CHTBase
             {
                 clashTableSize += 100;
                 memsize_t newClashTableMemSz = clashTableSize*sizeof(HtEntry);
-                //virtual void resizeRow(memsize_t & capacity, void * & original, memsize_t copysize, memsize_t newsize, unsigned activityId) = 0;
-                activity->queryRowManager()->resizeRow(newClashTableMemSz, (void * &)clashTable, clashTableMemSz, newClashTableMemSz, activity->queryContainer().queryId());
+
+                class CResizeMemCallback : implements roxiemem::IRowResizeCallback
+                {
+                    void *&memory;
+                    memsize_t &capacity;
+                public:
+                    CResizeMemCallback(void *&_memory, memsize_t &_capacity) : memory(_memory), capacity(_capacity) { }
+                    virtual void lock() { }
+                    virtual void unlock() { }
+                    virtual void update(memsize_t _capacity, void * ptr) { capacity = _capacity; memory = (void *)ptr; }
+                    virtual void atomicUpdate(memsize_t capacity, void * ptr)
+                    {
+                        update(capacity, ptr);
+                    }
+                } callback((void *&)clashTable, newClashTableMemSz);
+                // JCS->GH: don't need callback, but do need to provide spill priority, there should probably be a different roxiemem method
+                if (newClashTableMemSz>fake)
+                {
+                    fake = RIMAX;
+                    throw MakeStringException(ROXIEMM_HEAP_ERROR, "FAKE!!!");
+                }
+                activity->queryRowManager()->resizeRow(clashTable, clashTableMemSz, newClashTableMemSz, activity->queryContainer().queryId(), SPILL_PRIORITY_LOW, callback);
                 clashTableMemSz = newClashTableMemSz;
                 clashTableSize = clashTableMemSz / sizeof(HtEntry);
             }
@@ -3048,23 +3006,28 @@ class CLookupManyHT : public CHTBase
             INCHFSTATE(misses);
         }
     }
+    void initClashTable()
+    {
+        ReleaseThorRow(clashTable);
+        clashTableSize = 100; // starting size
+        clashTableMemSz = clashTableSize*sizeof(HtEntry);
+        clashTable = (HtEntry *)activity->queryRowManager()->allocate(clashTableMemSz, activity->queryContainer().queryId());
+        clashTableMemSz = RoxieRowCapacity(clashTable);
+        clashTableSize = clashTableMemSz / sizeof(HtEntry);
+        nextClashIdx = 0;
+    }
     void _reset()
     {
         ht = NULL;
         rows = NULL;
-        clashTableSize = clashTableMemSz / sizeof(HtEntry);
-        nextClashIdx = 0;
+        initClashTable();
     }
 public:
     CLookupManyHT(CLookupJoinActivityBase *_activity) : PARENT(_activity)
     {
         elementSize = sizeof(HtEntry);
         _reset();
-        clashTableSize = 100; // starting size
-        clashTableMemSz = clashTableSize*sizeof(HtEntry);
-        clashTable = (HtEntry *)activity->queryRowManager()->allocate(clashTableMemSz, activity->queryContainer().queryId());
-        clashTableMemSz = RoxieRowCapacity(clashTable);
-        clashTableSize = clashTableMemSz / sizeof(HtEntry);
+        fake = 10000;
     }
     ~CLookupManyHT()
     {
