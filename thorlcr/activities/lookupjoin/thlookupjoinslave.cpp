@@ -2030,29 +2030,13 @@ protected:
                 clearNonLocalRows("OOM on sizing global hash table", false); // NB: setupHT should have provoked callback already
                 dbgassertex(hasFailedOverToLocal());
             }
-            {
-                CThorArrayLockBlock b(*rightCollector);
-                if (!hasFailedOverToLocal())
-                    rightCollector->transferRowsOut(channelRows, false);
-            }
             bool addRowsSuccess = true;
             {
                 CThorArrayLockBlock b(*rightCollector);
                 if (!hasFailedOverToLocal())
                 {
-                    try
-                    {
-                        CCycleTimer timer;
-                        table->addRows(channelRows, &marker);
-                        logTiming("addHTTime", timer.elapsedCycles());
-                    }
-                    catch (IException *e)
-                    {
-                        if (!isOOMException(e))
-                            throw e;
-                        addRowsSuccess = false;
-                    }
-                    if (!addRowsSuccess)
+                    rightCollector->transferRowsOut(channelRows, false);
+                    if (!addRowsToTable(channelRows, marker))
                     {
                         clearHT();
                         rightCollector->transferRowsIn(channelRows);
@@ -2170,6 +2154,23 @@ protected:
             oomCallbackInstalled = false;
             rightRowManager->removeRowBuffer(this);
         }
+    }
+    bool addRowsToTable(CThorExpandingRowArray &rows, CMarker &marker)
+    {
+        bool addRowsSuccess = true;
+        try
+        {
+            CCycleTimer timer;
+            table->addRows(rows, &marker);
+            logTiming("addHTTime", timer.elapsedCycles());
+        }
+        catch (IException *e)
+        {
+            if (!isOOMException(e))
+                throw e;
+            addRowsSuccess = false;
+        }
+        return addRowsSuccess;
     }
     void getRHS(bool stopping)
     {
@@ -2295,20 +2296,7 @@ protected:
                         if (!rightStream)
                         {
                             totalRHSCount = rhs.ordinality();
-                            bool addRowsSuccess = true;
-                            try
-                            {
-                                CCycleTimer timer;
-                                table->addRows(rhs, &marker);
-                                logTiming("addHTTime", timer.elapsedCycles());
-                            }
-                            catch (IException *e)
-                            {
-                                if (!isOOMException(e))
-                                    throw e;
-                                addRowsSuccess = false;
-                            }
-                            if (!addRowsSuccess)
+                            if (!addRowsToTable(rhs, marker))
                             {
                                 rightCollector->transferRowsIn(rhs);
                                 rightStream.setown(rightCollector->getStream(false));
@@ -2915,7 +2903,6 @@ class CLookupManyHT : public CHTBase
     const void **rows = nullptr;
     rowidx_t nextClashIdx = 0, clashTableSize = 0;
     memsize_t clashTableMemSz = 0;
- rowidx_t fake = 10000;
 
 #ifdef HIGHFREQ_TIMING
     unsigned __int64 misses = 0, lookupMisses = 0;
@@ -2987,11 +2974,6 @@ class CLookupManyHT : public CHTBase
                     }
                 } callback((void *&)clashTable, newClashTableMemSz);
                 // JCS->GH: don't need callback, but do need to provide spill priority, there should probably be a different roxiemem method
-                if (newClashTableMemSz>fake)
-                {
-                    fake = RIMAX;
-                    throw MakeStringException(ROXIEMM_HEAP_ERROR, "FAKE!!!");
-                }
                 activity->queryRowManager()->resizeRow(clashTable, clashTableMemSz, newClashTableMemSz, activity->queryContainer().queryId(), SPILL_PRIORITY_LOW, callback);
                 clashTableMemSz = newClashTableMemSz;
                 clashTableSize = clashTableMemSz / sizeof(HtEntry);
@@ -3027,7 +3009,6 @@ public:
     {
         elementSize = sizeof(HtEntry);
         _reset();
-        fake = 10000;
     }
     ~CLookupManyHT()
     {
