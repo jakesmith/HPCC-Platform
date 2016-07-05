@@ -779,7 +779,7 @@ public:
 #endif
 
 
-struct HtEntry { rowidx_t index, count; };
+struct HtEntry { rowidx_t index, count; unsigned hash; };
 
 interface ITableLookup : extends IInterface
 {
@@ -1558,6 +1558,7 @@ public:
         atomic_set(&interChannelToNotifyCount, 0);
         currentHashEntry.index = 0;
         currentHashEntry.count = 0;
+        currentHashEntry.hash = 0;
 
         rightSerializer.set(::queryRowSerializer(rightITDL));
         rightDeserializer.set(::queryRowDeserializer(rightITDL));
@@ -2764,6 +2765,7 @@ protected:
     OwnedConstThorRow htMemory;
     IHash *leftHash, *rightHash;
     ICompare *compareLeftRight;
+    size32_t elementSize = sizeof(const void *);
 
     void _reset()
     {
@@ -2778,7 +2780,7 @@ public:
     }
     virtual void setup(roxiemem::IRowManager *rowManager, rowidx_t size, IHash *_leftHash, IHash *_rightHash, ICompare *_compareLeftRight) override
     {
-        unsigned __int64 _sz = sizeof(const void *) * ((unsigned __int64)size);
+        unsigned __int64 _sz = elementSize * ((unsigned __int64)size);
         memsize_t sz = (memsize_t)_sz;
         if (sz != _sz) // treat as OOM exception for handling purposes.
             throw MakeStringException(ROXIEMM_MEMORY_LIMIT_EXCEEDED, "Unsigned overflow, trying to allocate hash table of size: %" I64F "d ", _sz);
@@ -2971,8 +2973,12 @@ class CLookupManyHT : public CHTBase
 {
     typedef CHTBase PARENT;
 
-    HtEntry *ht;
-    const void **rows;
+    HtEntry *ht = nullptr;
+    HtEntry *clashTable = nullptr;
+    const void **rows = nullptr;
+    rowidx_t nextClashIdx = 0, clashTableSize = 0;
+    memsize_t clashTableMemSz = 0;
+
 #ifdef HIGHFREQ_TIMING
     unsigned __int64 misses = 0, lookupMisses = 0;
     CCycleTimer timer, timer2;
@@ -2980,39 +2986,85 @@ class CLookupManyHT : public CHTBase
     cycle_t findFirstCompareTime = 0;
 #endif
 
-    inline HtEntry *lookup(unsigned hash)
+    inline const void *lookup(const void *left, unsigned hash, HtEntry &currentHashEntry)
     {
-        HtEntry *e = ht+hash;
+        unsigned h = hash & tableMask;
+        HtEntry *e = ht+h;
         if (0 == e->count)
-            return NULL;
-        return e;
+            return nullptr;
+        hash &= ~tableMask;
+        loop
+        {
+            unsigned eHash = e->hash & ~tableMask;
+            if (hash == eHash)
+            {
+                const void *right = rows[e->index];
+                ADDHFTIMERRESET(timer2);
+                bool res = (0 == compareLeftRight->docompare(left, right));
+                ADDHFTIME(findFirstCompareTime, timer2.elapsedCycles());
+                if (res)
+                {
+                    currentHashEntry = *e;
+                    ADDHFTIME(findFirstTime, timer.elapsedCycles());
+                    return right;
+                }
+            }
+            unsigned clashIndex = e->hash & tableMask;
+            if (0 == clashIndex) // no clash
+                return nullptr;
+            --clashIndex;
+            e = clashTable+clashIndex;
+        }
     }
     inline void addEntry(const void *row, unsigned hash, rowidx_t index, rowidx_t count)
     {
-        loop
+        unsigned h = hash & tableMask;
+        HtEntry &e = ht[h];
+        if (!e.count)
         {
-            HtEntry &e = ht[hash];
-            if (!e.count)
+            e.index = index;
+            e.count = count;
+            e.hash = hash & ~tableMask; // tableMask is index into table, so reuse for clash index
+        }
+        else
+        {
+            dbgassertex(nextClashIdx <= tableMask); // clash table will not exceed size of HT
+            if (nextClashIdx >= clashTableSize)
             {
-                e.index = index;
-                e.count = count;
-                break;
+                clashTableSize += 100;
+                memsize_t newClashTableMemSz = clashTableSize*sizeof(HtEntry);
+                //virtual void resizeRow(memsize_t & capacity, void * & original, memsize_t copysize, memsize_t newsize, unsigned activityId) = 0;
+                activity->queryRowManager()->resizeRow(newClashTableMemSz, (void * &)clashTable, clashTableMemSz, newClashTableMemSz, activity->queryContainer().queryId());
+                clashTableMemSz = newClashTableMemSz;
+                clashTableSize = clashTableMemSz / sizeof(HtEntry);
             }
+            HtEntry *clashEntry = clashTable+nextClashIdx;
+            unsigned clashIndex = e.hash & tableMask;
+            ++nextClashIdx; // deliberately here, to make it 1 based in e.hash
+            e.hash = (e.hash & ~tableMask) | nextClashIdx; // points to last if clash entry already
+            clashEntry->index = index;
+            clashEntry->count = count;
+            clashEntry->hash = (hash & ~tableMask) | clashIndex;
             INCHFSTATE(misses);
-            hash++;
-            if (hash>=tableSize)
-                hash = 0;
         }
     }
     void _reset()
     {
         ht = NULL;
         rows = NULL;
+        clashTableSize = clashTableMemSz / sizeof(HtEntry);
+        nextClashIdx = 0;
     }
 public:
     CLookupManyHT(CLookupJoinActivityBase *_activity) : PARENT(_activity)
     {
+        elementSize = sizeof(HtEntry);
         _reset();
+        clashTableSize = 100; // starting size
+        clashTableMemSz = clashTableSize*sizeof(HtEntry);
+        clashTable = (HtEntry *)activity->queryRowManager()->allocate(clashTableMemSz, activity->queryContainer().queryId());
+        clashTableMemSz = RoxieRowCapacity(clashTable);
+        clashTableSize = clashTableMemSz / sizeof(HtEntry);
     }
     ~CLookupManyHT()
     {
@@ -3021,34 +3073,18 @@ public:
         VStringBuffer msg("lookupMisses = %" I64F "u, findFirstCompareTime:", lookupMisses);
         activity->logTiming(msg, findFirstCompareTime);
 #endif
+        activity->ActPrintLog("clashTableSize=%u", clashTableSize);
+        ReleaseThorRow(clashTable);
     }
-    const void *findFirst(unsigned hv, const void *left, HtEntry &currentHashEntry)
+    const void *findFirst(unsigned hash, const void *left, HtEntry &currentHashEntry)
     {
         ADDHFTIMERRESET(timer);
-        unsigned h1 = hv%tableSize;
-        unsigned h = hv & tableMask; // tablesize is power of 2
-        loop
-        {
-            HtEntry *e = lookup(h);
-            if (!e)
-                break;
-            const void *right = rows[e->index];
-            ADDHFTIMERRESET(timer2);
-            bool res = (0 == compareLeftRight->docompare(left, right));
-            ADDHFTIME(findFirstCompareTime, timer2.elapsedCycles());
-            if (res)
-            {
-                currentHashEntry = *e;
-                ADDHFTIME(findFirstTime, timer.elapsedCycles());
-                return right;
-            }
-            INCHFSTATE(lookupMisses);
-            h++;
-            if (h>=tableSize)
-                h = 0;
-        }
+        const void *right = lookup(left, hash, currentHashEntry);
+        if (right)
+            return right;
+        INCHFSTATE(lookupMisses);
         ADDHFTIME(findFirstTime, timer.elapsedCycles());
-        return NULL;
+        return nullptr;
     }
     virtual void setup(roxiemem::IRowManager *rowManager, rowidx_t size, IHash *leftHash, IHash *rightHash, ICompare *compareLeftRight) override
     {
@@ -3083,11 +3119,11 @@ public:
             */
             const void *row = rows[pos];
             ADDHFTIMERRESET(timer);
-            unsigned h = rightHash->hash(row)%tableSize;
+            unsigned hash = rightHash->hash(row);
             ADDHFTIME(addRowsHashTime, timer.elapsedCycles());
             // NB: 'pos' and 'count' won't be used if dedup variety
             ADDHFTIMERRESET(timer);
-            addEntry(row, h, pos, count);
+            addEntry(row, hash, pos, count);
             ADDHFTIME(addEntryTime, timer.elapsedCycles());
             pos = pos2;
         }
