@@ -3054,7 +3054,7 @@ public:
     {
         ADDHFTIMERRESET(timer);
         unsigned hv = leftHash->hash(leftRow);
-        unsigned c = (hv % numSlaves) >> 1;
+        unsigned c = (hv % numSlaves) / numNodes;
         const void *right = ((CLookupManyHT *)hTables[c])->findFirst(hv, leftRow, currentHashEntry);
         if (right)
         {
