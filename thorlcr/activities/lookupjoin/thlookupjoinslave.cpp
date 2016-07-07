@@ -1475,7 +1475,6 @@ public:
         ActPrintLog("TIME: %s - %s = %u", queryJob().queryWuid(), msg, static_cast<unsigned>(cycle_to_millisec(cycles)));
     }
     ITableLookup *queryTable() { return table; }
-    IThorRowCollector *queryRightCollector() { return rightCollector; }
     void startLeftInput()
     {
         try
