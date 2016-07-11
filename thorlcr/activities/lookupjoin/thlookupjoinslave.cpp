@@ -74,13 +74,15 @@ typedef CCycleAddTimerType<std::atomic<cycle_t>> CAtomicCycleAddTimer;
 class CSendItem : public CSimpleInterface
 {
     CMessageBuffer msg;
-    unsigned slave, targetChannel, headerLen;
+    unsigned slave, targetChannel;
     unsigned short info;
+    unsigned headerLen, tgtChPos;
 public:
     CSendItem(broadcast_code _code, unsigned _slave, unsigned _targetChannel) : info((unsigned short)_code), slave(_slave), targetChannel(_targetChannel)
     {
         msg.append(info);
         msg.append(slave);
+        tgtChPos = msg.length();
         msg.append(targetChannel);
         headerLen = msg.length();
     }
@@ -98,7 +100,11 @@ public:
     broadcast_code queryCode() const { return (broadcast_code)(info & BROADCAST_CODE_MASK); }
     unsigned querySlave() const { return slave; } // 0 based
     unsigned queryTargetChannel() const { return targetChannel; } // 0 based
-    void setTargetChannel(unsigned _targetChannel) { targetChannel = _targetChannel; }
+    void setTargetChannel(unsigned _targetChannel)
+    {
+        targetChannel = _targetChannel;
+        msg.writeDirect(tgtChPos, sizeof(targetChannel), &targetChannel);
+    }
     broadcast_flags queryFlags() const { return (broadcast_flags)(info & BROADCAST_FLAG_MASK); }
     void setFlag(broadcast_flags _flag)
     {
@@ -299,7 +305,7 @@ class CBroadcaster : public CSimpleInterface
         CMessageBuffer replyMsg;
         // sends to all in 1st pass, then waits for ack from all
 
-        unsigned loopCnt = (bcast_stop == sendItem->queryCode()) ? 2 : 1;
+        unsigned loopCnt = (bcast_stop == sendItem->queryCode()) ? 1 : 2;
         for (unsigned sendRecv=0; sendRecv<loopCnt && !activity.queryAbortSoon(); sendRecv++)
         {
             unsigned i = 0;
@@ -321,6 +327,10 @@ class CBroadcaster : public CSimpleInterface
                 }
                 if (bcast_stop == sendItem->queryCode())
                     activity.ActPrintLog("broadcastToOthers: sending stop - ot=%u, t=%u, origin node=%u, sendItem->slave=%u", ot, t, origin, sendItem->querySlave());
+                else if (!nodeBroadcast)
+                {
+                    activity.ActPrintLog("targetNode=%u, targetChannel=%u, newTargetSlave=%u", sendItem->queryTargetChannel(), ot-1, t-1);
+                }
                 if (0 == sendRecv) // send
                 {
 #ifdef _TRACEBROADCAST
@@ -399,12 +409,6 @@ class CBroadcaster : public CSimpleInterface
             {
                 case bcast_stop:
                 {
-                    bool stopResent = (0 != (sendItem->queryFlags() & bcastflag_stop));
-                    if (!stopResent)
-                    {
-                        CMessageBuffer ackMsg;
-                        comm->send(ackMsg, sendRank, replyTag); // send ack
-                    }
                     if (0 == (sendItem->queryFlags() & bcastflag_stop))
                         sender.addBlock(sendItem.getLink());
                     bool stop = senderStop(*sendItem);
@@ -425,6 +429,8 @@ class CBroadcaster : public CSimpleInterface
                 }
                 case bcast_send:
                 {
+                    CMessageBuffer ackMsg;
+                    comm->send(ackMsg, sendRank, replyTag); // send ack
                     sender.addBlock(sendItem.getLink());
                     if (!allRequestStop) // don't care if all stopping
                         recvInterface->bCastReceive(sendItem.getClear(), false);
@@ -1674,6 +1680,7 @@ public:
     virtual bool addRHSRows(CThorExpandingRowArray &inRows, CThorExpandingRowArray &rhsInRowsTemp)
     {
         CriticalBlock b(rhsRowLock);
+        ActPrintLog("Adding#1 %u rows", inRows.ordinality());
         return rightCollector->addRows(inRows, true);
     }
 
@@ -1916,9 +1923,12 @@ protected:
     }
     virtual unsigned queryChannelDestination(const void *row) override
     {
-        unsigned hv = rightHash->hash(row);
-        unsigned slaveDst = hv % numSlaves;
-        return slaveDst / numNodes;
+        unsigned hash = rightHash->hash(row);
+        unsigned slaveDst = hash % numSlaves;
+        unsigned c = slaveDst / numNodes;
+
+        ActPrintLog("right hash = %u, channel dst = %u", hash, c);
+        return c;
     }
     bool prepareLocalHT(CMarker &marker)
     {
@@ -2631,6 +2641,9 @@ lkjStateSwitch:
         // NB: If PARENT::addRHSRows fails, it will cause clearNonLocalRows() to have been triggered and failedOverToLocal to be set
         if (!hasFailedOverToLocal())
         {
+            ActPrintLog("Adding#2 %u rows", inRows.ordinality());
+            PrintStackReport();
+            ActPrintLog("End Adding#2");
             if (rightCollector->addRows(inRows, true))
                 return true;
         }
@@ -2909,6 +2922,7 @@ class CLookupManyHT : public CHTBase
             HtEntry &e = ht[h];
             if (!e.count)
             {
+                activity->ActPrintLog("HT::addEntry hash=%u, index=%u, count=%u", hash, index, count);
                 e.index = index;
                 e.count = count;
                 e.hash = hash;
@@ -2942,6 +2956,7 @@ public:
     {
         ADDHFTIMERRESET(timer);
         const void *right = lookup(left, hash, currentHashEntry);
+        activity->ActPrintLog("CLookupManyHT::findFirst left hash=%u, right=%p", hash, right);
         if (right)
             return right;
         INCHFSTATE(lookupMisses);
@@ -3006,8 +3021,9 @@ public:
     }
     virtual const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry) override
     {
-        unsigned hv=leftHash->hash(leftRow);
-        const void *right = findFirst(hv, leftRow, currentHashEntry);
+        unsigned hash=leftHash->hash(leftRow);
+        activity->ActPrintLog("HT::getFirstRHSMatch left hash=%u", hash);
+        const void *right = findFirst(hash, leftRow, currentHashEntry);
         if (right)
         {
             if (activity->exceedsLimit(currentHashEntry.count, leftRow, right, failRow))
@@ -3052,9 +3068,10 @@ public:
     virtual const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry) override
     {
         ADDHFTIMERRESET(timer);
-        unsigned hv = leftHash->hash(leftRow);
-        unsigned c = (hv % numSlaves) / numNodes;
-        const void *right = ((CLookupManyHT *)hTables[c])->findFirst(hv, leftRow, currentHashEntry);
+        unsigned hash = leftHash->hash(leftRow);
+        unsigned c = (hash % numSlaves) / numNodes;
+        activity->ActPrintLog("CLookupManyHTGlobal::getFirstRHSMatch left hash=%u, channel=%u", hash, c);
+        const void *right = ((CLookupManyHT *)hTables[c])->findFirst(hash, leftRow, currentHashEntry);
         if (right)
         {
             currentTableChannel = c;
@@ -3082,9 +3099,9 @@ public:
     virtual const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry) override
     {
         ADDHFTIMERRESET(timer);
-        unsigned hv = leftHash->hash(leftRow);
-        unsigned c = (hv & slavesMask) / numNodes;
-        const void *right = ((CLookupManyHT *)hTables[c])->findFirst(hv, leftRow, currentHashEntry);
+        unsigned hash = leftHash->hash(leftRow);
+        unsigned c = (hash & slavesMask) / numNodes;
+        const void *right = ((CLookupManyHT *)hTables[c])->findFirst(hash, leftRow, currentHashEntry);
         if (right)
         {
             currentTableChannel = c;
