@@ -327,10 +327,6 @@ class CBroadcaster : public CSimpleInterface
                 }
                 if (bcast_stop == sendItem->queryCode())
                     activity.ActPrintLog("broadcastToOthers: sending stop - ot=%u, t=%u, origin node=%u, sendItem->slave=%u", ot, t, origin, sendItem->querySlave());
-                else if (!nodeBroadcast)
-                {
-                    activity.ActPrintLog("targetNode=%u, targetChannel=%u, newTargetSlave=%u", sendItem->queryTargetChannel(), ot-1, t-1);
-                }
                 if (0 == sendRecv) // send
                 {
 #ifdef _TRACEBROADCAST
@@ -1680,7 +1676,6 @@ public:
     virtual bool addRHSRows(CThorExpandingRowArray &inRows, CThorExpandingRowArray &rhsInRowsTemp)
     {
         CriticalBlock b(rhsRowLock);
-        ActPrintLog("Adding#1 %u rows", inRows.ordinality());
         return rightCollector->addRows(inRows, true);
     }
 
@@ -1925,10 +1920,7 @@ protected:
     {
         unsigned hash = rightHash->hash(row);
         unsigned slaveDst = hash % numSlaves;
-        unsigned c = slaveDst / numNodes;
-
-        ActPrintLog("right hash = %u, channel dst = %u", hash, c);
-        return c;
+        return slaveDst / numNodes;
     }
     bool prepareLocalHT(CMarker &marker)
     {
@@ -2641,9 +2633,6 @@ lkjStateSwitch:
         // NB: If PARENT::addRHSRows fails, it will cause clearNonLocalRows() to have been triggered and failedOverToLocal to be set
         if (!hasFailedOverToLocal())
         {
-            ActPrintLog("Adding#2 %u rows", inRows.ordinality());
-            PrintStackReport();
-            ActPrintLog("End Adding#2");
             if (rightCollector->addRows(inRows, true))
                 return true;
         }
@@ -2922,7 +2911,6 @@ class CLookupManyHT : public CHTBase
             HtEntry &e = ht[h];
             if (!e.count)
             {
-                activity->ActPrintLog("HT::addEntry hash=%u, index=%u, count=%u", hash, index, count);
                 e.index = index;
                 e.count = count;
                 e.hash = hash;
@@ -2956,7 +2944,6 @@ public:
     {
         ADDHFTIMERRESET(timer);
         const void *right = lookup(left, hash, currentHashEntry);
-        activity->ActPrintLog("CLookupManyHT::findFirst left hash=%u, right=%p", hash, right);
         if (right)
             return right;
         INCHFSTATE(lookupMisses);
@@ -3022,7 +3009,6 @@ public:
     virtual const void *getFirstRHSMatch(const void *leftRow, const void *&failRow, HtEntry &currentHashEntry) override
     {
         unsigned hash=leftHash->hash(leftRow);
-        activity->ActPrintLog("HT::getFirstRHSMatch left hash=%u", hash);
         const void *right = findFirst(hash, leftRow, currentHashEntry);
         if (right)
         {
@@ -3070,7 +3056,6 @@ public:
         ADDHFTIMERRESET(timer);
         unsigned hash = leftHash->hash(leftRow);
         unsigned c = (hash % numSlaves) / numNodes;
-        activity->ActPrintLog("CLookupManyHTGlobal::getFirstRHSMatch left hash=%u, channel=%u", hash, c);
         const void *right = ((CLookupManyHT *)hTables[c])->findFirst(hash, leftRow, currentHashEntry);
         if (right)
         {
