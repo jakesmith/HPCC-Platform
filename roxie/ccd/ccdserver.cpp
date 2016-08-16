@@ -7195,15 +7195,17 @@ class CRoxieServerDedupKeepRightActivity : public CRoxieServerDedupActivity
 {
     const void *kept;
     bool first;
+    ICompare * compareBest;
 
 public:
 
     CRoxieServerDedupKeepRightActivity(IRoxieSlaveContext *_ctx, const IRoxieServerActivityFactory *_factory, IProbeManager *_probeManager)
-        : CRoxieServerDedupActivity(_ctx, _factory, _probeManager)
+        : CRoxieServerDedupActivity(_ctx, _factory, _probeManager), compareBest(0)
     {
         kept = NULL;
         first = true;
-    }
+        if (helper.keepBest())
+            compareBest = helper.queryCompareBest();    }
 
     virtual void start(unsigned parentExtractSize, const byte *parentExtract, bool paused)
     {
@@ -7235,6 +7237,9 @@ public:
                 numKept = 0;
                 break;
             }
+
+            if (compareBest && compareBest->docompare(kept,next) <= 0)
+                continue;
 
             if (numKept < numToKeep-1)
             {
@@ -7439,6 +7444,8 @@ class CRoxieServerDedupActivityFactory : public CRoxieServerActivityFactory
 {
     bool compareAll;
     bool keepLeft;
+    bool keepBest;
+    unsigned flags;
 
 public:
     CRoxieServerDedupActivityFactory(unsigned _id, unsigned _subgraphId, IQueryFactory &_queryFactory, HelperFactory *_helperFactory, ThorActivityKind _kind, IPropertyTree &_graphNode)
@@ -7447,13 +7454,14 @@ public:
         Owned<IHThorDedupArg> helper = (IHThorDedupArg *) helperFactory();
         compareAll = helper->compareAll();
         keepLeft = helper->keepLeft();
+        keepBest = helper->keepBest();
     }
 
     virtual IRoxieServerActivity *createActivity(IRoxieSlaveContext *_ctx, IProbeManager *_probeManager) const
     {
         if (compareAll)
             return new CRoxieServerDedupAllActivity(_ctx, this, _probeManager, keepLeft);
-        else if (keepLeft)
+        else if (keepLeft && !keepBest)
             return new CRoxieServerDedupKeepLeftActivity(_ctx, this, _probeManager);
         else
             return new CRoxieServerDedupKeepRightActivity(_ctx, this, _probeManager);
@@ -7504,6 +7512,7 @@ class CRoxieServerHashDedupActivity : public CRoxieServerActivity
               activityId(_activityId),
               keySize(helper.queryKeySize())
         {
+            bestCompare=helper.queryCompareBest();
         }
         virtual ~HashDedupTable() { _releaseAll(); }
 
@@ -7551,18 +7560,36 @@ class CRoxieServerHashDedupActivity : public CRoxieServerActivity
             return true;
         }
 
+        bool insertBest(const void * nextrow)
+        {
+            unsigned hash = helper.queryHash()->hash(nextrow);
+            const void *et = find(hash, nextrow);
+            if (et)
+            {
+                const HashDedupElement *element = reinterpret_cast<const HashDedupElement *>(et);
+                const void * row = element->queryRow();
+                if (bestCompare->docompare(row,nextrow) <= 0)
+                    return false;
+                removeExact( const_cast<void *>(et));
+                // drop-through to add new row
+            }
+            addNew(new HashDedupElement(hash, nextrow), hash);
+            return true;
+        }
     private:
         IHThorHashDedupArg & helper;
         CachedOutputMetaData keySize;
         Owned<IEngineRowAllocator> keyRowAllocator;
         unsigned activityId;
+        ICompare * bestCompare;
     } table;
 
 public:
     CRoxieServerHashDedupActivity(IRoxieSlaveContext *_ctx, const IRoxieServerActivityFactory *_factory, IProbeManager *_probeManager)
-        : CRoxieServerActivity(_ctx, _factory, _probeManager), helper((IHThorHashDedupArg &)basehelper), table(helper, activityId)
+        : CRoxieServerActivity(_ctx, _factory, _probeManager), helper((IHThorHashDedupArg &)basehelper), table(helper, activityId), hashTableFilled(false), hashDedupTableIter(table)
     {
         eof = false;
+        keepBest = helper.keepBest();
     }
 
     virtual void start(unsigned parentExtractSize, const byte *parentExtract, bool paused)
@@ -7582,30 +7609,69 @@ public:
         table.reset();
         eof = false;
         CRoxieServerActivity::reset();
+        hashTableFilled = false;
     }
 
     virtual const void *nextRow()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        while(!eof)
+        if (keepBest)
         {
-            const void * next = inputStream->nextRow();
-            if(!next)
+            if (eof)
+                return NULL;
+            // Populate hash table with best rows
+            if (!hashTableFilled)
             {
+                const void * next(inputStream->nextRow());
+                while(next)
+                {
+                    table.insertBest(next);
+                    next = inputStream->nextRow();
+                }
                 if (table.count() == 0)
                     eof = true;
-                table.reset();
-                return NULL;
+                hashTableFilled = true;
+                hashDedupTableIter.first();
             }
 
-            if(table.insert(next))
-                return next;
-            else
-                ReleaseRoxieRow(next);
-        }
-        return NULL;
-    }
+            // Iterate throw hash table returning rows
+            if (hashDedupTableIter.isValid())
+            {
+                HashDedupElement &el = hashDedupTableIter.query();
 
+                const void * row = el.queryRow();
+                hashDedupTableIter.next();
+                return row;
+            }
+            table.reset();
+            hashTableFilled = false;
+            return NULL;
+        }
+        else
+        {
+            while(!eof)
+            {
+                const void * next = inputStream->nextRow();
+                if(!next)
+                {
+                    if (table.count() == 0)
+                        eof = true;
+                    table.reset();
+                    return NULL;
+                }
+
+                if(table.insert(next))
+                    return next;
+                else
+                    ReleaseRoxieRow(next);
+            }
+            return NULL;
+        }
+    }
+private:
+    bool keepBest;
+    bool hashTableFilled;
+    SuperHashIteratorOf<HashDedupElement> hashDedupTableIter;
 };
 
 class CRoxieServerHashDedupActivityFactory : public CRoxieServerActivityFactory
