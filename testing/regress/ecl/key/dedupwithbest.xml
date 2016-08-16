@@ -1,0 +1,55 @@
+<Dataset name='BEST_Field2'>
+ <Row><id>008</id><field1>KA</field1><field2>B</field2></Row>
+ <Row><id>006</id><field1>KB</field1><field2>A</field2></Row>
+ <Row><id>004</id><field1>KC</field1><field2>C</field2></Row>
+</Dataset>
+<Dataset name='BEST_Field2_Reverse'>
+ <Row><id>005</id><field1>KA</field1><field2>X</field2></Row>
+ <Row><id>007</id><field1>KB</field1><field2>G</field2></Row>
+ <Row><id>002</id><field1>KC</field1><field2>Z</field2></Row>
+</Dataset>
+<Dataset name='BEST_Field2_HASH'>
+ <Row><id>008</id><field1>KA</field1><field2>B</field2></Row>
+ <Row><id>006</id><field1>KB</field1><field2>A</field2></Row>
+ <Row><id>004</id><field1>KC</field1><field2>C</field2></Row>
+</Dataset>
+<Dataset name='GroupDedup'>
+ <Row><id>008</id><field1>KA</field1><field2>B</field2></Row>
+ <Row><id>005</id><field1>KA</field1><field2>X</field2></Row>
+ <Row><id>006</id><field1>KB</field1><field2>A</field2></Row>
+ <Row><id>010</id><field1>KB</field1><field2>B</field2></Row>
+ <Row><id>007</id><field1>KB</field1><field2>G</field2></Row>
+ <Row><id>004</id><field1>KC</field1><field2>C</field2></Row>
+ <Row><id>001</id><field1>KC</field1><field2>G</field2></Row>
+ <Row><id>002</id><field1>KC</field1><field2>Z</field2></Row>
+</Dataset>
+<Dataset name='GroupDedup_Reverse'>
+ <Row><id>008</id><field1>KA</field1><field2>B</field2></Row>
+ <Row><id>005</id><field1>KA</field1><field2>X</field2></Row>
+ <Row><id>006</id><field1>KB</field1><field2>A</field2></Row>
+ <Row><id>011</id><field1>KB</field1><field2>B</field2></Row>
+ <Row><id>007</id><field1>KB</field1><field2>G</field2></Row>
+ <Row><id>004</id><field1>KC</field1><field2>C</field2></Row>
+ <Row><id>001</id><field1>KC</field1><field2>G</field2></Row>
+ <Row><id>009</id><field1>KC</field1><field2>Z</field2></Row>
+</Dataset>
+<Dataset name='GroupDedupHash'>
+ <Row><id>008</id><field1>KA</field1><field2>B</field2></Row>
+ <Row><id>005</id><field1>KA</field1><field2>X</field2></Row>
+ <Row><id>006</id><field1>KB</field1><field2>A</field2></Row>
+ <Row><id>010</id><field1>KB</field1><field2>B</field2></Row>
+ <Row><id>007</id><field1>KB</field1><field2>G</field2></Row>
+ <Row><id>004</id><field1>KC</field1><field2>C</field2></Row>
+ <Row><id>001</id><field1>KC</field1><field2>G</field2></Row>
+ <Row><id>002</id><field1>KC</field1><field2>Z</field2></Row>
+</Dataset>
+<Dataset name='GroupDedupHash_Reverse'>
+ <Row><id>008</id><field1>KA</field1><field2>B</field2></Row>
+ <Row><id>005</id><field1>KA</field1><field2>X</field2></Row>
+ <Row><id>006</id><field1>KB</field1><field2>A</field2></Row>
+ <Row><id>011</id><field1>KB</field1><field2>B</field2></Row>
+ <Row><id>007</id><field1>KB</field1><field2>G</field2></Row>
+ <Row><id>004</id><field1>KC</field1><field2>C</field2></Row>
+ <Row><id>001</id><field1>KC</field1><field2>G</field2></Row>
+ <Row><id>009</id><field1>KC</field1><field2>Z</field2></Row>
+</Dataset>

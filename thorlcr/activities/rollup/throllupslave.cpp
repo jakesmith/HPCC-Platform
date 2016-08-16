@@ -289,7 +289,9 @@ class CDedupBaseSlaveActivity : public CDedupRollupBaseActivity
 {
 protected:
     IHThorDedupArg *ddhelper;
+    ICompare *compareBest;
     bool keepLeft = 0;
+    bool keepBest = 0;
     unsigned numToKeep = 0;
 
 public:
@@ -305,8 +307,10 @@ public:
         ActivityTimer s(totalCycles, timeActivities);
         CDedupRollupBaseActivity::start();
         keepLeft = ddhelper->keepLeft();
+        keepBest = ddhelper->keepBest();
         numToKeep = ddhelper->numToKeep();
-        assertex(keepLeft || numToKeep == 1);
+        compareBest = ddhelper->queryCompareBest();
+        assertex( (keepLeft || numToKeep == 1) && (!keepBest || numToKeep==1));
     }
     virtual bool isGrouped() const override { return groupOp; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
@@ -381,7 +385,7 @@ public:
                 numKept++;
                 break;
             }
-            if (!keepLeft) 
+            if (!keepLeft || (keepBest && (compareBest->docompare(kept,next) > 0)))
                 kept.setown(next.getClear());
         }
         OwnedConstThorRow ret = kept.getClear();
