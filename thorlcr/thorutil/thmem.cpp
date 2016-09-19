@@ -168,7 +168,9 @@ protected:
     unsigned spillCompInfo;
     CThorSpillableRowArray rows;
     OwnedIFile spillFile;
-    bool mmRegistered;
+    bool mmRegistered = false;
+    bool clearCB = false;
+    bool mmEnabled = false;
 
     bool spillRows()
     {
@@ -189,18 +191,26 @@ protected:
     }
     inline void addSpillingCallback()
     {
-        if (!mmRegistered)
+        if (!mmRegistered && !mmEnabled)
         {
-            mmRegistered = true;
-            rowIf->queryRowManager()->addRowBuffer(this);
+            if (clearCB)
+            {
+                rowIf->queryRowManager()->addRowBuffer(this);
+                mmRegistered = true;
+            }
+            mmEnabled = true;
         }
     }
     inline void clearSpillingCallback()
     {
-        if (mmRegistered)
+        if (mmRegistered && mmEnabled)
         {
-            mmRegistered = false;
-            rowIf->queryRowManager()->removeRowBuffer(this);
+            if (clearCB)
+            {
+                rowIf->queryRowManager()->removeRowBuffer(this);
+                mmRegistered = false;
+            }
+            mmEnabled = false;
         }
     }
 public:
@@ -210,7 +220,6 @@ public:
         : activity(_activity), rowIf(_rowIf), rows(_activity), preserveNulls(_preserveNulls), spillPriority(_spillPriority)
     {
         assertex(inRows.isFlushed());
-        mmRegistered = false;
         ownsRows = false;
         spillCompInfo = 0x0;
         rows.setup(rowIf, _preserveNulls);
@@ -1576,7 +1585,9 @@ protected:
     bool preserveGrouping;
     IThorRowInterfaces *rowIf;
     CriticalSection readerLock;
-    bool mmRegistered;
+    bool mmRegistered = false;
+    bool mmEnabled = false;
+    bool clearCB = false;
     Owned<CSharedSpillableRowSet> spillableRowSet;
     unsigned options;
     unsigned spillCompInfo = 0;
@@ -1780,18 +1791,26 @@ protected:
     inline bool spillingEnabled() const { return SPILL_PRIORITY_DISABLE != spillPriority; }
     void clearSpillingCallback()
     {
-        if (mmRegistered)
+        if (mmRegistered && mmEnabled)
         {
-            rowManager->removeRowBuffer(this);
-            mmRegistered = false;
+            if (clearCB)
+            {
+                rowManager->removeRowBuffer(this);
+                mmRegistered = false;
+            }
+            mmEnabled = false;
         }
     }
     void enableSpillingCallback()
     {
-        if (!mmRegistered && spillingEnabled())
+        if (!mmRegistered && !mmEnabled && spillingEnabled())
         {
-            rowManager->addRowBuffer(this);
-            mmRegistered = true;
+            if (clearCB)
+            {
+                rowManager->addRowBuffer(this);
+                mmRegistered = true;
+            }
+            mmEnabled = true;
         }
     }
 public:
@@ -1805,7 +1824,6 @@ public:
         totalRows = 0;
         overflowCount = outStreams = 0;
         sizeSpill = 0;
-        mmRegistered = false;
         if (rc_allMem == diskMemMix)
             spillPriority = SPILL_PRIORITY_DISABLE; // all mem, implies no spilling
         else
@@ -1914,7 +1932,7 @@ public:
     }
     virtual bool freeBufferedRows(bool critical)
     {
-        if (!spillingEnabled())
+        if (!mmEnabled || !spillingEnabled())
             return false;
         CThorArrayLockBlock block(spillableRows);
         return spillRows(critical);
