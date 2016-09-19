@@ -504,10 +504,6 @@ class graph_decl CGraphBase : public CGraphStub, implements IEclGraphResults
         virtual void addWuException(const char * text, unsigned code, unsigned severity, const char * source) { ctx->addWuException(text, code, severity, source); }
         virtual void addWuAssertFailure(unsigned code, const char * text, const char * filename, unsigned lineno, unsigned column, bool isAbort) { ctx->addWuAssertFailure(code, text, filename, lineno, column, isAbort); }
         virtual IUserDescriptor *queryUserDescriptor() { return ctx->queryUserDescriptor(); }
-        virtual IThorChildGraph * resolveChildQuery(__int64 gid, IHThorArg * colocal)
-        {
-            return graph->getChildGraph((graph_id)gid);
-        }
         virtual unsigned __int64 getDatasetHash(const char * name, unsigned __int64 hash) { return ctx->getDatasetHash(name, hash); }
         virtual unsigned getNodes() { return ctx->getNodes(); }
         virtual unsigned getNodeNum() { return ctx->getNodeNum(); }
@@ -523,6 +519,10 @@ class graph_decl CGraphBase : public CGraphStub, implements IEclGraphResults
         virtual char *getPlatform() { return ctx->getPlatform(); }
         virtual char *getEnv(const char *name, const char *defaultValue) const { return ctx->getEnv(name, defaultValue); }
         virtual char *getOS() { return ctx->getOS(); }
+        virtual IThorChildGraph * resolveChildQuery(__int64 gid, IHThorArg * colocal)
+        {
+            return graph->getChildGraph((graph_id)gid);
+        }
         virtual IEclGraphResults * resolveLocalQuery(__int64 gid)
         {
             return ctx->resolveLocalQuery(gid);
@@ -573,7 +573,7 @@ class graph_decl CGraphBase : public CGraphStub, implements IEclGraphResults
 
 protected:
     Owned<IThorGraphResults> localResults, graphLoopResults;
-    CGraphBase *owner, *parent;
+    CGraphBase *owner, *parent, *graphResultsContainer;
     Owned<IException> abortException;
     Owned<IPropertyTree> node;
     IBarrier *startBarrier, *waitBarrier, *doneBarrier;
@@ -598,7 +598,7 @@ public:
 
     CGraphBase *cloneGraph();
 
-    virtual void init() { }
+    virtual void init();
     void onCreate();
     void GraphPrintLog(const char *msg, ...) __attribute__((format(printf, 2, 3)));
     void GraphPrintLog(IException *e, const char *msg, ...) __attribute__((format(printf, 3, 4)));

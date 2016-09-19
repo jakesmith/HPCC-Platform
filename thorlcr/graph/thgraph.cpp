@@ -1034,7 +1034,7 @@ bool isLoopActivity(CGraphElementBase &container)
 CGraphBase::CGraphBase(CJobChannel &_jobChannel) : jobChannel(_jobChannel), job(_jobChannel.queryJob())
 {
     xgmml = NULL;
-    parent = owner = NULL;
+    parent = owner = graphResultsContainer = NULL;
     complete = false;
     parentActivityId = 0;
     connected = started = graphDone = aborted = false;
@@ -1055,8 +1055,14 @@ CGraphBase *CGraphBase::cloneGraph()
 {
     Owned<CGraphBase> subGraph = queryJobChannel().createGraph();
     // JCSMORE - could probably improve how cloned
-    subGraph->createFromXGMML(xgmml, NULL, NULL, NULL);
+    subGraph->createFromXGMML(node, owner, parent, graphResultsContainer);
     return subGraph.getClear();
+}
+
+void CGraphBase::init()
+{
+    bool log = queryJob().queryForceLogging(queryGraphId(), (NULL == queryOwner()) || isGlobal());
+    setLogging(log);
 }
 
 void CGraphBase::clean()
@@ -1110,9 +1116,8 @@ void CGraphBase::reset()
     graphCancelHandler.reset();
     if (0 == containers.count())
     {
-        SuperHashIteratorOf<CGraphBase> iter(childGraphsTable);
-        ForEach(iter)
-            iter.query().reset();
+        ForEachItemIn(c, childGraphs)
+            childGraphs.item(c).reset();
     }
     else
     {
@@ -1681,6 +1686,7 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
     localOnly = -1; // unset
     parentActivityId = node->getPropInt("att[@name=\"_parentActivity\"]/@value", 0);
 
+    graphResultsContainer = resultsGraph;
     CGraphBase *graphContainer = this;
     if (resultsGraph)
         graphContainer = resultsGraph; // JCSMORE is this right?
@@ -1728,7 +1734,7 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
             if (subGraphParentActivityId) // JCS - not sure if ever false
             {
                 stub.setown(new CChildParallelFactory(subGraph));
-                CGraphElementBase *subGraphParentElement = queryElement(parentActivityId);
+                CGraphElementBase *subGraphParentElement = queryElement(subGraphParentActivityId);
                 subGraphParentElement->addAssociatedChildGraph(subGraph);
             }
 
@@ -1928,7 +1934,7 @@ const void * CGraphBase::getLinkedRowResult(unsigned id)
 // IThorChildGraph impl.
 IEclGraphResults *CGraphBase::evaluate(unsigned _parentExtractSz, const byte *parentExtract)
 {
-    CriticalBlock block(evaluateCrit);
+//    CriticalBlock block(evaluateCrit);
     localResults.setown(createThorGraphResults(xgmml->getPropInt("att[@name=\"_numResults\"]/@value", 0)));
     parentExtractSz = _parentExtractSz;
     executeChild(parentExtractSz, parentExtract);
@@ -2809,8 +2815,6 @@ void CJobChannel::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
                     subGraph.setGlobal(true);
             }
         }
-        bool log = queryJob().queryForceLogging(subGraph.queryGraphId(), (NULL == subGraph.queryOwner()) || subGraph.isGlobal());
-        subGraph.setLogging(log);
     }
 }
 

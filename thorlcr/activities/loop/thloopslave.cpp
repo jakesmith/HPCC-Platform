@@ -543,11 +543,12 @@ public:
         PARENT::start();
         curRow = 0;
         abortSoon = false;
-        assertex(container.queryResultsGraph());
+        Owned<CGraphBase> graph;
         graph_id resultGraphId = container.queryXGMML().getPropInt("att[@name=\"_graphId\"]/@value");
-        if (!resultGraphId)
-            resultGraphId = container.queryResultsGraph()->queryGraphId();
-        Owned<CGraphBase> graph = queryJobChannel().getGraph(resultGraphId);
+        if (resultGraphId)
+            graph.setown(queryJobChannel().getGraph(resultGraphId)); // JCSMORE - suspect this is wrong!
+        else
+            graph.set(container.queryResultsGraph());
         Owned<IThorResult> result = graph->getResult(helper->querySequence(), queryGraph().isLocalChild());
         resultStream.setown(result->getRowStream());
     }
@@ -625,7 +626,7 @@ public:
         lastNull = eoi = false;
         abortSoon = false;
         assertex(container.queryResultsGraph());
-        Owned<CGraphBase> graph = queryJobChannel().getGraph(container.queryResultsGraph()->queryGraphId());
+        CGraphBase *graph = container.queryResultsGraph();
         IThorResult *result = graph->createResult(*this, helper->querySequence(), this, !queryGraph().isLocalChild());  // NB graph owns result
         resultWriter.setown(result->getWriter());
     }
@@ -714,7 +715,7 @@ public:
     virtual IThorResult *createResult()
     {
         IHThorLocalResultWriteArg *helper = (IHThorLocalResultWriteArg *)queryHelper();
-        Owned<CGraphBase> graph = queryJobChannel().getGraph(container.queryResultsGraph()->queryGraphId());
+        CGraphBase *graph = container.queryResultsGraph();
         return graph->createResult(*this, helper->querySequence(), this, !queryGraph().isLocalChild());
     }
 };
@@ -756,7 +757,7 @@ public:
             }
             builder.appendOwn(row);
         }
-        Owned<CGraphBase> graph = queryJobChannel().getGraph(container.queryResultsGraph()->queryGraphId());
+        CGraphBase *graph = container.queryResultsGraph();
         IThorResult *result = graph->createResult(*this, helper->querySequence(), this, !queryGraph().isLocalChild());
         Owned<IRowWriter> resultWriter = result->getWriter();
         size32_t dictSize = builder.getcount();
@@ -1246,9 +1247,11 @@ public:
         {
             assertex(container.queryResultsGraph());
             graph_id resultGraphId = container.queryXGMML().getPropInt("att[@name=\"_graphId\"]/@value");
-            if (!resultGraphId)
-                resultGraphId = container.queryResultsGraph()->queryGraphId();
-            Owned<CGraphBase> graph = queryJobChannel().getGraph(resultGraphId);
+            Owned<CGraphBase> graph;
+            if (resultGraphId)
+                graph.setown(queryJobChannel().getGraph(resultGraphId)); // JCSMORE - suspect this is wrong!
+            else
+                graph.set(container.queryResultsGraph());
             Owned<IThorResult> result = graph->getGraphLoopResult(sequence, queryGraph().isLocalChild());
             resultStream.setown(result->getRowStream());
         }
@@ -1371,7 +1374,7 @@ public:
     virtual IThorResult *createResult()
     {
         IHThorGraphLoopResultWriteArg *helper = (IHThorGraphLoopResultWriteArg *)queryHelper();
-        Owned<CGraphBase> graph = queryJobChannel().getGraph(container.queryResultsGraph()->queryGraphId());
+        CGraphBase *graph = container.queryResultsGraph();
         return graph->createGraphLoopResult(*this, input->queryFromActivity(), !queryGraph().isLocalChild());
     }
 };
