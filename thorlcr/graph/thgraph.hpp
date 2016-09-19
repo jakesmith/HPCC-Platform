@@ -230,8 +230,10 @@ public:
     }
 };
 
+class CGraphStub;
 typedef SimpleHashTableOf<CGraphBase, graph_id> CGraphTableCopy;
 typedef OwningSimpleHashTableOf<CGraphBase, graph_id> CGraphTable;
+typedef OwningSimpleHashTableOf<CGraphStub, graph_id> CChildGraphTable;
 typedef CIArrayOf<CGraphBase> CGraphArray;
 typedef CICopyArrayOf<CGraphBase> CGraphArrayCopy;
 typedef IIteratorOf<CGraphBase> IThorGraphIterator;
@@ -419,9 +421,36 @@ public:
     }
 };
 
+class graph_decl CGraphStub : public CInterface, implements IThorChildGraph, implements IExceptionHandler
+{
+protected:
+    graph_id graphId = 0;
+    unsigned counter = 0;
+    bool global = false;
+public:
+    IMPLEMENT_IINTERFACE;
+
+    const void *queryFindParam() const { return &graphId; } // for SimpleHashTableOf
+
+    bool isGlobal() const { return global; }
+    void setLoopCounter(unsigned _counter) { counter = _counter; }
+    virtual bool isLocalOnly() const = 0; // this graph and all upstream dependencies
+    virtual IThorGraphResults *createThorGraphResults(unsigned num) = 0;
+    virtual void abort(IException *e) = 0;
+
+    virtual CGraphBase *createConcreateGraphInstance() { throwUnexpected(); }
+// IExceptionHandler
+    virtual bool fireException(IException *e) = 0;
+
+    virtual void executeChild(size32_t parentExtractSz, const byte *parentExtract, IThorGraphResults *results, IThorGraphResults *graphLoopResults) = 0;
+    virtual void executeChild(size32_t parentExtractSz, const byte *parentExtract) = 0;
+// IThorChildGraph
+    virtual IEclGraphResults *evaluate(unsigned parentExtractSz, const byte * parentExtract) = 0;
+};
+
 class CJobBase;
 interface IPropertyTree;
-class graph_decl CGraphBase : public CInterface, implements IEclGraphResults, implements IThorChildGraph, implements IExceptionHandler
+class graph_decl CGraphBase : public CGraphStub, implements IEclGraphResults
 {
     mutable CriticalSection crit;
     CriticalSection evaluateCrit, executeCrit;
@@ -431,7 +460,7 @@ class graph_decl CGraphBase : public CInterface, implements IEclGraphResults, im
     mutable int localOnly;
     activity_id parentActivityId;
     IPropertyTree *xgmml;
-    CGraphTable childGraphsTable;
+    CChildGraphTable childGraphsTable;
     CGraphArrayCopy childGraphs;
     Owned<IGraphTempHandler> tmpHandler;
     bool initialized = false;
@@ -485,7 +514,10 @@ class graph_decl CGraphBase : public CInterface, implements IEclGraphResults, im
         virtual void addWuException(const char * text, unsigned code, unsigned severity, const char * source) { ctx->addWuException(text, code, severity, source); }
         virtual void addWuAssertFailure(unsigned code, const char * text, const char * filename, unsigned lineno, unsigned column, bool isAbort) { ctx->addWuAssertFailure(code, text, filename, lineno, column, isAbort); }
         virtual IUserDescriptor *queryUserDescriptor() { return ctx->queryUserDescriptor(); }
-        virtual IThorChildGraph * resolveChildQuery(__int64 activityId, IHThorArg * colocal) { return ctx->resolveChildQuery(activityId, colocal); }
+        virtual IThorChildGraph * resolveChildQuery(__int64 gid, IHThorArg * colocal)
+        {
+            return graph->getChildGraph((graph_id)gid);
+        }
         virtual unsigned __int64 getDatasetHash(const char * name, unsigned __int64 hash) { return ctx->getDatasetHash(name, hash); }
         virtual unsigned getNodes() { return ctx->getNodes(); }
         virtual unsigned getNodeNum() { return ctx->getNodeNum(); }
@@ -501,7 +533,15 @@ class graph_decl CGraphBase : public CInterface, implements IEclGraphResults, im
         virtual char *getPlatform() { return ctx->getPlatform(); }
         virtual char *getEnv(const char *name, const char *defaultValue) const { return ctx->getEnv(name, defaultValue); }
         virtual char *getOS() { return ctx->getOS(); }
-        virtual IEclGraphResults * resolveLocalQuery(__int64 activityId) { return ctx->resolveLocalQuery(activityId); }
+        virtual IEclGraphResults * resolveLocalQuery(__int64 gid)
+        {
+            return ctx->resolveLocalQuery(gid);
+#if 0
+            IEclGraphResults *_graph = graph->getChildGraph((graph_id)gid);
+            _graph->Release(); // resolveLocalQuery doesn't own, can't otherwise will be circular ref.
+            return _graph;
+#endif
+        }
         virtual char *getEnv(const char *name, const char *defaultValue) { return ctx->getEnv(name, defaultValue); }
         virtual unsigned logString(const char * text) const { return ctx->logString(text); }
         virtual const IContextLogger &queryContextLogger() const { return ctx->queryContextLogger(); }
@@ -551,7 +591,6 @@ protected:
     bool connected, started, aborted, graphDone, sequential;
     CJobBase &job;
     CJobChannel &jobChannel;
-    graph_id graphId;
     mptag_t executeReplyTag;
     size32_t parentExtractSz; // keep track of sz when passed in, as may need to serialize later
     MemoryBuffer parentExtractMb; // retain copy, used if slave transmits to master (child graph 1st time initialization of global graph)
@@ -560,14 +599,14 @@ protected:
     bool loopBodySubgraph;
 
 public:
-    IMPLEMENT_IINTERFACE;
+    IMPLEMENT_IINTERFACE_USING(CGraphStub);
 
     CGraphArrayCopy dependentSubGraphs;
 
     CGraphBase(CJobChannel &jobChannel);
     ~CGraphBase();
 
-    const void *queryFindParam() const { return &queryGraphId(); } // for SimpleHashTableOf
+    CGraphBase *cloneGraph();
 
     virtual void init() { }
     void onCreate();
@@ -676,9 +715,9 @@ public:
     }
     const activity_id &queryParentActivityId() const { return parentActivityId; }
     const graph_id &queryGraphId() const { return graphId; }
-    void addChildGraph(CGraphBase &graph);
+    void addChildGraph(CGraphBase *graph, CGraphStub *stub);
     unsigned queryChildGraphCount() { return childGraphs.ordinality(); }
-    CGraphBase *getChildGraph(graph_id gid)
+    CGraphStub *getChildGraph(graph_id gid)
     {
         CriticalBlock b(crit);
         return LINK(childGraphsTable.find(gid));

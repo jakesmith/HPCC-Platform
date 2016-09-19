@@ -591,7 +591,8 @@ void CGraphElementBase::onCreate()
         if (isLoopActivity(*this))
         {
             unsigned loopId = queryXGMML().getPropInt("att[@name=\"_loopid\"]/@value");
-            Owned<CGraphBase> childGraph = owner->getChildGraph(loopId);
+            Owned<CGraphStub> stub = owner->getChildGraph(loopId);
+            Owned<CGraphBase> childGraph = stub->createConcreateGraphInstance();
             Owned<IThorBoundLoopGraph> boundLoopGraph = createBoundLoopGraph(childGraph, baseHelper->queryOutputMeta(), queryId());
             setBoundGraph(boundLoopGraph);
         }
@@ -1034,7 +1035,6 @@ CGraphBase::CGraphBase(CJobChannel &_jobChannel) : jobChannel(_jobChannel), job(
 {
     xgmml = NULL;
     parent = owner = NULL;
-    graphId = 0;
     complete = false;
     parentActivityId = 0;
     connected = started = graphDone = aborted = false;
@@ -1049,6 +1049,14 @@ CGraphBase::CGraphBase(CJobChannel &_jobChannel) : jobChannel(_jobChannel), job(
 CGraphBase::~CGraphBase()
 {
     clean();
+}
+
+CGraphBase *CGraphBase::cloneGraph()
+{
+    Owned<CGraphBase> subGraph = queryJobChannel().createGraph();
+    // JCSMORE - could probably improve how cloned
+    subGraph->createFromXGMML(xgmml, NULL, NULL, NULL);
+    return subGraph.getClear();
 }
 
 void CGraphBase::clean()
@@ -1122,12 +1130,15 @@ void CGraphBase::reset()
         clearNodeStats();
 }
 
-void CGraphBase::addChildGraph(CGraphBase &graph)
+void CGraphBase::addChildGraph(CGraphBase *graph, CGraphStub *stub)
 {
     CriticalBlock b(crit);
-    childGraphs.append(graph);
-    childGraphsTable.replace(graph);
-    jobChannel.associateGraph(graph);
+    if (stub)
+        childGraphsTable.replace(*LINK(stub));
+    else
+        childGraphsTable.replace(*LINK(graph));
+    childGraphs.append(*graph);
+    jobChannel.associateGraph(*graph);
 }
 
 IThorGraphIterator *CGraphBase::getChildGraphs() const
@@ -1607,6 +1618,64 @@ void CGraphBase::setLogging(bool tf)
 
 void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGraphBase *_parent, CGraphBase *resultsGraph)
 {
+    class CChildParallelFactory : public CGraphStub
+    {
+        Linked<CGraphBase> originalChildGraph;
+        CriticalSection crit;
+        CIArrayOf<CGraphBase> stack;
+
+        CGraphBase *getGraph()
+        {
+            Owned<CGraphBase> childGraph;
+            {
+                CriticalBlock b(crit);
+                if (stack.length())
+                    childGraph.setown(&stack.popGet());
+            }
+            if (!childGraph)
+                childGraph.setown(originalChildGraph->cloneGraph());
+            return childGraph.getClear();
+        }
+        void pushGraph(CGraphBase *childGraph)
+        {
+            CriticalBlock b(crit);
+            stack.append(*childGraph);
+        }
+    public:
+        CChildParallelFactory(CGraphBase *_originalChildGraph) : originalChildGraph(_originalChildGraph)
+        {
+            graphId = originalChildGraph->queryGraphId();
+        }
+        virtual bool isLocalOnly() const { return originalChildGraph->isLocalOnly(); }
+        virtual IThorGraphResults *createThorGraphResults(unsigned num) { return originalChildGraph->createThorGraphResults(num); }
+        virtual void abort(IException *e) { originalChildGraph->abort(e); }
+
+        virtual CGraphBase *createConcreateGraphInstance()
+        {
+            return getGraph();
+        }
+    // IExceptionHandler
+        virtual bool fireException(IException *e) { return originalChildGraph->fireException(e); }
+        virtual IEclGraphResults * evaluate(unsigned parentExtractSz, const byte * parentExtract) override
+        {
+            Owned<CGraphBase> childGraph = getGraph();
+            Owned<IEclGraphResults> results = childGraph->evaluate(parentExtractSz, parentExtract);
+            pushGraph(childGraph.getClear());
+            return results.getClear();
+        }
+        virtual void executeChild(size32_t parentExtractSz, const byte *parentExtract, IThorGraphResults *results, IThorGraphResults *graphLoopResults) override
+        {
+            Owned<CGraphBase> childGraph = getGraph();
+            childGraph->executeChild(parentExtractSz, parentExtract, results, graphLoopResults);
+            pushGraph(childGraph.getClear());
+        }
+        virtual void executeChild(size32_t parentExtractSz, const byte *parentExtract) override
+        {
+            Owned<CGraphBase> childGraph = getGraph();
+            childGraph->executeChild(parentExtractSz, parentExtract);
+            pushGraph(childGraph.getClear());
+        }
+    };
     owner = _owner;
     parent = _parent?_parent:owner;
     node.setown(createPTreeFromIPT(_node));
@@ -1637,7 +1706,6 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
     if (owner && parentActivityId)
     {
         CGraphElementBase *parentElement = owner->queryElement(parentActivityId);
-        parentElement->addAssociatedChildGraph(this);
         if (isLoopActivity(*parentElement))
         {
             localChild = parentElement->queryOwner().isLocalChild();
@@ -1660,9 +1728,19 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         {
             Owned<CGraphBase> subGraph = queryJobChannel().createGraph();
             subGraph->createFromXGMML(&e, this, parent, resultsGraph);
-            addChildGraph(*LINK(subGraph));
+
+            Owned<CGraphStub> stub;
+            activity_id subGraphParentActivityId = e.getPropInt("att[@name=\"_parentActivity\"]/@value", 0);
+            if (subGraphParentActivityId) // JCS - not sure if ever false
+            {
+                stub.setown(new CChildParallelFactory(subGraph));
+                CGraphElementBase *subGraphParentElement = queryElement(parentActivityId);
+                subGraphParentElement->addAssociatedChildGraph(subGraph);
+            }
+
             if (!global)
                 global = subGraph->isGlobal();
+            addChildGraph(subGraph, stub);
         }
         else
         {
