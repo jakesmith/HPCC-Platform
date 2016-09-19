@@ -421,26 +421,16 @@ public:
     }
 };
 
-class graph_decl CGraphStub : public CInterface, implements IThorChildGraph, implements IExceptionHandler
+class graph_decl CGraphStub : public CInterface, implements IThorChildGraph
 {
 protected:
     graph_id graphId = 0;
-    unsigned counter = 0;
-    bool global = false;
 public:
     IMPLEMENT_IINTERFACE;
 
     const void *queryFindParam() const { return &graphId; } // for SimpleHashTableOf
 
-    bool isGlobal() const { return global; }
-    void setLoopCounter(unsigned _counter) { counter = _counter; }
-    virtual bool isLocalOnly() const = 0; // this graph and all upstream dependencies
-    virtual IThorGraphResults *createThorGraphResults(unsigned num) = 0;
-    virtual void abort(IException *e) = 0;
-
     virtual CGraphBase *createConcreateGraphInstance() { throwUnexpected(); }
-// IExceptionHandler
-    virtual bool fireException(IException *e) = 0;
 
     virtual void executeChild(size32_t parentExtractSz, const byte *parentExtract, IThorGraphResults *results, IThorGraphResults *graphLoopResults) = 0;
     virtual void executeChild(size32_t parentExtractSz, const byte *parentExtract) = 0;

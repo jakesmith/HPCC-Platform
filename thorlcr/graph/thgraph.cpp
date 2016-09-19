@@ -1646,16 +1646,10 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         {
             graphId = originalChildGraph->queryGraphId();
         }
-        virtual bool isLocalOnly() const { return originalChildGraph->isLocalOnly(); }
-        virtual IThorGraphResults *createThorGraphResults(unsigned num) { return originalChildGraph->createThorGraphResults(num); }
-        virtual void abort(IException *e) { originalChildGraph->abort(e); }
-
         virtual CGraphBase *createConcreateGraphInstance()
         {
             return getGraph();
         }
-    // IExceptionHandler
-        virtual bool fireException(IException *e) { return originalChildGraph->fireException(e); }
         virtual IEclGraphResults * evaluate(unsigned parentExtractSz, const byte * parentExtract) override
         {
             Owned<CGraphBase> childGraph = getGraph();
