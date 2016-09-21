@@ -525,12 +525,10 @@ class graph_decl CGraphBase : public CGraphStub, implements IEclGraphResults
         }
         virtual IEclGraphResults * resolveLocalQuery(__int64 gid)
         {
-            return ctx->resolveLocalQuery(gid);
-#if 0
-            IEclGraphResults *_graph = graph->getChildGraph((graph_id)gid);
-            _graph->Release(); // resolveLocalQuery doesn't own, can't otherwise will be circular ref.
-            return _graph;
-#endif
+            if (gid == graph->queryGraphId())
+                return graph;
+            else
+                return ctx->resolveLocalQuery(gid);
         }
         virtual char *getEnv(const char *name, const char *defaultValue) { return ctx->getEnv(name, defaultValue); }
         virtual unsigned logString(const char * text) const { return ctx->logString(text); }
@@ -603,7 +601,7 @@ public:
     void GraphPrintLog(const char *msg, ...) __attribute__((format(printf, 2, 3)));
     void GraphPrintLog(IException *e, const char *msg, ...) __attribute__((format(printf, 3, 4)));
     void GraphPrintLog(IException *e);
-    void createFromXGMML(IPropertyTree *node, CGraphBase *owner, CGraphBase *parent, CGraphBase *resultsGraph);
+    void createFromXGMML(IPropertyTree *node, CGraphBase *owner, CGraphBase *parent, CGraphBase *resultsGraph, CGraphTableCopy &newGraphs);
     bool queryAborted() const { return aborted; }
     CJobBase &queryJob() const { return job; }
     CJobChannel &queryJobChannel() const { return jobChannel; }
@@ -934,7 +932,6 @@ protected:
     ITimeReporter *timeReporter;
     CriticalSection crit;
     CGraphTable subGraphs;
-    CGraphTableCopy allGraphs; // for lookup, includes all childGraphs
     Owned<ICommunicator> jobComm;
     rank_t myrank;
     Linked<IMPServer> mpServer;
@@ -955,6 +952,9 @@ protected:
         }
     }
 public:
+
+    CGraphTableCopy allGraphs; // for lookup, includes all childGraphs
+
     IMPLEMENT_IINTERFACE;
 
     CJobChannel(CJobBase &job, IMPServer *mpServer, unsigned channel);
@@ -975,11 +975,6 @@ public:
     {
         CriticalBlock b(crit);
         subGraphs.replace(graph);
-        allGraphs.replace(graph);
-    }
-    void associateGraph(CGraphBase &graph)
-    {
-        CriticalBlock b(crit);
         allGraphs.replace(graph);
     }
     void removeSubGraph(CGraphBase &graph)

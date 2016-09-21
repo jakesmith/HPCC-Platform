@@ -1029,6 +1029,136 @@ bool isLoopActivity(CGraphElementBase &container)
     }
     return false;
 }
+
+static void getGlobalDeps(CGraphBase &graph, CICopyArrayOf<CGraphDependency> &deps)
+{
+    Owned<IThorActivityIterator> iter = graph.getIterator();
+    ForEach(*iter)
+    {
+        CGraphElementBase &elem = iter->query();
+        Owned<IThorGraphDependencyIterator> dependIterator = elem.getDependsIterator();
+        ForEach(*dependIterator)
+        {
+            CGraphDependency &dependency = dependIterator->query();
+            if (dependency.graph->isGlobal() && NULL==dependency.graph->queryOwner())
+                deps.append(dependency);
+            getGlobalDeps(*dependency.graph, deps);
+        }
+    }
+}
+
+static void noteDependency(CGraphElementBase *targetActivity, CGraphElementBase *sourceActivity, CGraphBase *targetGraph, CGraphBase *sourceGraph, unsigned controlId)
+{
+    targetActivity->addDependsOn(sourceGraph, controlId);
+    // NB: record dependency in source graph, serialized to slaves, used to decided if should run dependency sinks or not
+    Owned<IPropertyTree> dependencyFor = createPTree();
+    dependencyFor->setPropInt("@id", sourceActivity->queryId());
+    dependencyFor->setPropInt("@graphId", targetGraph->queryGraphId());
+    if (controlId)
+        dependencyFor->setPropInt("@conditionalId", controlId);
+    sourceGraph->queryXGMML().addPropTree("Dependency", dependencyFor.getClear());
+}
+
+static void addDependencies(IPropertyTree *xgmml, bool failIfMissing, CGraphTableCopy &graphs)
+{
+    CGraphArrayCopy childGraphs;
+    CGraphElementArrayCopy targetActivities, sourceActivities;
+
+    Owned<IPropertyTreeIterator> iter = xgmml->getElements("edge");
+    ForEach(*iter)
+    {
+        IPropertyTree &edge = iter->query();
+        graph_id sourceGid = edge.getPropInt("@source");
+        graph_id targetGid = edge.getPropInt("@target");
+        Owned<CGraphBase> source = LINK(graphs.find(sourceGid));
+        Owned<CGraphBase> target = LINK(graphs.find(targetGid));
+        if (!source || !target)
+        {
+            if (failIfMissing)
+                throwUnexpected();
+            else
+                continue; // expected if assigning dependencies in slaves
+        }
+        CGraphElementBase *targetActivity = (CGraphElementBase *)target->queryElement(edge.getPropInt("att[@name=\"_targetActivity\"]/@value"));
+        CGraphElementBase *sourceActivity = (CGraphElementBase *)source->queryElement(edge.getPropInt("att[@name=\"_sourceActivity\"]/@value"));
+        if (!edge.getPropBool("att[@name=\"_childGraph\"]/@value"))
+        {
+            if (TAKlocalresultwrite == sourceActivity->getKind() && (TAKlocalresultread != targetActivity->getKind()))
+            {
+                if (source->isLoopSubGraph())
+                    source->setGlobal(true);
+            }
+        }
+        int controlId = 0;
+        if (edge.getPropBool("att[@name=\"_dependsOn\"]/@value", false))
+        {
+            if (!edge.getPropBool("att[@name=\"_childGraph\"]/@value", false)) // JCSMORE - not sure if necess. roxie seem to do.
+                controlId = edge.getPropInt("att[@name=\"_when\"]/@value", 0);
+            CGraphBase &sourceGraph = sourceActivity->queryOwner();
+            unsigned sourceGraphContext = sourceGraph.queryParentActivityId();
+
+            CGraphBase *targetGraph = NULL;
+            unsigned targetGraphContext = -1;
+            loop
+            {
+                targetGraph = &targetActivity->queryOwner();
+                targetGraphContext = targetGraph->queryParentActivityId();
+                if (sourceGraphContext == targetGraphContext)
+                    break;
+                targetActivity = targetGraph->queryElement(targetGraphContext);
+            }
+            assertex(targetActivity && sourceActivity);
+            noteDependency(targetActivity, sourceActivity, target, source, controlId);
+        }
+        else if (edge.getPropBool("att[@name=\"_conditionSource\"]/@value", false))
+        { /* Ignore it */ }
+        else if (edge.getPropBool("att[@name=\"_childGraph\"]/@value", false))
+        {
+            // NB: any dependencies of the child acts. are dependencies of this act.
+            childGraphs.append(*source);
+            targetActivities.append(*targetActivity);
+            sourceActivities.append(*sourceActivity);
+        }
+        else
+        {
+            if (!edge.getPropBool("att[@name=\"_childGraph\"]/@value", false)) // JCSMORE - not sure if necess. roxie seem to do.
+                controlId = edge.getPropInt("att[@name=\"_when\"]/@value", 0);
+            noteDependency(targetActivity, sourceActivity, target, source, controlId);
+        }
+    }
+    ForEachItemIn(c, childGraphs)
+    {
+        CGraphBase &childGraph = childGraphs.item(c);
+        CGraphElementBase &targetActivity = targetActivities.item(c);
+        CGraphElementBase &sourceActivity = sourceActivities.item(c);
+        if (!childGraph.isGlobal())
+        {
+            CICopyArrayOf<CGraphDependency> globalChildGraphDeps;
+            getGlobalDeps(childGraph, globalChildGraphDeps);
+            ForEachItemIn(gcd, globalChildGraphDeps)
+            {
+                CGraphDependency &globalDep = globalChildGraphDeps.item(gcd);
+                noteDependency(&targetActivity, &sourceActivity, globalDep.graph, &childGraph, globalDep.controlId);
+            }
+        }
+    }
+
+    SuperHashIteratorOf<CGraphBase> allIter(graphs);
+    ForEach(allIter)
+    {
+        CGraphBase &subGraph = allIter.query();
+        if (subGraph.queryOwner() && subGraph.queryParentActivityId())
+        {
+            CGraphElementBase *parentElement = subGraph.queryOwner()->queryElement(subGraph.queryParentActivityId());
+            if (isLoopActivity(*parentElement))
+            {
+                if (!parentElement->queryOwner().isLocalChild() && !subGraph.isLocalOnly())
+                    subGraph.setGlobal(true);
+            }
+        }
+    }
+}
+
 /////
 
 CGraphBase::CGraphBase(CJobChannel &_jobChannel) : jobChannel(_jobChannel), job(_jobChannel.queryJob())
@@ -1054,8 +1184,9 @@ CGraphBase::~CGraphBase()
 CGraphBase *CGraphBase::cloneGraph()
 {
     Owned<CGraphBase> subGraph = queryJobChannel().createGraph();
-    // JCSMORE - could probably improve how cloned
-    subGraph->createFromXGMML(node, owner, parent, graphResultsContainer);
+    CGraphTableCopy newGraphs;
+    subGraph->createFromXGMML(node, owner, parent, graphResultsContainer, newGraphs);
+    addDependencies(queryJob().queryXGMML(), false, newGraphs);
     return subGraph.getClear();
 }
 
@@ -1143,7 +1274,6 @@ void CGraphBase::addChildGraph(CGraphBase *graph, CGraphStub *stub)
     else
         childGraphsTable.replace(*LINK(graph));
     childGraphs.append(*graph);
-    jobChannel.associateGraph(*graph);
 }
 
 IThorGraphIterator *CGraphBase::getChildGraphs() const
@@ -1621,7 +1751,7 @@ void CGraphBase::setLogging(bool tf)
         iter->query().setLogging(tf);
 }
 
-void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGraphBase *_parent, CGraphBase *resultsGraph)
+void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGraphBase *_parent, CGraphBase *resultsGraph, CGraphTableCopy &newGraphs)
 {
     class CChildParallelFactory : public CGraphStub
     {
@@ -1727,7 +1857,7 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
         if (TAKsubgraph == kind)
         {
             Owned<CGraphBase> subGraph = queryJobChannel().createGraph();
-            subGraph->createFromXGMML(&e, this, parent, resultsGraph);
+            subGraph->createFromXGMML(&e, this, parent, resultsGraph, newGraphs);
 
             Owned<CGraphStub> stub;
             activity_id subGraphParentActivityId = e.getPropInt("att[@name=\"_parentActivity\"]/@value", 0);
@@ -1741,6 +1871,7 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
             if (!global)
                 global = subGraph->isGlobal();
             addChildGraph(subGraph, stub);
+            newGraphs.replace(*subGraph);
         }
         else
         {
@@ -2534,23 +2665,6 @@ bool CJobBase::queryForceLogging(graph_id graphId, bool def) const
     return def;
 }
 
-static void getGlobalDeps(CGraphBase &graph, CICopyArrayOf<CGraphDependency> &deps)
-{
-    Owned<IThorActivityIterator> iter = graph.getIterator();
-    ForEach(*iter)
-    {
-        CGraphElementBase &elem = iter->query();
-        Owned<IThorGraphDependencyIterator> dependIterator = elem.getDependsIterator();
-        ForEach(*dependIterator)
-        {
-            CGraphDependency &dependency = dependIterator->query();
-            if (dependency.graph->isGlobal() && NULL==dependency.graph->queryOwner())
-                deps.append(dependency);
-            getGlobalDeps(*dependency.graph, deps);
-        }
-    }
-}
-
 void CJobBase::addSubGraph(IPropertyTree &xgmml)
 {
     CriticalBlock b(crit);
@@ -2559,7 +2673,7 @@ void CJobBase::addSubGraph(IPropertyTree &xgmml)
         CJobChannel &jobChannel = queryJobChannel(c);
         Owned<CGraphBase> subGraph = jobChannel.createGraph();
         // JCSMORE - clone, instead of recrete
-        subGraph->createFromXGMML(&xgmml, NULL, NULL, NULL);
+        subGraph->createFromXGMML(&xgmml, NULL, NULL, NULL, jobChannel.allGraphs);
         jobChannel.addSubGraph(*subGraph.getClear());
     }
 }
@@ -2708,114 +2822,9 @@ roxiemem::IRowManager *CJobChannel::queryRowManager() const
 }
 
 
-static void noteDependency(CGraphElementBase *targetActivity, CGraphElementBase *sourceActivity, CGraphBase *targetGraph, CGraphBase *sourceGraph, unsigned controlId)
-{
-    targetActivity->addDependsOn(sourceGraph, controlId);
-    // NB: record dependency in source graph, serialized to slaves, used to decided if should run dependency sinks or not
-    Owned<IPropertyTree> dependencyFor = createPTree();
-    dependencyFor->setPropInt("@id", sourceActivity->queryId());
-    dependencyFor->setPropInt("@graphId", targetGraph->queryGraphId());
-    if (controlId)
-        dependencyFor->setPropInt("@conditionalId", controlId);
-    sourceGraph->queryXGMML().addPropTree("Dependency", dependencyFor.getClear());
-}
-
 void CJobChannel::addDependencies(IPropertyTree *xgmml, bool failIfMissing)
 {
-    CGraphArrayCopy childGraphs;
-    CGraphElementArrayCopy targetActivities, sourceActivities;
-
-    Owned<IPropertyTreeIterator> iter = xgmml->getElements("edge");
-    ForEach(*iter)
-    {
-        IPropertyTree &edge = iter->query();
-        Owned<CGraphBase> source = getGraph(edge.getPropInt("@source"));
-        Owned<CGraphBase> target = getGraph(edge.getPropInt("@target"));
-        if (!source || !target)
-        {
-            if (failIfMissing)
-                throwUnexpected();
-            else
-                continue; // expected if assigning dependencies in slaves
-        }
-        CGraphElementBase *targetActivity = (CGraphElementBase *)target->queryElement(edge.getPropInt("att[@name=\"_targetActivity\"]/@value"));
-        CGraphElementBase *sourceActivity = (CGraphElementBase *)source->queryElement(edge.getPropInt("att[@name=\"_sourceActivity\"]/@value"));
-        if (!edge.getPropBool("att[@name=\"_childGraph\"]/@value"))
-        {
-            if (TAKlocalresultwrite == sourceActivity->getKind() && (TAKlocalresultread != targetActivity->getKind()))
-            {
-                if (source->isLoopSubGraph())
-                    source->setGlobal(true);
-            }
-        }
-        int controlId = 0;
-        if (edge.getPropBool("att[@name=\"_dependsOn\"]/@value", false))
-        {
-            if (!edge.getPropBool("att[@name=\"_childGraph\"]/@value", false)) // JCSMORE - not sure if necess. roxie seem to do.
-                controlId = edge.getPropInt("att[@name=\"_when\"]/@value", 0);
-            CGraphBase &sourceGraph = sourceActivity->queryOwner();
-            unsigned sourceGraphContext = sourceGraph.queryParentActivityId();
-
-            CGraphBase *targetGraph = NULL;
-            unsigned targetGraphContext = -1;
-            loop
-            {
-                targetGraph = &targetActivity->queryOwner();
-                targetGraphContext = targetGraph->queryParentActivityId();
-                if (sourceGraphContext == targetGraphContext)
-                    break;
-                targetActivity = targetGraph->queryElement(targetGraphContext);
-            }
-            assertex(targetActivity && sourceActivity);
-            noteDependency(targetActivity, sourceActivity, target, source, controlId);
-        }
-        else if (edge.getPropBool("att[@name=\"_conditionSource\"]/@value", false))
-        { /* Ignore it */ }
-        else if (edge.getPropBool("att[@name=\"_childGraph\"]/@value", false))
-        {
-            // NB: any dependencies of the child acts. are dependencies of this act.
-            childGraphs.append(*source);
-            targetActivities.append(*targetActivity);
-            sourceActivities.append(*sourceActivity);
-        }
-        else
-        {
-            if (!edge.getPropBool("att[@name=\"_childGraph\"]/@value", false)) // JCSMORE - not sure if necess. roxie seem to do.
-                controlId = edge.getPropInt("att[@name=\"_when\"]/@value", 0);
-            noteDependency(targetActivity, sourceActivity, target, source, controlId);
-        }
-    }
-    ForEachItemIn(c, childGraphs)
-    {
-        CGraphBase &childGraph = childGraphs.item(c);
-        CGraphElementBase &targetActivity = targetActivities.item(c);
-        CGraphElementBase &sourceActivity = sourceActivities.item(c);
-        if (!childGraph.isGlobal())
-        {
-            CICopyArrayOf<CGraphDependency> globalChildGraphDeps;
-            getGlobalDeps(childGraph, globalChildGraphDeps);
-            ForEachItemIn(gcd, globalChildGraphDeps)
-            {
-                CGraphDependency &globalDep = globalChildGraphDeps.item(gcd);
-                noteDependency(&targetActivity, &sourceActivity, globalDep.graph, &childGraph, globalDep.controlId);
-            }
-        }
-    }
-
-    SuperHashIteratorOf<CGraphBase> allIter(allGraphs);
-    ForEach(allIter)
-    {
-        CGraphBase &subGraph = allIter.query();
-        if (subGraph.queryOwner() && subGraph.queryParentActivityId())
-        {
-            CGraphElementBase *parentElement = subGraph.queryOwner()->queryElement(subGraph.queryParentActivityId());
-            if (isLoopActivity(*parentElement))
-            {
-                if (!parentElement->queryOwner().isLocalChild() && !subGraph.isLocalOnly())
-                    subGraph.setGlobal(true);
-            }
-        }
-    }
+    ::addDependencies(xgmml, failIfMissing, allGraphs);
 }
 
 IThorGraphIterator *CJobChannel::getSubGraphs()
