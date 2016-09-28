@@ -359,9 +359,7 @@ class graphslave_decl CSlaveGraph : public CGraphBase
 {
     CJobSlave *jobS;
     Semaphore getDoneSem;
-    bool initialized, progressActive, progressToCollect;
     CriticalSection progressCrit;
-    SpinLock progressActiveLock; // MORE use atomic variables (and progressToCollect.exchange()) to remove this spin lock
     bool doneInit = false;
 
 public:

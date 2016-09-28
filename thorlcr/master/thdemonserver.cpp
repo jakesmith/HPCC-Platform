@@ -72,7 +72,7 @@ private:
         try
         {
             StatsSubgraphScope subgraph(stats, graph->queryGraphId());
-            if (graph->isInitialized())
+            if (graph->hasProgressUpdated())
                 doReportGraph(stats, graph, finished);
             Owned<IThorGraphIterator> graphIter = graph->getChildGraphIterator();
             ForEach (*graphIter)

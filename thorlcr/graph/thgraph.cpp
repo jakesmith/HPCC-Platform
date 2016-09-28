@@ -1143,7 +1143,7 @@ static void addDependencies(IPropertyTree *xgmml, bool failIfMissing, CGraphTabl
 
 /////
 
-CGraphBase::CGraphBase(CJobChannel &_jobChannel) : jobChannel(_jobChannel), job(_jobChannel.queryJob())
+CGraphBase::CGraphBase(CJobChannel &_jobChannel) : jobChannel(_jobChannel), job(_jobChannel.queryJob()), progressUpdated(false)
 {
     xgmml = NULL;
     parent = owner = graphResultsContainer = NULL;
@@ -1225,6 +1225,7 @@ void CGraphBase::deserializeCreateContexts(MemoryBuffer &mb)
 void CGraphBase::reset()
 {
     setCompleteEx(false);
+    clearProgressUpdated();
     graphCancelHandler.reset();
     if (0 == containers.count())
     {
