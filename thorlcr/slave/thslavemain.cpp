@@ -364,6 +364,8 @@ int main( int argc, char *argv[]  )
         markNodeCentral(masterEp);
         if (RegisterSelf(masterEp))
         {
+            setStatisticsComponentName(SCTthorSlave, globals->queryProp("@name"), true);
+
             if (globals->getPropBool("Debug/@slaveDaliClient"))
                 enableThorSlaveAsDaliClient();
 

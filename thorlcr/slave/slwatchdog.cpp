@@ -35,6 +35,7 @@ class CGraphProgressHandlerBase : public CSimpleInterface, implements ISlaveWatc
     bool stopped, progressEnabled;
     CThreaded threaded;
     SocketEndpoint self;
+    Owned<IStatisticGatherer> collector;
 
     void gatherAndSend()
     {
@@ -65,6 +66,10 @@ public:
 
         progressEnabled = globals->getPropBool("@watchdogProgressEnabled");
         stopped = false;
+
+        StatsScopeId rootScopeId; // undefined!
+//        verifyex(rootScopeId.setScopeText("tmp"));
+        collector.setown(createStatisticsGatherer(queryStatisticsComponentType(), queryStatisticsComponentName(), rootScopeId));
 #ifdef _WIN32
         threaded.adjustPriority(+1); // it is critical that watchdog packets get through.
 #endif
@@ -98,10 +103,12 @@ public:
                 ForEachItemIn(g, activeGraphs) // NB: 1 for each slavesPerProcess
                 {
                     CGraphBase &graph = activeGraphs.item(g);
-                    progressData.append((unsigned)graph.queryJobChannel().queryMyRank()-1);
-                    if (!graph.serializeStats(progressData))
-                        progressData.setLength(progressData.length()-sizeof(unsigned));
+                    StatsScopeId channelScopeId(SSTsection, (unsigned)graph.queryJobChannel().queryMyRank()-1);
+                    StatsScope channelScope(*collector, channelScopeId);
+                    graph.gatherStats(*collector);
                 }
+                Owned<IStatisticCollection> stats = collector->getResult();
+                serializeStatisticCollection(progressData, stats);
             }
             size32_t sz = progressData.length();
             if (sz)

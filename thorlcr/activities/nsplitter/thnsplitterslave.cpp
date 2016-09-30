@@ -50,6 +50,7 @@ public:
     virtual CSlaveActivity *queryFromActivity() override;
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override;
     virtual void dataLinkSerialize(MemoryBuffer &mb) const override { CEdgeProgress::dataLinkSerialize(mb); }
+    virtual void gatherStats(IStatisticGatherer &stats) { CEdgeProgress::gatherStats(stats); }
     virtual rowcount_t getProgressCount() const override { return CEdgeProgress::getCount(); }
     virtual bool isGrouped() const override;
     virtual IOutputMetaData * queryOutputMeta() const override;

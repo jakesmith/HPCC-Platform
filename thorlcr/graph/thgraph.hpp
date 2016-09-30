@@ -729,6 +729,7 @@ public:
     virtual void executeChild(size32_t parentExtractSz, const byte *parentExtract, IThorGraphResults *results, IThorGraphResults *graphLoopResults);
     virtual void executeChild(size32_t parentExtractSz, const byte *parentExtract);
     virtual bool serializeStats(MemoryBuffer &mb) override { return false; }
+    virtual void gatherStats(IStatisticGatherer &stats) { }
     virtual bool prepare(size32_t parentExtractSz, const byte *parentExtract, bool checkDependencies, bool shortCircuit, bool async);
     virtual bool preStart(size32_t parentExtractSz, const byte *parentExtract);
     virtual void start() = 0;

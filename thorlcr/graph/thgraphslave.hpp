@@ -103,6 +103,11 @@ public:
     inline bool hasStarted() const { return (count & THORDATALINK_STARTED) ? true : false; }
     inline bool hasStopped() const { return (count & THORDATALINK_STOPPED) ? true : false; }
     inline void dataLinkSerialize(MemoryBuffer &mb) const { mb.append(count); }
+    inline void gatherStats(IStatisticGatherer &stats)
+    {
+        StatsEdgeScope edgeScope(stats, owner.queryId(), outputId);
+        stats.addStatistic(StNumRowsProcessed, count);
+    }
     inline rowcount_t getDataLinkGlobalCount() { return (count & THORDATALINK_COUNT_MASK); }
     inline rowcount_t getDataLinkCount() const { return icount; }
     inline rowcount_t getCount() const { return count; }
@@ -188,6 +193,7 @@ public:
     void startAllInputs();
     void stopInput(unsigned index, const char *extra=NULL);
     void stopAllInputs();
+    virtual void gatherStats(IStatisticGatherer &stats);
     virtual void serializeStats(MemoryBuffer &mb);
     void debugRequest(unsigned edgeIdx, MemoryBuffer &msg);
 
@@ -378,7 +384,8 @@ public:
     IThorResult *getGlobalResult(CActivityBase &activity, IThorRowInterfaces *rowIf, activity_id ownerId, unsigned id);
 
     virtual void executeSubGraph(size32_t parentExtractSz, const byte *parentExtract) override;
-    virtual bool serializeStats(MemoryBuffer &mb);
+    virtual void gatherStats(IStatisticGatherer &stats) override;
+    virtual bool serializeStats(MemoryBuffer &mb) override;
     virtual bool preStart(size32_t parentExtractSz, const byte *parentExtract) override;
     virtual void start() override;
     virtual void abort(IException *e) override;

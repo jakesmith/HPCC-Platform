@@ -196,26 +196,35 @@ public:
         {
             MemoryBuffer uncompressedMb;
             ThorExpand(progressMb.readDirect(compressedProgressSz), compressedProgressSz, uncompressedMb);
-            do
+
+            Owned<IStatisticCollection> collection = createStatisticCollection(uncompressedMb);
+            Owned<IStatisticCollectionIterator> slaveIter = &collection->getScopes(nullptr);
+            ForEach(*slaveIter)
             {
-                graph_id graphId;
-                unsigned slave;
-                uncompressedMb.read(slave);
-                uncompressedMb.read(graphId);
-                CMasterGraph *graph = NULL;
-                ForEachItemIn(g, activeGraphs) if (activeGraphs.item(g).queryGraphId() == graphId) graph = (CMasterGraph *)&activeGraphs.item(g);
-                if (!graph)
+                IStatisticCollection &slaveCollection = slaveIter->query();
+                StringBuffer slaveScope;
+                slaveCollection.getScope(slaveScope);
+                Owned<IStatisticCollectionIterator> graphIter = &slaveCollection.getScopes(nullptr);
+                ForEach(*graphIter)
                 {
-                    LOG(MCdebugProgress, unknownJob, "heartbeat received from unknown graph %" GIDPF "d", graphId);
-                    break;
-                }
-                if (!graph->deserializeStats(slave, uncompressedMb))
-                {
-                    LOG(MCdebugProgress, unknownJob, "heartbeat error in graph %" GIDPF "d", graphId);
-                    break;
+                    StringBuffer graphScope;
+                    slaveCollection.getScope(graphScope);
+                    graph_id graphId = 0; // TBD
+                    unsigned slave = 0; // TBD
+                    CMasterGraph *graph = NULL;
+                    ForEachItemIn(g, activeGraphs) if (activeGraphs.item(g).queryGraphId() == graphId) graph = (CMasterGraph *)&activeGraphs.item(g);
+                    if (!graph)
+                    {
+                        LOG(MCdebugProgress, unknownJob, "heartbeat received from unknown graph %" GIDPF "d", graphId);
+                        break;
+                    }
+                    if (!graph->deserializeStats(slave, uncompressedMb))
+                    {
+                        LOG(MCdebugProgress, unknownJob, "heartbeat error in graph %" GIDPF "d", graphId);
+                        break;
+                    }
                 }
             }
-            while (uncompressedMb.remaining());
         }
         unsigned now=msTick();
         if (now-lastReport > 1000*reportRate)

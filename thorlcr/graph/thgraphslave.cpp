@@ -437,6 +437,22 @@ unsigned __int64 CSlaveActivity::queryLocalCycles() const
     return _totalCycles-inputCycles;
 }
 
+void CSlaveActivity::gatherStats(IStatisticGatherer &stats)
+{
+    CriticalBlock b(crit);
+    StatsActivityScope scope(stats, queryId());
+    stats.addStatistic(StTimeLocalExecute, (unsigned __int64)cycle_to_nanosec(queryLocalCycles()));
+    ForEachItemIn(oid, outputs)
+    {
+        IThorDataLink *output = queryOutput(oid);
+        if (output) // JCSMORE - not sure can be null?
+        {
+            StatsEdgeScope edgeScope(stats, queryId(), oid);
+            output->gatherStats(stats);
+        }
+    }
+}
+
 void CSlaveActivity::serializeStats(MemoryBuffer &mb)
 {
     CriticalBlock b(crit);
@@ -1093,6 +1109,24 @@ void CSlaveGraph::done()
     }
     if (exception.get())
         throw LINK(exception.get());
+}
+
+void CSlaveGraph::gatherStats(IStatisticGatherer &stats)
+{
+    StatsSubgraphScope subgraph(stats, queryGraphId());
+    Owned<IThorActivityIterator> iter = getConnectedIterator();
+    ForEach (*iter)
+    {
+        CSlaveActivity *activity = (CSlaveActivity *)iter->query().queryActivity();
+        activity->gatherStats(stats);
+    }
+    Owned<IThorGraphIterator> childIter = getChildGraphs();
+    ForEach(*childIter)
+    {
+        CGraphBase &stub = childIter->query();
+        StatsSubgraphScope subgraph(stats, stub.queryGraphId());
+        stub.gatherStats(stats);
+    }
 }
 
 bool CSlaveGraph::serializeStats(MemoryBuffer &mb)

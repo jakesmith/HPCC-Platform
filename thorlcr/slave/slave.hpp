@@ -102,6 +102,7 @@ interface IThorDataLink : extends IInterface
     virtual IStrandJunction *getOutputStreams(CActivityBase &_ctx, unsigned idx, PointerArrayOf<IEngineRowStream> &streams, const CThorStrandOptions * consumerOptions, bool consumerOrdered, IOrderedCallbackCollection * orderedCallbacks) = 0;
     virtual void setOutputStream(unsigned index, IEngineRowStream *stream) = 0;
 // progress methods
+    virtual void gatherStats(IStatisticGatherer &stats) = 0;
     virtual void dataLinkSerialize(MemoryBuffer &mb) const = 0;
     virtual rowcount_t getProgressCount() const = 0;
 // timing methods
