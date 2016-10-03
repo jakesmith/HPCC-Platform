@@ -2441,7 +2441,7 @@ void CHThorGroupDedupKeepLeftActivity::resetEOF()
 
 //=====================================================================================================
 
-CHThorGroupDedupKeepRightActivity::CHThorGroupDedupKeepRightActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorDedupArg &_arg, ThorActivityKind _kind) : CHThorGroupDedupActivity(_agent, _activityId, _subgraphId, _arg, _kind), compareBest(0)
+CHThorGroupDedupKeepRightActivity::CHThorGroupDedupKeepRightActivity(IAgentContext &_agent, unsigned _activityId, unsigned _subgraphId, IHThorDedupArg &_arg, ThorActivityKind _kind) : CHThorGroupDedupActivity(_agent, _activityId, _subgraphId, _arg, _kind), compareBest(nullptr)
 {
 }
 

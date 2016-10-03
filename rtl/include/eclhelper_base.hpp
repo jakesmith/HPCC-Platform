@@ -2114,7 +2114,7 @@ class CThorHashDedupArg : implements IHThorHashDedupArg, public CThorArg
         return NULL;
     }
 
-    virtual unsigned getFlags() { return HDFkeepleft;; }
+    virtual unsigned getFlags() { return HDFkeepleft; }
     virtual ICompare * queryCompareBest() { return NULL; }
     virtual IOutputMetaData * queryKeySize() { return NULL; }
     virtual size32_t recordToKey(ARowBuilder & rowBuilder, const void * _record) { return 0; }

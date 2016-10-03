@@ -7200,17 +7200,18 @@ class CRoxieServerDedupKeepRightActivity : public CRoxieServerDedupActivity
 public:
 
     CRoxieServerDedupKeepRightActivity(IRoxieSlaveContext *_ctx, const IRoxieServerActivityFactory *_factory, IProbeManager *_probeManager)
-        : CRoxieServerDedupActivity(_ctx, _factory, _probeManager), compareBest(0)
+        : CRoxieServerDedupActivity(_ctx, _factory, _probeManager), compareBest(nullptr)
     {
-        kept = NULL;
+        kept = nullptr;
         first = true;
         if (helper.keepBest())
-            compareBest = helper.queryCompareBest();    }
+            compareBest = helper.queryCompareBest();
+    }
 
     virtual void start(unsigned parentExtractSize, const byte *parentExtract, bool paused)
     {
         first = true;
-        kept = NULL;
+        kept = nullptr;
         CRoxieServerDedupActivity::start(parentExtractSize, parentExtract, paused);
     }
 
@@ -7489,7 +7490,8 @@ class CRoxieServerHashDedupActivity : public CRoxieServerActivity
         }
         ~HashDedupElement()
         {
-            ReleaseRoxieRow(keyRow);
+            if (keyRow)
+                ReleaseRoxieRow(keyRow);
         }
         inline unsigned queryHash() const
         {
@@ -7498,6 +7500,12 @@ class CRoxieServerHashDedupActivity : public CRoxieServerActivity
         inline const void *queryRow() const
         {
             return keyRow;
+        }
+        inline const void *getRowClear()
+        {
+            const void * row = keyRow;
+            keyRow = nullptr;
+            return row;
         }
     private:
         unsigned hash;
@@ -7622,7 +7630,7 @@ public:
             // Populate hash table with best rows
             if (!hashTableFilled)
             {
-                const void * next(inputStream->nextRow());
+                const void * next = inputStream->nextRow();
                 while(next)
                 {
                     table.insertBest(next);
@@ -7639,7 +7647,7 @@ public:
             {
                 HashDedupElement &el = hashDedupTableIter.query();
 
-                const void * row = el.queryRow();
+                const void * row = el.getRowClear();
                 hashDedupTableIter.next();
                 return row;
             }

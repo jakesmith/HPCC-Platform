@@ -3058,7 +3058,11 @@ public:
         if (keepBestRowsReadyToReturn)
         {
             if (bucketHandlerIterator->next())
-                return bucketHandlerIterator->query();
+            {
+                const void * row = bucketHandlerIterator->query();
+                LinkThorRow(row);
+                return row;
+            }
             // drop-through
         }
         // bucket handlers, stream out non-duplicates (1st entry in HT)
@@ -3090,7 +3094,9 @@ public:
                     if (bucketHandlerIterator->first())
                     {
                         keepBestRowsReadyToReturn = true;
-                        return bucketHandlerIterator->query();
+                        const void * row = bucketHandlerIterator->query();
+                        LinkThorRow(row);
+                        return row;
                     }
                 }
                 keepBestRowsReadyToReturn = false;
