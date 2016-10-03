@@ -448,7 +448,7 @@ void CSlaveActivity::gatherStats(IStatisticGatherer &stats)
         if (output) // JCSMORE - not sure can be null?
         {
             StatsEdgeScope edgeScope(stats, queryId(), oid);
-            output->gatherStats(stats);
+            output->gatherEdgeStats(stats);
         }
     }
 }
@@ -483,6 +483,11 @@ bool CSlaveActivity::isGrouped() const
 IOutputMetaData *CSlaveActivity::queryOutputMeta() const
 {
     return queryHelper()->queryOutputMeta();
+}
+
+void CSlaveActivity::gatherEdgeStats(IStatisticGatherer &stats) const
+{
+    CEdgeProgress::gatherEdgeStats(stats);
 }
 
 void CSlaveActivity::dataLinkSerialize(MemoryBuffer &mb) const

@@ -103,7 +103,7 @@ public:
     inline bool hasStarted() const { return (count & THORDATALINK_STARTED) ? true : false; }
     inline bool hasStopped() const { return (count & THORDATALINK_STOPPED) ? true : false; }
     inline void dataLinkSerialize(MemoryBuffer &mb) const { mb.append(count); }
-    inline void gatherStats(IStatisticGatherer &stats)
+    inline void gatherEdgeStats(IStatisticGatherer &stats) const
     {
         StatsEdgeScope edgeScope(stats, owner.queryId(), outputId);
         stats.addStatistic(StNumRowsProcessed, count);
@@ -204,6 +204,7 @@ public:
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override { }
     virtual bool isGrouped() const override;
     virtual IOutputMetaData * queryOutputMeta() const;
+    virtual void gatherEdgeStats(IStatisticGatherer &stats) const override;
     virtual void dataLinkSerialize(MemoryBuffer &mb) const override;
     virtual rowcount_t getProgressCount() const override;
     virtual bool isInputOrdered(bool consumerOrdered) const override
