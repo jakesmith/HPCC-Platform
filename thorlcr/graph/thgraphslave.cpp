@@ -1125,7 +1125,7 @@ void CSlaveGraph::gatherStats(IStatisticGatherer &stats)
         CSlaveActivity *activity = (CSlaveActivity *)iter->query().queryActivity();
         activity->gatherStats(stats);
     }
-    Owned<IThorGraphIterator> childIter = getChildGraphs();
+    Owned<IThorGraphIterator> childIter = getChildGraphIterator();
     ForEach(*childIter)
     {
         CGraphBase &stub = childIter->query();

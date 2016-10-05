@@ -2656,7 +2656,7 @@ void CMasterGraph::setComplete(bool tf)
     }
 }
 
-bool CMasterGraph::deserializeStats(unsigned node, MemoryBuffer &mb)
+bool CMasterGraph::deserializeStats(unsigned slave, MemoryBuffer &mb)
 {
     CriticalBlock b(createdCrit);
     unsigned count, _count;
@@ -2699,7 +2699,7 @@ bool CMasterGraph::deserializeStats(unsigned node, MemoryBuffer &mb)
                 }
             }
             if (activity)
-                activity->deserializeStats(node, mb);
+                activity->deserializeStats(slave, mb);
         }
         else
         {
@@ -2717,7 +2717,74 @@ bool CMasterGraph::deserializeStats(unsigned node, MemoryBuffer &mb)
         Owned<CMasterGraph> graph = (CMasterGraph *)job.queryJobChannel(0).getGraph(subId);
         if (NULL == graph.get())
             return false;
-        if (!graph->deserializeStats(node, mb))
+        if (!graph->deserializeStats(slave, mb))
+            return false;
+    }
+    return true;
+}
+
+bool CMasterGraph::ungatherStats(unsigned slave, MemoryBuffer &mb)
+{
+    CriticalBlock b(createdCrit);
+    unsigned count, _count;
+    mb.read(count);
+    if (count)
+        setProgressUpdated();
+    _count = count;
+    while (count--)
+    {
+        activity_id activityId;
+        mb.read(activityId);
+        CMasterActivity *activity = NULL;
+        CMasterGraphElement *element = (CMasterGraphElement *)queryElement(activityId);
+        if (element)
+        {
+            activity = (CMasterActivity *)element->queryActivity();
+            if (!activity)
+            {
+                CGraphBase *parentGraph = element->queryOwner().queryOwner(); // i.e. am I in a childgraph
+                if (!parentGraph)
+                {
+                    GraphPrintLog("Activity id=%" ACTPF "d not created in master and not a child query activity", activityId);
+                    return false; // don't know if or how this could happen, but all bets off with packet if did.
+                }
+                Owned<IException> e;
+                try
+                {
+                    element->createActivity();
+                    activity = (CMasterActivity *)element->queryActivity();
+                }
+                catch (IException *_e)
+                {
+                    e.setown(_e);
+                    GraphPrintLog(_e, "In deserializeStats");
+                }
+                if (!activity || e.get())
+                {
+                    GraphPrintLog("Activity id=%" ACTPF "d failed to created child query activity ready for progress", activityId);
+                    return false;
+                }
+            }
+            if (activity)
+                activity->deserializeStats(slave, mb);
+        }
+        else
+        {
+            GraphPrintLog("Failed to find activity, during progress deserialization, id=%" ACTPF "d", activityId);
+            return false; // don't know if or how this could happen, but all bets off with packet if did.
+        }
+    }
+    unsigned subs, _subs;
+    mb.read(subs);
+    _subs = subs;
+    while (subs--)
+    {
+        graph_id subId;
+        mb.read(subId);
+        Owned<CMasterGraph> graph = (CMasterGraph *)job.queryJobChannel(0).getGraph(subId);
+        if (NULL == graph.get())
+            return false;
+        if (!graph->deserializeStats(slave, mb))
             return false;
     }
     return true;

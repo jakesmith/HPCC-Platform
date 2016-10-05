@@ -46,7 +46,8 @@ public:
 
     unsigned getHash() const;
     bool matches(const StatsScopeId & other) const;
-    unsigned queryActivity() const;
+    unsigned queryId() const { return id; }
+    unsigned queryActivity() const; // returns id, if SSTactivity or SSTedge types
 
     void deserialize(MemoryBuffer & in, unsigned version);
     void serialize(MemoryBuffer & out) const;
@@ -72,6 +73,7 @@ interface IStatisticCollectionIterator;
 interface IStatisticCollection : public IInterface
 {
 public:
+    virtual unsigned queryScopeId() const = 0;
     virtual StatisticScopeType queryScopeType() const = 0;
     virtual StringBuffer & getFullScope(StringBuffer & str) const = 0;
     virtual StringBuffer & getScope(StringBuffer & str) const = 0;

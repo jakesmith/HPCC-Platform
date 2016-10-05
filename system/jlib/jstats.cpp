@@ -1045,6 +1045,11 @@ void StatsScopeId::deserialize(MemoryBuffer & in, unsigned version)
     case SSTfunction:
         in.read(name);
         break;
+    case SSTglobal:
+        break;
+    case SSTsection:
+        in.read(id);
+        break;
     default:
         throwUnexpected();
         break;
@@ -1067,6 +1072,11 @@ void StatsScopeId::serialize(MemoryBuffer & out) const
         break;
     case SSTfunction:
         out.append(name);
+        break;
+    case SSTglobal:
+        break;
+    case SSTsection:
+        out.append(id);
         break;
     default:
         throwUnexpected();
@@ -1190,6 +1200,7 @@ public:
     {
         return id.queryScopeType();
     }
+    virtual unsigned queryScopeId() const { return id.queryId(); }
     virtual unsigned __int64 queryWhenCreated() const
     {
         if (parent)

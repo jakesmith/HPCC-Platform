@@ -203,14 +203,11 @@ public:
             {
                 IStatisticCollection &slaveCollection = slaveIter->query();
                 StringBuffer slaveScope;
-                slaveCollection.getScope(slaveScope);
+                unsigned slaveId = slaveCollection.queryScopeId();
                 Owned<IStatisticCollectionIterator> graphIter = &slaveCollection.getScopes(nullptr);
                 ForEach(*graphIter)
                 {
-                    StringBuffer graphScope;
-                    slaveCollection.getScope(graphScope);
-                    graph_id graphId = 0; // TBD
-                    unsigned slave = 0; // TBD
+                    graph_id graphId = slaveCollection.queryScopeId();
                     CMasterGraph *graph = NULL;
                     ForEachItemIn(g, activeGraphs) if (activeGraphs.item(g).queryGraphId() == graphId) graph = (CMasterGraph *)&activeGraphs.item(g);
                     if (!graph)
@@ -218,7 +215,7 @@ public:
                         LOG(MCdebugProgress, unknownJob, "heartbeat received from unknown graph %" GIDPF "d", graphId);
                         break;
                     }
-                    if (!graph->deserializeStats(slave, uncompressedMb))
+                    if (!graph->deserializeStats(slaveId, uncompressedMb))
                     {
                         LOG(MCdebugProgress, unknownJob, "heartbeat error in graph %" GIDPF "d", graphId);
                         break;

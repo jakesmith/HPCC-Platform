@@ -66,7 +66,8 @@ public:
     void handleSlaveDone(unsigned node, MemoryBuffer &mb);
     bool serializeActivityInitData(unsigned slave, MemoryBuffer &mb, IThorActivityIterator &iter);
     void readActivityInitData(MemoryBuffer &mb, unsigned slave);
-    bool deserializeStats(unsigned node, MemoryBuffer &mb);
+    bool deserializeStats(unsigned slave, MemoryBuffer &mb);
+    bool ungatherStats(unsigned slave, MemoryBuffer &mb);
     virtual void setComplete(bool tf=true);
     virtual bool prepare(size32_t parentExtractSz, const byte *parentExtract, bool checkDependencies, bool shortCircuit, bool async) override;
     virtual void execute(size32_t _parentExtractSz, const byte *parentExtract, bool checkDependencies, bool async) override;
