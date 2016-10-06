@@ -67,7 +67,7 @@ public:
         progressEnabled = globals->getPropBool("@watchdogProgressEnabled");
         stopped = false;
 
-        StatsScopeId rootScopeId(SSTglobal, (unsigned)0);
+        StatsScopeId rootScopeId(SSTglobal);
         collector.setown(createStatisticsGatherer(queryStatisticsComponentType(), queryStatisticsComponentName(), rootScopeId));
 #ifdef _WIN32
         threaded.adjustPriority(+1); // it is critical that watchdog packets get through.

@@ -34,6 +34,7 @@ class DeMonServer : public CSimpleInterface, implements IDeMonServer
 {
 private:
     Mutex mutex;
+    Owned<IStatisticGatherer> collector;
     unsigned lastReport;
     unsigned reportRate;
     CIArrayOf<CGraphBase> activeGraphs;
@@ -180,6 +181,8 @@ public:
     {
         lastReport = msTick();
         reportRate = globals->getPropInt("@watchdogProgressInterval", 30);
+        StatsScopeId rootScopeId(SSTglobal);
+        collector.setown(createStatisticsGatherer(queryStatisticsComponentType(), queryStatisticsComponentName(), rootScopeId));
     }
 
     virtual void takeHeartBeat(MemoryBuffer &progressMb)
@@ -198,6 +201,9 @@ public:
             ThorExpand(progressMb.readDirect(compressedProgressSz), compressedProgressSz, uncompressedMb);
 
             Owned<IStatisticCollection> collection = createStatisticCollection(uncompressedMb);
+            collector->merge(*collection);
+
+
             Owned<IStatisticCollectionIterator> slaveIter = &collection->getScopes(nullptr);
             ForEach(*slaveIter)
             {
@@ -207,7 +213,8 @@ public:
                 Owned<IStatisticCollectionIterator> graphIter = &slaveCollection.getScopes(nullptr);
                 ForEach(*graphIter)
                 {
-                    graph_id graphId = slaveCollection.queryScopeId();
+                    IStatisticCollection &graphCollection = graphIter->query();
+                    graph_id graphId = graphCollection.queryScopeId();
                     CMasterGraph *graph = NULL;
                     ForEachItemIn(g, activeGraphs) if (activeGraphs.item(g).queryGraphId() == graphId) graph = (CMasterGraph *)&activeGraphs.item(g);
                     if (!graph)
@@ -215,7 +222,7 @@ public:
                         LOG(MCdebugProgress, unknownJob, "heartbeat received from unknown graph %" GIDPF "d", graphId);
                         break;
                     }
-                    if (!graph->deserializeStats(slaveId, uncompressedMb))
+                    if (!graph->ungatherStats(slaveId, uncompressedMb))
                     {
                         LOG(MCdebugProgress, unknownJob, "heartbeat error in graph %" GIDPF "d", graphId);
                         break;

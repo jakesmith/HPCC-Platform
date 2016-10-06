@@ -32,7 +32,7 @@ class jlib_decl StatsScopeId
 {
 public:
     StatsScopeId() {}
-    StatsScopeId(StatisticScopeType _scopeType, unsigned _id, unsigned _extra = 0)
+    StatsScopeId(StatisticScopeType _scopeType, unsigned _id = 0, unsigned _extra = 0)
         : id(_id), extra(_extra), scopeType(_scopeType)
     {
     }
@@ -73,6 +73,7 @@ interface IStatisticCollectionIterator;
 interface IStatisticCollection : public IInterface
 {
 public:
+    virtual const StatsScopeId &queryScope() const = 0;
     virtual unsigned queryScopeId() const = 0;
     virtual StatisticScopeType queryScopeType() const = 0;
     virtual StringBuffer & getFullScope(StringBuffer & str) const = 0;
@@ -111,6 +112,7 @@ public:
     virtual void endScope() = 0;
     virtual void addStatistic(StatisticKind kind, unsigned __int64 value) = 0;
     virtual void updateStatistic(StatisticKind kind, unsigned __int64 value, StatsMergeAction mergeAction) = 0;
+    virtual void merge(IStatisticCollection &collection) = 0;
     virtual IStatisticCollection * getResult() = 0;
 };
 

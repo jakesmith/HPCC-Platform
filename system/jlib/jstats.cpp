@@ -1196,6 +1196,7 @@ public:
     StringBuffer &toXML(StringBuffer &out) const;
 
 //interface IStatisticCollection:
+    virtual const StatsScopeId &queryScope() const { return id; }
     virtual StatisticScopeType queryScopeType() const
     {
         return id.queryScopeType();
@@ -1525,6 +1526,18 @@ public:
     {
         CStatisticCollection & tos = scopes.tos();
         tos.updateStatistic(kind, value, mergeAction);
+    }
+    virtual void merge(IStatisticCollection &collection)
+    {
+        beginScope(collection.queryScope());
+        Owned<IStatisticCollectionIterator> iter = &collection.getScopes(nullptr);
+        ForEach(*iter)
+        {
+            IStatisticCollection &subCollection = iter->query();
+            merge(subCollection);
+
+        }
+        endScope();
     }
     virtual IStatisticCollection * getResult()
     {
