@@ -31,7 +31,7 @@
 class CGraphProgressHandlerBase : public CSimpleInterface, implements ISlaveWatchdog, implements IThreaded
 {
     mutable CriticalSection crit;
-    CGraphArray activeGraphs;
+    IArrayOf<CJobBase> jobs;
     bool stopped, progressEnabled;
     CThreaded threaded;
     SocketEndpoint self;
@@ -99,12 +99,10 @@ public:
             MemoryBuffer progressData;
             {
                 CriticalBlock b(crit);
-                ForEachItemIn(g, activeGraphs) // NB: 1 for each slavesPerProcess
+                ForEachItemIn(j, jobs)
                 {
-                    CGraphBase &graph = activeGraphs.item(g);
-                    StatsScopeId channelScopeId(SSTsection, (unsigned)graph.queryJobChannel().queryMyRank()-1);
-                    StatsScope channelScope(*collector, channelScopeId);
-                    graph.gatherStats(*collector);
+                    CJobBase &job = jobs.item(j);
+                    job.gatherStats(*collector);
                 }
                 Owned<IStatisticCollection> stats = collector->getResult();
                 serializeStatisticCollection(progressData, stats);
@@ -120,57 +118,6 @@ public:
     }
 
 // ISlaveWatchdog impl.
-    void startGraph(CGraphBase &graph)
-    {
-        CriticalBlock b(crit);
-        activeGraphs.append(*LINK(&graph));
-        StringBuffer str("Watchdog: Start Job ");
-        LOG(MCdebugProgress, thorJob, "%s", str.append(graph.queryGraphId()).str());
-    }
-    void stopGraph(CGraphBase &graph, MemoryBuffer *mb)
-    {
-        CriticalBlock b(crit);
-        if (NotFound != activeGraphs.find(graph))
-        {
-            StringBuffer str("Watchdog: Stop Job ");
-            LOG(MCdebugProgress, thorJob, "%s", str.append(graph.queryGraphId()).str());
-            if (mb)
-            {
-                DelayedSizeMarker sizeMark(*mb);
-                gatherData(*mb);
-                sizeMark.write();
-            }
-            activeGraphs.zap(graph);
-        }
-    }
-    virtual void debugRequest(MemoryBuffer &msg, const char *request) const
-    {
-        Owned<IPTree> req = createPTreeFromXMLString(request);
-
-        StringBuffer edgeString;
-        req->getProp("@edgeId", edgeString);
-
-        // Split edge string in activityId and edgeIdx
-        const char *pEdge=edgeString.str();
-        const activity_id actId = (activity_id)_atoi64(pEdge);
-        if (!actId) return;
-
-        while (*pEdge && *pEdge!='_')  ++pEdge;
-        if (!*pEdge) return;
-        const unsigned edgeIdx = (unsigned)_atoi64(++pEdge);
-
-        CriticalBlock b(crit);
-        ForEachItemIn(g, activeGraphs) // NB: 1 for each slavesPerProcess
-        {
-            CGraphBase &graph = activeGraphs.item(g);
-            CGraphElementBase *element = graph.queryElement(actId);
-            if (element)
-            {
-                CSlaveActivity *activity = (CSlaveActivity*) element->queryActivity();
-                if (activity) activity->debugRequest(edgeIdx, msg);
-            }
-        }
-    }
 
 // IThreaded
     void main()

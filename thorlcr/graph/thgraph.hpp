@@ -729,7 +729,7 @@ public:
     virtual void executeChild(size32_t parentExtractSz, const byte *parentExtract, IThorGraphResults *results, IThorGraphResults *graphLoopResults);
     virtual void executeChild(size32_t parentExtractSz, const byte *parentExtract);
     virtual bool serializeStats(MemoryBuffer &mb) override { return false; }
-    virtual void gatherStats(IStatisticGatherer &stats) { }
+    virtual void gatherStats(IStatisticGatherer &collector) { }
     virtual bool prepare(size32_t parentExtractSz, const byte *parentExtract, bool checkDependencies, bool shortCircuit, bool async);
     virtual bool preStart(size32_t parentExtractSz, const byte *parentExtract);
     virtual void start() = 0;
@@ -855,6 +855,7 @@ public:
     void addDependencies(IPropertyTree *xgmml, bool failIfMissing=true);
     void addSubGraph(IPropertyTree &xgmml);
 
+    void gatherStats(IStatisticGatherer &collector);
     bool queryUseCheckpoints() const;
     bool queryPausing() const { return pausing; }
     bool queryResumed() const { return resumed; }
@@ -937,6 +938,8 @@ protected:
     Owned<CThorCodeContextBase> codeCtx;
     Owned<CThorCodeContextBase> sharedMemCodeCtx;
     unsigned channel;
+    CICopyArrayOf<CGraphBase> activeGraphs;
+    mutable CriticalSection activeGraphCrit;
 
     void removeAssociates(CGraphBase &graph)
     {
@@ -955,6 +958,8 @@ public:
     CJobChannel(CJobBase &job, IMPServer *mpServer, unsigned channel);
     ~CJobChannel();
 
+    void addActiveGraph(CGraphBase &graph);
+    void removeActiveGraph(CGraphBase &graph);
     CJobBase &queryJob() const { return job; }
     void clean();
     void init();
@@ -986,6 +991,7 @@ public:
         return LINK(allGraphs.find(gid));
     }
 
+    virtual void gatherStats(IStatisticGatherer &collector);
     ICodeContext &queryCodeContext() const;
     ICodeContext &querySharedMemCodeContext() const;
     IThorResult *getOwnedResult(graph_id gid, activity_id ownerId, unsigned resultId);

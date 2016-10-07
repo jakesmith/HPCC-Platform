@@ -2705,6 +2705,15 @@ void CJobBase::endJob()
     PrintMemoryStatusLog();
 }
 
+void CJobBase::gatherStats(IStatisticGatherer &collector)
+{
+    ForEachItemIn(c, jobChannels)
+    {
+        CJobChannel &channel = jobChannels.item(c);
+        channel.gatherStats(collector);
+    }
+}
+
 bool CJobBase::queryForceLogging(graph_id graphId, bool def) const
 {
     // JCSMORE, could add comma separated range, e.g. 1-5,10-12
@@ -2823,6 +2832,28 @@ CJobChannel::~CJobChannel()
     clean();
     codeCtx.clear();
     timeReporter->Release();
+}
+
+void CJobChannel::addActiveGraph(CGraphBase &graph)
+{
+    CriticalBlock b(activeGraphCrit);
+    dbgassertex(NotFound == activeGraphs.find(graph));
+    activeGraphs.append(graph);
+}
+
+void CJobChannel::removeActiveGraph(CGraphBase &graph)
+{
+    CriticalBlock b(activeGraphCrit);
+    verifyex(NotFound != activeGraphs.find(graph));
+}
+
+void CJobChannel::gatherStats(IStatisticGatherer &collector)
+{
+    ForEachItemIn(g, activeGraphs)
+    {
+        CGraphBase &graph = activeGraphs.item(g);
+        graph.gatherStats(collector);
+    }
 }
 
 INode *CJobChannel::queryMyNode()

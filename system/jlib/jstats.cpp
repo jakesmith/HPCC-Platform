@@ -1531,6 +1531,7 @@ public:
     {
         beginScope(collection.queryScope());
 
+        /*
         StringBuffer formattedValue;
         unsigned numStats = collection.getNumStatistics();
         for (unsigned i=0; i <numStats; i++)
@@ -1542,7 +1543,7 @@ public:
             formatStatistic(formattedValue.clear(), value, kind);
             target->setProp(queryTreeTag(kind), formattedValue);
         }
-
+*/
         Owned<IStatisticCollectionIterator> iter = &collection.getScopes(nullptr);
         ForEach(*iter)
         {
@@ -1624,6 +1625,7 @@ public:
         }
     }
 
+    virtual void merge(IStatisticCollection &collection) { throwUnexpected(); }
     virtual IStatisticCollection * getResult() { throwUnexpected(); }
 
 protected:

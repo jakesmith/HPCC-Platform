@@ -437,18 +437,18 @@ unsigned __int64 CSlaveActivity::queryLocalCycles() const
     return _totalCycles-inputCycles;
 }
 
-void CSlaveActivity::gatherStats(IStatisticGatherer &stats)
+void CSlaveActivity::gatherStats(IStatisticGatherer &collector)
 {
     CriticalBlock b(crit);
-    StatsActivityScope scope(stats, queryId());
-    stats.addStatistic(StTimeLocalExecute, (unsigned __int64)cycle_to_nanosec(queryLocalCycles()));
+    StatsActivityScope scope(collector, queryId());
+    collector.addStatistic(StTimeLocalExecute, (unsigned __int64)cycle_to_nanosec(queryLocalCycles()));
     ForEachItemIn(oid, outputs)
     {
         IThorDataLink *output = queryOutput(oid);
         if (output) // JCSMORE - not sure can be null?
         {
-            StatsEdgeScope edgeScope(stats, queryId(), oid);
-            output->gatherEdgeStats(stats);
+            StatsEdgeScope edgeScope(collector, queryId(), oid);
+            output->gatherEdgeStats(collector);
         }
     }
 }
@@ -485,9 +485,9 @@ IOutputMetaData *CSlaveActivity::queryOutputMeta() const
     return queryHelper()->queryOutputMeta();
 }
 
-void CSlaveActivity::gatherEdgeStats(IStatisticGatherer &stats) const
+void CSlaveActivity::gatherEdgeStats(IStatisticGatherer &collector) const
 {
-    CEdgeProgress::gatherEdgeStats(stats);
+    CEdgeProgress::gatherEdgeStats(collector);
 }
 
 void CSlaveActivity::dataLinkSerialize(MemoryBuffer &mb) const
@@ -985,7 +985,7 @@ void CSlaveGraph::start()
     if (!queryOwner())
     {
         if (globals->getPropBool("@watchdogProgressEnabled"))
-            jobS->queryProgressHandler()->startGraph(*this);
+            queryJobChannel().addActiveGraph(*this);
     }
 }
 
@@ -1099,7 +1099,7 @@ void CSlaveGraph::done()
     if (!queryOwner())
     {
         if (globals->getPropBool("@watchdogProgressEnabled"))
-            jobS->queryProgressHandler()->stopGraph(*this, NULL);
+            queryJobChannel().removeActiveGraph(*this);
     }
 
     Owned<IException> exception;
@@ -1116,21 +1116,21 @@ void CSlaveGraph::done()
         throw LINK(exception.get());
 }
 
-void CSlaveGraph::gatherStats(IStatisticGatherer &stats)
+void CSlaveGraph::gatherStats(IStatisticGatherer &collector)
 {
-    StatsSubgraphScope subgraph(stats, queryGraphId());
+    StatsSubgraphScope subgraph(collector, queryGraphId());
     Owned<IThorActivityIterator> iter = getConnectedIterator();
     ForEach (*iter)
     {
         CSlaveActivity *activity = (CSlaveActivity *)iter->query().queryActivity();
-        activity->gatherStats(stats);
+        activity->gatherStats(collector);
     }
     Owned<IThorGraphIterator> childIter = getChildGraphIterator();
     ForEach(*childIter)
     {
         CGraphBase &stub = childIter->query();
-        StatsSubgraphScope subgraph(stats, stub.queryGraphId());
-        stub.gatherStats(stats);
+        StatsSubgraphScope subgraph(collector, stub.queryGraphId());
+        stub.gatherStats(collector);
     }
 }
 
@@ -1219,25 +1219,23 @@ void CSlaveGraph::getDone(MemoryBuffer &doneInfoMb)
 {
     if (!started) return;
     GraphPrintLog("Entering getDone");
-    if (!queryOwner() || isGlobal())
+    try
     {
-        try
-        {
-            serializeDone(doneInfoMb);
-            if (!queryOwner())
-            {
-                if (globals->getPropBool("@watchdogProgressEnabled"))
-                    jobS->queryProgressHandler()->stopGraph(*this, &doneInfoMb);
-            }
-            doneInfoMb.append(job.queryMaxDiskUsage());
-            queryJobChannel().queryTimeReporter().serialize(doneInfoMb);
-        }
-        catch (IException *)
-        {
-            GraphPrintLog("Leaving getDone");
-            getDoneSem.signal();
-            throw;
-        }
+        serializeDone(doneInfoMb);
+
+        Owned<IStatisticGatherer> collector;
+        gatherStats(*collector);
+        Owned<IStatisticCollection> collection = collector->getResult();
+        serializeStatisticCollection(doneInfoMb, collection);
+
+        doneInfoMb.append(job.queryMaxDiskUsage());
+        queryJobChannel().queryTimeReporter().serialize(doneInfoMb);
+    }
+    catch (IException *)
+    {
+        GraphPrintLog("Leaving getDone");
+        getDoneSem.signal();
+        throw;
     }
     GraphPrintLog("Leaving getDone");
     getDoneSem.signal();
@@ -1614,7 +1612,25 @@ bool CJobSlave::getWorkUnitValueBool(const char *prop, bool defVal) const
 
 void CJobSlave::debugRequest(MemoryBuffer &msg, const char *request) const
 {
-    if (watchdog) watchdog->debugRequest(msg, request);
+    Owned<IPTree> req = createPTreeFromXMLString(request);
+
+    StringBuffer edgeString;
+    req->getProp("@edgeId", edgeString);
+
+    // Split edge string in activityId and edgeIdx
+    const char *pEdge=edgeString.str();
+    const activity_id actId = (activity_id)_atoi64(pEdge);
+    if (!actId) return;
+
+    while (*pEdge && *pEdge!='_')  ++pEdge;
+    if (!*pEdge) return;
+    const unsigned edgeIdx = (unsigned)_atoi64(++pEdge);
+
+    ForEachItemIn(c, jobChannels)
+    {
+        CJobSlaveChannel &channel = (CJobSlaveChannel &)jobChannels.item(c);
+        channel.debugRequest(msg, actId, edgeIdx);
+    }
 }
 
 IGraphTempHandler *CJobSlave::createTempHandler(bool errorOnMissing)
@@ -1653,6 +1669,21 @@ CJobSlaveChannel::CJobSlaveChannel(CJobBase &_job, IMPServer *mpServer, unsigned
 IBarrier *CJobSlaveChannel::createBarrier(mptag_t tag)
 {
     return new CBarrierSlave(*this, *jobComm, tag);
+}
+
+void CJobSlaveChannel::debugRequest(MemoryBuffer &msg, activity_id actId, unsigned edgeIdx) const
+{
+    CriticalBlock b(activeGraphCrit);
+    ForEachItemIn(g, activeGraphs)
+    {
+        CGraphBase &graph = activeGraphs.item(g);
+        CGraphElementBase *element = graph.queryElement(actId);
+        if (element)
+        {
+            CSlaveActivity *activity = (CSlaveActivity*) element->queryActivity();
+            if (activity) activity->debugRequest(edgeIdx, msg);
+        }
+    }
 }
 
 void CJobSlaveChannel::runSubgraph(CGraphBase &graph, size32_t parentExtractSz, const byte *parentExtract)

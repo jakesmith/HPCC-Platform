@@ -453,6 +453,8 @@ class graphslave_decl CJobSlaveChannel : public CJobChannel
 public:
     CJobSlaveChannel(CJobBase &job, IMPServer *mpServer, unsigned channel);
 
+    void debugRequest(MemoryBuffer &msg, activity_id actId, unsigned edgeIdx) const;
+
     virtual IBarrier *createBarrier(mptag_t tag);
     virtual CGraphBase *createGraph()
     {

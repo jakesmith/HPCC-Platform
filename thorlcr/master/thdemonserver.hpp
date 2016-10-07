@@ -33,7 +33,7 @@ interface IDeMonServer : extends IInterface
 };
 
 
-IDeMonServer *createDeMonServer();
+IDeMonServer *createDeMonServer(unsigned nodes);
 
 
 #endif

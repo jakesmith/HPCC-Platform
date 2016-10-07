@@ -249,7 +249,7 @@ CJobManager::CJobManager(ILogMsgHandler *_logHandler) : logHandler(_logHandler)
     stopped = handlingConversation = false;
     addThreadExceptionHandler(this);
     if (globals->getPropBool("@watchdogEnabled"))
-        demonServer.setown(createDeMonServer());
+        demonServer.setown(createDeMonServer(queryNodeClusterWidth()));
     else
         globals->setPropBool("@watchdogProgressEnabled", false);
     atomic_set(&activeTasks, 0);

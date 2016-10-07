@@ -34,12 +34,14 @@ class DeMonServer : public CSimpleInterface, implements IDeMonServer
 {
 private:
     Mutex mutex;
+    IPointerArrayOf<IStatisticCollection> collections;
     Owned<IStatisticGatherer> collector;
     unsigned lastReport;
     unsigned reportRate;
     CIArrayOf<CGraphBase> activeGraphs;
     UnsignedArray graphStarts;
-    
+    unsigned nodes;
+
     void doReportGraph(IStatisticGatherer & stats, CGraphBase *graph, bool finished)
     {
         Owned<IThorActivityIterator> iter;
@@ -177,12 +179,14 @@ private:
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
-    DeMonServer()
+    DeMonServer(unsigned _nodes) : nodes(_nodes)
     {
         lastReport = msTick();
         reportRate = globals->getPropInt("@watchdogProgressInterval", 30);
         StatsScopeId rootScopeId(SSTglobal);
         collector.setown(createStatisticsGatherer(queryStatisticsComponentType(), queryStatisticsComponentName(), rootScopeId));
+        for (unsigned n=0; n<nodes; n++)
+            collections.append(nullptr);
     }
 
     virtual void takeHeartBeat(MemoryBuffer &progressMb)
@@ -199,36 +203,10 @@ public:
         {
             MemoryBuffer uncompressedMb;
             ThorExpand(progressMb.readDirect(compressedProgressSz), compressedProgressSz, uncompressedMb);
-
+            unsigned node;
+            uncompressedMb.read(node);
             Owned<IStatisticCollection> collection = createStatisticCollection(uncompressedMb);
-            collector->merge(*collection);
-
-
-            Owned<IStatisticCollectionIterator> slaveIter = &collection->getScopes(nullptr);
-            ForEach(*slaveIter)
-            {
-                IStatisticCollection &slaveCollection = slaveIter->query();
-                StringBuffer slaveScope;
-                unsigned slaveId = slaveCollection.queryScopeId();
-                Owned<IStatisticCollectionIterator> graphIter = &slaveCollection.getScopes(nullptr);
-                ForEach(*graphIter)
-                {
-                    IStatisticCollection &graphCollection = graphIter->query();
-                    graph_id graphId = graphCollection.queryScopeId();
-                    CMasterGraph *graph = NULL;
-                    ForEachItemIn(g, activeGraphs) if (activeGraphs.item(g).queryGraphId() == graphId) graph = (CMasterGraph *)&activeGraphs.item(g);
-                    if (!graph)
-                    {
-                        LOG(MCdebugProgress, unknownJob, "heartbeat received from unknown graph %" GIDPF "d", graphId);
-                        break;
-                    }
-                    if (!graph->ungatherStats(slaveId, uncompressedMb))
-                    {
-                        LOG(MCdebugProgress, unknownJob, "heartbeat error in graph %" GIDPF "d", graphId);
-                        break;
-                    }
-                }
-            }
+            collections.replace(collection.getClear(), node);
         }
         unsigned now=msTick();
         if (now-lastReport > 1000*reportRate)
@@ -274,7 +252,7 @@ public:
 };
 
 
-IDeMonServer *createDeMonServer()
+IDeMonServer *createDeMonServer(unsigned nodes)
 {
-    return new DeMonServer();
+    return new DeMonServer(nodes);
 }

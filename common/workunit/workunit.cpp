@@ -10604,6 +10604,7 @@ public:
         StatisticScopeType scopeType = scopeTypeStack.ordinality() ? (StatisticScopeType)scopeTypeStack.tos() : SSTglobal;
         wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), scopeType, scope, kind, NULL, value, 1, 0, mergeAction);
     }
+    virtual void merge(IStatisticCollection &collection) { throwUnexpected(); }
     virtual IStatisticCollection * getResult()
     {
         return NULL;
