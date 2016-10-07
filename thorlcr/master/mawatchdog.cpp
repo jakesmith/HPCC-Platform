@@ -35,30 +35,18 @@
 #include "thorport.hpp"
 
 #define DEFAULT_SLAVEDOWNTIMEOUT (60*5)
-class CMachineStatus
+
+void CMachineStatus::update(HeartBeatPacketHeader &packet)
 {
-public:
-    SocketEndpoint ep;
-    bool alive;
-    bool markdead;
-    CMachineStatus(const SocketEndpoint &_ep)
-        : ep(_ep)
+    alive = true;
+    if (markdead)
     {
-        alive = true;
         markdead = false;
+        StringBuffer epstr;
+        ep.getUrlStr(epstr);
+        LOG(MCdebugProgress, unknownJob, "Watchdog : Marking Machine as Up! [%s]", epstr.str());
     }
-    void update(HeartBeatPacketHeader &packet)
-    {
-        alive = true;
-        if (markdead)
-        {
-            markdead = false;
-            StringBuffer epstr;
-            ep.getUrlStr(epstr);
-            LOG(MCdebugProgress, unknownJob, "Watchdog : Marking Machine as Up! [%s]", epstr.str());
-        }
-    }   
-};
+}
 
 
 CMasterWatchdogBase::CMasterWatchdogBase() : threaded("CMasterWatchdogBase")
@@ -76,11 +64,7 @@ CMasterWatchdogBase::CMasterWatchdogBase() : threaded("CMasterWatchdogBase")
 CMasterWatchdogBase::~CMasterWatchdogBase()
 {
     stop();
-    ForEachItemInRev(i, state)
-    {
-        CMachineStatus *mstate=(CMachineStatus *)state.item(i);
-        delete mstate;
-    }
+    state.kill();
 }
 
 void CMasterWatchdogBase::start()
@@ -93,29 +77,26 @@ void CMasterWatchdogBase::start()
 void CMasterWatchdogBase::addSlave(const SocketEndpoint &slave)
 {
     synchronized block(mutex);
-    CMachineStatus *mstate=new CMachineStatus(slave);
-    state.append(mstate);
+    state.append(* new CMachineStatus(slave));
 }
 
 void CMasterWatchdogBase::removeSlave(const SocketEndpoint &slave)
 {
     synchronized block(mutex);
-    CMachineStatus *ms = findSlave(slave);
-    if (ms) {
-        state.zap(ms);
-        delete ms;
-    }
+    unsigned idx = findSlave(slave);
+    if (NotFound != idx)
+        state.remove(idx);
 }
 
-CMachineStatus *CMasterWatchdogBase::findSlave(const SocketEndpoint &ep)
+unsigned CMasterWatchdogBase::findSlave(const SocketEndpoint &ep)
 {
     ForEachItemInRev(i, state)
     {
-        CMachineStatus *mstate=(CMachineStatus *)state.item(i);
-        if (mstate->ep.equals(ep))
-            return mstate;
+        CMachineStatus &mstate = state.item(i);
+        if (mstate.ep.equals(ep))
+            return i;
     }
-    return NULL;
+    return NotFound;
 }
 
 
@@ -139,23 +120,22 @@ void CMasterWatchdogBase::checkMachineStatus()
     synchronized block(mutex);
     ForEachItemInRev(i, state)
     {
-        CMachineStatus *mstate=(CMachineStatus *)state.item(i);
-        if (!mstate->alive)
+        CMachineStatus &mstate = state.item(i);
+        if (!mstate.alive)
         {
             StringBuffer epstr;
-            mstate->ep.getUrlStr(epstr);
-            if (mstate->markdead)
+            mstate.ep.getUrlStr(epstr);
+            if (mstate.markdead)
                 abortThor(MakeThorOperatorException(TE_AbortException, "Watchdog has lost contact with Thor slave: %s (Process terminated or node down?)", epstr.str()), TEC_Watchdog);
             else
             {
-                mstate->markdead = true;
+                mstate.markdead = true;
                 LOG(MCdebugProgress, unknownJob, "Watchdog : Marking Machine as Down! [%s]", epstr.str());
-                //removeSlave(mstate->ep); // more TBD
+                //removeSlave(mstate.ep); // more TBD
             }
         }
-        else {
-            mstate->alive = false;
-        }
+        else
+            mstate.alive = false;
     }
 }
 
@@ -216,15 +196,16 @@ void CMasterWatchdogBase::main()
             else if (sz)
             {
                 synchronized block(mutex);
-                CMachineStatus *ms = findSlave(hb.sender);
-                if (ms)
+                unsigned idx = findSlave(hb.sender);
+                if (NotFound != idx)
                 {
-                    ms->update(hb);
+                    CMachineStatus &ms = state.item(idx);
+                    ms.update(hb);
                     if (progressData.remaining())
                     {
                         Owned<IJobManager> jobManager = getJobManager();
                         if (jobManager)
-                            jobManager->queryDeMonServer()->takeHeartBeat(progressData);
+                            jobManager->queryDeMonServer()->takeHeartBeat(progressData, idx);
                     }
                 }
                 else

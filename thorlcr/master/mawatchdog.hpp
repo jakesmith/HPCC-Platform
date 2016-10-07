@@ -23,12 +23,23 @@
 #include "jthread.hpp"
 #include "jmutex.hpp"
 
-class CMachineStatus;
 struct HeartBeatPacketHeader;
+
+class CMachineStatus : public CSimpleInterfaceOf<CInterface>
+{
+public:
+    SocketEndpoint ep;
+    bool alive = true;
+    bool markdead = false;
+    CMachineStatus(const SocketEndpoint &_ep) : ep(_ep)
+    {
+    }
+    void update(HeartBeatPacketHeader &packet);
+};
 
 class CMasterWatchdogBase : public CSimpleInterface, implements IThreaded
 {
-    PointerArray state;
+    CIArrayOf<CMachineStatus> state;
     SocketEndpoint master;
     Mutex mutex;
     int retrycount;
@@ -41,7 +52,7 @@ public:
     ~CMasterWatchdogBase();
     void addSlave(const SocketEndpoint &slave);
     void removeSlave(const SocketEndpoint &slave);
-    CMachineStatus *findSlave(const SocketEndpoint &ep);
+    unsigned findSlave(const SocketEndpoint &ep);
     void checkMachineStatus();
     unsigned readPacket(HeartBeatPacketHeader &hb, MemoryBuffer &mb);
     void start();

@@ -21,10 +21,12 @@
 #include "jiface.hpp"
 #include "thwatchdog.hpp"
 
-class CGraphBase;
+class CJobBase;
 interface ISlaveWatchdog : extends IInterface
 {
     virtual void stop() = 0;
+    virtual void addJob(CJobBase &job) = 0;
+    virtual void removeJob(CJobBase &job) = 0;
 };
 
 ISlaveWatchdog *createProgressHandler(bool udp=false);

@@ -1530,8 +1530,6 @@ public:
     virtual void merge(IStatisticCollection &collection)
     {
         beginScope(collection.queryScope());
-
-        /*
         StringBuffer formattedValue;
         unsigned numStats = collection.getNumStatistics();
         for (unsigned i=0; i <numStats; i++)
@@ -1539,11 +1537,8 @@ public:
             StatisticKind kind;
             unsigned __int64 value;
             collection.getStatistic(kind, value, i);
-            updateStatistic(kind, value, )
-            formatStatistic(formattedValue.clear(), value, kind);
-            target->setProp(queryTreeTag(kind), formattedValue);
+            updateStatistic(kind, value, StatsMergeSum);
         }
-*/
         Owned<IStatisticCollectionIterator> iter = &collection.getScopes(nullptr);
         ForEach(*iter)
         {

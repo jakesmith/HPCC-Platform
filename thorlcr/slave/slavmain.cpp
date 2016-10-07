@@ -467,16 +467,14 @@ public:
                             {
                                 CJobChannel &jobChannel = job->queryJobChannel(c);
                                 Owned<CSlaveGraph> graph = (CSlaveGraph *)jobChannel.getGraph(gid);
-                                if (graph)
-                                {
-                                    msg.append(jobChannel.queryMyRank()-1);
-                                    graph->getDone(msg);
-                                }
-                                else
-                                {
-                                    msg.append((rank_t)0); // JCSMORE - not sure why this would ever happen
-                                }
+                                assertex(graph);
+                                msg.append(jobChannel.queryMyRank()-1);
+                                graph->getDone(msg);
                             }
+                            msg.append(job->queryMaxDiskUsage());
+                            DelayedSizeMarker sizeMark(msg);
+                            job->serializeStats(msg);
+                            sizeMark.write();
                             job->reportGraphEnd(gid);
                         }
                         else

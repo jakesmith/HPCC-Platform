@@ -424,7 +424,8 @@ public:
     CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *workUnitInfo, const char *graphName, ILoadedDllEntry *querySo, mptag_t _mptag, mptag_t _slavemptag);
 
     virtual void addChannel(IMPServer *mpServer);
-    virtual void startJob();
+    virtual void startJob() override;
+    virtual void endJob() override;
     const char *queryFindString() const { return key.get(); } // for string HT
 
     virtual IGraphTempHandler *createTempHandler(bool errorOnMissing);

@@ -90,6 +90,15 @@ public:
             LOG(MCdebugProgress, thorJob, "Stopped watchdog");
         }
     }
+    virtual void addJob(CJobBase &job)
+    {
+        assertex(NotFound == jobs.find(job));
+        jobs.append(job);
+    }
+    virtual void removeJob(CJobBase &job)
+    {
+        verifyex(jobs.zap(job));
+    }
 
     size32_t gatherData(MemoryBuffer &mb)
     {
@@ -97,21 +106,16 @@ public:
         if (progressEnabled)
         {
             MemoryBuffer progressData;
+            ForEachItemIn(j, jobs)
             {
-                CriticalBlock b(crit);
-                ForEachItemIn(j, jobs)
+                CJobBase &job = jobs.item(j);
+                job.serializeStats(progressData);
+                size32_t sz = progressData.length();
+                if (sz)
                 {
-                    CJobBase &job = jobs.item(j);
-                    job.gatherStats(*collector);
+                    ThorCompress(progressData, mb, 0x200);
+                    return sz;
                 }
-                Owned<IStatisticCollection> stats = collector->getResult();
-                serializeStatisticCollection(progressData, stats);
-            }
-            size32_t sz = progressData.length();
-            if (sz)
-            {
-                ThorCompress(progressData, mb, 0x200);
-                return sz;
             }
         }
         return 0;

@@ -1096,6 +1096,7 @@ void CSlaveGraph::done()
     setProgressUpdated(); // NB: ensure collected after end of graph
     if (!aborted && graphDone && (!queryOwner() || isGlobal()))
         getDoneSem.wait(); // must wait on master
+
     if (!queryOwner())
     {
         if (globals->getPropBool("@watchdogProgressEnabled"))
@@ -1222,13 +1223,6 @@ void CSlaveGraph::getDone(MemoryBuffer &doneInfoMb)
     try
     {
         serializeDone(doneInfoMb);
-
-        Owned<IStatisticGatherer> collector;
-        gatherStats(*collector);
-        Owned<IStatisticCollection> collection = collector->getResult();
-        serializeStatisticCollection(doneInfoMb, collection);
-
-        doneInfoMb.append(job.queryMaxDiskUsage());
         queryJobChannel().queryTimeReporter().serialize(doneInfoMb);
     }
     catch (IException *)
@@ -1577,6 +1571,15 @@ void CJobSlave::startJob()
             throw MakeThorException(TE_NotEnoughFreeSpace, "Node %s has %u MB(s) of available disk space, specified minimum for this job: %u MB(s)", ep.getUrlStr(s).str(), (unsigned) freeSpace / 0x100000, minFreeSpace);
         }
     }
+    if (globals->getPropBool("@watchdogProgressEnabled"))
+        queryProgressHandler()->addJob(*this);
+}
+
+void CJobSlave::endJob()
+{
+    if (globals->getPropBool("@watchdogProgressEnabled"))
+        queryProgressHandler()->removeJob(*this);
+    CJobBase::endJob();
 }
 
 void CJobSlave::reportGraphEnd(graph_id gid)

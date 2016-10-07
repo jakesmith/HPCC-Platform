@@ -189,7 +189,7 @@ public:
             collections.append(nullptr);
     }
 
-    virtual void takeHeartBeat(MemoryBuffer &progressMb)
+    virtual void takeHeartBeat(MemoryBuffer &progressMb, unsigned node)
     {
         synchronized block(mutex);
         if (0 == activeGraphs.ordinality())
@@ -203,8 +203,6 @@ public:
         {
             MemoryBuffer uncompressedMb;
             ThorExpand(progressMb.readDirect(compressedProgressSz), compressedProgressSz, uncompressedMb);
-            unsigned node;
-            uncompressedMb.read(node);
             Owned<IStatisticCollection> collection = createStatisticCollection(uncompressedMb);
             collections.replace(collection.getClear(), node);
         }

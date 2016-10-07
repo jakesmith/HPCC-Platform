@@ -825,7 +825,6 @@ protected:
         }
     } pluginCtx;
     SafePluginMap *pluginMap;
-    void endJob();
 public:
     IMPLEMENT_IINTERFACE;
 
@@ -851,10 +850,12 @@ public:
     bool queryForceLogging(graph_id graphId, bool def) const;
     const IContextLogger &queryContextLogger() const { return *logctx; }
     virtual void startJob();
+    virtual void endJob();
     virtual IGraphTempHandler *createTempHandler(bool errorOnMissing) = 0;
     void addDependencies(IPropertyTree *xgmml, bool failIfMissing=true);
     void addSubGraph(IPropertyTree &xgmml);
 
+    void serializeStats(MemoryBuffer &mb);
     void gatherStats(IStatisticGatherer &collector);
     bool queryUseCheckpoints() const;
     bool queryPausing() const { return pausing; }

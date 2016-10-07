@@ -2705,12 +2705,30 @@ void CJobBase::endJob()
     PrintMemoryStatusLog();
 }
 
+void CJobBase::serializeStats(MemoryBuffer &mb)
+{
+    StatsScopeId rootScopeId(SSTglobal);
+    Owned<IStatisticGatherer> jobCollector = createStatisticsGatherer(queryStatisticsComponentType(), queryStatisticsComponentName(), rootScopeId);
+    gatherStats(*jobCollector);
+    Owned<IStatisticCollection> collection = jobCollector->getResult();
+    serializeStatisticCollection(mb, collection);
+}
+
 void CJobBase::gatherStats(IStatisticGatherer &collector)
 {
     ForEachItemIn(c, jobChannels)
     {
         CJobChannel &channel = jobChannels.item(c);
-        channel.gatherStats(collector);
+        if (0 == c)
+            channel.gatherStats(collector);
+        else
+        {
+            StatsScopeId channelScopeId(SSTsection, c);
+            Owned<IStatisticGatherer> channelCollector = createStatisticsGatherer(queryStatisticsComponentType(), queryStatisticsComponentName(), channelScopeId);
+            channel.gatherStats(*channelCollector);
+            Owned<IStatisticCollection> collection = channelCollector->getResult();
+            collector.merge(*collection);
+        }
     }
 }
 

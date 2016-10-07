@@ -2553,41 +2553,41 @@ void CMasterGraph::getFinalProgress()
             unsigned slave;
             msg.read(slave);
             handleSlaveDone(slave, msg);
-            if (!queryOwner())
-            {
-                if (globals->getPropBool("@watchdogProgressEnabled"))
-                {
-                    try
-                    {
-                        size32_t progressLen;
-                        msg.read(progressLen);
-                        MemoryBuffer progressData;
-                        progressData.setBuffer(progressLen, (void *)msg.readDirect(progressLen));
-                        queryJobManager().queryDeMonServer()->takeHeartBeat(progressData);
-                    }
-                    catch (IException *e)
-                    {
-                        GraphPrintLog(e, "Failure whilst deserializing stats/progress");
-                        e->Release();
-                    }
-                }
-            }
-            offset_t nodeDiskUsage;
-            msg.read(nodeDiskUsage);
-            jobM->setNodeDiskUsage(n, nodeDiskUsage);
-            if (nodeDiskUsage > maxNodeDiskUsage)
-            {
-                maxNodeDiskUsage = nodeDiskUsage;
-                maxNode = n;
-            }
-            if ((unsigned)-1 == minNode || nodeDiskUsage < minNodeDiskUsage)
-            {
-                minNodeDiskUsage = nodeDiskUsage;
-                minNode = n;
-            }
-            totalDiskUsage += nodeDiskUsage;
             Owned<ITimeReporter> slaveReport = createStdTimeReporter(msg);
             queryJobChannel().queryTimeReporter().merge(*slaveReport);
+        }
+        offset_t nodeDiskUsage;
+        msg.read(nodeDiskUsage);
+        jobM->setNodeDiskUsage(n, nodeDiskUsage);
+        if (nodeDiskUsage > maxNodeDiskUsage)
+        {
+            maxNodeDiskUsage = nodeDiskUsage;
+            maxNode = n;
+        }
+        if ((unsigned)-1 == minNode || nodeDiskUsage < minNodeDiskUsage)
+        {
+            minNodeDiskUsage = nodeDiskUsage;
+            minNode = n;
+        }
+        totalDiskUsage += nodeDiskUsage;
+        if (!queryOwner())
+        {
+            if (globals->getPropBool("@watchdogProgressEnabled"))
+            {
+                try
+                {
+                    size32_t progressLen;
+                    msg.read(progressLen);
+                    MemoryBuffer progressData;
+                    progressData.setBuffer(progressLen, (void *)msg.readDirect(progressLen));
+                    queryJobManager().queryDeMonServer()->takeHeartBeat(progressData, sender);
+                }
+                catch (IException *e)
+                {
+                    GraphPrintLog(e, "Failure whilst deserializing stats/progress");
+                    e->Release();
+                }
+            }
         }
     }
     if (totalDiskUsage)
