@@ -2580,7 +2580,7 @@ void CMasterGraph::getFinalProgress()
                     msg.read(progressLen);
                     MemoryBuffer progressData;
                     progressData.setBuffer(progressLen, (void *)msg.readDirect(progressLen));
-                    queryJobManager().queryDeMonServer()->takeHeartBeat(progressData, sender);
+                    queryJobManager().queryDeMonServer()->takeHeartBeat(progressData, sender-1);
                 }
                 catch (IException *e)
                 {
