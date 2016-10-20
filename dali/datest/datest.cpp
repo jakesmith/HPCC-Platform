@@ -3002,6 +3002,17 @@ void testMultiConnect()
     printf("connect took %d\n",msTick()-t);
 }
 
+void testMPServer()
+{
+    unsigned n = 10;
+    loop
+    {
+        PROGLOG("Sleeping %u secs", n);
+        MilliSleep(n * 1000);
+    }
+}
+
+
 #if 0
 LogMsgCategory const daliAuditLogCat(MSGAUD_audit, MSGCLS_information, DefaultDetail);
 
@@ -3156,101 +3167,108 @@ int main(int argc, char* argv[])
                 }
             }
         }
-        if (!epa.ordinality())
+
+        if (TEST("MPSERVER"))
         {
-            usage("No dali servers specified");
-            return 1;
+            assertex(epa.ordinality() == 0);
+            startMPServer(getFixedPort(TPORT_mp));
+            testMPServer();
         }
-
-        IGroup *group = createIGroup(epa); 
-
-        if (TEST("SESSION"))
-            initClientProcess(group,DCR_Other, testParams.ordinality() ? 0 : 7777);
         else
-            initClientProcess(group, DCR_Other);
-
-        
-        //testlockprop("test::propagated_matchrecs");
-
-
-
-        for(unsigned iter=0;iter<nIter;iter++)
         {
-
-            if (TEST("RANDTEST"))
+            if (!epa.ordinality())
             {
-                switch (getRandom()%12) {
-                case 0: Test_DFS(); break;
-                case 1: QTest(true); break;
-                case 2: QTest(false); break;
-                case 3: QTest2(true); break;
-                case 4: QTest2(false); break;
-                case 5: TestSDS1(); break;
-                case 6: TestStress(); break;
-                case 7: TestSDS2(); break;
-                case 8: TestServerShutdown(group); break;
-                case 9: TestExternal(); break;
-                case 10: TestSubLocks(); break;
-                case 11: TestSDS3(group); break;
-                case 12: TestNodeSubs(); break;
-                }
-            }
-            else if (TEST("DFS"))
-                Test_DFS();
-            else if (TEST("SUPERFILE"))
-                Test_SuperFile();
-            else if (TEST("SUPERFILE2"))
-                Test_SuperFile2();
-            else if (TEST("MULTIFILE"))
-                Test_MultiFile();
-            else if (TEST("DFSU"))
-                Test_DFSU();
-            else if (TEST("SESSION"))
-                Test_Session(testParams.ordinality()?testParams.item(0):NULL);
-            else if (TEST("QTEST"))
-                QTest(testParams.ordinality()&&0==stricmp(testParams.item(0),"PUT"));
-            else if (TEST("QTEST2"))
-                QTest2(testParams.ordinality()&&0==stricmp(testParams.item(0),"PUT"));
-            else if (TEST("LOCKS"))
-                TestLocks();
-            else if (TEST("SDS1"))
-                TestSDS1();
-            else if (TEST("SDS2"))
-                TestSDS2();
-            else if (TEST("SDS3"))
-                TestSDS3(group);
-            else if (TEST("NODESUBS"))
-                TestNodeSubs();
-            else if (TEST("XPATHS"))
-                TestSDSXPaths();
-            else if (TEST("STRESS"))
-                TestStress();
-            else if (TEST("STRESS2"))
-                TestStress2();
-            else if (TEST("EXTERNAL"))
-                TestExternal();
-            else if (TEST("SUBLOCKS"))
-                TestSubLocks();
-            else if (TEST("SUBSCRIPTION"))
-                testSubscription(testParams.ordinality()&&0!=atoi(testParams.item(0)), testParams.isItem(1)?atoi(testParams.item(1)):-1, testParams.isItem(2)?atoi(testParams.item(2)):-1);
-            else if (TEST("CONNECTIONSUBS"))
-                testConnectionSubscription();
-            else if (TEST("SHUTDOWN"))
-                TestServerShutdown(group);
-            else if (TEST("FILEPARTS"))
-                Test_PartIter();
-            else if (TEST("MULTICONNECT"))
-                testMultiConnect();
-//          else if (TEST("DALILOG"))
-//              testDaliLog(testParams.ordinality()&&0!=atoi(testParams.item(0)));
-            else
-            {
-                usage("Unknown test");
+                usage("No dali servers specified");
                 return 1;
             }
+            Owned<IGroup> group = createIGroup(epa);
+
+            if (TEST("SESSION"))
+                initClientProcess(group,DCR_Other, testParams.ordinality() ? 0 : 7777);
+            else
+                initClientProcess(group, DCR_Other);
+
+
+            //testlockprop("test::propagated_matchrecs");
+
+
+            for(unsigned iter=0;iter<nIter;iter++)
+            {
+
+                if (TEST("RANDTEST"))
+                {
+                    switch (getRandom()%12) {
+                    case 0: Test_DFS(); break;
+                    case 1: QTest(true); break;
+                    case 2: QTest(false); break;
+                    case 3: QTest2(true); break;
+                    case 4: QTest2(false); break;
+                    case 5: TestSDS1(); break;
+                    case 6: TestStress(); break;
+                    case 7: TestSDS2(); break;
+                    case 8: TestServerShutdown(group); break;
+                    case 9: TestExternal(); break;
+                    case 10: TestSubLocks(); break;
+                    case 11: TestSDS3(group); break;
+                    case 12: TestNodeSubs(); break;
+                    }
+                }
+                else if (TEST("DFS"))
+                    Test_DFS();
+                else if (TEST("SUPERFILE"))
+                    Test_SuperFile();
+                else if (TEST("SUPERFILE2"))
+                    Test_SuperFile2();
+                else if (TEST("MULTIFILE"))
+                    Test_MultiFile();
+                else if (TEST("DFSU"))
+                    Test_DFSU();
+                else if (TEST("SESSION"))
+                    Test_Session(testParams.ordinality()?testParams.item(0):NULL);
+                else if (TEST("QTEST"))
+                    QTest(testParams.ordinality()&&0==stricmp(testParams.item(0),"PUT"));
+                else if (TEST("QTEST2"))
+                    QTest2(testParams.ordinality()&&0==stricmp(testParams.item(0),"PUT"));
+                else if (TEST("LOCKS"))
+                    TestLocks();
+                else if (TEST("SDS1"))
+                    TestSDS1();
+                else if (TEST("SDS2"))
+                    TestSDS2();
+                else if (TEST("SDS3"))
+                    TestSDS3(group);
+                else if (TEST("NODESUBS"))
+                    TestNodeSubs();
+                else if (TEST("XPATHS"))
+                    TestSDSXPaths();
+                else if (TEST("STRESS"))
+                    TestStress();
+                else if (TEST("STRESS2"))
+                    TestStress2();
+                else if (TEST("EXTERNAL"))
+                    TestExternal();
+                else if (TEST("SUBLOCKS"))
+                    TestSubLocks();
+                else if (TEST("SUBSCRIPTION"))
+                    testSubscription(testParams.ordinality()&&0!=atoi(testParams.item(0)), testParams.isItem(1)?atoi(testParams.item(1)):-1, testParams.isItem(2)?atoi(testParams.item(2)):-1);
+                else if (TEST("CONNECTIONSUBS"))
+                    testConnectionSubscription();
+                else if (TEST("SHUTDOWN"))
+                    TestServerShutdown(group);
+                else if (TEST("FILEPARTS"))
+                    Test_PartIter();
+                else if (TEST("MULTICONNECT"))
+                    testMultiConnect();
+    //          else if (TEST("DALILOG"))
+    //              testDaliLog(testParams.ordinality()&&0!=atoi(testParams.item(0)));
+                else
+                {
+                    usage("Unknown test");
+                    return 1;
+                }
+            }
+            closedownClientProcess();
         }
-        group->Release();
-        closedownClientProcess();
     }
     catch (IException *e) {
         pexception("Exception",e);
