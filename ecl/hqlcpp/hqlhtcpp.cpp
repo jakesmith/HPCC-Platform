@@ -14161,7 +14161,6 @@ ABoundActivity * HqlCppTranslator::doBuildActivityDedup(BuildCtx & ctx, IHqlExpr
         buildHashOfExprsClass(instance->nestedctx, "Hash", order, DatasetReference(dataset), true);
 
         bool reuseCompare = false;
-
         HqlExprArray fields, selects;
         ForEachItemIn(idx, info.equalities)
         {

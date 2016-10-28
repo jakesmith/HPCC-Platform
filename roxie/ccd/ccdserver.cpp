@@ -7240,7 +7240,7 @@ public:
             if (compareBest && compareBest->docompare(kept,next) <= 0)
                 continue;
 
-            if (numKept < numToKeep-1)
+            if (numKept < numToKeep - 1)
             {
                 numKept++;
                 break;
@@ -7631,7 +7631,8 @@ public:
                 const void * next = inputStream->nextRow();
                 while(next)
                 {
-                    table.insertBest(next);
+                    if (!table.insertBest(next))
+                        ReleaseRoxieRow(next);
                     next = inputStream->nextRow();
                 }
                 if (table.count() == 0)

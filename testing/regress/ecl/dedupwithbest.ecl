@@ -16,9 +16,9 @@
 ############################################################################## */
 
 MyRec := RECORD
-    STRING3 Id;
-    STRING2 Field1;
-    STRING1 Field2;
+    INTEGER3 Id;
+    STRING10 Field1;
+    STRING50 Field2;
 END;
 
 ds := DATASET([{'001','KC','G'},
@@ -56,4 +56,14 @@ Dedupgr3 := SORT(DEDUP(gr1_sorted, field2, BEST(Id), HASH), Field2, Id);
 Dedupgr4 := SORT(DEDUP(gr1_sorted, field2, BEST(-Id), HASH), Field2, Id);
 OUTPUT(Dedupgr3, NAMED('GroupDedupHash'));
 OUTPUT(Dedupgr4, NAMED('GroupDedupHash_Reverse'));
+
+//Larger test
+numRecords := 2000000;
+
+createIds(unsigned n) := NOFOLD(DATASET(n, TRANSFORM(MyRec, SELF.id := COUNTER , SELF.Field1:='K' + (STRING) (COUNTER % 1000000), SELF.Field2:=(STRING)((COUNTER-1) DIV 1000000) )));
+
+x := createIds(numRecords);
+d := SAMPLE(SORT(DEDUP(x, Field1, HASH, BEST(field2)),Id),34567);
+
+OUTPUT( d ) ;
 
