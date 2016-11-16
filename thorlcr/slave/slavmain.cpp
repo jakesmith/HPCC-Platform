@@ -411,37 +411,59 @@ public:
                             throw MakeStringException(0, "Job not found: %s", jobKey.get());
 
                         mptag_t executeReplyTag = job->deserializeMPTag(msg);
-                        size32_t len;
-                        msg.read(len);
-                        MemoryBuffer createInitData;
-                        createInitData.append(len, msg.readDirect(len));
+                        size32_t createDataLen;
+                        msg.read(createDataLen);
+                        unsigned createDataStart = msg.getPos();
+                        msg.skip(createDataLen);
 
                         graph_id subGraphId;
                         msg.read(subGraphId);
-                        unsigned graphInitDataPos = msg.getPos();
+                        unsigned initDataStart = msg.getPos();
 
                         VStringBuffer xpath("node[@id='%" GIDPF "u']", subGraphId);
                         Owned<IPropertyTree> graphNode = job->queryGraphXGMML()->getPropTree(xpath.str());
                         job->addSubGraph(*graphNode);
 
-                        /* JCSMORE - should improve, create 1st graph with create context/init data and clone
-                         * Should perhaps do this initialization in parallel..
-                         */
-                        for (unsigned c=0; c<job->queryJobChannels(); c++)
+                        // JCSMORE - should improve, create 1st graph with create context/init data and clone
+
+                        PROGLOG("GraphInit: %s, graphId=%" GIDPF "u", jobKey.get(), subGraphId);
+                        class CGraphInitAsyncfor : public CAsyncFor
                         {
-                            PROGLOG("GraphInit: %s, graphId=%" GIDPF "d, slaveChannel=%d", jobKey.get(), subGraphId, c);
-                            CJobChannel &jobChannel = job->queryJobChannel(c);
-                            Owned<CSlaveGraph> subGraph = (CSlaveGraph *)jobChannel.getGraph(subGraphId);
-                            subGraph->setExecuteReplyTag(executeReplyTag);
+                            CJobSlave &job;
+                            graph_id gid;
+                            CMessageBuffer &msg;
+                            unsigned createDataStart, initDataStart;
+                            size32_t createLen, initDataLen;
+                            mptag_t executeReplyTag;
 
-                            createInitData.reset(0);
-                            subGraph->deserializeCreateContexts(createInitData);
+                        public:
+                            CGraphInitAsyncfor(CJobSlave &_job, graph_id &_gid, CMessageBuffer &_msg, unsigned _createDataStart,
+                                    size32_t _createLen, unsigned _initDataStart, size32_t _initDataLen, mptag_t _executeReplyTag)
+                                : job(_job), gid(_gid), msg(_msg), createDataStart(_createDataStart), createLen(_createLen),
+                                  initDataStart(_initDataStart), initDataLen(_initDataLen), executeReplyTag(_executeReplyTag)
+                            {
+                            }
+                            void Do(unsigned i)
+                            {
+                                CJobChannel &jobChannel = job.queryJobChannel(i);
+                                Owned<CSlaveGraph> graph = (CSlaveGraph *)jobChannel.getGraph(gid);
 
-                            msg.reset(graphInitDataPos);
-                            subGraph->init(msg);
+                                MemoryBuffer createInitData;
+                                createInitData.setBuffer(createLen, ((char *)msg.toByteArray())+createDataStart);
+                                MemoryBuffer initData;
+                                initData.setBuffer(initDataLen, ((char *)msg.toByteArray())+initDataStart);
 
-                            jobChannel.addDependencies(job->queryXGMML(), false);
-                        }
+                                graph->setExecuteReplyTag(executeReplyTag);
+
+                                graph->deserializeCreateContexts(createInitData);
+                                graph->init(initData);
+
+                                jobChannel.addDependencies(job.queryXGMML(), false);
+                            }
+                        } afor(*job, subGraphId, msg, createDataStart, createDataLen, initDataStart, msg.length()-initDataStart, executeReplyTag);
+
+                        afor.For(job->queryJobChannels(), job->queryJobChannels());
+
                         msg.clear();
                         msg.append(false);
                         queryNodeComm().reply(msg); // reply to sendGraph()
@@ -467,20 +489,40 @@ public:
                             msg.read(gid);
                             msg.clear();
                             msg.append(false);
-                            for (unsigned c=0; c<job->queryJobChannels(); c++)
+
+                            CriticalSection crit;
+                            class CGraphEndAsyncfor : public CAsyncFor
                             {
-                                CJobChannel &jobChannel = job->queryJobChannel(c);
-                                Owned<CSlaveGraph> graph = (CSlaveGraph *)jobChannel.getGraph(gid);
-                                if (graph)
+                                CJobSlave &job;
+                                graph_id gid;
+                                CriticalSection &crit;
+                                CMessageBuffer &msg;
+                            public:
+                                CGraphEndAsyncfor(CJobSlave &_job, graph_id &_gid, CriticalSection &_crit, CMessageBuffer &_msg)
+                                    : job(_job), gid(_gid), crit(_crit), msg(_msg)
                                 {
-                                    msg.append(jobChannel.queryMyRank()-1);
-                                    graph->getDone(msg);
                                 }
-                                else
+                                void Do(unsigned i)
                                 {
-                                    msg.append((rank_t)0); // JCSMORE - not sure why this would ever happen
+                                    CJobChannel &jobChannel = job.queryJobChannel(i);
+                                    MemoryBuffer doneMb;
+                                    {
+                                        Owned<CSlaveGraph> graph = (CSlaveGraph *)jobChannel.getGraph(gid);
+                                        if (graph)
+                                        {
+                                            doneMb.append(jobChannel.queryMyRank()-1);
+                                            graph->getDone(doneMb);
+                                        }
+                                        else
+                                        {
+                                            doneMb.append((rank_t)0); // JCSMORE - not sure why this would ever happen
+                                        }
+                                    }
+                                    CriticalBlock b(crit);
+                                    msg.append(doneMb);
                                 }
-                            }
+                            } afor(*job, gid, crit, msg);
+                            afor.For(job->queryJobChannels(), job->queryJobChannels());
                             job->reportGraphEnd(gid);
                         }
                         else

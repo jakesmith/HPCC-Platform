@@ -2282,7 +2282,7 @@ class CGraphExecutor : implements IGraphExecutor, public CInterface
         {
             class CGraphExecutorThread : implements IPooledThread, public CInterface
             {
-                Owned<CGraphExecutorGraphInfo> graphInfo;
+                Owned<CGraphExecutorGraphInfo> initialGraphInfo;
             public:
                 IMPLEMENT_IINTERFACE;
                 CGraphExecutorThread()
@@ -2290,13 +2290,14 @@ class CGraphExecutor : implements IGraphExecutor, public CInterface
                 }
                 void init(void *startInfo)
                 {
-                    graphInfo.setown((CGraphExecutorGraphInfo *)startInfo);
+                    initialGraphInfo.setown((CGraphExecutorGraphInfo *)startInfo);
                 }
                 void main()
                 {
+                    Owned<CGraphExecutorGraphInfo> graphInfo = initialGraphInfo.getClear();
                     loop
                     {
-                        Linked<CGraphBase> graph = graphInfo->subGraph;
+                        CGraphBase *graph = graphInfo->subGraph;
                         Owned<IException> e;
                         try
                         {
