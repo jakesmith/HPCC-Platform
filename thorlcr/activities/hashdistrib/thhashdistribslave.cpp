@@ -140,13 +140,14 @@ protected:
              */
             dedupList.sort(*iCompare, 1);
 
+            OwnedConstThorRow prev = dedupList.getClear(--c);
             if (!keepBestCompare)
             {
-                OwnedConstThorRow prev;
+                rows.enqueue(prev.getClear());
                 for (unsigned i = c; i>0;)
                 {
                     OwnedConstThorRow row = dedupList.getClear(--i);
-                    if ((NULL != prev.get()) && (0 == iCompare->docompare(prev, row)))
+                    if (0 == iCompare->docompare(prev, row))
                     {
                         /* NB: do not alter 'total' size. It represents the amount originally added to the bucket
                         * which will be deducted when sent.
@@ -162,19 +163,16 @@ protected:
             else
             {
                 // Queue all the "best" rows
-                OwnedConstThorRow prev;
-                unsigned i = c;
-                prev.set(dedupList.getClear(--i));
-                while (i>0)
+                for (unsigned i = c; i>0;)
                 {
                     OwnedConstThorRow row = dedupList.getClear(--i);
 
-                    if (NULL == prev.get())
-                        prev.setown(row.getClear());
-                    else if ((0 == iCompare->docompare(prev, row)) && (keepBestCompare->docompare(prev,row) < 0))
+                    if (0 == iCompare->docompare(prev, row))
                     {
-                        // Skip rows that are not "better" rows
+                        // Same 'key' fields, so no examine 'best' fields to decide which to keep
                         // N.B. queue rows that equal in terms of the "best" condition as slave activity select which to retain
+                        if ((keepBestCompare->docompare(prev,row) > 0))
+                            prev.setown(row.getClear());
                     }
                     else
                     {
@@ -2452,13 +2450,12 @@ class CHashTableRowTable : private CThorExpandingRowArray
     ICompare *iCompare;
     rowidx_t htElements, htMax;
 
-    class CHashTableRowStream : public IRowStream, public CInterface
+    class CHashTableRowStream : public CSimpleInterfaceOf<IRowStream>
     {
         CHashTableRowTable * parent;
         bool stopped;
         unsigned pos;
     public:
-        IMPLEMENT_IINTERFACE;
         CHashTableRowStream(CHashTableRowTable * _parent) : parent(_parent), pos(0), stopped(false) {};
         const void * nextRow()
         {
@@ -2738,7 +2735,7 @@ class CBucketHandler : public CSimpleInterface, implements IInterface, implement
         {
             while (!stopped && (cur < parent->numBuckets))
             {
-                if (parent->isValidBucket(cur))
+                if (!parent->buckets[cur]->isSpilt() && parent->isValidBucket(cur))
                 {
                     if (!bucketRowStream.get())
                     {
@@ -2892,6 +2889,7 @@ protected:
     ICompare *keepBestCompare;
     bool keepBestRowsReadyToReturn;
     Owned<IRowStream> bestRowStream;
+    unsigned testSpillTimes;
 
     inline CHashTableRowTable &queryHashTable(unsigned n) const { return *hashTables[n]; }
     void ensureNumHashTables(unsigned _numHashTables)
@@ -2941,6 +2939,7 @@ public:
         appendOutputLinked(this);
         keepBest = false;
         keepBestRowsReadyToReturn = false;
+        testSpillTimes = getOptInt("testHashDedupSpillTimes");
     }
     ~HashDedupSlaveActivityBase()
     {
@@ -3045,10 +3044,10 @@ public:
             const void * row = bestRowStream->nextRow();
             if (row)
             {
-                LinkThorRow(row);
+                dataLinkIncrement();
                 return row;
             }
-            // drop-through
+            // Else drop-through
         }
         // bucket handlers, stream out non-duplicates (1st entry in HT)
         loop
@@ -3076,12 +3075,18 @@ public:
                 if (keepBest && !keepBestRowsReadyToReturn)
                 {
                     bucketHandler->clearCallbacks();
+                    // This should cause one of the buckets to spill (used for testing)
+                    if (testSpillTimes)
+                    {
+                        bucketHandler->spillBucket(false);
+                        testSpillTimes--;
+                    }
                     bestRowStream.setown(bucketHandler->getRowStream());
                     const void * row = bestRowStream->nextRow();
                     if (row)
                     {
+                        dataLinkIncrement();
                         keepBestRowsReadyToReturn = true;
-                        LinkThorRow(row);
                         return row;
                     }
                 }

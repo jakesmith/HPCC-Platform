@@ -53,34 +53,28 @@
  <Row><id>1</id><field1>KC        </field1><field2>G                                                 </field2></Row>
  <Row><id>9</id><field1>KC        </field1><field2>Z                                                 </field2></Row>
 </Dataset>
-<Dataset name='Result 8'>
- <Row><id>1</id><field1>K1        </field1><field2>0                                                 </field2></Row>
- <Row><id>34568</id><field1>K34568    </field1><field2>0                                                 </field2></Row>
- <Row><id>69135</id><field1>K69135    </field1><field2>0                                                 </field2></Row>
- <Row><id>103702</id><field1>K103702   </field1><field2>0                                                 </field2></Row>
- <Row><id>138269</id><field1>K138269   </field1><field2>0                                                 </field2></Row>
- <Row><id>172836</id><field1>K172836   </field1><field2>0                                                 </field2></Row>
- <Row><id>207403</id><field1>K207403   </field1><field2>0                                                 </field2></Row>
- <Row><id>241970</id><field1>K241970   </field1><field2>0                                                 </field2></Row>
- <Row><id>276537</id><field1>K276537   </field1><field2>0                                                 </field2></Row>
- <Row><id>311104</id><field1>K311104   </field1><field2>0                                                 </field2></Row>
- <Row><id>345671</id><field1>K345671   </field1><field2>0                                                 </field2></Row>
- <Row><id>380238</id><field1>K380238   </field1><field2>0                                                 </field2></Row>
- <Row><id>414805</id><field1>K414805   </field1><field2>0                                                 </field2></Row>
- <Row><id>449372</id><field1>K449372   </field1><field2>0                                                 </field2></Row>
- <Row><id>483939</id><field1>K483939   </field1><field2>0                                                 </field2></Row>
- <Row><id>518506</id><field1>K518506   </field1><field2>0                                                 </field2></Row>
- <Row><id>553073</id><field1>K553073   </field1><field2>0                                                 </field2></Row>
- <Row><id>587640</id><field1>K587640   </field1><field2>0                                                 </field2></Row>
- <Row><id>622207</id><field1>K622207   </field1><field2>0                                                 </field2></Row>
- <Row><id>656774</id><field1>K656774   </field1><field2>0                                                 </field2></Row>
- <Row><id>691341</id><field1>K691341   </field1><field2>0                                                 </field2></Row>
- <Row><id>725908</id><field1>K725908   </field1><field2>0                                                 </field2></Row>
- <Row><id>760475</id><field1>K760475   </field1><field2>0                                                 </field2></Row>
- <Row><id>795042</id><field1>K795042   </field1><field2>0                                                 </field2></Row>
- <Row><id>829609</id><field1>K829609   </field1><field2>0                                                 </field2></Row>
- <Row><id>864176</id><field1>K864176   </field1><field2>0                                                 </field2></Row>
- <Row><id>898743</id><field1>K898743   </field1><field2>0                                                 </field2></Row>
- <Row><id>933310</id><field1>K933310   </field1><field2>0                                                 </field2></Row>
- <Row><id>967877</id><field1>K967877   </field1><field2>0                                                 </field2></Row>
+<Dataset name='DEDUP_COUNT'>
+ <Row><DEDUP_COUNT>50000</DEDUP_COUNT></Row>
+</Dataset>
+<Dataset name='DEDUP_SAMPLE'>
+ <Row><id>2500</id><field1>K2500     </field1><field2>0                                                 </field2></Row>
+ <Row><id>5000</id><field1>K5000     </field1><field2>0                                                 </field2></Row>
+ <Row><id>7500</id><field1>K7500     </field1><field2>0                                                 </field2></Row>
+ <Row><id>10000</id><field1>K10000    </field1><field2>0                                                 </field2></Row>
+ <Row><id>12500</id><field1>K12500    </field1><field2>0                                                 </field2></Row>
+ <Row><id>15000</id><field1>K15000    </field1><field2>0                                                 </field2></Row>
+ <Row><id>17500</id><field1>K17500    </field1><field2>0                                                 </field2></Row>
+ <Row><id>20000</id><field1>K20000    </field1><field2>0                                                 </field2></Row>
+ <Row><id>22500</id><field1>K22500    </field1><field2>0                                                 </field2></Row>
+ <Row><id>25000</id><field1>K25000    </field1><field2>0                                                 </field2></Row>
+ <Row><id>27500</id><field1>K27500    </field1><field2>0                                                 </field2></Row>
+ <Row><id>30000</id><field1>K30000    </field1><field2>0                                                 </field2></Row>
+ <Row><id>32500</id><field1>K32500    </field1><field2>0                                                 </field2></Row>
+ <Row><id>35000</id><field1>K35000    </field1><field2>0                                                 </field2></Row>
+ <Row><id>37500</id><field1>K37500    </field1><field2>0                                                 </field2></Row>
+ <Row><id>40000</id><field1>K40000    </field1><field2>0                                                 </field2></Row>
+ <Row><id>42500</id><field1>K42500    </field1><field2>0                                                 </field2></Row>
+ <Row><id>45000</id><field1>K45000    </field1><field2>0                                                 </field2></Row>
+ <Row><id>47500</id><field1>K47500    </field1><field2>0                                                 </field2></Row>
+ <Row><id>50000</id><field1>K0        </field1><field2>0                                                 </field2></Row>
 </Dataset>

@@ -15,6 +15,7 @@
     limitations under the License.
 ############################################################################## */
 
+#option ('testHashDedupSpillTimes',10);
 MyRec := RECORD
     INTEGER3 Id;
     STRING10 Field1;
@@ -58,12 +59,24 @@ OUTPUT(Dedupgr3, NAMED('GroupDedupHash'));
 OUTPUT(Dedupgr4, NAMED('GroupDedupHash_Reverse'));
 
 //Larger test
-numRecords := 2000000;
+numRecords := 1000000;
+// Generate DS set so that
+// 1) Id fields values are from 1..1000000
+// 2) Field1 fields are from K0..K49999
+// 3) Field2 fields are from 0..19
+createIds(unsigned n) := NOFOLD(DATASET(n, TRANSFORM(MyRec, SELF.id := COUNTER , SELF.Field1:='K' + (STRING) (COUNTER % 50000), SELF.Field2:=(STRING)((COUNTER-1) DIV 50000) ), DISTRIBUTED));
 
-createIds(unsigned n) := NOFOLD(DATASET(n, TRANSFORM(MyRec, SELF.id := COUNTER , SELF.Field1:='K' + (STRING) (COUNTER % 1000000), SELF.Field2:=(STRING)((COUNTER-1) DIV 1000000) )));
+generatedDS := createIds(numRecords);
 
-x := createIds(numRecords);
-d := SAMPLE(SORT(DEDUP(x, Field1, HASH, BEST(field2)),Id),34567);
+// The expected result willl be (if dedup is working)
+// 1) Id field has value 1..50000
+// 2) field1 fields should have value 'K0' to 'K49999'
+// 3) field2 fields should be '0' (because this is the 'best' field)
+// 4) field2 should be the same as field1 prefixed with 'K', other than for Id field 50000 where field1 should be K0
+// 5) There should be 50K rows
+dedupds := DEDUP(generatedDS, Field1, HASH, BEST(field2));
+OUTPUT( COUNT(dedupds), NAMED('DEDUP_COUNT') );
 
-OUTPUT( d ) ;
+d := ENTH(SORT(dedupds,Id),20);
+OUTPUT( d, NAMED('DEDUP_SAMPLE') ) ;
 
