@@ -448,26 +448,24 @@ public:
                                 CJobChannel &jobChannel = job.queryJobChannel(i);
                                 Owned<CSlaveGraph> graph = (CSlaveGraph *)jobChannel.getGraph(gid);
 
-                                MemoryBuffer createInitData;
-                                createInitData.setBuffer(createLen, ((char *)msg.toByteArray())+createDataStart);
-                                MemoryBuffer initData;
-                                initData.setBuffer(initDataLen, ((char *)msg.toByteArray())+initDataStart);
+                                MemoryBuffer createInitData, initData;
+                                createInitData.setBuffer(createLen, ((char *)msg.toByteArray())+createDataStart); // NB: read-only MB
+                                initData.setBuffer(initDataLen, ((char *)msg.toByteArray())+initDataStart); // NB: read-only MB
 
                                 graph->setExecuteReplyTag(executeReplyTag);
-
                                 graph->deserializeCreateContexts(createInitData);
                                 graph->init(initData);
 
                                 jobChannel.addDependencies(job.queryXGMML(), false);
+                                jobChannel.startGraph(*graph, true, 0, NULL);
                             }
                         } afor(*job, subGraphId, msg, createDataStart, createDataLen, initDataStart, msg.length()-initDataStart, executeReplyTag);
-
                         afor.For(job->queryJobChannels(), job->queryJobChannels());
 
                         msg.clear();
                         msg.append(false);
                         queryNodeComm().reply(msg); // reply to sendGraph()
-
+/*
                         for (unsigned c=0; c<job->queryJobChannels(); c++)
                         {
                             CJobChannel &jobChannel = job->queryJobChannel(c);
@@ -475,7 +473,7 @@ public:
 
                             jobChannel.startGraph(*subGraph, true, 0, NULL);
                         }
-
+*/
                         break;
                     }
                     case GraphEnd:
@@ -506,18 +504,14 @@ public:
                                 {
                                     CJobChannel &jobChannel = job.queryJobChannel(i);
                                     MemoryBuffer doneMb;
+                                    Owned<CSlaveGraph> graph = (CSlaveGraph *)jobChannel.getGraph(gid);
+                                    if (graph)
                                     {
-                                        Owned<CSlaveGraph> graph = (CSlaveGraph *)jobChannel.getGraph(gid);
-                                        if (graph)
-                                        {
-                                            doneMb.append(jobChannel.queryMyRank()-1);
-                                            graph->getDone(doneMb);
-                                        }
-                                        else
-                                        {
-                                            doneMb.append((rank_t)0); // JCSMORE - not sure why this would ever happen
-                                        }
+                                        doneMb.append(jobChannel.queryMyRank()-1);
+                                        graph->getDone(doneMb);
                                     }
+                                    else
+                                        doneMb.append((rank_t)0); // JCSMORE - not sure why this would ever happen
                                     CriticalBlock b(crit);
                                     msg.append(doneMb);
                                 }
