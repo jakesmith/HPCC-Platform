@@ -169,7 +169,7 @@ protected:
 
                     if (0 == iCompare->docompare(prev, row))
                     {
-                        // Same 'key' fields, so no examine 'best' fields to decide which to keep
+                        // Same 'key' fields, so now examine 'best' fields to decide which to keep
                         // N.B. queue rows that equal in terms of the "best" condition as slave activity select which to retain
                         if ((keepBestCompare->docompare(prev,row) > 0))
                             prev.setown(row.getClear());
@@ -2646,13 +2646,14 @@ class CBucket : public CSimpleInterface
     Owned<IEngineRowAllocator> _keyAllocator;
     IEngineRowAllocator *keyAllocator;
     CHashTableRowTable *htRows;
-    bool extractKey, spilt;
+    bool extractKey, spilt, suspendSpilling;
     CriticalSection lock;
     unsigned bucketN;
     CSpill rowSpill, keySpill;
     bool keepBest;
     ICompare *keepBestCompare;
     void doSpillHashTable();
+    bool rowsInBucketDedupedAlready;
 
 public:
     CBucket(HashDedupSlaveActivityBase &_owner, IThorRowInterfaces *_rowIf, IThorRowInterfaces *_keyIf, IHash *_iRowHash, IHash *_iKeyHash, ICompare *_iCompare, bool _extractKey, unsigned _bucketN, CHashTableRowTable *_htRows);
@@ -2669,6 +2670,8 @@ public:
     }
     bool spillHashTable(bool critical); // returns true if freed mem
     bool flush(bool critical);
+    bool disableSpilling();
+    void enableSpilling();
     bool rehash();
     void close()
     {
@@ -2691,6 +2694,14 @@ public:
             return htRows->queryRow(htPos);
         return nullptr;
     }
+    inline void setRowsInBucketDeduped()
+    {
+        if (!isSpilt()) rowsInBucketDedupedAlready=true;
+    }
+    inline bool isRowsInBucketDeduped()
+    {
+        return rowsInBucketDedupedAlready;
+    }
 };
 
 class CBucketHandler : public CSimpleInterface, implements IInterface, implements roxiemem::IBufferedRowCallback
@@ -2700,7 +2711,7 @@ class CBucketHandler : public CSimpleInterface, implements IInterface, implement
     IHash *iRowHash, *iKeyHash;
     ICompare *iCompare;
     bool extractKey;
-    unsigned numBuckets, currentBucket, nextSpilledBucketFlush;
+    unsigned numBuckets, currentBucket, nextSpilledBucketFlush, currentReadyBucket;
     unsigned depth, div;
     unsigned nextToSpill;
     PointerArrayOf<CBucket> _buckets;
@@ -2727,35 +2738,49 @@ class CBucketHandler : public CSimpleInterface, implements IInterface, implement
         CBucketHandler * parent;
         Owned<IRowStream> bucketRowStream;
         bool stopped;
-        unsigned cur;
+        unsigned currentBucketPos;
     public:
         IMPLEMENT_IINTERFACE;
-        CBucketHandlerRowStream(CBucketHandler * _parent) : parent(_parent), cur(0), stopped(false) {};
+        CBucketHandlerRowStream(CBucketHandler * _parent) : parent(_parent), stopped(false), currentBucketPos(0)
+        {
+            if (!setToNextValidRowStream())
+                stopped=true;
+        }
+        ~CBucketHandlerRowStream()
+        {
+            if (currentBucketPos < parent->numBuckets)
+                parent->buckets[currentBucketPos]->enableSpilling();
+        }
         const void * nextRow()
         {
-            while (!stopped && (cur < parent->numBuckets))
+            if (stopped) return nullptr;
+            do
             {
-                if (!parent->buckets[cur]->isSpilt() && parent->isValidBucket(cur))
-                {
-                    if (!bucketRowStream.get())
-                    {
-                        CBucket * bucket = parent->buckets[cur];
-                        if (bucket->getKeyCount()==0)
-                        {
-                            cur ++;
-                            continue;
-                        }
-                        bucketRowStream.setown(bucket->getRowStream());
-                    }
-                    const void * row = bucketRowStream->nextRow();
-                    if (row)
-                        return row;
-                }
-                cur ++;
-                bucketRowStream.clear();
-            }
-            stopped = true;
+                const void * row = bucketRowStream->nextRow();
+                if (row) return row;
+
+                parent->buckets[currentBucketPos]->enableSpilling();
+                currentBucketPos++;
+            } while (setToNextValidRowStream());
+            stopped=true;
             return nullptr;
+        }
+        bool setToNextValidRowStream()
+        {
+            while (currentBucketPos < parent->numBuckets)
+            {
+                if (!parent->buckets[currentBucketPos]->isSpilt() && parent->isValidBucket(currentBucketPos))
+                {
+                    CBucket * bucket = parent->buckets[currentBucketPos];
+                    if (bucket->disableSpilling() && bucket->getKeyCount() > 0)
+                    {
+                        bucketRowStream.setown(bucket->getRowStream());
+                        return true;
+                    }
+                }
+                currentBucketPos ++;
+            }
+            return false;
         }
         void stop() { stopped=true; }
     };
@@ -2810,6 +2835,7 @@ public:
         return peakKeyCount;
     }
     void clearCallbacks();
+    void initCallbacks();
     void flushBuckets();
     bool isValidBucket(unsigned bucketn) { return (bucketn < numBuckets) && buckets[bucketn]->isValid(); }
     CBucket *queryBucket(unsigned bucketn) { assertex (bucketn < numBuckets); return buckets[bucketn]; }
@@ -2844,6 +2870,9 @@ public:
         return false;
     }
     CBucketHandler *getNextBucketHandler(Owned<IRowStream> &nextInput);
+    void setInMemBucketsReady();
+    bool getSpillButReadyRowHandler(Owned<IRowStream> &nextInput);
+
 public:
     bool addRow(const void *row);
     inline unsigned calcBucket(unsigned hashValue) const
@@ -2888,8 +2917,9 @@ protected:
     bool keepBest;
     ICompare *keepBestCompare;
     bool keepBestRowsReadyToReturn;
-    Owned<IRowStream> bestRowStream;
+    Owned<IRowStream> readyRowStream;
     unsigned testSpillTimes;
+    bool streamSpilledReadyRows;
 
     inline CHashTableRowTable &queryHashTable(unsigned n) const { return *hashTables[n]; }
     void ensureNumHashTables(unsigned _numHashTables)
@@ -2939,6 +2969,7 @@ public:
         appendOutputLinked(this);
         keepBest = false;
         keepBestRowsReadyToReturn = false;
+        streamSpilledReadyRows = false;
         testSpillTimes = getOptInt("testHashDedupSpillTimes");
     }
     ~HashDedupSlaveActivityBase()
@@ -3039,21 +3070,32 @@ public:
         ActivityTimer t(totalCycles, timeActivities);
         if (eos)
             return NULL;
-        if (keepBestRowsReadyToReturn)
-        {
-            const void * row = bestRowStream->nextRow();
-            if (row)
-            {
-                dataLinkIncrement();
-                return row;
-            }
-            // Else drop-through
-        }
+
         // bucket handlers, stream out non-duplicates (1st entry in HT)
         loop
         {
             OwnedConstThorRow row;
-            if (!keepBestRowsReadyToReturn)
+
+            if (keepBestRowsReadyToReturn || streamSpilledReadyRows)
+            {
+                row.setown(readyRowStream->nextRow());
+                if (row)
+                {
+                    dataLinkIncrement();
+                    return row.getClear();
+                }
+                if (streamSpilledReadyRows)
+                {
+                    if (bucketHandler->getSpillButReadyRowHandler(readyRowStream))
+                    {
+                        dataLinkIncrement();
+                        return readyRowStream->nextRow();
+                    }
+                }
+                readyRowStream.clear();
+                // Else drop-through
+            }
+            else
             {
                 SpinBlock b(stopSpin);
                 row.setown(grouped?distInput->nextRow():distInput->ungroupedNextRow());
@@ -3063,6 +3105,8 @@ public:
                 lastEog = false;
                 if (bucketHandler->addRow(row)) // true if new, i.e. non-duplicate (does not take ownership)
                 {
+                    // Keepbest doesn't return rows straight-away, it builds the
+                    // best rows in the hash table first
                     if (!keepBest)
                     {
                         dataLinkIncrement();
@@ -3072,29 +3116,60 @@ public:
             }
             else
             {
-                if (keepBest && !keepBestRowsReadyToReturn)
+                // Keepbest has populated the hashtable with the best rows
+                // -> stream back best rows from hash table
+                if (keepBest)
                 {
-                    bucketHandler->clearCallbacks();
-                    // This should cause one of the buckets to spill (used for testing)
-                    if (testSpillTimes)
+                    // Set up IRowStream to return all rows in hashtable
+                    // * The keepBestRowsReadyToReturn flag ensures this section is done just once
+                    // * When flag is true, all rows in hash table have been streamed out so drop-through
+                    //   to the next section to processed spilled buckets
+                    if (!keepBestRowsReadyToReturn)
                     {
-                        bucketHandler->spillBucket(false);
-                        testSpillTimes--;
+                        // This should cause one of the buckets to spill (used for testing)
+                        if (testSpillTimes)
+                        {
+                            bucketHandler->spillBucket(false);
+                            testSpillTimes--;
+                        }
+                        // Disable callbacks to suspend spilling
+                        bucketHandler->clearCallbacks();
+                        readyRowStream.setown(bucketHandler->getRowStream());
+                        // All buckets non-spilled buckets in memory at this point in time are deduped
+                        // -> set flag in all these buckets just in case they are spilled so that
+                        //    when they need to be stream back it's not necessary to dedupe again
+                        bucketHandler->setInMemBucketsReady();
+                        // Re-enable callbacks to renable spilling
+                        bucketHandler->initCallbacks();
+                        const void * row = readyRowStream->nextRow();
+                        if (row)
+                        {
+                            dataLinkIncrement();
+                            keepBestRowsReadyToReturn = true;
+                            return row;
+                        }
+                        readyRowStream.clear();
                     }
-                    bestRowStream.setown(bucketHandler->getRowStream());
-                    const void * row = bestRowStream->nextRow();
-                    if (row)
+                    keepBestRowsReadyToReturn = false;
+                    // Stream back any buckets that have been spilled but are deduped
+                    // * these buckets do not need to be reprocessed through the hashtable
+                    // * This streamSpilledReadyRows flag ensures this section is done once
+                    // * When flag is true, all spilled deduped buckets have been streamed out
+                    //   so drop-through to process spilled buckets that have not been deduped
+                    // * Buckets that contained fully deduped rows may be spilled whilst
+                    //   during the streaming out of the rows from the hashtable.
+                    if (!streamSpilledReadyRows)
                     {
-                        dataLinkIncrement();
-                        keepBestRowsReadyToReturn = true;
-                        return row;
+                        if (bucketHandler->getSpillButReadyRowHandler(readyRowStream))
+                        {
+                            streamSpilledReadyRows=true;
+                            continue;
+                        }
                     }
+                    streamSpilledReadyRows=false;
                 }
-                bestRowStream.clear();
-                keepBestRowsReadyToReturn = false;
                 // If spill event occurred, disk buckets + key buckets will have been created by this stage.
                 bucketHandler->flushBuckets();
-
                 Owned<CBucketHandler> nextBucketHandler;
                 loop
                 {
@@ -3107,6 +3182,7 @@ public:
                         {
                             currentInput.clear();
                             bucketHandler.clear();
+
                             if (grouped)
                             {
                                 if (lastEog)
@@ -3215,7 +3291,7 @@ void CHashTableRowTable::rehash(const void **newRows)
 
 CBucket::CBucket(HashDedupSlaveActivityBase &_owner, IThorRowInterfaces *_rowIf, IThorRowInterfaces *_keyIf, IHash *_iRowHash, IHash *_iKeyHash, ICompare *_iCompare, bool _extractKey, unsigned _bucketN, CHashTableRowTable *_htRows)
     : owner(_owner), rowIf(_rowIf), keyIf(_keyIf), iRowHash(_iRowHash), iKeyHash(_iKeyHash), iCompare(_iCompare), extractKey(_extractKey), bucketN(_bucketN), htRows(_htRows),
-      rowSpill(owner, _rowIf, "rows", _bucketN), keySpill(owner, _keyIf, "keys", _bucketN)
+      rowSpill(owner, _rowIf, "rows", _bucketN), keySpill(owner, _keyIf, "keys", _bucketN), suspendSpilling(false), rowsInBucketDedupedAlready(false)
 
 {
     spilt = false;
@@ -3294,6 +3370,23 @@ bool CBucket::flush(bool critical)
         }
     }
     return false;
+}
+
+bool CBucket::disableSpilling()
+{
+    CriticalBlock b(lock);
+    if (!isSpilt()) 
+    {
+      suspendSpilling = true;
+      return true;
+    }
+    return false;
+}
+
+void CBucket::enableSpilling()
+{
+    if (suspendSpilling)
+      suspendSpilling = false;
 }
 
 bool CBucket::addKey(const void *key, unsigned hashValue)
@@ -3417,7 +3510,7 @@ bool CBucket::addRow(const void *row, unsigned hashValue)
 //
 
 CBucketHandler::CBucketHandler(HashDedupSlaveActivityBase &_owner, IThorRowInterfaces *_rowIf, IThorRowInterfaces *_keyIf, IHash *_iRowHash, IHash *_iKeyHash, ICompare *_iCompare, bool _extractKey, unsigned _depth, unsigned _div)
-    : owner(_owner), rowIf(_rowIf), keyIf(_keyIf), iRowHash(_iRowHash), iKeyHash(_iKeyHash), iCompare(_iCompare), extractKey(_extractKey), depth(_depth), div(_div), postSpillFlush(*this)
+    : owner(_owner), rowIf(_rowIf), keyIf(_keyIf), iRowHash(_iRowHash), iKeyHash(_iKeyHash), iCompare(_iCompare), extractKey(_extractKey), depth(_depth), div(_div), postSpillFlush(*this), currentReadyBucket(0)
 {
     currentBucket = 0;
     nextToSpill = NotFound;
@@ -3445,6 +3538,17 @@ void CBucketHandler::clearCallbacks()
         owner.queryRowManager()->removeRowBuffer(this);
         owner.queryRowManager()->removeRowBuffer(&postSpillFlush);
         callbacksInstalled = false;
+    }
+}
+
+void CBucketHandler::initCallbacks()
+{
+    if (!callbacksInstalled)
+    {
+      owner.queryRowManager()->addRowBuffer(this);
+      // postSpillFlush not needed until after 1 spill event, but not safe to add within callback
+      owner.queryRowManager()->addRowBuffer(&postSpillFlush);
+      callbacksInstalled = true;
     }
 }
 
@@ -3550,10 +3654,7 @@ void CBucketHandler::init(unsigned _numBuckets, IRowStream *keyStream)
         htRows.setOwner(buckets[i]);
     }
     ActPrintLog(&owner, "Max %d buckets, current depth = %d", numBuckets, depth+1);
-    owner.queryRowManager()->addRowBuffer(this);
-    // postSpillFlush not needed until after 1 spill event, but not safe to add within callback
-    owner.queryRowManager()->addRowBuffer(&postSpillFlush);
-    callbacksInstalled = true;
+    initCallbacks();
     if (keyStream)
     {
         loop
@@ -3575,7 +3676,7 @@ CBucketHandler *CBucketHandler::getNextBucketHandler(Owned<IRowStream> &nextInpu
     while (currentBucket<numBuckets)
     {
         CBucket *bucket = buckets[currentBucket];
-        if (bucket->isSpilt())
+        if (bucket->isSpilt() && !bucket->isRowsInBucketDeduped())
         {
             rowcount_t keyCount, count;
             /* If each key and row stream were to use a unique allocator per destination bucket
@@ -3600,6 +3701,29 @@ CBucketHandler *CBucketHandler::getNextBucketHandler(Owned<IRowStream> &nextInpu
     return NULL;
 }
 
+void CBucketHandler::setInMemBucketsReady()
+{
+    for(unsigned cur=0; cur<numBuckets; cur++)
+        buckets[cur]->setRowsInBucketDeduped();
+};
+
+bool CBucketHandler::getSpillButReadyRowHandler(Owned<IRowStream> &nextInput)
+{
+    while (currentReadyBucket<numBuckets)
+    {
+        CBucket *bucket = buckets[currentReadyBucket];
+        if (bucket->isSpilt() && bucket->isRowsInBucketDeduped())
+        {
+            rowcount_t count;
+            nextInput.setown(bucket->getSpillRowStream(&count));
+            dbgassertex(nextInput);
+            ++currentReadyBucket;
+            return true;
+        }
+        ++currentReadyBucket;
+    }
+    return false;
+}
 bool CBucketHandler::addRow(const void *row)
 {
     unsigned hashValue = iRowHash->hash(row);
