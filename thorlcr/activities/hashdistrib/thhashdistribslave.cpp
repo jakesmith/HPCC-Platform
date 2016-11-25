@@ -143,7 +143,6 @@ protected:
             OwnedConstThorRow prev = dedupList.getClear(--c);
             if (!keepBestCompare)
             {
-                rows.enqueue(prev.getClear());
                 for (unsigned i = c; i>0;)
                 {
                     OwnedConstThorRow row = dedupList.getClear(--i);
@@ -155,10 +154,11 @@ protected:
                     }
                     else
                     {
-                        prev.set(row);
-                        rows.enqueue(row.getClear());
+                        rows.enqueue(prev.getClear());
+                        prev.setown(row.getClear());
                     }
                 }
+                rows.enqueue(prev.getClear());
             }
             else
             {
