@@ -54,7 +54,7 @@ protected:
         IPropertyTree &elem= *(IPropertyTree *)e;
         elem.Release();
     }
-    virtual unsigned getHashFromElement(const void *e) const;
+    virtual unsigned getHashFromElement(const void *e) const = 0;
     virtual unsigned getHashFromFindParam(const void *fp) const
     {
         return hashc((const unsigned char *)fp, (size32_t)strlen((const char *)fp), 0);
@@ -62,7 +62,7 @@ protected:
     virtual const void *getFindParam(const void *e) const
     {
         const IPropertyTree &elem=*(const IPropertyTree *)e;
-        return (void *)elem.queryName();
+        return elem.queryName();
     }
     virtual bool matchesFindParam(const void *e, const void *fp, unsigned fphash) const
     {
@@ -104,22 +104,6 @@ public:
         return SuperHashTableOf<IPropertyTree, constcharptr>::removeExact(child);
     }
 };
-
-// case insensitive childmap
-class jlib_decl ChildMapNC : public ChildMap
-{
-public:
-// SuperHashTable definitions
-    virtual unsigned getHashFromFindParam(const void *fp) const
-    {
-        return hashnc((const unsigned char *)fp, (size32_t)strlen((const char *)fp), 0);
-    }
-    virtual bool matchesFindParam(const void *e, const void *fp, unsigned fphash) const
-    {
-        return (0 == stricmp(((IPropertyTree *)e)->queryName(), (const char *)fp));
-    }
-};
-
 
 inline static int validJSONUtf8ChrLen(unsigned char c)
 {
@@ -242,58 +226,12 @@ struct AttrValue
 // Ideally the classes would be restructured to avoid this, but it would probably require AttrMap to move into PTree
 #endif
 
-class jlib_decl AttrMap
+struct AttrKeyValue
 {
-    AttrValue *attrs;
-    unsigned short numattrs;    // use top bit for nocase flag
-    static AttrValue **freelist; // entry 0 not used
-    static unsigned freelistmax; 
-    static CLargeMemoryAllocator freeallocator;
-
-    AttrValue *newArray(unsigned n);
-    void freeArray(AttrValue *a,unsigned n);
-
-public:
-    AttrMap()
-    { 
-        attrs = NULL;
-        numattrs = 0;
-    }
-    ~AttrMap() 
-    { 
-        kill();
-    }
-    inline unsigned count() const
-    { 
-        return numattrs&AM_NOCASE_MASK; 
-    }
-    inline AttrValue *item(unsigned i) const
-    { 
-        return attrs+i; 
-    }
-    void setNoCase(bool nc) 
-    { 
-        if (nc) 
-            numattrs |= AM_NOCASE_FLAG; 
-        else 
-            numattrs &= AM_NOCASE_MASK; 
-    }
-    inline bool isNoCase() const 
-    { 
-        return (numattrs&AM_NOCASE_FLAG)!=0; 
-    }
-    void kill();
-    void set(const char *key, const char *val);
-    const char *find(const char *key) const;
-    bool remove(const char *key);
-    void swap(AttrMap &other);
-    static inline void killfreelist()
-    {
-        free(freelist);
-        freelist = NULL;
-    }
+    const char *key;
+    const char *value;
 };
-
+typedef ArrayOf<AttrKeyValue, AttrKeyValue &> AttrKeyValueArray;
 
 class jlib_decl PTree : public CInterfaceOf<IPropertyTree>
 {
@@ -304,7 +242,7 @@ friend class ChildMap;
 
 public:
     PTree(MemoryBuffer &mb);
-    PTree(const char *_name=NULL, byte _flags=0, IPTArrayValue *_value=NULL, ChildMap *_children=NULL);
+    PTree(byte _flags=ipt_none, IPTArrayValue *_value=nullptr, ChildMap *_children=nullptr);
     ~PTree();
 
     IPropertyTree *queryParent() { return parent; }
@@ -318,11 +256,11 @@ public:
     void serializeAttributes(MemoryBuffer &tgt);
     virtual void serializeSelf(MemoryBuffer &tgt);
     virtual void deserializeSelf(MemoryBuffer &src);
-    virtual void createChildMap() { children = isnocase()?new ChildMapNC():new ChildMap(); }
+    virtual void createChildMap() = 0;
+    virtual IPropertyTree *detach() = 0;
 
-
-    HashKeyElement *queryKey() { return name; }
-    void setName(const char *_name);
+    virtual void setName(const char *_name) = 0;
+    virtual const char *queryName() const = 0;
     IPropertyTree *clone(IPropertyTree &srcTree, bool self=false, bool sub=true);
     void clone(IPropertyTree &srcTree, IPropertyTree &dstTree, bool sub=true);
     inline void setParent(IPropertyTree *_parent) { parent = _parent; }
@@ -332,7 +270,6 @@ public:
     IPTArrayValue *detachValue() { IPTArrayValue *v = value; value = NULL; return v; }
     void setValue(IPTArrayValue *_value, bool binary) { if (value) delete value; value = _value; if (binary) IptFlagSet(flags, ipt_binary); }
     bool checkPattern(const char *&xxpath) const;
-    void clear();
 
 // IPropertyTree impl.
     virtual bool hasProp(const char * xpath) const;
@@ -367,7 +304,6 @@ public:
     virtual bool removeTree(IPropertyTree *child);
     virtual bool removeProp(const char *xpath);
     virtual aindex_t queryChildIndex(IPropertyTree *child);
-    virtual const char *queryName() const;
     virtual StringBuffer &getName(StringBuffer &ret) const;
     virtual IAttributeIterator *getAttributes(bool sorted=false) const;
     virtual IPropertyTreeIterator *getElements(const char *xpath, IPTIteratorCodes flags = iptiter_null) const;
@@ -380,20 +316,25 @@ public:
 // serializable impl.
     virtual void serialize(MemoryBuffer &tgt);
     virtual void deserialize(MemoryBuffer &src);
-    const AttrMap &queryAttributes() const { return attributes; }
     
 protected:
     virtual ChildMap *checkChildren() const;
-    virtual bool isEquivalent(IPropertyTree *tree) { return (NULL != QUERYINTERFACE(tree, PTree)); }
+    virtual bool isEquivalent(IPropertyTree *tree) { return (nullptr != QUERYINTERFACE(tree, PTree)); }
     virtual void setLocal(size32_t l, const void *data, bool binary=false);
     virtual void appendLocal(size32_t l, const void *data, bool binary=false);
-    virtual void setAttr(const char *attr, const char *val);
-    virtual bool removeAttr(const char *attr);
     virtual void addingNewElement(IPropertyTree &child, int pos) { }
     virtual void removingElement(IPropertyTree *tree, unsigned pos) { }
-    virtual IPropertyTree *create(const char *name=NULL, IPTArrayValue *value=NULL, ChildMap *children=NULL, bool existing=false) = 0;
+    virtual IPropertyTree *create(const char *name=nullptr, IPTArrayValue *value=nullptr, ChildMap *children=nullptr, bool existing=false) = 0;
     virtual IPropertyTree *create(MemoryBuffer &mb) = 0;
     virtual IPropertyTree *ownPTree(IPropertyTree *tree);
+
+    virtual const void *findAttribute(const char *k) const = 0;
+    virtual const char *getAttributeValue(const char *k) const = 0;
+    virtual unsigned getAttributeCount() const = 0;
+    virtual const void *getNextAttribute(const void *cur, AttrKeyValue &kv) const = 0;
+    virtual void setAttribute(const char *attr, const char *val) = 0;
+    virtual bool removeAttribute(const char *k) = 0;
+
     aindex_t getChildMatchPos(const char *xpath);
 
 private:
@@ -404,14 +345,241 @@ private:
 
 protected: // data
     IPropertyTree *parent; // ! currently only used if tree embedded into array, used to locate position.
-    HashKeyElement *name;
     ChildMap *children;
     IPTArrayValue *value;
-    //The packing (#pragma pack) is overridden because very large numbers of these objects are created, and the
-    //following two members currently cause 8 bytes to be wasted.  Refactoring the contents of AttrMap into this
-    //class would allow the fields to pack cleanly.
-    AttrMap attributes;     // this has 2 "extra" bytes - which could pack into the space following the count
     byte flags;             // this could also pack into the space following the count.
+};
+
+struct AttrStrC: public AttrStr
+{
+    static inline unsigned getHash(const char *k)
+    {
+        return hashc((const byte *)k,strlen(k),17);
+    }
+    inline bool eq(const char *k)
+    {
+        return strcmp(k,str)==0;
+    }
+    static AttrStrC *create(const char *k)
+    {
+        size32_t kl = (k?strlen(k):0);
+        AttrStrC *ret = (AttrStrC *)malloc(sizeof(AttrStrC)+kl);
+        memcpy(ret->str,k,kl);
+        ret->str[kl] = 0;
+        ret->hash = hashc((const byte *)k,kl,17);
+        ret->linkcount = 0;
+        return ret;
+    }
+    static void destroy(AttrStrC *a)
+    {
+        free(a);
+    }
+};
+
+struct AttrStrNC: public AttrStr
+{
+    static inline unsigned getHash(const char *k)
+    {
+        return hashnc((const byte *)k,strlen(k),17);
+    }
+
+    inline bool eq(const char *k)
+    {
+        return stricmp(k,str)==0;
+    }
+
+
+    static AttrStrNC *create(const char *k)
+    {
+        size32_t kl = (k?strlen(k):0);
+        AttrStrNC *ret = (AttrStrNC *)malloc(sizeof(AttrStrNC)+kl);
+        memcpy(ret->str,k,kl);
+        ret->str[kl] = 0;
+        ret->hash = hashnc((const byte *)k,kl,17);
+        ret->linkcount = 0;
+        return ret;
+    }
+
+    static void destroy(AttrStrNC *a)
+    {
+        free(a);
+    }
+
+};
+
+class CAttrValHashTable
+{
+    CMinHashTable<AttrStrC>  htc;
+    CMinHashTable<AttrStrNC> htnc;
+    CMinHashTable<AttrStrC>  htv;
+
+public:
+    inline AttrStr *addkey(const char *v,bool nc)
+    {
+
+        AttrStr * ret;
+        if (nc)
+            ret = htnc.find(v,true);
+        else
+            ret = htc.find(v,true);
+        if (ret->linkcount!=(unsigned short)-1)
+            ret->linkcount++;
+        return ret;
+    }
+
+    inline AttrStr *addval(const char *v)
+    {
+
+        AttrStr * ret = htv.find(v,true);
+        if (ret->linkcount!=(unsigned short)-1)
+            ret->linkcount++;
+        return ret;
+    }
+
+    inline void removekey(AttrStr *a,bool nc)
+    {
+        if (a->linkcount!=(unsigned short)-1)
+        {
+            if (--(a->linkcount)==0)
+            {
+                if (nc)
+                    htnc.remove((AttrStrNC *)a);
+                else
+                    htc.remove((AttrStrC *)a);
+            }
+        }
+    }
+
+    inline void removeval(AttrStr *a)
+    {
+        if (a->linkcount!=(unsigned short)-1)
+            if (--(a->linkcount)==0)
+                htv.remove((AttrStrC *)a);
+    }
+
+};
+
+class jlib_decl ChildMapAtom : public ChildMap
+{
+public:
+// SuperHashTable definitions
+    virtual unsigned getHashFromElement(const void *e) const;
+    virtual unsigned getHashFromFindParam(const void *fp) const
+    {
+        return hashnc((const unsigned char *)fp, (size32_t)strlen((const char *)fp), 0);
+    }
+    virtual bool matchesFindParam(const void *e, const void *fp, unsigned fphash) const
+    {
+        return (0 == stricmp(((IPropertyTree *)e)->queryName(), (const char *)fp));
+    }
+};
+
+// case insensitive childmap
+class jlib_decl ChildMapAtomNC : public ChildMap
+{
+public:
+// SuperHashTable definitions
+    virtual unsigned getHashFromElement(const void *e) const;
+    virtual unsigned getHashFromFindParam(const void *fp) const
+    {
+        return hashnc((const unsigned char *)fp, (size32_t)strlen((const char *)fp), 0);
+    }
+    virtual bool matchesFindParam(const void *e, const void *fp, unsigned fphash) const
+    {
+        return (0 == stricmp(((IPropertyTree *)e)->queryName(), (const char *)fp));
+    }
+};
+
+
+
+class jlib_decl CAtomPTree : public PTree
+{
+    static AtomRefTable *keyTable, *keyTableNC;
+    static CriticalSection hashcrit;
+    static CAttrValHashTable *attrHT;
+    static AttrValue **freelist; // entry 0 not used
+    static unsigned freelistmax;
+    static CLargeMemoryAllocator freeallocator;
+
+    //The packing (#pragma pack above the base class definition) is overridden because very large numbers of these objects are created, and the
+    //following two members .....
+
+    HashKeyElement *name = nullptr;
+    unsigned short numAttrs = 0;
+    AttrValue *attrs = nullptr;
+
+    void killAttrs();
+    AttrValue *newAttrArray(unsigned n);
+    void freeAttrArray(AttrValue *a,unsigned n);
+
+protected:
+    virtual const void *findAttribute(const char *k) const;
+    virtual const char *getAttributeValue(const char *k) const;
+    virtual unsigned getAttributeCount() const;
+    virtual const void *getNextAttribute(const void *cur, AttrKeyValue &kv) const;
+    virtual void setAttribute(const char *attr, const char *val);
+    virtual bool removeAttribute(const char *k);
+public:
+    static inline void init()
+    {
+        keyTable = new AtomRefTable;
+        keyTableNC = new AtomRefTable(true);
+        attrHT = new CAttrValHashTable;
+    }
+    static inline void kill()
+    {
+        delete attrHT;
+        keyTable->Release();
+        keyTableNC->Release();
+        free(freelist);
+        freelist = NULL;
+    }
+
+    CAtomPTree(const char *name=nullptr, byte flags=ipt_none, IPTArrayValue *value=nullptr, ChildMap *children=nullptr);
+    ~CAtomPTree();
+    HashKeyElement *queryKey() const { return name; }
+    inline AttrValue *item(unsigned i) const
+    {
+        return attrs+i;
+    }
+    virtual void setName(const char *_name);
+    virtual const char *queryName() const;
+    virtual bool isEquivalent(IPropertyTree *tree) { return (nullptr != QUERYINTERFACE(tree, CAtomPTree)); }
+    virtual IPropertyTree *create(const char *name=nullptr, IPTArrayValue *value=nullptr, ChildMap *children=nullptr, bool existing=false)
+    {
+        return new CAtomPTree(name, flags, value, children);
+    }
+    virtual IPropertyTree *create(MemoryBuffer &mb)
+    {
+        IPropertyTree *tree = new CAtomPTree();
+        tree->deserialize(mb);
+        return tree;
+    }
+    virtual void createChildMap()
+    {
+        if (isnocase())
+            children = new ChildMapAtomNC();
+        else
+            children = new ChildMapAtom();
+    }
+    virtual IPropertyTree *detach()
+    {
+        IPropertyTree *tree = create(queryName(), value, children, true);
+        CAtomPTree *_tree = QUERYINTERFACE(tree, CAtomPTree); assertex(_tree); _tree->setParent(this);
+
+#if 0
+        AttrValue *ta = attrs;
+        attrs = _tree.attrs;
+        _tree.attrs = ta;
+        unsigned short tn = numAttrs;
+        numAttrs = _tree.numAttrs;
+        _tree.numAttrs = tn;
+#endif
+
+        ::Release(children);
+        children = nullptr;
+        return tree;
+    }
 };
 
 #ifdef __64BIT__
@@ -421,14 +589,59 @@ protected: // data
 
 jlib_decl IPropertyTree *createPropBranch(IPropertyTree *tree, const char *xpath, bool createIntermediates=false, IPropertyTree **created=NULL, IPropertyTree **createdParent=NULL);
 
-class LocalPTree : public PTree
+
+// case insensitive childmap
+class jlib_decl ChildMapC : public ChildMap
 {
 public:
-    LocalPTree(const char *name=NULL, byte flags=ipt_none, IPTArrayValue *value=NULL, ChildMap *children=NULL)
-        : PTree(name, flags, value, children) { }
+// SuperHashTable definitions
+    virtual unsigned getHashFromElement(const void *e) const;
+    virtual unsigned getHashFromFindParam(const void *fp) const
+    {
+        return hashnc((const unsigned char *)fp, (size32_t)strlen((const char *)fp), 0);
+    }
+    virtual bool matchesFindParam(const void *e, const void *fp, unsigned fphash) const
+    {
+        return (0 == stricmp(((IPropertyTree *)e)->queryName(), (const char *)fp));
+    }
+};
 
-    virtual bool isEquivalent(IPropertyTree *tree) { return (NULL != QUERYINTERFACE(tree, LocalPTree)); }
-    virtual IPropertyTree *create(const char *name=NULL, IPTArrayValue *value=NULL, ChildMap *children=NULL, bool existing=false)
+// case insensitive childmap
+class jlib_decl ChildMapNC : public ChildMap
+{
+public:
+// SuperHashTable definitions
+    virtual unsigned getHashFromElement(const void *e) const;
+    virtual unsigned getHashFromFindParam(const void *fp) const
+    {
+        return hashnc((const unsigned char *)fp, (size32_t)strlen((const char *)fp), 0);
+    }
+    virtual bool matchesFindParam(const void *e, const void *fp, unsigned fphash) const
+    {
+        return (0 == stricmp(((IPropertyTree *)e)->queryName(), (const char *)fp));
+    }
+};
+
+
+class jlib_decl LocalPTree : public PTree
+{
+    StringAttr name;
+    AttrKeyValueArray attributes;
+protected:
+    virtual const void *findAttribute(const char *k) const;
+    virtual const char *getAttributeValue(const char *k) const;
+    virtual unsigned getAttributeCount() const;
+    virtual const void *getNextAttribute(const void *cur, AttrKeyValue &kv) const;
+    virtual void setAttribute(const char *attr, const char *val);
+    virtual bool removeAttribute(const char *k);
+public:
+    LocalPTree(const char *name=nullptr, byte flags=ipt_none, IPTArrayValue *value=nullptr, ChildMap *children=nullptr);
+    ~LocalPTree();
+
+    virtual void setName(const char *_name) { name.set(_name); }
+    virtual const char *queryName() const { return name; }
+    virtual bool isEquivalent(IPropertyTree *tree) { return (nullptr != QUERYINTERFACE(tree, LocalPTree)); }
+    virtual IPropertyTree *create(const char *name=nullptr, IPTArrayValue *value=nullptr, ChildMap *children=nullptr, bool existing=false)
     {
         return new LocalPTree(name, flags, value, children);
     }
@@ -438,9 +651,24 @@ public:
         tree->deserialize(mb);
         return tree;
     }
+    virtual void createChildMap()
+    {
+        if (isnocase())
+            children = new ChildMapNC();
+        else
+            children = new ChildMapC();
+    }
+    virtual IPropertyTree *detach()
+    {
+        IPropertyTree *tree = create(queryName(), value, children, true);
+        LocalPTree *_tree = QUERYINTERFACE(tree, LocalPTree); assertex(_tree); _tree->setParent(this);
+        attributes.swapWith(_tree->attributes);
+        ::Release(children);
+        children = nullptr;
+        return tree;
+    }
 };
 
-class PTree;
 class SingleIdIterator : public CInterfaceOf<IPropertyTreeIterator>
 {
 public:

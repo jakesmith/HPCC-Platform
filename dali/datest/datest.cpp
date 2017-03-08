@@ -1905,6 +1905,17 @@ void TestSDS1()
     IRemoteConnection *conn;
     IPropertyTree *root;
 
+#if 0
+    {
+        Owned<IRemoteConnection> conn = sdsManager.connect("/", myProcessSession(), RTM_LOCK_WRITE, 2000*MDELAY);
+        root = conn->queryRoot();
+
+        conn->commit();
+        conn.clear();
+        return;
+    }
+#endif
+
 #ifdef TSUB
     Owned<TestSubscription> ts = new TestSubscription();
     SubscriptionId id = querySDS().subscribe("/subtest", *ts, false, true);
@@ -3046,6 +3057,7 @@ void usage(const char *error=NULL)
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
+#include "jptree.ipp"
 int main(int argc, char* argv[])
 {   
     ReleaseAtomBlock rABlock;
@@ -3053,6 +3065,40 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
+#if 0
+    {
+        size32_t sz1 = sizeof(PTree);
+        size32_t sz2 = sizeof(CAtomPTree);
+        size32_t sz3 = sizeof(LocalPTree);
+
+        PROGLOG("PTree sz = %u, CAtomPTree sz = %u, LocalPTree sz = %u", sz1, sz2, sz3);
+        return 0;
+    }
+#endif
+#if 1
+    {
+        if (argc<2)
+        {
+            PROGLOG("Missing filename");
+            return 1;
+        }
+        const char *fname = argv[1];
+
+        Owned<IPropertyTree> ctree1 = createPTree("root");
+        ctree1.clear();
+
+        PROGLOG("Loading %s", fname);
+        Owned<IPropertyTree> tree = createPTreeFromXMLFile(fname);
+
+
+        Owned<IPropertyTree> ctree = createPTree("root");
+        ctree->addPropTree("C", LINK(tree));
+        VStringBuffer outname("%s.out.xml", fname);
+        PROGLOG("Saving %s", outname.str());
+        saveXML(outname.str(), tree);
+        return 0;
+    }
+#endif
     try {
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);

@@ -225,7 +225,7 @@ class CBranchChange;
 ///////////////////
 class CSubscriberContainerList;
 
-class CRemoteTreeBase : public PTree
+class CRemoteTreeBase : public CAtomPTree
 {
 public:
     CRemoteTreeBase(MemoryBuffer &mb);
@@ -243,7 +243,7 @@ public:
     virtual void setServerId(__int64 _serverId);
     virtual CSubscriberContainerList *getSubscribers(const char *xpath, CPTStack &stack) { UNIMPLEMENTED; return NULL; } // JCSMORE
 
-// PTree
+// CAtomPTree
     virtual bool isEquivalent(IPropertyTree *tree) { return (NULL != QUERYINTERFACE(tree, CRemoteTreeBase)); }
     virtual IPropertyTree *create(const char *name=NULL, IPTArrayValue *value=NULL, ChildMap *children=NULL, bool existing=false) = 0;
     virtual IPropertyTree *create(MemoryBuffer &mb) = 0;
