@@ -1624,7 +1624,7 @@ public:
     virtual void resetAsExternal(IPropertyTree &_tree)
     {
         PTree &tree = *QUERYINTERFACE(&_tree, PTree);
-        tree.clear();
+        Owned<IPropertyTree> toDelete = tree.detach();
     }
     virtual void readValue(const char *name, MemoryBuffer &mb)
     {
@@ -2265,7 +2265,7 @@ void CServerConnection::aborted(SessionId id)
 enum IncCmd { None, PropDelete, AttrDelete, PropChange, PropNew, PropExisting, ChildEndMarker, PropRename, AttrChange };
 
 CRemoteTreeBase::CRemoteTreeBase(const char *name, IPTArrayValue *value, ChildMap *children)
-    : PTree(name, ipt_none, value, children)
+    : CAtomPTree(name, ipt_none, value, children)
 {
     serverId = 0;
 }
@@ -2365,10 +2365,10 @@ static bool suppressedOrphanUnlock=false;
 class CServerRemoteTree : public CRemoteTreeBase
 {
     DECL_NAMEDCOUNT;
-    class COrphanHandler : public ChildMap
+    class COrphanHandler : public ChildMapAtom
     {
     public:
-        COrphanHandler() : ChildMap() { }
+        COrphanHandler() : ChildMapAtom() { }
         ~COrphanHandler() { _releaseAll(); }
         static void setOrphans(CServerRemoteTree &tree, bool tf)
         {
@@ -2393,7 +2393,7 @@ class CServerRemoteTree : public CRemoteTreeBase
         }
         virtual void onAdd(void *e) // ensure memory of constructed multi value elements are no longer orphaned.
         {
-            ChildMap::onAdd(e);
+            ChildMapAtom::onAdd(e);
             CServerRemoteTree &tree = *((CServerRemoteTree *)(IPropertyTree *)e);
             setOrphans(tree, false);
         }
@@ -2410,13 +2410,13 @@ class CServerRemoteTree : public CRemoteTreeBase
                 setOrphans(tree, true);
                 SDSManager->unlockAll(tree.queryServerId());
             }
-            ChildMap::onRemove(e);
+            ChildMapAtom::onRemove(e);
         }
         virtual bool replace(const char *key, IPropertyTree *tree) // provides different semantics, used if element being replaced is not to be treated as deleted.
         {
             CHECKEDCRITICALBLOCK(suppressedOrphanUnlockCrit, fakeCritTimeout);
             BoolSetBlock bblock(suppressedOrphanUnlock);
-            bool ret = ChildMap::replace(key, tree);
+            bool ret = ChildMapAtom::replace(key, tree);
             return ret;
         }
         virtual bool set(const char *key, IPropertyTree *tree)
@@ -2427,7 +2427,7 @@ class CServerRemoteTree : public CRemoteTreeBase
             IPropertyTree *et = (IPropertyTree *)SuperHashTable::find(vs, fp);
             if (et)
                 removeExact(et);        
-            return ChildMap::set(key, tree);
+            return ChildMapAtom::set(key, tree);
         }
     };
 
@@ -3010,7 +3010,7 @@ PDState CServerRemoteTree::checkChange(IPropertyTree &changeTree, CBranchChange 
                         Owned<IAttributeIterator> iter = e.getAttributes();
                         ForEach(*iter)
                         {
-                            if (removeAttr(iter->queryName()))
+                            if (removeAttribute(iter->queryName()))
                                 mergePDState(res, PDS_Data);
                         }
                         break;

@@ -287,6 +287,8 @@ public:
 ////////////////////
 class CClientRemoteTree : implements ITrackChanges, public CRemoteTreeBase
 {
+    typedef CRemoteTreeBase PARENT;
+
     DECL_NAMEDCOUNT;
     IPropertyTree *_queryBranch(const char *xpath);
     ChildMap *_checkChildren();
@@ -333,8 +335,8 @@ public:
     virtual void appendLocal(size32_t size, const void *data, bool binary);
     virtual void addingNewElement(IPropertyTree &child, int pos);
     virtual void removingElement(IPropertyTree *tree, unsigned pos);
-    virtual void setAttr(const char *attr, const char *val);
-    virtual bool removeAttr(const char *attr);
+    virtual void setAttribute(const char *attr, const char *val);
+    virtual bool removeAttribute(const char *attr);
 
 // IPropertyTree
     virtual void addProp(const char *xpath, const char *val);
