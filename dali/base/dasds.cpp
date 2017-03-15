@@ -2365,10 +2365,10 @@ static bool suppressedOrphanUnlock=false;
 class CServerRemoteTree : public CRemoteTreeBase
 {
     DECL_NAMEDCOUNT;
-    class COrphanHandler : public ChildMapAtom
+    class COrphanHandler : public AtomChildMap
     {
     public:
-        COrphanHandler() : ChildMapAtom() { }
+        COrphanHandler() : AtomChildMap() { }
         ~COrphanHandler() { _releaseAll(); }
         static void setOrphans(CServerRemoteTree &tree, bool tf)
         {
@@ -2393,7 +2393,7 @@ class CServerRemoteTree : public CRemoteTreeBase
         }
         virtual void onAdd(void *e) // ensure memory of constructed multi value elements are no longer orphaned.
         {
-            ChildMapAtom::onAdd(e);
+            AtomChildMap::onAdd(e);
             CServerRemoteTree &tree = *((CServerRemoteTree *)(IPropertyTree *)e);
             setOrphans(tree, false);
         }
@@ -2410,13 +2410,13 @@ class CServerRemoteTree : public CRemoteTreeBase
                 setOrphans(tree, true);
                 SDSManager->unlockAll(tree.queryServerId());
             }
-            ChildMapAtom::onRemove(e);
+            AtomChildMap::onRemove(e);
         }
         virtual bool replace(const char *key, IPropertyTree *tree) // provides different semantics, used if element being replaced is not to be treated as deleted.
         {
             CHECKEDCRITICALBLOCK(suppressedOrphanUnlockCrit, fakeCritTimeout);
             BoolSetBlock bblock(suppressedOrphanUnlock);
-            bool ret = ChildMapAtom::replace(key, tree);
+            bool ret = AtomChildMap::replace(key, tree);
             return ret;
         }
         virtual bool set(const char *key, IPropertyTree *tree)
@@ -2427,7 +2427,7 @@ class CServerRemoteTree : public CRemoteTreeBase
             IPropertyTree *et = (IPropertyTree *)SuperHashTable::find(vs, fp);
             if (et)
                 removeExact(et);        
-            return ChildMapAtom::set(key, tree);
+            return AtomChildMap::set(key, tree);
         }
     };
 

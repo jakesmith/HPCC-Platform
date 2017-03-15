@@ -2961,13 +2961,13 @@ void LocalPTree::setAttribute(const char *attr, const char *val)
 
 ///////////////////
 
-unsigned ChildMapAtom::getHashFromElement(const void *e) const
+unsigned AtomChildMap::getHashFromElement(const void *e) const
 {
     CAtomPTree &elem= (CAtomPTree &) (*(IPropertyTree *)e);
     return elem.queryKey()->queryHash();
 }
 
-unsigned ChildMapAtomNC::getHashFromElement(const void *e) const
+unsigned AtomChildMapNC::getHashFromElement(const void *e) const
 {
     CAtomPTree &elem= (CAtomPTree &) (*(IPropertyTree *)e);
     return elem.queryKey()->queryHash();

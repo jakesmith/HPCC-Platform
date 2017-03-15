@@ -452,7 +452,7 @@ public:
 
 };
 
-class jlib_decl ChildMapAtom : public ChildMap
+class jlib_decl AtomChildMap : public ChildMap
 {
 public:
 // SuperHashTable definitions
@@ -469,7 +469,7 @@ public:
 };
 
 // case insensitive childmap
-class jlib_decl ChildMapAtomNC : public ChildMap
+class jlib_decl AtomChildMapNC : public ChildMap
 {
 public:
 // SuperHashTable definitions
@@ -552,9 +552,9 @@ public:
     virtual void createChildMap() override
     {
         if (isnocase())
-            children = new ChildMapAtomNC();
+            children = new AtomChildMapNC();
         else
-            children = new ChildMapAtom();
+            children = new AtomChildMap();
     }
     virtual IPropertyTree *detach() override
     {
