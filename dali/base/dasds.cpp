@@ -2265,7 +2265,7 @@ void CServerConnection::aborted(SessionId id)
 enum IncCmd { None, PropDelete, AttrDelete, PropChange, PropNew, PropExisting, ChildEndMarker, PropRename, AttrChange };
 
 CRemoteTreeBase::CRemoteTreeBase(const char *name, IPTArrayValue *value, ChildMap *children)
-    : CAtomPTree(name, ipt_none, value, children)
+    : SDS_PTREE(name, ipt_none, value, children)
 {
     serverId = 0;
 }
@@ -2365,10 +2365,10 @@ static bool suppressedOrphanUnlock=false;
 class CServerRemoteTree : public CRemoteTreeBase
 {
     DECL_NAMEDCOUNT;
-    class COrphanHandler : public AtomChildMap
+    class COrphanHandler : public ChildMap
     {
     public:
-        COrphanHandler() : AtomChildMap() { }
+        COrphanHandler() : ChildMap() { }
         ~COrphanHandler() { _releaseAll(); }
         static void setOrphans(CServerRemoteTree &tree, bool tf)
         {
@@ -2393,7 +2393,7 @@ class CServerRemoteTree : public CRemoteTreeBase
         }
         virtual void onAdd(void *e) // ensure memory of constructed multi value elements are no longer orphaned.
         {
-            AtomChildMap::onAdd(e);
+            ChildMap::onAdd(e);
             CServerRemoteTree &tree = *((CServerRemoteTree *)(IPropertyTree *)e);
             setOrphans(tree, false);
         }
@@ -2410,13 +2410,13 @@ class CServerRemoteTree : public CRemoteTreeBase
                 setOrphans(tree, true);
                 SDSManager->unlockAll(tree.queryServerId());
             }
-            AtomChildMap::onRemove(e);
+            ChildMap::onRemove(e);
         }
         virtual bool replace(const char *key, IPropertyTree *tree) // provides different semantics, used if element being replaced is not to be treated as deleted.
         {
             CHECKEDCRITICALBLOCK(suppressedOrphanUnlockCrit, fakeCritTimeout);
             BoolSetBlock bblock(suppressedOrphanUnlock);
-            bool ret = AtomChildMap::replace(key, tree);
+            bool ret = ChildMap::replace(key, tree);
             return ret;
         }
         virtual bool set(const char *key, IPropertyTree *tree)
@@ -2427,7 +2427,7 @@ class CServerRemoteTree : public CRemoteTreeBase
             IPropertyTree *et = (IPropertyTree *)SuperHashTable::find(vs, fp);
             if (et)
                 removeExact(et);        
-            return AtomChildMap::set(key, tree);
+            return ChildMap::set(key, tree);
         }
     };
 
@@ -7310,9 +7310,10 @@ CServerConnection *CCovenSDSManager::createConnectionInstance(CRemoteTreeBase *r
                 unsigned l = _deltaPath.length();
                 const char *t = queryHead(headPath.str(), _deltaPath);
                 assertex(l != _deltaPath.length());
-                headPath.clear();
                 if (t)
-                    headPath.append(t);
+                    headPath.remove(0, _deltaPath.length());
+                else
+                    headPath.clear();
                 if (++s>=connection->queryPTreePath().ordinality())
                     break;
             }
@@ -7812,8 +7813,6 @@ void CCovenSDSManager::disconnect(ConnectionId id, bool deleteRoot, Owned<CLCLoc
     if (!tree) return;
 
     unsigned index = (unsigned)-1;
-    StringBuffer path;
-    connection->queryPTreePath().getAbsolutePath(path);
     if (connection->queryParent())
     {
         if (deleteRoot || RTM_MODE(connection->queryMode(), RTM_DELETE_ON_DISCONNECT))
@@ -7835,6 +7834,11 @@ void CCovenSDSManager::disconnect(ConnectionId id, bool deleteRoot, Owned<CLCLoc
         deleteRoot = false;
 
     bool orphaned = ((CServerRemoteTree*)connection->queryRootUnvalidated())->isOrphaned();
+    StringBuffer path;
+    if (!orphaned) // see below, path/delta only recorded if not orphaned. Cannot calulate path if connection root has already been deleted
+        connection->queryPTreePath().getAbsolutePath(path);
+    else
+        DBGLOG("Disconnecting orphaned connection: %s, deleteRoot=%s", connection->queryXPath(), deleteRoot?"true":"false");
     // Still want disconnection to be performed & recorded, if orphaned
     if (!deleteRoot && unlock(tree->queryServerId(), id, true)) // unlock returns true if last unlock and there was a setDROLR on it
         deleteRoot = true;

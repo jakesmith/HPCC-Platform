@@ -3045,6 +3045,16 @@ void usage(const char *error=NULL)
 
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
+static IPropertyTree *getOSSdirTree()
+{
+    Owned<IPropertyTree> envtree = getHPCCEnvironment();
+    if (envtree) {
+        IPropertyTree *ret = envtree->queryPropTree("Software/Directories");
+        if (ret)
+            return createPTreeFromIPT(ret);
+    }
+    return NULL;
+}
 
 int main(int argc, char* argv[])
 {   
@@ -3052,7 +3062,46 @@ int main(int argc, char* argv[])
     InitModuleObjects();
 
     EnableSEHtoExceptionMapping();
+#if 1
+    {
+//        Owned<const IPropertyTree> dirtree = getOSSdirTree();
+        Owned<IPropertyTree> envtree = createPTreeFromXMLFile("/etc/HPCCSystems/environment.xml");
+        IPropertyTree *_dirtree = envtree->queryPropTree("Software/Directories");
+        IPropertyTree *dirtree = createPTreeFromIPT(_dirtree);
+        const char *category = "lock";
+        const char *name = dirtree->queryProp("@name");
+        if (name&&*name)
+        {
+            StringBuffer dirTreeStr;
+            toXML(dirtree, dirTreeStr);
+            PROGLOG("dirTreeStr = %s", dirTreeStr.str());
 
+            StringBuffer q("Category[@name=\"");
+            q.append(category).append("\"]");
+            IPropertyTree *cat = dirtree->queryPropTree(q.str()); // assume only 1
+
+            if (!cat)
+                PROGLOG("FAILED");
+            else
+            {
+                StringBuffer str;
+                toXML(cat, str);
+                PROGLOG("str = %s", str.str());
+            }
+        }
+        return 0 ;
+    }
+#endif
+#if 1
+    {
+ PROGLOG("loading %s", argv[1]);
+        Owned<IPropertyTree> t = createPTreeFromXMLFile(argv[1]);
+ PROGLOG("loaded");
+        saveXML("file", t);
+ PROGLOG("end");
+        return 0;
+    }
+#endif
     try {
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);

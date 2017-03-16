@@ -52,11 +52,11 @@ static CriticalSection SDScrit;
 
 ////////////////////
 
-class MonitoredChildMap : public AtomChildMap
+class MonitoredChildMap : public ChildMap
 {
     CClientRemoteTree &owner;
 public:
-    MonitoredChildMap(CClientRemoteTree &_owner) : AtomChildMap(), owner(_owner) { }
+    MonitoredChildMap(CClientRemoteTree &_owner) : ChildMap(), owner(_owner) { }
 
     
     virtual bool replace(const char *name, IPropertyTree *tree)
@@ -64,7 +64,7 @@ public:
         // suppress notification of old node - old node has been preserved.
         bool changes = owner.queryConnection().queryStateChanges();
         owner.queryConnection().setStateChanges(false);
-        bool res = AtomChildMap::replace(name, tree);
+        bool res = ChildMap::replace(name, tree);
         owner.queryConnection().setStateChanges(changes);
         return res;
     }
@@ -97,7 +97,7 @@ public:
                 }
             }
         }
-        AtomChildMap::onRemove(e);
+        ChildMap::onRemove(e);
     }
 };
 

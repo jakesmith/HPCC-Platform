@@ -225,7 +225,8 @@ class CBranchChange;
 ///////////////////
 class CSubscriberContainerList;
 
-class CRemoteTreeBase : public CAtomPTree
+#define SDS_PTREE LocalPTree
+class CRemoteTreeBase : public SDS_PTREE
 {
 public:
     CRemoteTreeBase(MemoryBuffer &mb);
