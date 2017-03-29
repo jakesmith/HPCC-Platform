@@ -77,6 +77,22 @@ protected:
     unsigned maxIndex = 0;
 };
 
+class CConstLegacyDropZoneServerInfoIterator : public CSimpleInterfaceOf<IConstDropZoneServerInfoIterator>
+{
+public:
+    CConstLegacyDropZoneServerInfoIterator(const IConstDropZoneInfo * dropZone, const char *computer);
+
+    virtual bool first() override;
+    virtual bool next() override;
+    virtual bool isValid() override;
+    virtual IConstDropZoneServerInfo & query() override;
+    virtual unsigned count() const override;
+
+protected:
+    Owned<IConstDropZoneServerInfo> computerServerInfo;
+    Owned<IConstDropZoneServerInfo> curr;
+};
+
 class CConstDropZoneInfoIterator : public CSimpleInterfaceOf<IConstDropZoneInfoIterator>
 {
 public:
@@ -987,7 +1003,11 @@ public:
     }
     virtual IConstDropZoneServerInfoIterator * getServers() const
     {
-        return new CConstDropZoneServerInfoIterator(this);
+        const char *computer = root->queryProp("@computer");
+        if (computer) //legacy DZ.
+            return new CConstLegacyDropZoneServerInfoIterator(this, computer);
+        else
+            return new CConstDropZoneServerInfoIterator(this);
     }
 };
 
@@ -1859,6 +1879,70 @@ IConstDropZoneServerInfo & CConstDropZoneServerInfoIterator::query()
 unsigned CConstDropZoneServerInfoIterator::count() const
 {
     return maxIndex;
+}
+
+//--------------------------------------------------
+
+
+CConstLegacyDropZoneServerInfoIterator::CConstLegacyDropZoneServerInfoIterator(const IConstDropZoneInfo * dropZone, const char *computer)
+{
+    class CConstLegacyDropZoneServerInfo : public CConstEnvBase, implements IConstDropZoneServerInfo
+    {
+        StringAttr name, server;
+    public:
+        IMPLEMENT_IINTERFACE;
+        IMPLEMENT_ICONSTENVBASE;
+        CConstLegacyDropZoneServerInfo(CLocalEnvironment *env, IPropertyTree *root, const char *_name, const char *_server)
+            : CConstEnvBase(env, root), name(_name), server(_server)
+        {
+        }
+        virtual StringBuffer & getName(StringBuffer & _name) const override
+        {
+            return _name.append(name);
+        }
+        virtual StringBuffer & getServer(StringBuffer & _server) const override
+        {
+            return _server.append(server);
+        }
+    };
+    Owned<IEnvironmentFactory> factory = getEnvironmentFactory();
+    Owned<CLocalEnvironment> constEnv = (CLocalEnvironment *)factory->openEnvironment();
+    Owned<IConstMachineInfo> machineInfo = constEnv->getMachine(computer);
+    if (machineInfo)
+    {
+        SCMStringBuffer dropZoneMachineNetAddress;
+        machineInfo->getNetAddress(dropZoneMachineNetAddress);
+        constEnv.setown((CLocalEnvironment *)factory->openEnvironment());
+        Owned<IPropertyTree> pSrc = &dropZone->getPTree();
+        computerServerInfo.setown(new CConstLegacyDropZoneServerInfo(constEnv, pSrc, computer, dropZoneMachineNetAddress.str()));
+    }
+}
+
+bool CConstLegacyDropZoneServerInfoIterator::first()
+{
+    curr.set(computerServerInfo);
+    return nullptr != curr;
+}
+
+bool CConstLegacyDropZoneServerInfoIterator::next()
+{
+    curr.clear();
+    return false;
+}
+
+bool CConstLegacyDropZoneServerInfoIterator::isValid()
+{
+    return nullptr != curr;
+}
+
+IConstDropZoneServerInfo & CConstLegacyDropZoneServerInfoIterator::query()
+{
+    return *curr;
+}
+
+unsigned CConstLegacyDropZoneServerInfoIterator::count() const
+{
+    return (nullptr != computerServerInfo) ? 1 : 0;
 }
 
 //--------------------------------------------------
