@@ -230,6 +230,8 @@ class THORHELPER_API RowAggregator : private SuperHashTable
     // We have to be careful with ownership of the items in the hashtable. Because we free them as we iterate, we need to make sure
     // that we always do exactly one iteration through the hash table. We therefore DON'T free anything in onRemove.
     
+    unsigned matches = 0;
+    unsigned mismatches = 0;
 public:
     RowAggregator(IHThorHashAggregateExtra &_extra, IHThorRowAggregator & _helper);
     ~RowAggregator();
@@ -241,6 +243,7 @@ public:
     void mergeElement(const void * otherElement);
     AggregateRowBuilder *nextResult();
     unsigned elementCount() const { return count(); }
+    void dumpInfo();
     memsize_t queryMem() const { return SuperHashTable::queryMem() + totalSize + overhead; };
 
 protected:

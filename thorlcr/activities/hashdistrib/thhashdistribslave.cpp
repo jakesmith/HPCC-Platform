@@ -3737,6 +3737,283 @@ public:
 
 //===========================================================================
 
+class CSMT : public CSimpleInterfaceOf<IRowStream>
+{
+    struct HTEntry
+    {
+        const void *row;
+        unsigned hash;
+    };
+    CActivityBase &activity;
+    Owned<IEngineRowAllocator> rowAllocator;
+    IHash * hasher;
+    IHash * elementHasher;
+    ICompare * elementComparer;
+    IHThorRowAggregator & helper;
+
+    unsigned htn;
+    unsigned n;
+    HTEntry *table;
+    unsigned iPos = 0;
+
+    void expand()
+    {
+        HTEntry *t = table+htn; // more interesting going backwards
+        htn += htn;
+        HTEntry *newTable = (HTEntry *)activity.queryRowManager()->allocate(((memsize_t)htn)*sizeof(HTEntry), activity.queryContainer().queryId());
+        // could check capacity and see if higher pow2
+        memset(newTable, 0, sizeof(HTEntry)*htn);
+        while (t-- != table)
+        {
+            if (t->row)
+            {
+                unsigned i = t->hash & (htn - 1);
+                while (newTable[i].row)
+                {
+                    i++;
+                    if (i==htn)
+                        i = 0;
+                }
+                newTable[i] = *t;
+            }
+        }
+        ReleaseThorRow(table);
+        table = newTable;
+    }
+public:
+    CSMT(CActivityBase &_activity, IHThorHashAggregateExtra &_extra, IHThorRowAggregator & _helper) : activity(_activity), helper(_helper)
+    {
+        hasher = _extra.queryHash();
+        elementHasher = _extra.queryHashElement();
+        elementComparer = _extra.queryCompareElements();
+        htn = 8;
+        n = 0;
+        table = (HTEntry *)activity.queryRowManager()->allocate(((memsize_t)htn)*sizeof(HTEntry), activity.queryContainer().queryId());
+        // could check capacity and see if higher pow2
+        memset(table, 0, sizeof(HTEntry)*htn);
+    }
+    ~CSMT()
+    {
+        reset();
+        ReleaseThorRow(table);
+    }
+    void reset()
+    {
+        HTEntry *t = table+htn;
+        while (t-- != table)
+        {
+            if (t->row)
+            {
+                ReleaseRoxieRow(t->row);
+                t->row = nullptr;
+            }
+        }
+        n = 0;
+        iPos = 0;
+    }
+    void init(IEngineRowAllocator *_rowAllocator)
+    {
+        rowAllocator.set(_rowAllocator);
+    }
+    unsigned find(const void *row, unsigned h)
+    {
+        unsigned i = h & (htn - 1);
+        while (true)
+        {
+            HTEntry &ht = table[i];
+            if (nullptr == ht.row)
+                return i;
+            if ((table[i].hash==h) && (0 == elementComparer->docompare(row, ht.row)))
+                return i;
+            if (++i==htn)
+                i = 0;
+        }
+    }
+    inline void addNew(unsigned i, unsigned h, const void *row)
+    {
+        HTEntry *ht;
+        if (n >= ((htn * 3) / 4)) // if over 75% full
+        {
+            expand();
+            // re-find empty slot
+            i = h & (htn - 1);
+            while (true)
+            {
+                ht = &table[i];
+                if (nullptr == ht->row)
+                    break;
+                if (++i==htn)
+                    i = 0;
+            }
+        }
+        else
+            ht = &table[i];
+        ht->hash = h;
+        ht->row = row;
+        n++;
+    }
+    void add(const void *row)
+    {
+        unsigned h = hasher->hash(row);
+        unsigned i = find(row, h);
+        HTEntry *ht = &table[i];
+        RtlDynamicRowBuilder rowBuilder(rowAllocator);
+        size32_t sz;
+        if (ht->row)
+        {
+            sz = cloneRow(rowBuilder, ht->row, rowAllocator->queryOutputMeta());
+            sz = helper.processNext(rowBuilder, row);
+            ReleaseRoxieRow(ht->row);
+            ht->row = rowBuilder.finalizeRowClear(sz);
+        }
+        else
+        {
+            helper.clearAggregate(rowBuilder);
+            sz = helper.processFirst(rowBuilder, row);
+            const void *row = rowBuilder.finalizeRowClear(sz);
+            addNew(i, h, row);
+        }
+    }
+    void merge(const void *row)
+    {
+        unsigned h = elementHasher->hash(row);
+        unsigned i = find(row, h);
+        RtlDynamicRowBuilder rowBuilder(rowAllocator);
+        size32_t sz;
+        HTEntry &ht = table[i];
+        if (ht.row)
+        {
+            sz = cloneRow(rowBuilder, ht.row, rowAllocator->queryOutputMeta());
+            sz = helper.mergeAggregate(rowBuilder, row);
+            ReleaseRoxieRow(ht.row);
+            ht.row = rowBuilder.finalizeRowClear(sz);
+        }
+        else
+        {
+            RtlDynamicRowBuilder rowBuilder(rowAllocator);
+            sz = cloneRow(rowBuilder, row, rowAllocator->queryOutputMeta());
+            const void *row = rowBuilder.finalizeRowClear(sz);
+            addNew(i, h, row);
+        }
+    }
+    unsigned ordinality()
+    {
+        return n;
+    }
+// IRowStream impl.
+    virtual const void *nextRow()
+    {
+        while (iPos != htn)
+        {
+            HTEntry &r = table[iPos++];
+            if (r.row)
+            {
+                const void *row = r.row;
+                r.row = nullptr;
+                return row;
+            }
+        }
+        return nullptr;
+    }
+    virtual void stop() { iPos = 0; }
+};
+
+CSMT *mergeLocalAggs2(Owned<IHashDistributor> &distributor, CActivityBase &activity, IHThorRowAggregator &helper, IHThorHashAggregateExtra &helperExtra, CSMT *localAggTable, mptag_t mptag, bool ordered)
+{
+    Owned<IRowStream> strm;
+    Owned<CSMT> globalAggTable = new CSMT(activity, helperExtra, helper);
+    globalAggTable->init(activity.queryRowAllocator());
+    __int64 readCount = 0;
+    if (ordered)
+    {
+        class CRowAggregatedStream : implements IRowStream, public CInterface
+        {
+            CActivityBase &activity;
+            IThorRowInterfaces *rowIf;
+            Linked<IRowStream> localAggregated;
+            RtlDynamicRowBuilder outBuilder;
+            size32_t node;
+        public:
+            IMPLEMENT_IINTERFACE;
+            CRowAggregatedStream(CActivityBase &_activity, IThorRowInterfaces *_rowIf, IRowStream *_localAggregated) : activity(_activity), rowIf(_rowIf), localAggregated(_localAggregated), outBuilder(_rowIf->queryRowAllocator())
+            {
+                node = activity.queryContainer().queryJobChannel().queryMyRank();
+            }
+            // IRowStream impl.
+            virtual const void *nextRow()
+            {
+                const void *row = localAggregated->nextRow();
+                if (!row) return nullptr;
+                byte *outPtr = outBuilder.getSelf();
+                memcpy(outPtr, &node, sizeof(node));
+                memcpy(outPtr+sizeof(node), &row, sizeof(const void *));
+                return outBuilder.finalizeRowClear(sizeof(node)+sizeof(const void *));
+            }
+            virtual void stop() { }
+        };
+        Owned<IOutputMetaData> nodeRowMeta = createOutputMetaDataWithChildRow(activity.queryRowAllocator(), sizeof(size32_t));
+        Owned<IThorRowInterfaces> nodeRowMetaRowIf = activity.createRowInterfaces(nodeRowMeta);
+        Owned<IRowStream> localAggregatedStream = new CRowAggregatedStream(activity, nodeRowMetaRowIf, localAggTable);
+        class CNodeCompare : implements ICompare, implements IHash
+        {
+            IHash *baseHash;
+        public:
+            CNodeCompare(IHash *_baseHash) : baseHash(_baseHash) { }
+            virtual int docompare(const void *l,const void *r) const
+            {
+                size32_t lNode, rNode;
+                memcpy(&lNode, l, sizeof(size32_t));
+                memcpy(&rNode, r, sizeof(size32_t));
+                return (int)lNode-(int)rNode;
+            }
+            virtual unsigned hash(const void *rowMeta)
+            {
+                const void *row;
+                memcpy(&row, ((const byte *)rowMeta)+sizeof(size32_t), sizeof(const void *));
+                return baseHash->hash(row);
+            }
+        } nodeCompare(helperExtra.queryHashElement());
+        if (!distributor)
+            distributor.setown(createPullHashDistributor(&activity, activity.queryContainer().queryJobChannel().queryJobComm(), mptag, false, NULL, "MERGEAGGS"));
+        strm.setown(distributor->connect(nodeRowMetaRowIf, localAggregatedStream, &nodeCompare, &nodeCompare));
+        for (;;)
+        {
+            OwnedConstThorRow rowMeta = strm->nextRow();
+            if (!rowMeta)
+                break;
+            readCount++;
+            const void *row;
+            memcpy(&row, ((const byte *)rowMeta.get())+sizeof(size32_t), sizeof(const void *));
+            globalAggTable->merge(row);
+        }
+    }
+    else
+    {
+        if (!distributor)
+            distributor.setown(createHashDistributor(&activity, activity.queryContainer().queryJobChannel().queryJobComm(), mptag, false, NULL, "MERGEAGGS"));
+        Owned<IThorRowInterfaces> rowIf = activity.getRowInterfaces(); // create new rowIF / avoid using activities IRowInterface, otherwise suffer from circular link
+        strm.setown(distributor->connect(rowIf, localAggTable, helperExtra.queryHashElement(), NULL));
+        for (;;)
+        {
+            OwnedConstThorRow row = strm->nextRow();
+            if (!row)
+                break;
+            readCount++;
+            globalAggTable->merge(row);
+        }
+    }
+//    globalAggTable->dumpInfo();
+    strm->stop();
+    strm.clear();
+    distributor->disconnect(true);
+    distributor->join();
+
+    activity.ActPrintLog("HASHAGGREGATE: Read %" RCPF "d records to build hash table", readCount);
+    StringBuffer str("HASHAGGREGATE: After distribution merge contains ");
+    activity.ActPrintLog("%s", str.append(globalAggTable->ordinality()).append("entries").str());
+    return globalAggTable.getClear();
+}
+
 RowAggregator *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBase &activity, IHThorRowAggregator &helper, IHThorHashAggregateExtra &helperExtra, RowAggregator *localAggTable, mptag_t mptag, bool ordered)
 {
     Owned<IRowStream> strm;
@@ -3852,6 +4129,8 @@ RowAggregator *mergeLocalAggs(Owned<IHashDistributor> &distributor, CActivityBas
     return globalAggTable.getClear();
 }
 
+
+
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning( disable : 4355 ) // 'this' : used in base member initializer list
@@ -3862,7 +4141,7 @@ class CHashAggregateSlave : public CSlaveActivity, implements IHThorRowAggregato
 
     IHThorHashAggregateArg *helper;
     mptag_t mptag;
-    Owned<RowAggregator> localAggTable;
+    Owned<CSMT> localAggTable;
     bool eos;
     Owned<IHashDistributor> distributor;
 
@@ -3870,7 +4149,7 @@ class CHashAggregateSlave : public CSlaveActivity, implements IHThorRowAggregato
     {
         try
         {
-            localAggTable->start(queryRowAllocator());
+            localAggTable->init(queryRowAllocator());
             while (!abortSoon)
             {
                 OwnedConstThorRow row = inputStream->nextRow();
@@ -3882,16 +4161,16 @@ class CHashAggregateSlave : public CSlaveActivity, implements IHThorRowAggregato
                     if (!row)
                         break;
                 }
-                localAggTable->addRow(row);
+                localAggTable->add(row);
             }
-            return 0 != localAggTable->elementCount();
+            return 0 != localAggTable->ordinality();
         }
         catch (IException *e)
         {
             if (!isOOMException(e))
                 throw e;
             IOutputMetaData *inputOutputMeta = input->queryFromActivity()->queryContainer().queryHelper()->queryOutputMeta();
-            throw checkAndCreateOOMContextException(this, e, "aggregating using hash table", localAggTable->elementCount(), inputOutputMeta, NULL);
+            throw checkAndCreateOOMContextException(this, e, "aggregating using hash table", localAggTable->ordinality(), inputOutputMeta, NULL);
         }
     }
 
@@ -3913,7 +4192,7 @@ public:
             mptag = container.queryJobChannel().deserializeMPTag(data);
             ActPrintLog("HASHAGGREGATE: init tags %d",(int)mptag);
         }
-        localAggTable.setown(new RowAggregator(*helper, *helper));
+        localAggTable.setown(new CSMT(*this, *helper, *helper));
     }
     virtual void start()
     {
@@ -3921,12 +4200,12 @@ public:
         PARENT::start();
         doNextGroup(); // or local set if !grouped
         if (!container.queryGrouped())
-            ActPrintLog("Table before distribution contains %d entries", localAggTable->elementCount());
+            ActPrintLog("Table before distribution contains %d entries", localAggTable->ordinality());
         if (!container.queryLocalOrGrouped() && container.queryJob().querySlaves()>1)
         {
             bool ordered = 0 != (TAForderedmerge & helper->getAggregateFlags());
-            localAggTable.setown(mergeLocalAggs(distributor, *this, *helper, *helper, localAggTable, mptag, ordered));
-            ActPrintLog("Table after distribution contains %d entries", localAggTable->elementCount());
+            localAggTable.setown(mergeLocalAggs2(distributor, *this, *helper, *helper, localAggTable, mptag, ordered));
+            ActPrintLog("Table after distribution contains %d entries", localAggTable->ordinality());
         }
         eos = false;
     }
@@ -3946,12 +4225,12 @@ public:
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        if (eos) return NULL;
-        Owned<AggregateRowBuilder> next = localAggTable->nextResult();
+        if (eos) return nullptr;
+        const void *next = localAggTable->nextRow();
         if (next)
         {
             dataLinkIncrement();
-            return next->finalizeRowClear();
+            return next;
         }
         if (container.queryGrouped())
         {
@@ -3961,7 +4240,7 @@ public:
         }
         else
             eos = true;
-        return NULL;
+        return nullptr;
     }
     virtual bool isGrouped() const override { return false; }
     virtual void getMetaInfo(ThorDataLinkMetaInfo &info)

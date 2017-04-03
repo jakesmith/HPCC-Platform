@@ -33,6 +33,13 @@ extern jlib_decl unsigned hashnc( const unsigned char *k, unsigned length, unsig
 
 class jlib_decl SuperHashTable : public CInterface
 {
+protected:
+    mutable unsigned hashMissFind = 0;
+    mutable unsigned hashMissFindElement = 0;
+    mutable unsigned hashMissFindNew = 0;
+    mutable cycle_t mECycles = 0;
+    unsigned numExpands = 0;
+    cycle_t timeExpand = 0;
 public:
     SuperHashTable(void);
     SuperHashTable(unsigned initsize);

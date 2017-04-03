@@ -53,11 +53,13 @@ RowAggregator::~RowAggregator()
 
 void RowAggregator::start(IEngineRowAllocator *_rowAllocator)
 {
+    PROGLOG("RowAggregator::start : %p", this);
     rowAllocator.set(_rowAllocator);
 }
 
 void RowAggregator::reset()
 {
+    PROGLOG("RowAggregator::reset : %p", this);
     while (!eof)
     {
         AggregateRowBuilder *n = nextResult();
@@ -98,6 +100,13 @@ AggregateRowBuilder &RowAggregator::addRow(const void * row)
     return *result;
 }
 
+void RowAggregator::dumpInfo()
+{
+    PROGLOG("dumpInfo(%p): tablecount=%u, tablesize=%u, matches=%u, mismatches=%u, hashMissFind=%u, hashMissFindElement=%u, hashMissFindNew=%u", this, tablecount, tablesize, matches, mismatches, hashMissFind, hashMissFindElement, hashMissFindNew);
+    PROGLOG("expanded %u times, took time %u ms", numExpands, (unsigned)(cycle_to_millisec(timeExpand)));
+    PROGLOG("doFindElement time %u ms", (unsigned)(cycle_to_millisec(mECycles)));
+}
+
 void RowAggregator::mergeElement(const void * otherElement)
 {
     unsigned hash = elementHasher->hash(otherElement);
@@ -109,9 +118,11 @@ void RowAggregator::mergeElement(const void * otherElement)
         size32_t sz = helper.mergeAggregate(*rowBuilder, otherElement);
         rowBuilder->setSize(sz);
         totalSize += sz;
+        ++matches;
     }
     else
     {
+        ++mismatches;
         Owned<AggregateRowBuilder> rowBuilder = new AggregateRowBuilder(rowAllocator, hash);
         rowBuilder->setSize(cloneRow(*rowBuilder, otherElement, rowAllocator->queryOutputMeta()));
         addNew(rowBuilder.getClear(), hash);

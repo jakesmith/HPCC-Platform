@@ -19,6 +19,8 @@
 #include "jlib.hpp"
 #include "jsuperhash.hpp"
 #include "jexcept.hpp"
+#include "jdebug.hpp"
+#include "jlog.hpp"
 
 #ifndef HASHSIZE_POWER2
 #define HASHSIZE_POWER2
@@ -127,9 +129,7 @@ unsigned SuperHashTable::doFind(unsigned findHash, const void * findParam) const
     unsigned v = findHash % tablesize;
 #endif
     unsigned vs = v;
-#ifdef TRACE_HASH
     unsigned searchlen = 0;
-#endif
     while (1)
     {
 #ifdef MY_TRACE_HASH
@@ -140,15 +140,14 @@ unsigned SuperHashTable::doFind(unsigned findHash, const void * findParam) const
             break;
         if (matchesFindParam(et, findParam, findHash))
             break;
-#ifdef TRACE_HASH
         searchlen ++;
-#endif
         v++;
         if (v==tablesize)
             v = 0;
         if (v==vs)
             break;
     }
+    hashMissFind += searchlen;
 #ifdef MY_TRACE_HASH
     my_search_num++;
     if(my_search_num != 0)
@@ -169,9 +168,8 @@ unsigned SuperHashTable::doFindElement(unsigned v, const void * findET) const
     v = v % tablesize;
 #endif
     unsigned vs = v;
-#ifdef TRACE_HASH
     unsigned searchlen = 0;
-#endif
+    CCycleTimer t;
     while (1)
     {
 #ifdef MY_TRACE_HASH
@@ -182,15 +180,16 @@ unsigned SuperHashTable::doFindElement(unsigned v, const void * findET) const
             break;
         if (matchesElement(et, findET))
             break;
-#ifdef TRACE_HASH
+        mECycles += t.elapsedCycles();
         searchlen ++;
-#endif
         v++;
         if (v==tablesize)
             v = 0;
         if (v==vs)
             break;
     }
+    mECycles += t.elapsedCycles();
+    hashMissFindElement += searchlen;
 #ifdef MY_TRACE_HASH
     my_search_num++;
     if(my_search_num != 0)
@@ -211,9 +210,7 @@ unsigned SuperHashTable::doFindNew(unsigned v) const
     v = v % tablesize;
 #endif
     unsigned vs = v;
-#ifdef TRACE_HASH
     unsigned searchlen = 0;
-#endif
     while (1)
     {
 #ifdef MY_TRACE_HASH
@@ -222,15 +219,14 @@ unsigned SuperHashTable::doFindNew(unsigned v) const
         void *et = table[v];
         if (!et)
             break;
-#ifdef TRACE_HASH
         searchlen ++;
-#endif
         v++;
         if (v==tablesize)
             v = 0;
         if (v==vs)
             break; //table is full, should never occur
     }
+    hashMissFindNew += searchlen;
 #ifdef MY_TRACE_HASH
     my_search_num++;
     if(my_search_num != 0)
@@ -310,6 +306,7 @@ void SuperHashTable::expand()
 
 void SuperHashTable::expand(unsigned newsize)
 {
+    CCycleTimer timer;
     if (newsize < tablesize)
         throw MakeStringException(0, "HashTable expanded beyond 2^32 items");
     void * *newtable = (void * *) checked_malloc(newsize*sizeof(void *),-603);
@@ -338,6 +335,8 @@ void SuperHashTable::expand(unsigned newsize)
     free(table);
     table = newtable;
     tablesize = newsize;
+    ++numExpands;
+    timeExpand += timer.elapsedCycles();
 }
 
 bool SuperHashTable::doAdd(void * donor, bool replace)
