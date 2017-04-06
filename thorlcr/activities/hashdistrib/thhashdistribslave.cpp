@@ -3741,8 +3741,9 @@ class CSMT : public CSimpleInterfaceOf<IRowStream>
 {
     struct HTEntry
     {
-        const void *row;
+        void *row;
         unsigned hash;
+        size32_t size;
     };
     CActivityBase &activity;
     Owned<IEngineRowAllocator> rowAllocator;
@@ -3829,7 +3830,7 @@ public:
                 i = 0;
         }
     }
-    inline void addNew(unsigned i, unsigned h, const void *row)
+    inline void addNew(unsigned i, unsigned h, void *row, size32_t sz)
     {
         HTEntry *ht;
         if (n >= ((htn * 3) / 4)) // if over 75% full
@@ -3848,8 +3849,9 @@ public:
         }
         else
             ht = &table[i];
-        ht->hash = h;
         ht->row = row;
+        ht->hash = h;
+        ht->size = sz;
         n++;
     }
     void add(const void *row)
@@ -3857,21 +3859,19 @@ public:
         unsigned h = hasher->hash(row);
         unsigned i = find(row, h);
         HTEntry *ht = &table[i];
-        RtlDynamicRowBuilder rowBuilder(rowAllocator);
-        size32_t sz;
         if (ht->row)
         {
-            sz = cloneRow(rowBuilder, ht->row, rowAllocator->queryOutputMeta());
-            sz = helper.processNext(rowBuilder, row);
-            ReleaseRoxieRow(ht->row);
-            ht->row = rowBuilder.finalizeRowClear(sz);
+            RtlDynamicRowBuilder rowBuilder(rowAllocator, ht->size, ht->row);
+            ht->size = helper.processNext(rowBuilder, row);
+//            ReleaseRoxieRow(ht->row);
+            ht->row = rowBuilder.getUnfinalizedClear();
         }
         else
         {
+            RtlDynamicRowBuilder rowBuilder(rowAllocator);
             helper.clearAggregate(rowBuilder);
-            sz = helper.processFirst(rowBuilder, row);
-            const void *row = rowBuilder.finalizeRowClear(sz);
-            addNew(i, h, row);
+            size32_t sz = helper.processFirst(rowBuilder, row);
+            addNew(i, h, rowBuilder.getUnfinalizedClear(), sz);
         }
     }
     void merge(const void *row)
@@ -3883,17 +3883,19 @@ public:
         HTEntry &ht = table[i];
         if (ht.row)
         {
-            sz = cloneRow(rowBuilder, ht.row, rowAllocator->queryOutputMeta());
-            sz = helper.mergeAggregate(rowBuilder, row);
-            ReleaseRoxieRow(ht.row);
-            ht.row = rowBuilder.finalizeRowClear(sz);
+            RtlDynamicRowBuilder rowBuilder(rowAllocator, ht.size, ht.row);
+            ht.size = helper.mergeAggregate(rowBuilder, row);
+//            ReleaseRoxieRow(ht.row);
+            ht.row = rowBuilder.getUnfinalizedClear();
         }
         else
         {
+            /* rows arriving from remote side being merged have been finalized
+             * To avoid cloning here, will need to leave unfinalized and send size in distributor too (and could send hash as well)
+             */
             RtlDynamicRowBuilder rowBuilder(rowAllocator);
-            sz = cloneRow(rowBuilder, row, rowAllocator->queryOutputMeta());
-            const void *row = rowBuilder.finalizeRowClear(sz);
-            addNew(i, h, row);
+            size32_t sz = cloneRow(rowBuilder, row, rowAllocator->queryOutputMeta());
+            addNew(i, h, rowBuilder.getUnfinalizedClear(), sz);
         }
     }
     unsigned ordinality()
@@ -3905,11 +3907,12 @@ public:
     {
         while (iPos != htn)
         {
-            HTEntry &r = table[iPos++];
-            if (r.row)
+            HTEntry &ht = table[iPos++];
+            if (ht.row)
             {
-                const void *row = r.row;
-                r.row = nullptr;
+                RtlDynamicRowBuilder rowBuilder(rowAllocator, ht.size, ht.row);
+                const void *row = rowBuilder.finalizeRowClear(ht.size);
+                ht.row = nullptr;
                 return row;
             }
         }
