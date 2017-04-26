@@ -19,6 +19,7 @@
 #include "jfile.hpp"
 #include "jtime.hpp"
 #include "jsort.hpp"
+#include "sockfile.hpp"
 
 #include "rtlkey.hpp"
 #include "jhtree.hpp"
@@ -48,6 +49,7 @@ protected:
     Owned<IOutputRowDeserializer> deserializer;
     Owned<IOutputRowSerializer> serializer;
     bool localKey = false;
+    size32_t seekGEOffset = 0;
     __int64 lastSeeks = 0, lastScans = 0;
     UInt64Array _statsArr;
     SpinLock statLock;  // MORE: Can this be avoided by passing in the delta?
@@ -241,10 +243,22 @@ public:
         keyIndexSet.setown(createKeyIndexSet());
         ForEachItemIn(p, partDescs)
         {
-            Owned<IKeyIndex> keyIndex = openKeyPart(partDescs.item(p));
-            Owned<IKeyManager> klManager = createKeyManager(keyIndex, fixedDiskRecordSize, NULL);
-            keyManagers.append(*klManager.getClear());
-            keyIndexSet->addIndex(keyIndex.getClear());
+            IPartDescriptor &part = partDescs.item(p);
+            RemoteFilename rfn;
+            part.getFilename(0, rfn);
+
+            if (!rfn.isLocal() && !localKey && !seekGEOffset)
+            {
+                Owned<IKeyManager> klManager = createRemoteKeyManager(rfn);
+                keyManagers.append(*klManager.getClear());
+            }
+            else
+            {
+                Owned<IKeyIndex> keyIndex = openKeyPart(part);
+                Owned<IKeyManager> klManager = createKeyManager(keyIndex, fixedDiskRecordSize, NULL);
+                keyManagers.append(*klManager.getClear());
+                keyIndexSet->addIndex(keyIndex.getClear());
+            }
         }
     }
     // IThorDataLink
@@ -296,7 +310,6 @@ class CIndexReadSlaveActivity : public CIndexReadSlaveBase
     IHThorSteppedSourceExtra *steppedExtra;
     CSteppingMeta steppingMeta;
     UnsignedArray seekSizes;
-    size32_t seekGEOffset = 0;
 
     const void *getNextRow()
     {

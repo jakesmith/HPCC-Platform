@@ -261,6 +261,25 @@ void SegMonitorList::recalculateCache()
     cachedLRS = _lastRealSeg();
 }
 
+void SegMonitorList::deserialize(MemoryBuffer &mb)
+{
+    unsigned num;
+    mb.read(num);
+    while (num--)
+    {
+        append(deserializeKeySegmentMonitor(mb));
+    }
+}
+
+void SegMonitorList::serialize(MemoryBuffer &mb) const
+{
+    mb.append((unsigned) ordinality());
+    ForEachItemIn(idx, segMonitors)
+    {
+        segMonitors.item(idx).serialize(mb);
+    }
+}
+
 // interface IIndexReadContext
 void SegMonitorList::append(IKeySegmentMonitor *segment)
 {
@@ -935,6 +954,12 @@ public:
     {
         activitySegs->setMergeBarrier(offset); 
     }
+
+    virtual void deserializeSegmentMonitors(MemoryBuffer &mb) override
+    {
+        segs.deserialize(mb);
+    }
+
 
     virtual void finishSegmentMonitors()
     {

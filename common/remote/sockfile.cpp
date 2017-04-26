@@ -36,6 +36,7 @@
 #include "jsocket.hpp"
 #include "jencrypt.hpp"
 #include "jset.hpp"
+#include "jhtree.hpp"
 
 #include "remoteerr.hpp"
 #include <atomic>
@@ -159,7 +160,7 @@ struct dummyReadWrite
 // backward compatible modes
 typedef enum { compatIFSHnone, compatIFSHread, compatIFSHwrite, compatIFSHexec, compatIFSHall} compatIFSHmode;
 
-static const char *VERSTRING= "DS V1.9"       // dont forget FILESRV_VERSION in header
+static const char *VERSTRING= "DS V2.0"       // dont forget FILESRV_VERSION in header
 #ifdef _WIN32
 "Windows ";
 #else
@@ -313,6 +314,8 @@ enum {
 // 1.9
     RFCsetthrottle2,
     RFCsetfileperms,
+// 2.0
+    RFCreadfilteredindex,
     RFCmax,
     RFCunknown = 255 // 0 would have been more sensible, but can't break backward compatibility
 };
@@ -361,6 +364,7 @@ const char *RFCStrings[] =
     RFCText(RFCsetthrottle), // legacy version
     RFCText(RFCsetthrottle2),
     RFCText(RFCsetfileperms),
+    RFCText(RFCreadfilteredindex),
     RFCText(RFCunknown),
 };
 static const char *getRFCText(RemoteFileCommandType cmd)
@@ -1609,6 +1613,56 @@ void CEndpointCS::beforeDispose()
     table.removeExact(this);
 }
 
+class CRemoteKeyManager : public CRemoteBase, implements IKeyManager
+{
+public:
+    IMPLEMENT_IINTERFACE;
+    CRemoteKeyManager(const SocketEndpoint &_ep, const char *_filename);
+    virtual void reset(bool crappyHack = false) override { UNIMPLEMENTED; }
+    virtual void releaseSegmentMonitors() override { UNIMPLEMENTED; }
+
+    virtual const byte *queryKeyBuffer(offset_t & fpos) override;
+    virtual offset_t queryFpos() override;
+    virtual unsigned queryRecordSize() override;
+
+    virtual bool lookup(bool exact) override;
+    virtual unsigned __int64 getCount() override { UNIMPLEMENTED; }
+    virtual unsigned __int64 getCurrentRangeCount(unsigned groupSegCount) override { UNIMPLEMENTED; }
+    virtual bool nextRange(unsigned groupSegCount) override { UNIMPLEMENTED; }
+    virtual void setKey(IKeyIndexBase * _key) override { UNIMPLEMENTED; }
+    virtual unsigned __int64 checkCount(unsigned __int64 limit) override { UNIMPLEMENTED; }
+    virtual void serializeCursorPos(MemoryBuffer &mb) override { UNIMPLEMENTED; }
+    virtual void deserializeCursorPos(MemoryBuffer &mb) override { UNIMPLEMENTED; }
+    virtual unsigned querySeeks() const override { UNIMPLEMENTED; }
+    virtual unsigned queryScans() const override { UNIMPLEMENTED; }
+    virtual unsigned querySkips() const override { UNIMPLEMENTED; }
+    virtual unsigned queryNullSkips() const override { UNIMPLEMENTED; }
+    virtual const byte *loadBlob(unsigned __int64 blobid, size32_t &blobsize) override { UNIMPLEMENTED; }
+    virtual void releaseBlobs() override { UNIMPLEMENTED; }
+    virtual void resetCounts() override { UNIMPLEMENTED; }
+
+    virtual void setLayoutTranslator(IRecordLayoutTranslator * trans) override { UNIMPLEMENTED; }
+    virtual void deserializeSegmentMonitors(MemoryBuffer &mb) override { UNIMPLEMENTED; }
+    virtual void finishSegmentMonitors() override;
+
+    virtual bool lookupSkip(const void *seek, size32_t seekGEOffset, size32_t seeklen) override { UNIMPLEMENTED; }
+
+    virtual void append(IKeySegmentMonitor *segment) override;
+    virtual unsigned ordinality() const override { UNIMPLEMENTED; }
+    virtual IKeySegmentMonitor *item(unsigned idx) const override { UNIMPLEMENTED; }
+    virtual void setMergeBarrier(unsigned offset) override { UNIMPLEMENTED; }
+private:
+    SegMonitorList segs;
+    RemoteFileIOHandle  handle;
+    MemoryBuffer replyBuffer;
+    size32_t sizeRemaining;
+    size32_t numRecs = 100;
+    size32_t keySize = 0;
+    size32_t currentSize;
+    offset_t currentFpos;
+    const byte *currentRow;
+    bool first = true;
+};
 
 class CRemoteFile : public CRemoteBase, implements IFile
 {
@@ -2117,6 +2171,74 @@ IFile * createRemoteFile(SocketEndpoint &ep, const char * filename)
     if (ret)
         return ret;
     return new CRemoteFile(ep, filename);
+}
+
+CRemoteKeyManager::CRemoteKeyManager(const SocketEndpoint &_ep, const char *_filename)
+: CRemoteBase(_ep, _filename)
+{
+    MemoryBuffer sendBuffer;
+    initSendBuffer(sendBuffer);
+    MemoryBuffer replyBuffer;
+    // see open() code above
+    unsigned short sMode = 0;
+    unsigned short cFlags = 0;
+    sendBuffer.append((RemoteFileCommandType)RFCopenIO).append(_filename).append((byte)IFOread).append((byte)compatIFSHread).append((byte)IFEnone).append(sMode).append(cFlags);
+    sendRemoteCommand(sendBuffer, replyBuffer);
+    replyBuffer.read(handle);
+    assertex(handle); // TBD proper error!
+}
+
+const byte *CRemoteKeyManager::queryKeyBuffer(offset_t & fpos)
+{
+    fpos = currentFpos;
+    return currentRow;
+}
+offset_t CRemoteKeyManager::queryFpos()
+{
+    return currentFpos;
+}
+unsigned CRemoteKeyManager::queryRecordSize()
+{
+    return currentSize;
+}
+
+bool CRemoteKeyManager::lookup(bool exact)
+{
+    if (first)
+    {
+        assertex(handle); // TBD proper error!
+        MemoryBuffer sendBuffer;
+        initSendBuffer(sendBuffer);
+        sendBuffer.append((RemoteFileCommandType)RFCreadfilteredindex).append(handle).append(numRecs).append(keySize).append(filename);
+        segs.serialize(sendBuffer);
+        sendRemoteCommand(sendBuffer, replyBuffer);
+        replyBuffer.read(sizeRemaining);
+        first = false;
+    }
+    if (sizeRemaining)
+    {
+        replyBuffer.read(currentFpos);
+        replyBuffer.read(currentSize);
+        currentRow = replyBuffer.readDirect(currentSize);
+        return true;
+    }
+    else
+        return false;
+}
+
+void CRemoteKeyManager::finishSegmentMonitors()
+{
+}
+
+void CRemoteKeyManager::append(IKeySegmentMonitor *segment)
+{
+    segs.append(segment);
+}
+
+IKeyManager * createRemoteKeyManager(const RemoteFilename &_rfn)
+{
+    StringBuffer str;
+    return new CRemoteKeyManager(_rfn.queryEndpoint(), _rfn.getLocalPath(str).str());
 }
 
 
@@ -4162,6 +4284,37 @@ public:
         return true;
     }
 
+    bool cmdReadFilteredIndex(MemoryBuffer & msg, MemoryBuffer & reply, CClientStats &stats)
+    {
+        int handle;
+        size32_t numRecs;
+        size32_t keySize;
+        msg.read(handle).read(numRecs).read(keySize);
+        IFileIO *fileio;
+        if (!checkFileIOHandle(reply, handle, fileio))
+            return false;
+        StringBuffer keyname;
+        msg.read(keyname);
+
+        DelayedSizeMarker numReturned(reply);
+        Owned<IKeyIndex> index = createKeyIndex(keyname, 0, *fileio, false, false);
+        Owned<IKeyManager> keyManager = createKeyManager(index, keySize, NULL);
+        keyManager->deserializeSegmentMonitors(msg);
+        keyManager->finishSegmentMonitors();
+        keyManager->reset();
+        while (numRecs-- && keyManager->lookup(true))
+        {
+            unsigned size = keyManager->queryRecordSize();
+            offset_t fpos;
+            const byte *result = keyManager->queryKeyBuffer(fpos);
+            reply.append(size);
+            reply.append(size, result);
+            reply.append(fpos);
+        }
+        numReturned.write();
+        return true;
+    }
+
     bool cmdSize(MemoryBuffer & msg, MemoryBuffer & reply)
     {
         int handle;
@@ -4899,6 +5052,7 @@ public:
             case RFCisreadonly:
             case RFCsetreadonly:
             case RFCsetfileperms:
+            case RFCreadfilteredindex:
             case RFCgettime:
             case RFCsettime:
             case RFCcreatedir:
@@ -4937,6 +5091,7 @@ public:
             {
                 MAPCOMMANDSTATS(RFCread, cmdRead, *stats);
                 MAPCOMMANDSTATS(RFCwrite, cmdWrite, *stats);
+                MAPCOMMANDSTATS(RFCreadfilteredindex, cmdReadFilteredIndex, *stats);
                 MAPCOMMANDCLIENTSTATS(RFCappend, cmdAppend, *client, *stats);
                 MAPCOMMAND(RFCcloseIO, cmdCloseFileIO);
                 MAPCOMMANDCLIENT(RFCopenIO, cmdOpenFileIO, *client);
