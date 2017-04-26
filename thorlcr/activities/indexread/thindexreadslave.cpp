@@ -247,7 +247,8 @@ public:
             RemoteFilename rfn;
             part.getFilename(0, rfn);
 
-            if (!rfn.isLocal() && !localKey && !seekGEOffset)
+//            if (!rfn.isLocal() && !localKey && !seekGEOffset)
+            if (!localKey && !seekGEOffset)
             {
                 Owned<IKeyManager> klManager = createRemoteKeyManager(rfn);
                 keyManagers.append(*klManager.getClear());

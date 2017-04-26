@@ -1618,8 +1618,8 @@ class CRemoteKeyManager : public CRemoteBase, implements IKeyManager
 public:
     IMPLEMENT_IINTERFACE;
     CRemoteKeyManager(const SocketEndpoint &_ep, const char *_filename);
-    virtual void reset(bool crappyHack = false) override { UNIMPLEMENTED; }
-    virtual void releaseSegmentMonitors() override { UNIMPLEMENTED; }
+    virtual void reset(bool crappyHack = false) override;
+    virtual void releaseSegmentMonitors() override { segs.segMonitors.kill(); }
 
     virtual const byte *queryKeyBuffer(offset_t & fpos) override;
     virtual offset_t queryFpos() override;
@@ -1633,12 +1633,12 @@ public:
     virtual unsigned __int64 checkCount(unsigned __int64 limit) override { UNIMPLEMENTED; }
     virtual void serializeCursorPos(MemoryBuffer &mb) override { UNIMPLEMENTED; }
     virtual void deserializeCursorPos(MemoryBuffer &mb) override { UNIMPLEMENTED; }
-    virtual unsigned querySeeks() const override { UNIMPLEMENTED; }
-    virtual unsigned queryScans() const override { UNIMPLEMENTED; }
-    virtual unsigned querySkips() const override { UNIMPLEMENTED; }
-    virtual unsigned queryNullSkips() const override { UNIMPLEMENTED; }
+    virtual unsigned querySeeks() const override { return 0; }
+    virtual unsigned queryScans() const override { return 0; }
+    virtual unsigned querySkips() const override { return 0; }
+    virtual unsigned queryNullSkips() const override { return 0; }
     virtual const byte *loadBlob(unsigned __int64 blobid, size32_t &blobsize) override { UNIMPLEMENTED; }
-    virtual void releaseBlobs() override { UNIMPLEMENTED; }
+    virtual void releaseBlobs() override { /* TBD */ }
     virtual void resetCounts() override { UNIMPLEMENTED; }
 
     virtual void setLayoutTranslator(IRecordLayoutTranslator * trans) override { UNIMPLEMENTED; }
@@ -2188,6 +2188,16 @@ CRemoteKeyManager::CRemoteKeyManager(const SocketEndpoint &_ep, const char *_fil
     assertex(handle); // TBD proper error!
 }
 
+void CRemoteKeyManager::reset(bool crappyHack)
+{
+    replyBuffer.clear();
+    sizeRemaining = 0;
+    currentSize = 0;
+    currentFpos = 0;
+    currentRow = nullptr;
+    first = true;
+}
+
 const byte *CRemoteKeyManager::queryKeyBuffer(offset_t & fpos)
 {
     fpos = currentFpos;
@@ -2220,6 +2230,7 @@ bool CRemoteKeyManager::lookup(bool exact)
         replyBuffer.read(currentFpos);
         replyBuffer.read(currentSize);
         currentRow = replyBuffer.readDirect(currentSize);
+        sizeRemaining -= sizeof(currentFpos) + sizeof(currentSize) + currentSize;
         return true;
     }
     else
@@ -4296,6 +4307,7 @@ public:
         StringBuffer keyname;
         msg.read(keyname);
 
+        reply.append((unsigned)RFEnoerror);
         DelayedSizeMarker numReturned(reply);
         Owned<IKeyIndex> index = createKeyIndex(keyname, 0, *fileio, false, false);
         Owned<IKeyManager> keyManager = createKeyManager(index, keySize, NULL);
@@ -4307,9 +4319,9 @@ public:
             unsigned size = keyManager->queryRecordSize();
             offset_t fpos;
             const byte *result = keyManager->queryKeyBuffer(fpos);
+            reply.append(fpos);
             reply.append(size);
             reply.append(size, result);
-            reply.append(fpos);
         }
         numReturned.write();
         return true;
