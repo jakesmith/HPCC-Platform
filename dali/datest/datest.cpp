@@ -20,6 +20,7 @@
 #include "jlib.hpp"
 #include "jexcept.hpp"
 #include "jmisc.hpp"
+#include "jregexp.hpp"
 #include "mpbase.hpp"
 #include "mpcomm.hpp"
 #include "sockfile.hpp"
