@@ -2875,6 +2875,17 @@ static void migrateFiles(const char *srcGroup, const char *tgtGroup, const char 
             }
             return stream.getClear();
         }
+        unsigned find(IGroup *group, const IpAddress &ip) const
+        {
+            unsigned c = group->ordinality();
+            for (unsigned i=0; i<c; i++)
+            {
+                const IpAddress &nodeIP = group->queryNode(i).endpoint();
+                if (ip.ipequals(nodeIP))
+                    return i;
+            }
+            return NotFound;
+        }
     public:
         CMatchScanner(const char *_srcGroup, const char *_tgtGroup, mg_options _options) : srcGroup(_srcGroup), tgtGroup(_tgtGroup), options(_options)
         {
@@ -2925,72 +2936,87 @@ static void migrateFiles(const char *srcGroup, const char *tgtGroup, const char 
         }
         virtual void processFile(IPropertyTree &root, StringBuffer &name) override
         {
-            PROGLOG("Processing file %s", name.str());
-            if (mgOpt(mg_options::listonly))
-                return;
-
             bool doCommit = false;
             StringBuffer _tgtClusterGroupText = tgtClusterGroupText;
-            Linked<IGroup> _tgtClusterGroup = tgtClusterGroup;
 
             Owned<IFileDescriptor> fileDesc = deserializeFileDescriptorTree(&root, &queryNamedGroupStore());
             unsigned numClusters = fileDesc->numClusters();
             for (unsigned g=0; g<numClusters; g++)
             {
-                StringBuffer clusterGroupName;
-                fileDesc->getClusterGroupName(g, clusterGroupName);
-                const char *sub = strchr(clusterGroupName, '[');
-                StringAttr group;
-                if (sub)
-                    group.set(clusterGroupName, sub-clusterGroupName);
-                else
-                    group.set(clusterGroupName);
-                if (streq(group, srcGroup))
+                StringBuffer srcFileGroup;
+                fileDesc->getClusterGroupName(g, srcFileGroup);
+
+                StringBuffer srcFileGroupName, srcFileGroupRange;
+                if (!decodeChildGroupName(srcFileGroup, srcFileGroupName, srcFileGroupRange))
+                    srcFileGroupName.append(srcFileGroup);
+                if (streq(srcFileGroupName, srcGroup))
                 {
-                    if (!mgOpt(mg_options::dryrun))
+                    IGroup *srcFileClusterGroup = fileDesc->queryClusterGroup(g);
+                    unsigned srcFileClusterGroupWidth = srcFileClusterGroup->ordinality();
+
+                    StringBuffer _tgtGroup(tgtGroup);
+                    UnsignedArray srcFileGroupPositions;
+                    if (srcFileGroupRange.length())
                     {
-                        doCommit = true;
-                        StringBuffer _tgtGroup(tgtGroup);
-                        if (sub)
-                            _tgtGroup.append(sub);
-                        VStringBuffer clusterXPath("Cluster[%u]", g+1);
-                        IPropertyTree *cluster = root.queryPropTree(clusterXPath);
-                        root.setProp("@group", _tgtGroup);
-                        if (cluster)
-                            cluster->setProp("@name", _tgtGroup);
-                        else
-                            WARNLOG("No Cluster found for file: %s", name.str());
+                        SocketEndpointArray epas;
+                        UnsignedArray dstPositions;
+                        Owned<INodeIterator> nodeIter = srcFileClusterGroup->getIterator();
+                        ForEach(*nodeIter)
+                        {
+                            const IpAddress &ip = nodeIter->query().endpoint();
+                            unsigned srcRelPos = find(srcClusterGroup, ip);
+                            unsigned dstRelPos = srcRelPos % tgtClusterSize;
+                            dstPositions.append(dstRelPos);
+                        }
+                        StringBuffer rangeText;
+                        encodeChildGroupRange(tgtClusterGroup, dstPositions, rangeText);
+                        _tgtGroup.append(rangeText);
                     }
                     unsigned parts = fileDesc->numParts();
-                    unsigned dstPos = 0;
-                    for (unsigned p=0; p<parts; p++)
+                    PROGLOG("Processing file %s (width=%u), cluster group=%s (%u of %u), new group = %s", name.str(), parts, srcFileGroup.str(), g, numClusters, _tgtGroup.str());
+                    if (!mgOpt(mg_options::listonly))
                     {
-                        const SocketEndpoint &srcEp = fileDesc->queryPart(p)->queryNode()->endpoint();
-                        rank_t relPos = srcClusterGroup->rank(srcEp);
-                        dstPos = relPos % tgtClusterSize;
-                        const SocketEndpoint &ep = _tgtClusterGroup->queryNode(dstPos).endpoint();
-                        StringBuffer dstIpStr;
-                        ep.getIpText(dstIpStr);
-                        if (mgOpt(mg_options::createmaps))
+                        if (!mgOpt(mg_options::dryrun))
                         {
-                            // output srcIP, dstIP, path/file-part-name >> script<N>.lst
+                            doCommit = true;
+                            VStringBuffer clusterXPath("Cluster[%u]", g+1);
+                            IPropertyTree *cluster = root.queryPropTree(clusterXPath);
+                            root.setProp("@group", _tgtGroup);
+                            if (cluster)
+                                cluster->setProp("@name", _tgtGroup);
+                            else
+                                WARNLOG("No Cluster found for file: %s", name.str());
+                        }
+                        unsigned dstPos = 0;
+                        for (unsigned p=0; p<parts; p++)
+                        {
+                            unsigned r = p%srcFileClusterGroupWidth;
+                            const SocketEndpoint &srcEp = srcClusterGroup->queryNode(r).endpoint();
+                            unsigned relPos = find(srcClusterGroup, srcEp);
+                            dstPos = relPos % tgtClusterSize;
+                            const SocketEndpoint &tgtEp = tgtClusterGroup->queryNode(dstPos).endpoint();
 
-                            Owned<IFileIOStream> iFileIOStream = getFileIOStream(relPos);
+                            if (mgOpt(mg_options::createmaps))
+                            {
+                                // output srcIP, dstIP, path/file-part-name >> script<N>.lst
 
-                            StringBuffer outputLine;
-                            srcEp.getIpText(outputLine);
-                            outputLine.append(",");
-                            outputLine.append(dstIpStr);
-                            outputLine.append(",");
+                                Owned<IFileIOStream> iFileIOStream = getFileIOStream(relPos+1);
 
-                            IPartDescriptor *part = fileDesc->queryPart(p);
-                            StringBuffer filePath;
-                            part->getPath(filePath);
+                                StringBuffer outputLine;
+                                srcEp.getIpText(outputLine);
+                                outputLine.append(",");
+                                tgtEp.getIpText(outputLine);
+                                outputLine.append(",");
 
-                            outputLine.append(filePath);
-                            outputLine.newline();
+                                IPartDescriptor *part = fileDesc->queryPart(p);
+                                StringBuffer filePath;
+                                part->getPath(filePath);
 
-                            iFileIOStream->write(outputLine.length(), outputLine.str());
+                                outputLine.append(filePath);
+                                outputLine.newline();
+
+                                iFileIOStream->write(outputLine.length(), outputLine.str());
+                            }
                         }
                     }
                 }
@@ -3004,7 +3030,13 @@ static void migrateFiles(const char *srcGroup, const char *tgtGroup, const char 
             filemask.set(_filemask);
             conn.set(_conn);
             wild = containsWildcard(_filemask);
-            CSDSFileScanner::scan(_conn, includefiles, includesuper);
+//            CSDSFileScanner::scan(_conn, includefiles, includesuper);
+
+
+            Owned<IPropertyTree> xmlroot = createPTreeFromXMLFile("/home/jsmith/git/cmake-cdt/one.xml");
+            StringBuffer name("thor_data400::key::vehiclev2::20160126::xseglist");
+            processFile(*xmlroot,name);
+
             return matchingFiles;
         }
     } scanner(srcGroup, tgtGroup, opts);
@@ -3034,9 +3066,7 @@ static void migrateFiles(const char *srcGroup, const char *tgtGroup, const char 
         WARNLOG("Dry-run, no changes committed. %u files matched", matchingFiles);
     }
     else
-    {
         PROGLOG("Committed changes: %u files changed", matchingFiles);
-    }
 }
 
 
