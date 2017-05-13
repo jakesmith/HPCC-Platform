@@ -3030,13 +3030,7 @@ static void migrateFiles(const char *srcGroup, const char *tgtGroup, const char 
             filemask.set(_filemask);
             conn.set(_conn);
             wild = containsWildcard(_filemask);
-//            CSDSFileScanner::scan(_conn, includefiles, includesuper);
-
-
-            Owned<IPropertyTree> xmlroot = createPTreeFromXMLFile("/home/jsmith/git/cmake-cdt/one.xml");
-            StringBuffer name("thor_data400::key::vehiclev2::20160126::xseglist");
-            processFile(*xmlroot,name);
-
+            CSDSFileScanner::scan(_conn, includefiles, includesuper);
             return matchingFiles;
         }
     } scanner(srcGroup, tgtGroup, opts);
