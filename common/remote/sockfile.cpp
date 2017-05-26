@@ -43,6 +43,8 @@
 
 #define SOCKET_CACHE_MAX 500
 
+#define MIN_KEYFILTSUPPORT_VERSION 20
+
 #ifdef _DEBUG
 //#define SIMULATE_PACKETLOSS 1
 #endif
@@ -1072,7 +1074,7 @@ protected: friend class CRemoteFileIO;
     SocketEndpoint      ep;
 
 
-    void sendRemoteCommand(MemoryBuffer & src, MemoryBuffer & reply, bool retry=true, bool lengthy=false)
+    void sendRemoteCommand(MemoryBuffer & src, MemoryBuffer & reply, bool retry=true, bool lengthy=false, bool handleErrCode=true)
     {
         CriticalBlock block(crit);  // serialize commands on same file
         SocketEndpoint tep(ep);
@@ -1154,6 +1156,8 @@ protected: friend class CRemoteFileIO;
             }
         }
 
+        if (!handleErrCode)
+            return;
         unsigned errCode;
         reply.read(errCode);
         if (errCode) {
@@ -2482,9 +2486,9 @@ public:
 
     void setDisconnectOnExit(bool set) { disconnectonexit = set; }
 
-    void sendRemoteCommand(MemoryBuffer & sendBuffer, MemoryBuffer & replyBuffer, bool retry=true, bool lengthy=false)
+    void sendRemoteCommand(MemoryBuffer & sendBuffer, MemoryBuffer & replyBuffer, bool retry=true, bool lengthy=false, bool handleErrCode=true)
     {
-        parent->sendRemoteCommand(sendBuffer, replyBuffer, retry, lengthy);
+        parent->sendRemoteCommand(sendBuffer, replyBuffer, retry, lengthy, handleErrCode);
     }
 };
 
@@ -2598,6 +2602,100 @@ void CRemoteFile::copyTo(IFile *dest, size32_t buffersize, ICopyFileProgress *pr
 
 /////////////////////////
 
+unsigned getRemoteVersion(CRemoteFileIO &remoteFileIO, StringBuffer &ver)
+{
+    unsigned ret;
+    MemoryBuffer sendBuffer;
+    initSendBuffer(sendBuffer);
+    sendBuffer.append((RemoteFileCommandType)RFCgetver);
+    sendBuffer.append((unsigned)RFCgetver);
+    MemoryBuffer replyBuffer;
+    try
+    {
+        remoteFileIO.sendRemoteCommand(sendBuffer, replyBuffer, true, false, false);
+    }
+    catch (IException *e)
+    {
+        EXCLOG(e);
+        ::Release(e);
+        return 0;
+    }
+    unsigned errCode;
+    replyBuffer.read(errCode);
+    if (errCode==RFSERR_InvalidCommand)
+    {
+        ver.append("DS V1.0");
+        return 10;
+    }
+    else if (errCode==0)
+        ret = 11;
+    else if (errCode<0x10000)
+        return 0;
+    else
+        ret = errCode-0x10000;
+
+    StringAttr vers;
+    replyBuffer.read(vers);
+    ver.append(vers);
+    return ret;
+}
+
+unsigned getRemoteVersion(ISocket * socket, StringBuffer &ver)
+{
+    // used to have a global critical section here
+    if (!socket)
+        return 0;
+
+    Owned<ISecureSocket> ssock;
+
+    if (securitySettings.useSSL && !socket->isSecure())
+    {
+#ifdef _USE_OPENSSL
+        ssock.setown(createSecureSocket(LINK(socket), ClientSocket));
+        int status = ssock->secure_connect();
+        if (status < 0)
+            throw createDafsException(DAFSERR_connection_failed,"Failure to establish secure connection");
+        socket = ssock;
+#else
+        throw createDafsException(DAFSERR_connection_failed,"Failure to establish secure connection: OpenSSL disabled in build");
+#endif
+    }
+
+    unsigned ret;
+    MemoryBuffer sendbuf;
+    initSendBuffer(sendbuf);
+    sendbuf.append((RemoteFileCommandType)RFCgetver);
+    sendbuf.append((unsigned)RFCgetver);
+    MemoryBuffer reply;
+    try {
+        sendBuffer(socket, sendbuf);
+        receiveBuffer(socket, reply, 1 ,4096);
+        unsigned errCode;
+        reply.read(errCode);
+        if (errCode==RFSERR_InvalidCommand) {
+            ver.append("DS V1.0");
+            return 10;
+        }
+        else if (errCode==0)
+            ret = 11;
+        else if (errCode<0x10000)
+            return 0;
+        else
+            ret = errCode-0x10000;
+    }
+    catch (IException *e) {
+        EXCLOG(e);
+        ::Release(e);
+        return 0;
+    }
+    StringAttr vers;
+    reply.read(vers);
+    ver.append(vers);
+    return ret;
+}
+
+/////////////////////////
+
 class CRemoteKeyManager : public CSimpleInterfaceOf<IKeyManager>
 {
     StringAttr filename;
@@ -2616,6 +2714,9 @@ class CRemoteKeyManager : public CSimpleInterfaceOf<IKeyManager>
     bool first = true;
     unsigned __int64 chooseNLimit = 0;
     ConstPointerArray activeBlobs;
+    unsigned crc = 0;
+    mutable bool hasRemoteSupport = false; // must check 1st
+    mutable Owned<IKeyManager> directKM; // failover manager if remote key support is unavailable
 
     CRemoteFileIO *prepKeySend(MemoryBuffer &sendBuffer, RemoteFileCommandType cmd, bool segmentMonitors)
     {
@@ -2630,6 +2731,29 @@ class CRemoteKeyManager : public CSimpleInterfaceOf<IKeyManager>
             segs.serialize(sendBuffer);
         return remoteIO.getClear();
     }
+    bool remoteSupport() const
+    {
+        if (hasRemoteSupport)
+            return true;
+        else if (directKM)
+            return false;
+        Owned<IFileIO> iFileIO = delayedFile->getFileIO();
+        if (!iFileIO)
+            throw MakeStringException(0, "CRemoteKeyManager: Failed to open key file: %s", filename.get());
+        Linked<CRemoteFileIO> remoteIO = QUERYINTERFACE(iFileIO.get(), CRemoteFileIO);
+        assertex(remoteIO);
+        StringBuffer verString;
+        unsigned ver = getRemoteVersion(*remoteIO, verString);
+        if (ver < MIN_KEYFILTSUPPORT_VERSION)
+        {
+            Owned<IKeyIndex> keyIndex = createKeyIndex(filename, crc, *delayedFile, false, false);
+            directKM.setown(createLocalKeyManager(keyIndex, keySize, nullptr));
+            return false;
+        }
+        else
+            hasRemoteSupport = true;
+        return true;
+    }
     unsigned __int64 _checkCount(unsigned __int64 limit)
     {
         MemoryBuffer sendBuffer;
@@ -2642,15 +2766,21 @@ class CRemoteKeyManager : public CSimpleInterfaceOf<IKeyManager>
         return count;
     }
 public:
-    CRemoteKeyManager(const char *_filename, unsigned _keySize, IDelayedFile *_delayedFile) : filename(_filename), keySize(_keySize), delayedFile(_delayedFile)
+    CRemoteKeyManager(const char *_filename, unsigned _keySize, unsigned _crc, IDelayedFile *_delayedFile) : filename(_filename), keySize(_keySize), crc(_crc), delayedFile(_delayedFile)
     {
     }
     ~CRemoteKeyManager()
     {
         releaseBlobs();
     }
+// IKeyManager impl.
     virtual void reset(bool crappyHack = false) override
     {
+        if (!remoteSupport())
+        {
+            directKM->reset(crappyHack);
+            return;
+        }
         rowDataBuffer.clear();
         rowDataRemaining = 0;
         currentSize = 0;
@@ -2662,22 +2792,38 @@ public:
         keyCursorSz = 0;
         keyCursor = nullptr;
     }
-    virtual void releaseSegmentMonitors() override { segs.reset(); }
+    virtual void releaseSegmentMonitors() override
+    {
+        if (!remoteSupport())
+        {
+            directKM->releaseSegmentMonitors();
+            return;
+        }
+        segs.reset();
+    }
     virtual const byte *queryKeyBuffer(offset_t & fpos) override
     {
+        if (!remoteSupport())
+            return directKM->queryKeyBuffer(fpos);;
         fpos = currentFpos;
         return currentRow;
     }
     virtual offset_t queryFpos() override
     {
+        if (!remoteSupport())
+            return directKM->queryFpos();
         return currentFpos;
     }
     virtual unsigned queryRecordSize() override
     {
+        if (!remoteSupport())
+            return directKM->queryRecordSize();
         return currentSize;
     }
     virtual bool lookup(bool exact) override
     {
+        if (!remoteSupport())
+            return directKM->lookup(exact);
         while (true)
         {
             if (rowDataRemaining)
@@ -2735,27 +2881,92 @@ public:
     }
     virtual unsigned __int64 getCount() override
     {
+        if (!remoteSupport())
+            return directKM->getCount();
         return _checkCount((unsigned __int64)-1);
     }
-    virtual unsigned __int64 getCurrentRangeCount(unsigned groupSegCount) override { UNIMPLEMENTED; }
-    virtual bool nextRange(unsigned groupSegCount) override { UNIMPLEMENTED; }
-    virtual void setKey(IKeyIndexBase * _key) override { UNIMPLEMENTED; }
+    virtual unsigned __int64 getCurrentRangeCount(unsigned groupSegCount) override
+    {
+        if (!remoteSupport())
+            return directKM->getCurrentRangeCount(groupSegCount);
+        UNIMPLEMENTED;
+    }
+    virtual bool nextRange(unsigned groupSegCount) override
+    {
+        if (!remoteSupport())
+            return directKM->nextRange(groupSegCount);
+        UNIMPLEMENTED;
+    }
+    virtual void setKey(IKeyIndexBase * _key) override
+    {
+        if (!remoteSupport())
+        {
+            directKM->setKey(_key);
+            return;
+        }
+        UNIMPLEMENTED;
+    }
     virtual void setChooseNLimit(unsigned __int64 _chooseNLimit) override
     {
+        if (!remoteSupport())
+        {
+            directKM->setChooseNLimit(_chooseNLimit);
+            return;
+        }
         chooseNLimit = _chooseNLimit;
     }
     virtual unsigned __int64 checkCount(unsigned __int64 limit) override
     {
+        if (!remoteSupport())
+            directKM->checkCount(limit);
         return _checkCount(limit);
     }
-    virtual void serializeCursorPos(MemoryBuffer &mb) override { UNIMPLEMENTED; }
-    virtual void deserializeCursorPos(MemoryBuffer &mb) override { UNIMPLEMENTED; }
-    virtual unsigned querySeeks() const override { return 0; }
-    virtual unsigned queryScans() const override { return 0; }
-    virtual unsigned querySkips() const override { return 0; }
-    virtual unsigned queryNullSkips() const override { return 0; }
+    virtual void serializeCursorPos(MemoryBuffer &mb) override
+    {
+        if (!remoteSupport())
+        {
+            directKM->serializeCursorPos(mb);
+            return;
+        }
+        UNIMPLEMENTED;
+    }
+    virtual void deserializeCursorPos(MemoryBuffer &mb) override
+    {
+        if (!remoteSupport())
+        {
+            directKM->deserializeCursorPos(mb);
+            return;
+        }
+        UNIMPLEMENTED;
+    }
+    virtual unsigned querySeeks() const override
+    {
+        if (!remoteSupport())
+            return directKM->querySeeks();
+        return 0;
+    }
+    virtual unsigned queryScans() const override
+    {
+        if (!remoteSupport())
+            return directKM->queryScans();
+        return 0;
+    }
+    virtual unsigned querySkips() const override
+    {
+        if (!remoteSupport())
+            return directKM->querySkips();
+        return 0;
+    }
+    virtual unsigned queryNullSkips() const override
+    {
+        if (!remoteSupport())
+            return directKM->queryNullSkips();
+        return 0;
+    }
     virtual const byte *loadBlob(unsigned __int64 blobId, size32_t &blobSize) override
     {
+        if (!remoteSupport())
+            return directKM->loadBlob(blobId, blobSize);
         MemoryBuffer sendBuffer;
         Owned<CRemoteFileIO> remoteIO = prepKeySend(sendBuffer, RFCreadfilteredindexblob, false);
         sendBuffer.append(blobId);
@@ -2768,89 +2979,116 @@ public:
     }
     virtual void releaseBlobs() override
     {
+        if (!remoteSupport())
+            return directKM->releaseBlobs();
         ForEachItemIn(idx, activeBlobs)
         {
             free((void *) activeBlobs.item(idx));
         }
         activeBlobs.kill();
     }
-    virtual void resetCounts() override { UNIMPLEMENTED; }
+    virtual void resetCounts() override
+    {
+        if (!remoteSupport())
+        {
+            directKM->resetCounts();
+            return;
+        }
+        UNIMPLEMENTED;
+    }
 
-    virtual void setLayoutTranslator(IRecordLayoutTranslator * trans) override { UNIMPLEMENTED; }
-    virtual void setSegmentMonitors(SegMonitorList &segmentMonitors) override { segs.swapWith(segmentMonitors); }
-    virtual void deserializeSegmentMonitors(MemoryBuffer &mb) override { segs.deserialize(mb); }
-    virtual void finishSegmentMonitors() override { }
-    virtual bool lookupSkip(const void *seek, size32_t seekGEOffset, size32_t seeklen) override { UNIMPLEMENTED; }
+    virtual void setLayoutTranslator(IRecordLayoutTranslator * trans) override
+    {
+        if (!remoteSupport())
+        {
+            directKM->setLayoutTranslator(trans);
+            return;
+        }
+        UNIMPLEMENTED;
+    }
+    virtual void setSegmentMonitors(SegMonitorList &segmentMonitors) override
+    {
+        if (!remoteSupport())
+        {
+            directKM->setSegmentMonitors(segmentMonitors);
+            return;
+        }
+        segs.swapWith(segmentMonitors);
+    }
+    virtual void deserializeSegmentMonitors(MemoryBuffer &mb) override
+    {
+        if (!remoteSupport())
+        {
+            directKM->deserializeSegmentMonitors(mb);
+            return;
+        }
+        segs.deserialize(mb);
+    }
+    virtual void finishSegmentMonitors() override
+    {
+        if (!remoteSupport())
+        {
+            directKM->finishSegmentMonitors();
+            return;
+        }
+    }
+    virtual bool lookupSkip(const void *seek, size32_t seekGEOffset, size32_t seeklen) override
+    {
+        if (!remoteSupport())
+            return directKM->lookupSkip(seek, seekGEOffset, seeklen);
+        UNIMPLEMENTED;
+    }
     virtual void append(IKeySegmentMonitor *segment) override
     {
+        if (!remoteSupport())
+        {
+            directKM->append(segment);
+            return;
+        }
         segs.append(segment);
     }
-    virtual unsigned ordinality() const override { return segs.ordinality(); }
-    virtual IKeySegmentMonitor *item(unsigned idx) const override { return segs.item(idx); }
-    virtual void setMergeBarrier(unsigned offset) override { UNIMPLEMENTED; }
+    virtual unsigned ordinality() const override
+    {
+        if (!remoteSupport())
+            return directKM->ordinality();
+        return segs.ordinality();
+    }
+    virtual IKeySegmentMonitor *item(unsigned idx) const override
+    {
+        if (!remoteSupport())
+            return directKM->item(idx);
+        return segs.item(idx);
+    }
+    virtual void setMergeBarrier(unsigned offset) override
+    {
+        if (!remoteSupport())
+        {
+            directKM->setMergeBarrier(offset);
+            return;
+        }
+        UNIMPLEMENTED;
+    }
 };
 
-IKeyManager * createRemoteKeyManager(const char *filename, unsigned keySize, IDelayedFile *delayedFile)
+IKeyManager *createRemoteKeyManager(const char *filename, unsigned keySize, unsigned crc, IDelayedFile *delayedFile)
 {
-    return new CRemoteKeyManager(filename, keySize, delayedFile);
+    return new CRemoteKeyManager(filename, keySize, crc, delayedFile);
+}
+
+IKeyManager *createKeyManager(const char *filename, unsigned keySize, unsigned crc, IDelayedFile *delayedFile, bool allowRemote, bool forceRemote)
+{
+    RemoteFilename rfn;
+    rfn.setRemotePath(filename);
+    if (forceRemote || (allowRemote && !rfn.isLocal()))
+        return createRemoteKeyManager(filename, keySize, crc, delayedFile);
+    else
+    {
+        Owned<IKeyIndex> keyIndex = createKeyIndex(filename, crc, *delayedFile, false, false);
+        return createLocalKeyManager(keyIndex, keySize, nullptr);
+    }
 }
 
 //////////////
-
-unsigned getRemoteVersion(ISocket * socket, StringBuffer &ver)
-{
-    // used to have a global critical section here
-    if (!socket)
-        return 0;
-
-    Owned<ISecureSocket> ssock;
-
-    if (securitySettings.useSSL && !socket->isSecure())
-    {
-#ifdef _USE_OPENSSL
-        ssock.setown(createSecureSocket(LINK(socket), ClientSocket));
-        int status = ssock->secure_connect();
-        if (status < 0)
-            throw createDafsException(DAFSERR_connection_failed,"Failure to establish secure connection");
-        socket = ssock;
-#else
-        throw createDafsException(DAFSERR_connection_failed,"Failure to establish secure connection: OpenSSL disabled in build");
-#endif
-    }
-
-    unsigned ret;
-    MemoryBuffer sendbuf;
-    initSendBuffer(sendbuf);
-    sendbuf.append((RemoteFileCommandType)RFCgetver);
-    sendbuf.append((unsigned)RFCgetver);
-    MemoryBuffer reply;
-    try {
-        sendBuffer(socket, sendbuf);
-        receiveBuffer(socket, reply, 1 ,4096);
-        unsigned errCode;
-        reply.read(errCode);
-        if (errCode==RFSERR_InvalidCommand) {
-            ver.append("DS V1.0");
-            return 10;
-        }
-        else if (errCode==0)
-            ret = 11;
-        else if (errCode<0x10000)
-            return 0;
-        else
-            ret = errCode-0x10000;
-    }
-    catch (IException *e) {
-        EXCLOG(e);
-        ::Release(e);
-        return 0;
-    }
-    StringAttr vers;
-    reply.read(vers);
-    ver.append(vers);
-    return ret;
-}
-
 
 extern unsigned stopRemoteServer(ISocket * socket)
 {
@@ -4093,7 +4331,7 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
             VStringBuffer errStr("Error opening key file : %s", keyname);
             throw createDafsException(RFSERR_KeyIndexFailed, errStr.str());
         }
-        Owned<IKeyManager> keyManager = createKeyManager(index, keySize, nullptr);
+        Owned<IKeyManager> keyManager = createLocalKeyManager(index, keySize, nullptr);
         if (segs)
         {
             keyManager->setSegmentMonitors(*segs);
