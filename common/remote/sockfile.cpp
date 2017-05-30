@@ -23,6 +23,7 @@
 
 #include "jlib.hpp"
 #include "jio.hpp"
+#include "jlz4.hpp"
 
 #include "jmutex.hpp"
 #include "jfile.hpp"
@@ -2701,12 +2702,9 @@ class CRemoteKeyManager : public CSimpleInterfaceOf<IKeyManager>
     StringAttr filename;
     Linked<IDelayedFile> delayedFile;
     SegMonitorList segs;
-    size32_t rowDataRemaining = 0;
     MemoryBuffer rowDataBuffer;
-    size32_t keyCursorSz = 0;        // used for continuation
-    const void *keyCursor = nullptr; // used for continuation
+    MemoryBuffer keyCursorMb;        // used for continuation
     unsigned __int64 totalGot = 0;
-    size32_t maxRecsPerRequest = 100; // arbritary # recs per request, perhaps should be based on recsize
     size32_t keySize = 0;
     size32_t currentSize = 0;
     offset_t currentFpos = 0;
@@ -2782,15 +2780,11 @@ public:
             return;
         }
         rowDataBuffer.clear();
-        rowDataRemaining = 0;
         currentSize = 0;
         currentFpos = 0;
         currentRow = nullptr;
         first = true;
-        maxRecsPerRequest = 100;
         totalGot = 0;
-        keyCursorSz = 0;
-        keyCursor = nullptr;
     }
     virtual void releaseSegmentMonitors() override
     {
@@ -2826,26 +2820,28 @@ public:
             return directKM->lookup(exact);
         while (true)
         {
-            if (rowDataRemaining)
+            if (rowDataBuffer.remaining())
             {
                 rowDataBuffer.read(currentFpos);
                 rowDataBuffer.read(currentSize);
                 currentRow = rowDataBuffer.readDirect(currentSize);
-                rowDataRemaining -= sizeof(currentFpos) + sizeof(currentSize) + currentSize;
                 return true;
             }
             else
             {
-                if (!first && (nullptr == keyCursor)) // No keyCursor implies there is nothing more to fetch
+                if (!first && (0 == keyCursorMb.length())) // No keyCursor implies there is nothing more to fetch
                     return false;
-                unsigned maxRecs = maxRecsPerRequest;
-                if (maxRecs && chooseNLimit)
+                unsigned maxRecs = 0;
+                if (chooseNLimit)
                 {
-                    if (totalGot + maxRecs > chooseNLimit)
-                        maxRecs = (unsigned)(chooseNLimit - totalGot);
+                    if (totalGot == chooseNLimit)
+                        break;
+                    unsigned __int64 max = chooseNLimit-totalGot;
+                    if (max > UINT_MAX)
+                        maxRecs = UINT_MAX;
+                    else
+                        maxRecs = (unsigned)max;
                 }
-                if (0 == maxRecs)
-                    break;
                 MemoryBuffer sendBuffer;
                 Owned<CRemoteFileIO> remoteIO = prepKeySend(sendBuffer, RFCreadfilteredindex, true);
                 sendBuffer.append(first).append(maxRecs);
@@ -2853,28 +2849,26 @@ public:
                     first = false;
                 else
                 {
-                    dbgassertex(keyCursor);
-                    sendBuffer.append(keyCursorSz, keyCursor);
+                    dbgassertex(keyCursorMb.length());
+                    sendBuffer.append(keyCursorMb);
                 }
                 rowDataBuffer.clear();
-                remoteIO->sendRemoteCommand(sendBuffer, rowDataBuffer);
+                MemoryBuffer replyBuffer;
+                remoteIO->sendRemoteCommand(sendBuffer, replyBuffer);
                 unsigned recsGot;
-                rowDataBuffer.read(recsGot);
+                replyBuffer.read(recsGot);
                 if (0 == recsGot)
                 {
-                    maxRecsPerRequest = 0;
+                    keyCursorMb.clear(); // signals no more data if called again.
                     break; // end
                 }
                 totalGot += recsGot;
-                rowDataBuffer.read(rowDataRemaining);
-                unsigned pos = rowDataBuffer.getPos(); // start of row data
-                const void *rowData = rowDataBuffer.readDirect(rowDataRemaining);
-                rowDataBuffer.read(keyCursorSz);
+                LZ4DecompressToBuffer(rowDataBuffer, replyBuffer);
+                size32_t keyCursorSz;
+                replyBuffer.read(keyCursorSz);
+                keyCursorMb.clear();
                 if (keyCursorSz)
-                    keyCursor = rowDataBuffer.readDirect(keyCursorSz);
-                else
-                    keyCursor = nullptr;
-                rowDataBuffer.reset(pos); // reposition to start of row data
+                    keyCursorMb.append(keyCursorSz, replyBuffer.readDirect(keyCursorSz));
             }
         }
         return false;
@@ -3624,6 +3618,8 @@ struct OpenFileInfo
     unsigned flags = 0;
 };
 
+#define MAX_KEYDATA_SZ 0x10000
+
 class CRemoteFileServer : implements IRemoteFileServer, public CInterface
 {
     class CThrottler;
@@ -4299,21 +4295,33 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
         return false;
     }
 
-    unsigned readKeyData(IKeyManager *keyManager, unsigned maxRecs, MemoryBuffer &reply)
+    unsigned readKeyData(IKeyManager *keyManager, unsigned maxRecs, MemoryBuffer &reply, bool &maxHit)
     {
-        DelayedSizeMarker keyDataSzReturned(reply);
         unsigned numRecs = 0;
-        while (maxRecs-- && keyManager->lookup(true))
+        MemoryBuffer mb;
+        maxHit = false;
+        while (keyManager->lookup(true))
         {
             unsigned size = keyManager->queryRecordSize();
             offset_t fpos;
             const byte *result = keyManager->queryKeyBuffer(fpos);
-            reply.append(fpos);
-            reply.append(size);
-            reply.append(size, result);
+            mb.append(fpos);
+            mb.append(size);
+            mb.append(size, result);
             ++numRecs;
+            if (maxRecs && (0 == --maxRecs))
+            {
+                maxHit = true;
+                break;
+            }
+            if (mb.length() >= MAX_KEYDATA_SZ)
+            {
+                maxHit = true;
+                break;
+            }
         }
-        keyDataSzReturned.write();
+        // JCSMORE might be better to stream into ICompressor and limit to compressed size
+        LZ4CompressToBuffer(reply, mb.length(), mb.toByteArray());
         return numRecs;
     }
 
@@ -4718,20 +4726,21 @@ public:
     {
         Owned<IKeyManager> keyManager = prepKey(msg, true);
         bool first;
-        size32_t maxRecs;
+        unsigned maxRecs;
         msg.read(first).read(maxRecs);
         if (!first)
             keyManager->deserializeCursorPos(msg);
 
         reply.append((unsigned)RFEnoerror);
         DelayedMarker<unsigned> numReturned(reply);
-        unsigned numRecs = readKeyData(keyManager, maxRecs, reply);
+        bool maxHit;
+        unsigned numRecs = readKeyData(keyManager, maxRecs, reply, maxHit);
         numReturned.write(numRecs);
 
-        DelayedSizeMarker keyCursorSz(reply);
-        if (numRecs >= maxRecs) // no point in cursor if no more recs to return
+        DelayedSizeMarker keyCursorSzMarker(reply);
+        if (maxHit) // if maximum hit, either supplied maxRecs limit, or buffer limit, return cursor
             keyManager->serializeCursorPos(reply);
-        keyCursorSz.write();
+        keyCursorSzMarker.write();
         return true;
     }
 
