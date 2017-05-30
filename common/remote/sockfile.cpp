@@ -2739,17 +2739,25 @@ class CRemoteKeyManager : public CSimpleInterfaceOf<IKeyManager>
         if (!iFileIO)
             throw MakeStringException(0, "CRemoteKeyManager: Failed to open key file: %s", filename.get());
         Linked<CRemoteFileIO> remoteIO = QUERYINTERFACE(iFileIO.get(), CRemoteFileIO);
-        assertex(remoteIO);
-        StringBuffer verString;
-        unsigned ver = getRemoteVersion(*remoteIO, verString);
-        if (ver < MIN_KEYFILTSUPPORT_VERSION)
+        bool useRemote = nullptr != remoteIO.get();
+        if (useRemote)
+        {
+            StringBuffer verString;
+            unsigned ver = getRemoteVersion(*remoteIO, verString);
+            if (ver < MIN_KEYFILTSUPPORT_VERSION)
+                useRemote = false;
+        }
+        if (useRemote)
+        {
+            PROGLOG("Using remote key manager for file: %s", filename.get());
+            hasRemoteSupport = true;
+        }
+        else
         {
             Owned<IKeyIndex> keyIndex = createKeyIndex(filename, crc, *delayedFile, false, false);
             directKM.setown(createLocalKeyManager(keyIndex, keySize, nullptr));
             return false;
         }
-        else
-            hasRemoteSupport = true;
         return true;
     }
     unsigned __int64 _checkCount(unsigned __int64 limit)
