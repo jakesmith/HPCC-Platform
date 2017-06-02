@@ -76,6 +76,11 @@
 #define THOROPT_WRITECOMPRESSED_CRC   "crcWriteCompressedEnabled" // Calculate CRC's for compressed disk outputs and store in file meta data     (default = false)
 #define THOROPT_CHILD_GRAPH_INIT_TIMEOUT "childGraphInitTimeout"  // Time to wait for child graphs to respond to initialization                  (default = 5*60 seconds)
 #define THOROPT_SORT_COMPBLKSZ        "sortCompBlkSz"           // Block size used by compressed spill in a spilling sort                        (default = 0, uses row writer default)
+#define THOROPT_KEYLOOKUP_QUEUED_BATCHSIZE "keyLookupQueuedBatchSize" // Number of rows candidates to gather before performing lookup against part (default = 100)
+#define THOROPT_KEYLOOKUP_MAX_LOOKUP_BATCHSIZE "keyLookupMaxLookupBatchSize"  // Maximum chunk of rows to process per cycle in lookup handler    (default = 1000)
+#define THOROPT_KEYLOOKUP_MAX_THREADS "keyLookupMaxThreads"     // Maximum number of threads performing keyed lookups                            (default = 10)
+#define THOROPT_KEYLOOKUP_MAX_QUEUED "keyLookupMaxQueued"       // Total maximum number of rows (across all parts/threads) to queue              (default = 1000)
+
 
 #define INITIAL_SELFJOIN_MATCH_WARNING_LEVEL 20000  // max of row matches before selfjoin emits warning
 
