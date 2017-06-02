@@ -24,6 +24,9 @@
 #include "jqueue.tpp"
 #include "jset.hpp"
 #include "jsort.hpp"
+#include "jsorta.hpp"
+
+#include "thorcommon.ipp"
 
 #include "dadfs.hpp"
 
@@ -45,11 +48,10 @@
 #include "../fetch/thfetchcommon.hpp"
 #include "thkeyedjoinslave.ipp"
 
-//#define TRACE_USAGE
-//#define TRACE_JOINGROUPS
-#define NUMSLAVEPORTS       2
+#include <vector>
+#include <atomic>
 
-#define NEWFETCHSENDHEADERSZ (sizeof(CJoinGroup *)+sizeof(offset_t)+sizeof(size32_t))
+//#define TRACE_USAGE
 
 //#define NEWFETCHSTRESS
 #ifndef NEWFETCHSTRESS
@@ -66,523 +68,367 @@
 #define NEWFETCHPRMEMLIMIT 1 // low enough to cause 1-by-1
 
 #endif // NEWFETCHSTRESS
-#define KJ_BUFFER_SIZE (0x100000*8)
 
-#define FETCHKEY_HEADER_SIZE (sizeof(offset_t)+sizeof(void *))
-#define DEFAULTMAXRESULTPULLPOOL 1
-#define DEFAULTFREEQSIZE 10
 #define LOWTHROTTLE_GRANULARITY 10
 
-class CJoinGroup;
+#define DEFAULT_KEYLOOKUP_QUEUED_BATCHSIZE 100
+#define DEFAULT_KEYLOOKUP_MAX_THREADS 10
+#define DEFAULT_KEYLOOKUP_MAX_QUEUED 10000
+#define DEFAULT_KEYLOOKUP_MAX_DONE 10000
 
-#pragma pack(push,1)
-struct LookupRowResult
+class CJoinGroup;
+struct KeyLookupHeader
+{
+    CJoinGroup *jg;
+};
+struct FetchRequestHeader
 {
     offset_t fpos;
     CJoinGroup *jg;
-    bool eog;
+    unsigned __int64 sequence;
 };
-#pragma pack(pop)
-#define KEYLOOKUP_HEADER_SIZE (sizeof(LookupRowResult))
+struct FetchReplyHeader
+{
+    static const unsigned __int64 fetchMatchedMask = 0x8000000000000000;
+    CJoinGroup *jg;
+    unsigned __int64 sequence; // fetchMatchedMask used to screen top-bit to denote whether reply fetch matched or not
+};
+template <class HeaderStruct>
+void getHeaderFromRow(const void *row, HeaderStruct &header)
+{
+    memcpy(&header, row, sizeof(HeaderStruct));
+}
+
+
+enum AllocatorTypes { AT_Transform=1, AT_LookupWithJG, AT_JoinFields, AT_FetchRequest, AT_FetchResponse, AT_JoinGroup, AT_JoinGroupRhsRows, AT_FetchDisk };
+
+
+struct Row
+{
+    const void *rhs;
+    offset_t fpos;
+};
+struct RowArray
+{
+    Row *rows;
+    rowidx_t maxRows;
+    rowidx_t numRows;
+};
 
 interface IJoinProcessor
 {
-    virtual CJoinGroup *createJoinGroup(const void *row) = 0;
-    virtual void createSegmentMonitors(IIndexReadContext *ctx, const void *row) = 0;
-    virtual bool addMatch(CJoinGroup &match, const void *rhs, size32_t rhsSize, offset_t recptr) = 0;
     virtual void onComplete(CJoinGroup * jg) = 0;
-    virtual bool leftCanMatch(const void *_left) = 0;
-#ifdef TRACE_USAGE
-     virtual atomic_t &getdebug(unsigned w) = 0;
-#endif
-     virtual CActivityBase *queryOwner() = 0;
+    virtual unsigned addRowEntry(unsigned partNo, const void *rhs, offset_t fpos, RowArray *&rowArrays, unsigned &numRowArrays) = 0;
 };
 
-interface IJoinGroupNotify
-{
-    virtual void addJoinGroup(CJoinGroup *jg) = 0;
-};
-class CJoinGroup : implements IInterface, public CSimpleInterface
+class CJoinGroup : public CSimpleInterfaceOf<IInterface>
 {
 protected:
-    unsigned candidates;
-    CActivityBase &activity;
-    OwnedConstThorRow left;
-    CThorExpandingRowArray rows;
-    Int64Array offsets;
-    unsigned endMarkersPending, endEndCandidatesPending;
-    IJoinProcessor *join;
+    OwnedConstThorRow leftRow;
     mutable CriticalSection crit;
-    CJoinGroup *groupStart;
-
+    std::atomic<unsigned> pending{0};
+    std::atomic<unsigned> candidates{0};
+    IJoinProcessor *join = nullptr;
+    rowidx_t totalRows = 0;
+    unsigned numRowArrays = 0;
+    RowArray *rowArrays = nullptr;
+    static const unsigned GroupFlagLimitMask = 0x03;
 public:
-    CJoinGroup *prev;  // Doubly-linked list to allow us to keep track of ones that are still in use
-    CJoinGroup *next;
+    enum GroupFlags:unsigned { gf_null=0x0, gf_limitatmost=0x01, gf_limitabort=0x02, gf_eog=0x04, gf_head=0x08 } groupFlags = gf_null;
+    struct JoinGroupRhsState
+    {
+        JoinGroupRhsState() { clear(); }
+        inline void clear() { arr = nullptr; pos = 0; }
+        RowArray *arr;
+        rowidx_t pos;
+    };
+    CJoinGroup *prev = nullptr;  // Doubly-linked list to allow us to keep track of ones that are still in use
+    CJoinGroup *next = nullptr;
 
-    CJoinGroup(CActivityBase &_activity) : activity(_activity), rows(_activity, NULL)
+    inline const void *_queryNextRhs(offset_t &fpos, JoinGroupRhsState &rhsState) const
     {
-        // Used for head object only
-        prev = NULL;
-        next = NULL;
-        endMarkersPending = endEndCandidatesPending = 0;
-        groupStart = NULL;
-        candidates = 0;
+        while (rhsState.arr != (rowArrays+numRowArrays)) // end of array marker
+        {
+            if (rhsState.arr->rows)
+            {
+                while (rhsState.pos < rhsState.arr->numRows)
+                {
+                    Row &row = rhsState.arr->rows[rhsState.pos++];
+                    if (row.rhs)
+                    {
+                        fpos = row.fpos;
+                        return row.rhs;
+                    }
+                }
+            }
+            rhsState.arr++;
+            rhsState.pos = 0;
+        }
+        return nullptr;
     }
-
-    inline void incMarker(unsigned n)
+    void freeRows()
     {
-        crit.enter();
-        endMarkersPending += n;
-        crit.leave();
-    }
-    inline void incMarkerEndCandidate(unsigned n)
-    {
-        crit.enter();
-        endEndCandidatesPending += n;
-        crit.leave();
-    }
-    inline bool noteEndCandidateAndTest()
-    {
-        CriticalBlock b(crit);
-        endEndCandidatesPending--;
-        return (0 == endEndCandidatesPending) && (0 == endMarkersPending);
-    }
-    inline bool decMarkerAndTest()
-    {
-        CriticalBlock b(crit);
-        endMarkersPending--;
-        return (0 == endEndCandidatesPending) && (0 == endMarkersPending);
-    }
-    inline unsigned queryPending()
-    {
-        CriticalBlock b(crit);
-        return endMarkersPending;
-    }
-    inline unsigned queryPendingEndCandidate()
-    {
-        CriticalBlock b(crit);
-        return endEndCandidatesPending;
+        if (rowArrays)
+        {
+            RowArray *cur = rowArrays;
+            while (numRowArrays--)
+            {
+                if (cur->rows)
+                {
+                    const Row *row = cur->rows;
+                    while (cur->numRows--)
+                    {
+                        if (row->rhs)
+                            ReleaseRoxieRow(row->rhs);
+                        ++row;
+                    }
+                    ReleaseRoxieRow(cur->rows);
+                }
+                ++cur;
+            }
+            ReleaseRoxieRow(rowArrays);
+            rowArrays = nullptr;
+            totalRows = 0;
+        }
     }
 public:
-    IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-
-    CJoinGroup(CActivityBase &_activity, const void *_left, IJoinProcessor *_join, CJoinGroup *_groupStart) : activity(_activity), join(_join), rows(_activity, NULL)
+    CJoinGroup(CActivityBase &_activity, const void *_leftRow, IJoinProcessor *_join)
+        : join(_join)
     {
-#ifdef TRACE_USAGE
-        atomic_inc(&join->getdebug(0));
-#endif
-#ifdef TRACE_JOINGROUPS
-        ActPrintLog(join->queryOwner(), "Creating joinGroup %x, groupstart %x", this, _groupStart);
-#endif
-        candidates = 0;
-        left.setown(_left);
-        if (_groupStart)
-        {
-            groupStart = _groupStart;
-#ifdef TRACE_JOINGROUPS
-            _groupStart->notePending(__LINE__);
-#else
-            _groupStart->notePending();
-#endif
-        }
-        else
-        {
-            groupStart = this;
-            endMarkersPending = 1;
-        }
-        endEndCandidatesPending = 0;
+    	leftRow.set(_leftRow);
     }
-
     ~CJoinGroup()
     {
-#ifdef TRACE_USAGE
-        if (groupStart)
-            atomic_dec(&join->getdebug(0));
-#endif
-#ifdef TRACE_JOINGROUPS
-        if (groupStart)
-            ActPrintLog(join->queryOwner(), "Destroying joinGroup %x", this);
+        freeRows();
+    }
+#undef new
+    void *operator new(size_t size, roxiemem::IRowManager *rowManager, activity_id activityId)
+    {
+        return rowManager->allocate(size, createCompoundActSeqId(activityId, AT_JoinGroup));
+    }
+#if defined(_DEBUG) && defined(_WIN32) && !defined(USING_MPATROL)
+ #define new new(_NORMAL_BLOCK, __FILE__, __LINE__)
 #endif
 
-        if (NULL == prev) // detached from pool
-        {
-            CJoinGroup *finger = next;
-            while (finger)
-            {
-                CJoinGroup *next = finger->next;
-                finger->Release();
-                finger = next;
-            }
-        }
-    }
-#ifdef TRACE_JOINGROUPS
-    inline void notePendingEndCandidate(unsigned lineNo)
-#else
-    inline void notePendingEndCandidate()
-#endif
+    void operator delete(void *ptr, roxiemem::IRowManager *rowManager, activity_id activityId)
     {
-        groupStart->incMarkerEndCandidate(1);
-#ifdef TRACE_JOINGROUPS
-        ActPrintLog(join->queryOwner(), "CJoinGroup::notePendingEndCandidate %x from %d, count became %d", this, lineNo, groupStart->queryPendingEndCandidate());
-#endif
+        ReleaseRoxieRow(ptr);
     }
-
-#ifdef TRACE_JOINGROUPS
-    inline void notePending(unsigned lineNo)
-#else
-    inline void notePending()
-#endif
+    void operator delete(void *ptr)
     {
-        groupStart->incMarker(1);
-#ifdef TRACE_JOINGROUPS
-        ActPrintLog(join->queryOwner(), "CJoinGroup::notePending %x from %d, count became %d", this, lineNo, groupStart->queryPending());
-#endif
+        ReleaseRoxieRow(ptr);
     }
-#ifdef TRACE_JOINGROUPS
-    inline void notePendingN(unsigned n,unsigned lineNo)
-#else
-    inline void notePendingN(unsigned n)
-#endif
+    inline unsigned incCandidates()
     {
-        groupStart->incMarker(n);
-#ifdef TRACE_JOINGROUPS
-        ActPrintLog(join->queryOwner(), "CJoinGroup::notePendingN %x from %d, count became %d", this, lineNo, groupStart->queryPending());
-#endif
+        return candidates.fetch_add(1);
     }
-    inline void noteCandidates(unsigned n)
+    inline bool hasAbortLimitBeenHit() const
     {
-        crit.enter();
-        candidates += n;
-        crit.leave();
+        return gf_limitabort == (groupFlags & GroupFlagLimitMask);
     }
-
-#ifdef TRACE_JOINGROUPS
-    inline void noteEndCandidate(unsigned lineNo)
-#else
-    inline void noteEndCandidate()
-#endif
+    inline void setAbortLimitHit()
     {
-#ifdef TRACE_JOINGROUPS
-        ActPrintLog(join->queryOwner(), "CJoinGroup::noteEndCandidate %x from %d, count was %d", this, lineNo, groupStart->queryPendingEndCandidate());
-#endif
-        if (groupStart->noteEndCandidateAndTest())
-            join->onComplete(groupStart);
+        CriticalBlock b(crit);
+        addFlag(gf_limitabort);
+        freeRows();
     }
-
-    inline bool complete() const
+    inline bool hasAtMostLimitBeenHit() const
     {
-        return (0 == groupStart->queryPendingEndCandidate()) && (0 == groupStart->queryPending());
+        return gf_limitatmost == (groupFlags & GroupFlagLimitMask);
     }
-
-    inline CJoinGroup *groupHead()
+    inline void setAtMostLimitHit()
     {
-        return groupStart;
+        CriticalBlock b(crit);
+        addFlag(gf_limitatmost);
+        freeRows();
     }
-    inline bool inGroup(CJoinGroup *leader) const
-    {
-        return groupStart==leader;
-    }
-
-    inline const void *queryRow(unsigned idx, offset_t &fpos) const
-    {
-        // Single threaded by now
-        fpos = offsets.item(idx);
-        return rows.query(idx);
-    }
-
-#ifdef TRACE_JOINGROUPS
-    inline void noteEnd(unsigned c, unsigned lineNo)
-#else
-    inline void noteEnd(unsigned c)
-#endif
-    {
-#ifdef TRACE_JOINGROUPS
-        ActPrintLog(join->queryOwner(), "CJoinGroup::noteEnd %x from %d, count was %d", this, lineNo, groupStart->queryPending());
-#endif
-        assertex(!complete());
-        {
-            CriticalBlock b(crit);
-            candidates += c;
-        }
-        if (groupStart->decMarkerAndTest())
-            join->onComplete(groupStart);
-    }
-
     inline const void *queryLeft() const
     {
-        return left;
+        return leftRow;
     }
-
-    inline void addRightMatch(const void *right, offset_t fpos)
-    {
-        assertex(!complete());
-        CriticalBlock b(crit);
-        rows.append(right);
-        offsets.append(fpos);
-    }
-
-    inline unsigned rowsSeen() const
+    inline const void *queryFirstRhs(offset_t &fpos, JoinGroupRhsState &rhsState) const
     {
         CriticalBlock b(crit);
-        return rows.ordinality();
+        if (!rowArrays)
+            return nullptr;
+        rhsState.arr = &rowArrays[0];
+        rhsState.pos = 0;
+        return _queryNextRhs(fpos, rhsState);
     }
-
-    inline unsigned candidateCount() const
+    inline const void *queryNextRhs(offset_t &fpos, JoinGroupRhsState &rhsState) const
     {
         CriticalBlock b(crit);
-        return candidates;
+        return _queryNextRhs(fpos, rhsState);
+    }
+    inline bool complete() const { return 0 == pending; }
+    inline void incPending()
+    {
+        pending++;
+    }
+    inline void decPending()
+    {
+        if (1 == pending.fetch_sub(1))
+            join->onComplete(this);
+    }
+    inline unsigned addRightMatchPending(unsigned partNo, offset_t fpos)
+    {
+        CriticalBlock b(crit);
+        if (gf_null != (groupFlags & GroupFlagLimitMask))
+            return NotFound;
+        return join->addRowEntry(partNo, nullptr, fpos, rowArrays, numRowArrays);
+    }
+    inline void addRightMatchCompletePending(unsigned partNo, unsigned sequence, const void *right)
+    {
+        CriticalBlock b(crit);
+        if (gf_null != (groupFlags & GroupFlagLimitMask))
+            return;
+        RowArray &rowArray = rowArrays[partNo];
+        rowArray.rows[sequence].rhs = right;
+        ++totalRows;
+    }
+    inline void addRightMatch(unsigned partNo, const void *right, offset_t fpos)
+    {
+        CriticalBlock b(crit);
+        if (gf_null != (groupFlags & GroupFlagLimitMask))
+            return;
+        join->addRowEntry(partNo, right, fpos, rowArrays, numRowArrays);
+        ++totalRows;
+    }
+    inline unsigned numRhsMatches() const
+    {
+        CriticalBlock b(crit);
+        return totalRows;
+    }
+    inline void addFlag(GroupFlags flag)
+    {
+        groupFlags = static_cast<GroupFlags>(groupFlags | flag);
+    }
+    inline bool hasFlag(GroupFlags flag) const
+    {
+        return 0 != (groupFlags & flag);
     }
 };
 
-#ifdef TRACE_JOINGROUPS
-#define notePending() notePending(__LINE__)
-#define notePendingN(n) notePendingN(n, __LINE__)
-#define notePendingEndCandidate() notePendingEndCandidate(__LINE__)
-#define noteEnd(a) noteEnd(a, __LINE__)
-#define noteEndCandidate() noteEndCandidate(__LINE__)
-#endif
-
-#ifdef TRACE_USAGE
-static int unsignedcompare(unsigned *i1, unsigned *i2)
+class CJoinGroupList
 {
-    return *i2-*i1;
-}
-#endif
+    CJoinGroup *head = nullptr, *tail = nullptr;
+    unsigned count = 0;
 
-class CJoinGroupPool
-{
-    CActivityBase &activity;
-    CJoinGroup *groupStart;
 public:
-    CJoinGroup head;
-    CriticalSection crit;
-    bool preserveGroups, preserveOrder;
-
-    CJoinGroupPool(CActivityBase &_activity) : activity(_activity), head(_activity)
+    CJoinGroupList() { }
+    ~CJoinGroupList()
     {
-        head.next = &head;
-        head.prev = &head;
-        groupStart = NULL;
-    }
-    ~CJoinGroupPool()
-    {
-        CJoinGroup *finger = head.next;
-        while (finger != &head)
+        while (head)
         {
-            CJoinGroup *next = finger->next;
-            finger->Release();
-            finger = next;
+            CJoinGroup *next = head->next;
+            head->Release();
+            head = next;
         }
     }
-    void setOrdering(bool _preserveGroups, bool _preserveOrder)
+    inline unsigned queryCount() const { return count; }
+    inline CJoinGroup *queryHead() const { return head; }
+    CJoinGroup *removeHead()
     {
-        preserveGroups = _preserveGroups;
-        preserveOrder = _preserveOrder;
-    }
-    CJoinGroup *createJoinGroup(const void *row, CActivityBase &activity, IJoinProcessor *join)
-    {
-        CJoinGroup *jg = new CJoinGroup(activity, row, join, groupStart);
-        if (preserveGroups && !groupStart)
+        if (!head)
+            return nullptr;
+        CJoinGroup *ret = head;
+        head = head->next;
+        ret->next = nullptr;
+        if (head)
         {
-            jg->notePending(); // Make sure we wait for the group end
-            groupStart = jg;
+            dbgassertex(head->prev == ret);
+            head->prev = nullptr;
         }
-        CriticalBlock c(crit);
-        jg->next = &head;
-        jg->prev = head.prev;
-        head.prev->next = jg;
-        head.prev = jg;
-        return jg;
+        else
+            tail = nullptr;
+        --count;
+        return ret;
     }
-    void endGroup()
+    CJoinGroup *remove(CJoinGroup *joinGroup)
     {
-        if (groupStart)
-            groupStart->noteEnd(0);
-        groupStart = NULL;
+        CJoinGroup *prev = joinGroup->prev;
+        CJoinGroup *next = joinGroup->next;
+        if (joinGroup == tail) // implying next=null also
+            tail = prev;
+        else
+            next->prev = prev;
+        if (joinGroup == head) // implying prev=null also
+            head = next;
+        else
+            prev->next = next;
+        joinGroup->prev = nullptr;
+        joinGroup->next = nullptr;
+        --count;
+        return joinGroup; // now detached
     }
-    inline void _removeJoinGroup(CJoinGroup *goer)
+    void addToTail(CJoinGroup *joinGroup)
     {
-        goer->next->prev = goer->prev;
-        goer->prev->next = goer->next;
-        goer->prev = NULL;
-        goer->next = NULL;
-    }
-    inline void removeJoinGroup(CJoinGroup *goer)
-    {
-        CriticalBlock c(crit);
-        _removeJoinGroup(goer);
-    }
-    CJoinGroup *processRemoveGroup(CJoinGroup *head)
-    {
-        assertex(head == head->groupHead());
-        CJoinGroup *finger = head;
-        for (;;)
+        dbgassertex(nullptr == joinGroup->next);
+        dbgassertex(nullptr == joinGroup->prev);
+        if (!head)
         {
-            CJoinGroup *next = finger->next;
-            if (!next->inGroup(head))
-                break;
-            finger = next;
-            assertex(next->complete());
-        }
-        head->prev->next = finger->next;  // set next of elem before head to elem after end of group
-        finger->next->prev = head->prev; // set prev of elem after eog to elem before head
-        head->prev = NULL; // group extract set head of group to NULL
-        CJoinGroup *next = finger->next;
-        finger->next = NULL;       // end of group  
-        return next;
-    }
-    void processCompletedGroups(CJoinGroup *jg, IJoinGroupNotify &notify)
-    {
-        CriticalBlock c(crit);
-        if (preserveOrder)
-        {
-            CJoinGroup *finger = head.next;
-            if (preserveGroups)
-            {
-                unsigned cnt=0;
-                while (finger != &head)
-                {
-                    if (finger->complete())
-                    {
-                        CJoinGroup *next = processRemoveGroup(finger);
-                        notify.addJoinGroup(finger); // means doneQueue owns linked list
-                        finger = next;
-                        ++cnt;
-                    }
-                    else
-                        break;
-                }
-            }
-            else
-            {
-                while (finger != &head)
-                {
-                    if (finger->complete())
-                    {
-                        CJoinGroup *next = finger->next;
-                        removeJoinGroup(finger);
-                        notify.addJoinGroup(finger);
-                        finger = next;
-                    }
-                    else
-                        break;
-                }
-            }
-        }
-        else if (preserveGroups)
-        {
-            CJoinGroup *next = processRemoveGroup(jg);
-            notify.addJoinGroup(jg); // means doneQueue owns linked list
-            assertex(!next->inGroup(jg));
+            head = tail = joinGroup;
         }
         else
         {
-            removeJoinGroup(jg);
-            notify.addJoinGroup(jg);
+            tail->next = joinGroup;
+            joinGroup->prev = tail;
+            tail = joinGroup;
         }
+        ++count;
     }
-#ifdef TRACE_USAGE
-    void getStats(StringBuffer &str)
-    {
-        UnsignedArray counts;
-        {
-            CriticalBlock c(crit);
-            CJoinGroup *p = &head;
-            for (;;)
-            {
-                p = p->next;
-                if (p == &head) break;
-                counts.append(p->rowsSeen());
-            }
-        }
-        counts.sort(unsignedcompare);
-        unsigned i = 0;
-        unsigned tc = counts.ordinality();
-        if (tc)
-        {
-            str.append("CJoinGroup rowsSeen : ");
-            for (;;)
-            {
-                str.append(counts.item(i));
-                i++;
-                if (i == tc) break;
-                if (i > 10) break; // i.e show max top 10
-                str.append(",");
-            }
-        }
-        str.newline().append("total CJoinGroups=").append(tc);
-    }
-#endif
 };
 
 enum AdditionStats { AS_Seeks, AS_Scans, AS_Accepted, AS_PostFiltered, AS_PreFiltered,  AS_DiskSeeks, AS_DiskAccepted, AS_DiskRejected };
 
-interface IRowStreamSetInput : extends IRowStream
+class CLeavableCriticalBlock // JCSMORE - move to jlib?
 {
-    virtual void setInput(IRowStream *input) = 0;
+    CriticalSection &crit;
+    bool locked = false;
+public:
+    inline CLeavableCriticalBlock(CriticalSection &_crit) : crit(_crit)
+    {
+        enter();
+    }
+    inline ~CLeavableCriticalBlock()
+    {
+        if (locked)
+            crit.leave();
+    }
+    inline void enter()
+    {
+        crit.enter();
+        locked = true;
+    }
+    inline void leave()
+    {
+        if (locked)
+        {
+            locked = false;
+            crit.leave();
+        }
+    }
 };
 
-class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implements IJoinGroupNotify
+class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 {
     typedef CSlaveActivity PARENT;
 
-#ifdef TRACE_JOINGROUPS
-    unsigned groupsPendsNoted, fetchReadBack, groupPendsEnded, doneGroupsDeQueued, wroteToFetchPipe, groupsComplete;
-#endif
-    IHThorKeyedJoinArg *helper;
-    IHThorArg *inputHelper;
-    IRowStreamSetInput *resultDistStream;
-    CPartDescriptorArray indexParts, dataParts;
-    Owned<IKeyIndexSet> tlkKeySet;
-    bool preserveGroups, preserveOrder, eos, needsDiskRead, atMostProvided, remoteDataFiles;
-    unsigned joinFlags, abortLimit, parallelLookups, freeQSize, filePartTotal;
-    size32_t fixedRecordSize;
-    CJoinGroupPool *pool;
-    unsigned atMost, keepLimit;
-    Owned<IExpander> eexp;
-    MemoryBuffer tlkMb;
-    CriticalSection onCompleteCrit, stopInputCrit;
-    QueueOf<CJoinGroup, false> doneGroups;
-    unsigned currentMatchIdx, currentJoinGroupSize, currentAdded, currentMatched;
-    Owned<CJoinGroup> djg, doneJG;
-    OwnedConstThorRow defaultRight;
-    unsigned portbase, node;
-    IArrayOf<IDelayedFile> fetchFiles;
-    FPosTableEntry *localFPosToNodeMap; // maps fpos->local part #
-    FPosTableEntry *globalFPosToNodeMap; // maps fpos->node for all parts of file. If file is remote, localFPosToNodeMap will have all parts
-    unsigned pendingGroups, superWidth;
-    Semaphore pendingGroupSem;
-    CriticalSection pendingGroupCrit, statCrit, lookupCrit;
-    UnsignedArray tags;
-    UInt64Array _statsArr;
-    unsigned __int64 *statsArr;
-    unsigned additionalStats;
-    rowcount_t rowLimit;
-    __int64 lastSeeks, lastScans;
-    StringAttr indexName;
-    bool localKey, keyHasTlk, onFailTransform;
-    Owned<IEngineRowAllocator> joinFieldsAllocator, keyLookupAllocator, fetchInputAllocator, indexInputAllocator;
-    Owned<IEngineRowAllocator> fetchInputMetaAllocator;
-    Owned<IThorRowInterfaces> fetchInputMetaRowIf, fetchOutputRowIf;
-    MemoryBuffer rawFetchMb;
-
-#ifdef TRACE_USAGE
-    atomic_t debugats[10];
-    unsigned lastTick;
-#endif
-
     class CKeyedFetchHandler : public CSimpleInterface, implements IThreaded
     {
-        CKeyedJoinSlave &owner;
+        CKeyedJoinSlave &activity;
         CThreadedPersistent threaded;
-        bool writeWaiting, replyWaiting, stopped, aborted;
-        unsigned pendingSends, pendingReplies, nodes, minFetchSendSz, totalSz, fetchMin;
-        size32_t perRowMin;
-        unsigned maxRequests, blockRequestsAt;
+        bool writeWaiting = false, replyWaiting = false, stopped = false, aborted = false;
+        unsigned pendingSends = 0, pendingReplies = 0, nodes = 0, maxRequests = 0, blockRequestsAt = 0;
+        size32_t minFetchSendSz = NEWFETCHSENDMAX, totalSz = 0;
         PointerArrayOf<CThorExpandingRowArray> dstLists;
         CriticalSection crit, sendCrit;
         Semaphore pendingSendsSem, pendingReplySem;
-        mptag_t requestMpTag, resultMpTag;
+        mptag_t requestMpTag = TAG_NULL, resultMpTag = TAG_NULL;
+        Owned<IEngineRowAllocator> fetchInputMetaAllocator;
+        Owned<IThorRowInterfaces> fetchInputMetaRowIf; // fetch request rows, header + fetch fields
+        Owned<IThorRowInterfaces> fetchOutputMetaRowIf; // fetch request reply rows, header + [join fields as child row]
+        IHThorKeyedJoinArg *helper = nullptr;
 
         static int slaveLookup(const void *_key, const void *e)
         {
@@ -595,16 +441,22 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             else
                 return 0;
         }
+        IFileIO *getFilePartIO(unsigned partNum)
+        {
+            assertex(partNum<activity.dataParts.ordinality());
+            return activity.fetchFiles.item(partNum).getFileIO();
+        }
     public:
         class CKeyedFetchResultProcessor : public CSimpleInterface, implements IThreaded
         {
+            CKeyedFetchHandler &owner;
             CThreadedPersistent threaded;
-            CKeyedJoinSlave &owner;
+            CKeyedJoinSlave &activity;
             ICommunicator &comm;
-            mptag_t resultMpTag;
-            bool aborted;
+            mptag_t resultMpTag = TAG_NULL;
+            bool aborted = false;
         public:
-            CKeyedFetchResultProcessor(CKeyedJoinSlave &_owner, ICommunicator &_comm, mptag_t _mpTag) : threaded("CKeyedFetchResultProcessor", this), owner(_owner), comm(_comm), resultMpTag(_mpTag)
+            CKeyedFetchResultProcessor(CKeyedFetchHandler &_owner, ICommunicator &_comm, mptag_t _mpTag) : threaded("CKeyedFetchResultProcessor", this), owner(_owner), comm(_comm), resultMpTag(_mpTag), activity(owner.activity)
             {
                 aborted = false;
                 threaded.start();
@@ -612,7 +464,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             ~CKeyedFetchResultProcessor()
             {
                 stop();
-                threaded.join();
             }
             void stop()
             {
@@ -621,8 +472,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                     aborted = true;
                     comm.cancel(RANK_ALL, resultMpTag);
                 }
+                threaded.join();
             }
-            bool done()
+            bool done() const
             {
                 return aborted;
             }
@@ -630,7 +482,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             {
                 try
                 {
-                    unsigned endRequestsCount = owner.container.queryJob().querySlaves();
+                    unsigned endRequestsCount = activity.container.queryJob().querySlaves();
                     Owned<IBitSet> endRequests = createThreadSafeBitSet(); // NB: verification only
                     while (!aborted)
                     {
@@ -649,7 +501,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                             unsigned count;
                             msg.read(count);
 
-                            CThorExpandingRowArray received(owner, owner.fetchOutputRowIf);
+                            CThorExpandingRowArray received(activity, owner.fetchOutputMetaRowIf);
                             size32_t recvSz = msg.remaining();
                             received.deserialize(recvSz, msg.readDirect(recvSz));
 
@@ -657,48 +509,47 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                             while (c<count && !aborted)
                             {
                                 OwnedConstThorRow row = received.getClear(c++);
-                                const byte *rowPtr = (const byte *)row.get();
-                                offset_t fpos;
-                                CJoinGroup *jg;
-                                memcpy(&fpos, rowPtr, sizeof(fpos));
-                                rowPtr += sizeof(fpos);
-                                memcpy(&jg, rowPtr, sizeof(jg));
-                                rowPtr += sizeof(jg);
-                                const void *fetchRow = *((const void **)rowPtr);
-                                if (fetchRow)
+                                const FetchReplyHeader &header = *(FetchReplyHeader *)row.get();
+                                CJoinGroup *jg = header.jg;
+                                const void *childRow = *(const void **)((byte *)row.get()+sizeof(FetchReplyHeader));
+                                if (header.sequence & FetchReplyHeader::fetchMatchedMask)
                                 {
-                                    LinkThorRow(fetchRow);
-                                    jg->addRightMatch(fetchRow, fpos);
+                                    LinkThorRow(childRow);
+                                    unsigned sequence = header.sequence & 0xffffffff;
+                                    unsigned partNo = (header.sequence & ~FetchReplyHeader::fetchMatchedMask) >> 32;
+                                    // If !preserverOrder, right rows added to single array in jg, so pass 0
+                                    jg->addRightMatchCompletePending(activity.preserveOrder ? partNo : 0, sequence, childRow);
                                 }
-                                jg->noteEnd(0);
+                                jg->decPending();
                                 ++c2;
                                 if (LOWTHROTTLE_GRANULARITY == c2) // prevent sender when busy waking up to send very few.
                                 {
-                                    owner.fetchHandler->decPendingReplies(c2);
+                                    owner.decPendingReplies(c2);
                                     c2 = 0;
                                 }
                             }
                             if (c2)
-                                owner.fetchHandler->decPendingReplies(c2);
+                                owner.decPendingReplies(c2);
                         }
                     }
                 }
                 catch (IException *e)
                 {
-                    owner.fireException(e);
+                    activity.fireException(e);
                     e->Release();
                 }
                 aborted = true;
-                owner.pendingGroupSem.signal(); // release puller if blocked on fetch groups pending, in case this has stopped early.
             }
-        } *resultProcessor;
+        } *resultProcessor = nullptr;
         class CKeyedFetchRequestProcessor : public CSimpleInterface, implements IThreaded
         {
+            CKeyedFetchHandler &owner;
             CThreadedPersistent threaded;
-            CKeyedJoinSlave &owner;
+            CKeyedJoinSlave &activity;
             ICommunicator &comm;
-            mptag_t requestMpTag, resultMpTag;
-            bool aborted;
+            mptag_t requestMpTag = TAG_NULL, resultMpTag = TAG_NULL;
+            bool aborted = false;
+            IHThorKeyedJoinArg *helper = nullptr;
 
             static int partLookup(const void *_key, const void *e)
             {
@@ -713,15 +564,15 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             }
 
         public:
-            CKeyedFetchRequestProcessor(CKeyedJoinSlave &_owner, ICommunicator &_comm, mptag_t _requestMpTag, mptag_t _resultMpTag) : threaded("CKeyedFetchRequestProcessor", this), owner(_owner), comm(_comm), requestMpTag(_requestMpTag), resultMpTag(_resultMpTag)
+            CKeyedFetchRequestProcessor(CKeyedFetchHandler &_owner, ICommunicator &_comm, mptag_t _requestMpTag, mptag_t _resultMpTag) : threaded("CKeyedFetchRequestProcessor", this), owner(_owner), comm(_comm), requestMpTag(_requestMpTag), resultMpTag(_resultMpTag), activity(_owner.activity)
             {
                 aborted = false;
+                helper = owner.helper;
                 threaded.start();
             }
             ~CKeyedFetchRequestProcessor()
             {
                 stop();
-                threaded.join();
             }
             void stop()
             {
@@ -730,6 +581,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                     aborted = true;
                     comm.cancel(RANK_ALL, requestMpTag);
                 }
+                threaded.join();
             }
             virtual void threadmain() override
             {
@@ -737,15 +589,15 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                 {
                     rank_t sender;
                     CMessageBuffer msg;
-                    unsigned endRequestsCount = owner.container.queryJob().querySlaves();
+                    unsigned endRequestsCount = activity.container.queryJob().querySlaves();
                     Owned<IBitSet> endRequests = createThreadSafeBitSet(); // NB: verification only
 
-                    Owned<IThorRowInterfaces> fetchDiskRowIf = owner.createRowInterfaces(owner.helper->queryDiskRecordSize());
+                    Owned<IThorRowInterfaces> fetchDiskRowIf = activity.createRowInterfaces(helper->queryDiskRecordSize(), AT_FetchDisk);
                     while (!aborted)
                     {
                         CMessageBuffer replyMb;
                         unsigned retCount = 0;
-                        replyMb.append(retCount); // place holder;
+                        DelayedMarker<unsigned> countMarker(replyMb);
                         if (comm.recv(msg, RANK_ALL, requestMpTag, &sender))
                         {
                             if (!msg.length())
@@ -754,7 +606,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                                 assertex(0 == prevVal);
                                 // I will not get anymore from 'sender', tell sender I've processed all and there will be no more results.
                                 if (!comm.send(msg, sender, resultMpTag, LONGTIMEOUT))
-                                    throw MakeActivityException(&owner, 0, "CKeyedFetchRequestProcessor {3} - comm send failed");
+                                    throw MakeActivityException(&activity, 0, "CKeyedFetchRequestProcessor {3} - comm send failed");
                                 if (0 == --endRequestsCount)
                                     break;
                                 continue;
@@ -762,8 +614,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                             unsigned count;
                             msg.read(count);
 
-                            CThorExpandingRowArray received(owner, owner.fetchInputMetaRowIf);
-                            CThorExpandingRowArray replyRows(owner, owner.fetchOutputRowIf);
+                            CThorExpandingRowArray received(activity, owner.fetchInputMetaRowIf);
+                            CThorExpandingRowArray replyRows(activity, owner.fetchOutputMetaRowIf);
                             size32_t recvSz =  msg.remaining();
                             received.deserialize(recvSz, msg.readDirect(recvSz));
                             size32_t replySz = 0;
@@ -771,27 +623,20 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                             while (count--)
                             {
 #ifdef TRACE_JOINGROUPS
-                                owner.fetchReadBack++;
+                                activity.fetchReadBack++;
 #endif
                                 if (aborted)
                                     break;
                                 OwnedConstThorRow row = received.getClear(c++);
-                                const byte *rowPtr = (const byte *)row.get();
-                                offset_t fpos;
-                                memcpy(&fpos, rowPtr, sizeof(fpos));
-                                rowPtr += sizeof(fpos);
-                                rowPtr += sizeof(CJoinGroup *);
+                                FetchRequestHeader &requestHeader = *(FetchRequestHeader *)row.get();
+                                const offset_t &fpos = requestHeader.fpos;
 
-                                const void *fetchKey = NULL;
-                                if (owner.fetchInputAllocator)
-                                {
-                                    const void *fetchRow;
-                                    memcpy(&fetchRow, rowPtr, sizeof(const void *));
-                                    fetchKey = *((const void **)rowPtr);
-                                }
+                                const void *fetchKey = nullptr;
+                                if (0 != helper->queryFetchInputRecordSize()->getMinRecordSize())
+                                    fetchKey = (const byte *)row.get() + sizeof(FetchRequestHeader);
 
                                 unsigned __int64 localFpos;
-                                unsigned files = owner.dataParts.ordinality();
+                                unsigned files = activity.dataParts.ordinality();
                                 unsigned filePartIndex = 0;
                                 switch (files)
                                 {
@@ -802,13 +647,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                                         if (isLocalFpos(fpos))
                                             localFpos = getLocalFposOffset(fpos);
                                         else
-                                            localFpos = fpos-owner.localFPosToNodeMap[0].base;
+                                            localFpos = fpos-activity.localFPosToNodeMap[0].base;
                                         break;
                                     }
                                     default:
                                     {
                                         // which of multiple parts this slave is dealing with.
-                                        FPosTableEntry *result = (FPosTableEntry *)bsearch(&fpos, owner.localFPosToNodeMap, files, sizeof(FPosTableEntry), partLookup);
+                                        FPosTableEntry *result = (FPosTableEntry *)bsearch(&fpos, activity.localFPosToNodeMap, files, sizeof(FPosTableEntry), partLookup);
                                         if (isLocalFpos(fpos))
                                             localFpos = getLocalFposOffset(fpos);
                                         else
@@ -818,61 +663,61 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                                     }
                                 }
 
-                                RtlDynamicRowBuilder fetchOutRow(owner.fetchOutputRowIf->queryRowAllocator());
-                                byte *fetchOutPtr = fetchOutRow.getSelf();
-                                memcpy(fetchOutPtr, row.get(), FETCHKEY_HEADER_SIZE);
-                                fetchOutPtr += FETCHKEY_HEADER_SIZE;
+                                RtlDynamicRowBuilder fetchReplyBuilder(owner.fetchOutputMetaRowIf->queryRowAllocator());
+                                FetchReplyHeader &replyHeader = *(FetchReplyHeader *)fetchReplyBuilder.getUnfinalized();
+                                replyHeader.sequence = requestHeader.sequence;
+                                replyHeader.jg = requestHeader.jg;
+                                const void * &childRow = *(const void **)((byte *)fetchReplyBuilder.getUnfinalized() + sizeof(FetchReplyHeader));
 
                                 Owned<IFileIO> iFileIO = owner.getFilePartIO(filePartIndex);
                                 Owned<ISerialStream> stream = createFileSerialStream(iFileIO, localFpos);
                                 CThorStreamDeserializerSource ds(stream);
 
-                                RtlDynamicRowBuilder fetchedRowBuilder(fetchDiskRowIf->queryRowAllocator());
-                                size32_t fetchedLen = fetchDiskRowIf->queryRowDeserializer()->deserialize(fetchedRowBuilder, ds);
-                                OwnedConstThorRow diskFetchRow = fetchedRowBuilder.finalizeRowClear(fetchedLen);
+                                RtlDynamicRowBuilder fetchDiskRowBuilder(fetchDiskRowIf->queryRowAllocator());
+                                size32_t fetchedLen = fetchDiskRowIf->queryRowDeserializer()->deserialize(fetchDiskRowBuilder, ds);
+                                OwnedConstThorRow diskFetchRow = fetchDiskRowBuilder.finalizeRowClear(fetchedLen);
 
-                                RtlDynamicRowBuilder joinFieldsRow(owner.joinFieldsAllocator);
-                                const void *fJoinFieldsRow = NULL;
-                                if (owner.helper->fetchMatch(fetchKey, diskFetchRow))
+                                size32_t fetchReplySz = sizeof(FetchReplyHeader);
+                                if (helper->fetchMatch(fetchKey, diskFetchRow))
                                 {
-                                    size32_t sz = owner.helper->extractJoinFields(joinFieldsRow, diskFetchRow.get(), (IBlobProvider*)NULL); // JCSMORE it right that passing NULL IBlobProvider here??
-                                    fJoinFieldsRow = joinFieldsRow.finalizeRowClear(sz);
-                                    replySz += FETCHKEY_HEADER_SIZE + sz;
-                                    owner.statsArr[AS_DiskAccepted]++;
-                                    if (owner.statsArr[AS_DiskAccepted] > owner.rowLimit)
-                                        owner.onLimitExceeded();
+                                    replyHeader.sequence |= FetchReplyHeader::fetchMatchedMask;
+
+                                    RtlDynamicRowBuilder joinFieldsRow(activity.joinFieldsAllocator);
+                                    size32_t joinFieldsSz = helper->extractJoinFields(joinFieldsRow, diskFetchRow.get(), (IBlobProvider*)nullptr); // JCSMORE is it right that passing NULL IBlobProvider here??
+                                    fetchReplySz += joinFieldsSz;
+                                    childRow = joinFieldsRow.finalizeRowClear(joinFieldsSz); // NB: COutputMetaWithChildRow handles serializing/deserializing the child row
+                                    activity.statsArr[AS_DiskAccepted]++;
                                 }
                                 else
                                 {
-                                    replySz += FETCHKEY_HEADER_SIZE;
-                                    owner.statsArr[AS_DiskRejected]++;
+                                    childRow = nullptr;
+                                    activity.statsArr[AS_DiskRejected]++;
                                 }
-                                size32_t fopsz = owner.fetchOutputRowIf->queryRowAllocator()->queryOutputMeta()->getRecordSize(fetchOutRow.getSelf());
-                                // must be easier way? Is it sizeof(const void *)?
-                                memcpy(fetchOutPtr, &fJoinFieldsRow, sizeof(const void *));  // child row of fetchOutputRow
-                                replyRows.append(fetchOutRow.finalizeRowClear(fopsz));
-                                owner.statsArr[AS_DiskSeeks]++;
+
+                                replySz += fetchReplySz;
+                                replyRows.append(fetchReplyBuilder.finalizeRowClear(fetchReplySz));
+                                activity.statsArr[AS_DiskSeeks]++;
                                 ++retCount;
                                 if (replySz>=NEWFETCHREPLYMAX) // send back in chunks
                                 {
-                                    replyMb.writeDirect(0, sizeof(unsigned), &retCount);
+                                    countMarker.write(retCount);
                                     retCount = 0;
                                     replySz = 0;
                                     replyRows.serialize(replyMb);
                                     replyRows.kill();
                                     if (!comm.send(replyMb, sender, resultMpTag, LONGTIMEOUT))
-                                        throw MakeActivityException(&owner, 0, "CKeyedFetchRequestProcessor {1} - comm send failed");
+                                        throw MakeActivityException(&activity, 0, "CKeyedFetchRequestProcessor {1} - comm send failed");
                                     replyMb.rewrite(sizeof(retCount));
                                 }
                             }
                             if (retCount)
                             {
-                                replyMb.writeDirect(0, sizeof(unsigned), &retCount);
+                                countMarker.write(retCount);
                                 retCount = 0;
                                 replyRows.serialize(replyMb);
                                 replyRows.kill();
                                 if (!comm.send(replyMb, sender, resultMpTag, LONGTIMEOUT))
-                                    throw MakeActivityException(&owner, 0, "CKeyedFetchRequestProcessor {2} - comm send failed");
+                                    throw MakeActivityException(&activity, 0, "CKeyedFetchRequestProcessor {2} - comm send failed");
                                 replyMb.rewrite(sizeof(retCount));
                             }
                         }
@@ -880,34 +725,41 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                 }
                 catch (IException *e)
                 {
-                    owner.fireException(e);
+                    activity.fireException(e);
                     e->Release();
                 }
                 aborted = true;
             }
-        } *requestProcessor;
+        } *requestProcessor = nullptr;
     public:
-        CKeyedFetchHandler(CKeyedJoinSlave &_owner) : threaded("CKeyedFetchHandler", this), owner(_owner)
+        CKeyedFetchHandler(CKeyedJoinSlave &_activity) : threaded("CKeyedFetchHandler", this), activity(_activity)
         {
-            minFetchSendSz = NEWFETCHSENDMAX;
+            helper = activity.helper;
+            Owned<IOutputMetaData> fetchInputMeta = new CPrefixedOutputMeta(sizeof(FetchRequestHeader), helper->queryFetchInputRecordSize());
+            fetchInputMetaRowIf.setown(activity.createRowInterfaces(fetchInputMeta, AT_FetchRequest));
+            fetchInputMetaAllocator.set(fetchInputMetaRowIf->queryRowAllocator());
+
+            Owned<IOutputMetaData> fetchOutputMeta = createOutputMetaDataWithChildRow(activity.joinFieldsAllocator, sizeof(FetchReplyHeader));
+            fetchOutputMetaRowIf.setown(activity.createRowInterfaces(fetchOutputMeta, AT_FetchResponse));
+
             totalSz = 0;
-            if (minFetchSendSz < (NEWFETCHSENDHEADERSZ+owner.helper->queryFetchInputRecordSize()->getMinRecordSize()))
-                minFetchSendSz = NEWFETCHSENDHEADERSZ+owner.helper->queryFetchInputRecordSize()->getMinRecordSize();
-            nodes = owner.container.queryJob().querySlaves();
+            if (minFetchSendSz < fetchInputMeta->getMinRecordSize())
+                minFetchSendSz = fetchInputMeta->getMinRecordSize();
+            nodes = activity.container.queryJob().querySlaves();
             stopped = aborted = writeWaiting = replyWaiting = false;
             pendingSends = pendingReplies = 0;
             for (unsigned n=0; n<nodes; n++)
-                dstLists.append(new CThorExpandingRowArray(owner, owner.fetchInputMetaRowIf));
-            fetchMin = owner.helper->queryJoinFieldsRecordSize()->getMinRecordSize();
-            perRowMin = NEWFETCHSENDHEADERSZ+fetchMin;
+                dstLists.append(new CThorExpandingRowArray(activity, fetchInputMetaRowIf));
+            size32_t fetchMin = helper->queryJoinFieldsRecordSize()->getMinRecordSize();
+            size32_t perRowMin = sizeof(FetchReplyHeader)+fetchMin;
             maxRequests = NEWFETCHPRMEMLIMIT<perRowMin ? 1 : (NEWFETCHPRMEMLIMIT / perRowMin);
             blockRequestsAt = NEWFETCHPRBLOCKMEMLIMIT<perRowMin ? 1 : (NEWFETCHPRBLOCKMEMLIMIT / perRowMin);
             assertex(blockRequestsAt<=maxRequests);
 
-            requestMpTag = (mptag_t)owner.tags.popGet();
-            resultMpTag = (mptag_t)owner.tags.popGet();
-            requestProcessor = new CKeyedFetchRequestProcessor(owner, owner.queryJobChannel().queryJobComm(), requestMpTag, resultMpTag); // remote receive of fetch fpos'
-            resultProcessor = new CKeyedFetchResultProcessor(owner, owner.queryJobChannel().queryJobComm(), resultMpTag); // asynchronously receiving results back
+            requestMpTag = (mptag_t)activity.tags.popGet();
+            resultMpTag = (mptag_t)activity.tags.popGet();
+            requestProcessor = new CKeyedFetchRequestProcessor(*this, activity.queryJobChannel().queryJobComm(), requestMpTag, resultMpTag); // remote receive of fetch fpos'
+            resultProcessor = new CKeyedFetchResultProcessor(*this, activity.queryJobChannel().queryJobComm(), resultMpTag); // asynchronously receiving results back
 
             threaded.start();
         }
@@ -924,45 +776,44 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                 delete dstList;
             }
         }
-        bool resultsDone()
+        bool resultsDone() const
         {
             return resultProcessor->done();
         }
-        void addRow(offset_t fpos, CJoinGroup *jg)
+        void addRow(offset_t fpos, unsigned __int64 sequence, CJoinGroup *jg)
         {
-            RtlDynamicRowBuilder fetchInRow(owner.fetchInputMetaAllocator);
-            byte *fetchInRowPtr = fetchInRow.getSelf();
-            memcpy(fetchInRowPtr, &fpos, sizeof(fpos));
-            fetchInRowPtr += sizeof(fpos); 
-            memcpy(fetchInRowPtr, &jg, sizeof(jg));
-            fetchInRowPtr += sizeof(jg);
+            // build request row
+            RtlDynamicRowBuilder fetchInputRowBuilder(fetchInputMetaAllocator);
+            FetchRequestHeader &header = *(FetchRequestHeader *)fetchInputRowBuilder.getUnfinalized();
+            header.fpos = fpos;
+            header.sequence = sequence;
+            header.jg = jg;
 
-            size32_t sz = 0;
-            if (owner.fetchInputAllocator)
+            size32_t sz = sizeof(FetchRequestHeader);
+            if (0 != helper->queryFetchInputRecordSize()->getMinRecordSize())
             {
-                RtlDynamicRowBuilder fetchRow(owner.fetchInputAllocator);
-                sz = owner.helper->extractFetchFields(fetchRow, jg->queryLeft());
-                const void *fFetchRow = fetchRow.finalizeRowClear(sz);
-                memcpy(fetchInRowPtr, &fFetchRow, sizeof(const void *));  // child row of fetchInRow
+                CPrefixedRowBuilder prefixBuilder(sizeof(FetchRequestHeader), fetchInputRowBuilder);
+                sz += helper->extractFetchFields(prefixBuilder, jg->queryLeft());
             }
+            OwnedConstThorRow fetchInputRow = fetchInputRowBuilder.finalizeRowClear(sz);
 
-            if (totalSz + (FETCHKEY_HEADER_SIZE+sz) > minFetchSendSz)
+            if (totalSz + sz > minFetchSendSz)
             {
                 sendAll(); // in effect send remaining
                 totalSz = 0;
             }
             unsigned dstNode;
-            if (owner.remoteDataFiles)
-                dstNode = owner.node; // JCSMORE - do directly
+            if (activity.remoteDataFiles)
+                dstNode = activity.node; // JCSMORE - do directly
             else
             {
-                if (1 == owner.filePartTotal)
-                    dstNode = owner.globalFPosToNodeMap[0].index;
+                if (1 == activity.filePartTotal)
+                    dstNode = activity.globalFPosToNodeMap[0].index;
                 else if (isLocalFpos(fpos))
                     dstNode = getLocalFposPart(fpos);
                 else
                 {
-                    const void *result = bsearch(&fpos, owner.globalFPosToNodeMap, owner.filePartTotal, sizeof(FPosTableEntry), slaveLookup);
+                    const void *result = bsearch(&fpos, activity.globalFPosToNodeMap, activity.filePartTotal, sizeof(FPosTableEntry), slaveLookup);
                     if (!result)
                         throw MakeThorException(TE_FetchOutOfRange, "FETCH: Offset not found in offset table; fpos=%" I64F "d", fpos);
                     dstNode = ((FPosTableEntry *)result)->index;
@@ -972,9 +823,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             {
                 CriticalBlock b(crit);
                 //must be easier way?
-                size32_t sz = owner.fetchInputMetaAllocator->queryOutputMeta()->getRecordSize(fetchInRow.getSelf());
-                dstLists.item(dstNode)->append(fetchInRow.finalizeRowClear(sz));
-                totalSz += FETCHKEY_HEADER_SIZE+sz;
+                dstLists.item(dstNode)->append(fetchInputRow.getClear());
+                totalSz += sz;
                 ++pendingSends;
                 if (writeWaiting)
                 {
@@ -985,10 +835,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
         void stop(bool stopPending)
         {
-            crit.enter();
-            if (stopped)
-                crit.leave();
-            else
+            CLeavableCriticalBlock b(crit);
+            if (!stopped)
             {
                 stopped = true;
                 if (writeWaiting)
@@ -996,7 +844,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                     writeWaiting = false;
                     pendingSendsSem.signal();
                 }
-                crit.leave();
+                b.leave();
                 threaded.join();
                 if (stopPending) // stop groups in progress
                 {
@@ -1021,8 +869,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             for (; n<nodes; n++)
             {
                 CMessageBuffer msg;
-                if (!owner.queryJobChannel().queryJobComm().send(msg, n+1, requestMpTag, LONGTIMEOUT))
-                    throw MakeActivityException(&owner, 0, "CKeyedFetchHandler::stop - comm send failed");
+                if (!activity.queryJobChannel().queryJobComm().send(msg, n+1, requestMpTag, LONGTIMEOUT))
+                    throw MakeActivityException(&activity, 0, "CKeyedFetchHandler::stop - comm send failed");
             }
         }
         void decPendingReplies(unsigned c=1)
@@ -1051,7 +899,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                     if (total)
                     {
                         assertex(!replyWaiting);
-                        CThorExpandingRowArray dstList(owner, owner.fetchInputMetaRowIf);
+                        CThorExpandingRowArray dstList(activity, fetchInputMetaRowIf);
                         unsigned dstP=0;
                         for (;;)
                         {
@@ -1070,7 +918,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                                 { CriticalUnblock ub(crit);
                                     while (!pendingReplySem.wait(5000))
                                     {
-                                        owner.ActPrintLog("KJ: replyWaiting blocked");
+                                        activity.ActPrintLog("KJ: replyWaiting blocked");
                                     }
                                 }
                                 if (throttleBig) // break out if some received and reason for blocking was high number of pendingReplies.
@@ -1089,7 +937,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                                 requests = total;
                             msg.append(requests);
                             unsigned r=0;
-                            IOutputRowSerializer *serializer = owner.fetchInputMetaRowIf->queryRowSerializer();
+                            IOutputRowSerializer *serializer = fetchInputMetaRowIf->queryRowSerializer();
                             CMemoryRowSerializer s(msg);
                             for (; r<requests; r++)
                             {
@@ -1100,13 +948,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                             pendingReplies += requests;
                             total -= requests;
                             { CriticalUnblock ub(crit);
-                                if (!owner.queryJobChannel().queryJobComm().send(msg, n+1, requestMpTag, LONGTIMEOUT))
-                                    throw MakeActivityException(&owner, 0, "CKeyedFetchHandler - comm send failed");
+                                if (!activity.queryJobChannel().queryJobComm().send(msg, n+1, requestMpTag, LONGTIMEOUT))
+                                    throw MakeActivityException(&activity, 0, "CKeyedFetchHandler - comm send failed");
                             }
                             if (0 == total)
                                 break;
                             msg.clear();
-                        }                   
+                        }
                     }
                 }
             }
@@ -1143,672 +991,356 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             }
             catch (IException *e)
             {
-                owner.fireException(e);
+                activity.fireException(e);
                 e->Release();
             }
         }
     friend class CKeyedFetchRequestProcessor;
     friend class CKeyedFetchResultProcessor;
-    } *fetchHandler;
-    class CKeyLocalLookup : implements IRowStreamSetInput, implements IStopInput, public CSimpleInterface
+    };
+    Owned<CKeyedFetchHandler> fetchHandler;
+    // There is 1 of these per part, but # running is limited
+    class CKeyLookupHandler : public CSimpleInterface, implements IThreaded
     {
-        CKeyedJoinSlave &owner;
-        Linked<IRowStream> in;
-        unsigned nextTlk;
-        Owned<IKeyManager> tlkManager;
-        const RtlRecord &keyRecInfo;
-        bool eos, eog;
-        IKeyIndex *currentTlk;
-        CJoinGroup *currentJG;
-        RtlDynamicRowBuilder indexReadFieldsRow;
-        IArrayOf<IKeyManager> partKeyManagers;
-
-        IKeyManager *currentPartKeyManager = nullptr;
-        unsigned nextPart;
-        unsigned candidateCount;
-        __int64 lastSeeks, lastScans;
-
-        inline void noteStats(unsigned seeks, unsigned scans)
-        {
-            CriticalBlock b(owner.statCrit);
-            owner.statsArr[AS_Seeks] += seeks-lastSeeks;
-            owner.statsArr[AS_Scans] += scans-lastScans;
-            lastSeeks = seeks;
-            lastScans = scans;
-#ifdef TRACE_USAGE
-            if (msTick()-owner.lastTick > 5000)
-            {
-                owner.trace();
-                owner.lastTick = msTick();
-            }
-#endif
-        }
-        void reset()
-        {
-            eos = eog = false;
-            nextTlk = 0;
-            currentJG = NULL;
-            currentTlk = NULL;
-            lastSeeks = lastScans = 0;
-            nextPart = 0; // only used for superkeys of single part keys
-            currentPartKeyManager = nullptr;
-            candidateCount = 0;
-        }
+        CKeyedJoinSlave &activity;
+        CThorExpandingRowArray queue;
+        CriticalSection queueCrit;
+        unsigned partNo = NotFound;
+        Owned<IKeyManager> keyManager;
+        CThreaded threaded;
+        std::atomic<bool> running{false};
+        std::atomic<bool> stopping{false};
+        enum ThreadStates { ts_initial, ts_starting, ts_running, ts_stopping };
+        ThreadStates state = ts_initial;
+        IHThorKeyedJoinArg *helper = nullptr;
+        CThorExpandingRowArray batchArray;
+        bool stopped = false;
     public:
-        IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-
-        CKeyLocalLookup(CKeyedJoinSlave &_owner, const RtlRecord &_keyRecInfo) : owner(_owner), keyRecInfo(_keyRecInfo), indexReadFieldsRow(_owner.indexInputAllocator)
+        CKeyLookupHandler(CKeyedJoinSlave &_activity, unsigned _partNo) : activity(_activity), partNo(_partNo), queue(_activity), threaded("CKeyLookupHandler", this), batchArray(_activity)
         {
-            tlkManager.setown(owner.keyHasTlk ? createLocalKeyManager(keyRecInfo, nullptr, nullptr) : nullptr);
-
-            if (owner.getKeyManagers(partKeyManagers)) // true signifies that dealing with a local mergable set of index parts
-                currentPartKeyManager = &partKeyManagers.item(0);
-            reset();
+            helper = activity.helper;
         }
-        ~CKeyLocalLookup()
+        ~CKeyLookupHandler()
         {
-            in.clear();
+            stop();
         }
-
-        CJoinGroup *extractIndexFields(ARowBuilder & lhs)
+        void join()
         {
-            CriticalBlock b(owner.lookupCrit);
-            try
             {
-                while (!eos)
-                {
-                    OwnedConstThorRow row = in->nextRow();
-                    if (!row)
-                    {
-                        if (owner.preserveGroups)
-                        {
-                            if (owner.needsDiskRead)
-                                owner.notePendingGroup();
-                            owner.pool->endGroup();
-                        }
-                        row.setown(in->nextRow());
-                        if (!row)
-                        {
-                            eos = true;
-                            break;
-                        }
-                    }
-                    
-                    if (owner.helper->leftCanMatch(row))
-                    {
-                        owner.helper->extractIndexReadFields(lhs, row);
+                CriticalBlock b(queueCrit);
+                if (ts_initial == state)
+                    return;
+            }
+            threaded.join();
+        }
+        void stop()
+        {
+            stopped = true;
+            join();
+            queue.clearRows();
+            batchArray.clearRows();
+        }
+        void init()
+        {
+            stopped = false;
+            state = ts_initial;
+            keyManager.setown(activity.getPartKeyManager(partNo));
+        }
+        void enqueue(CThorExpandingRowArray &newItems) // NB: enqueue starts thread
+        {
+            CLeavableCriticalBlock b(queueCrit);
+            queue.appendRows(newItems, true);
 
-                        return owner.pool->createJoinGroup(row.getClear(), owner, &owner);
-                    }
-                    else
-                    {
-                        {
-                            CriticalBlock b(owner.statCrit);
-                            owner.statsArr[AS_PreFiltered]++;
-                        }
-                        switch (owner.joinFlags & JFtypemask)
-                        {
-                            case JFleftouter:
-                            case JFleftonly:
-                            {
-                                CJoinGroup *jg = owner.pool->createJoinGroup(row.getClear(), owner, &owner);
-                                jg->noteEnd(0); // will queue on doneGroups, may be used if excl.
-                                if (!owner.preserveGroups) // if preserving groups, JG won't be complete until lhs eog hit
-                                    return NULL;
-                                break;
-                            }
-                            default: // don't bother creating join group, will not be used, loop around and get another candidate.
-                                break;
-                        }
-                    }
+            do
+            {
+                if (state == ts_running) // as long as running here, we know thread will process queue
+                    break;
+                else if (state == ts_starting) // then another thread is dealing with transition (could be blocked in incRunningLookup())
+                    break;
+                else if (state == ts_initial)
+                {
+                    state = ts_starting;
+                    b.leave();
+                    activity.lookupThreadLimiter.inc(); // blocks if hit lookup thread limit
+                    if (activity.abortSoon)
+                        return;
+                    threaded.start();
+                    break;
+                }
+                else if (state == ts_stopping)
+                {
+                    state = ts_initial;
+                    b.leave();
+                    // stopping/stopped
+                    threaded.join(); // must be sure finished
+                    b.enter();
+                    // cycle around to start thread again, or bail out if someone else already has.
                 }
             }
-            catch (IException *e)
-            {
-                ::ActPrintLog(&owner, e);
-                throw;
-            }
-            return NULL;
+            while (true);
         }
-        // IStopInput
-        virtual void stopInput()
+        void process(CThorExpandingRowArray &processing)
         {
-            owner.stopInput();
-        }
-        // IRowStreamSetInput
-        const void *nextRow()
-        {
-            try
+            // NB: TBD This is where remote batch key filtering would be sent/received/processed.
+            for (unsigned r=0; r<processing.ordinality() && !stopped; r++)
             {
-                for (;;)
+                OwnedConstThorRow row = processing.getClear(r);
+                CJoinGroup *joinGroup = *(CJoinGroup **)row.get();
+
+                const void *keyedFieldsRow = (byte *)row.get() + sizeof(KeyLookupHeader);
+                helper->createSegmentMonitors(keyManager, keyedFieldsRow);
+                keyManager->finishSegmentMonitors();
+                keyManager->reset();
+
+                // NB: keepLimit is not on hard matches and can only be applied later, since other filtering (e.g. in transform) may keep below keepLimit
+                while (keyManager->lookup(true))
                 {
-                    if (currentPartKeyManager)
+                    unsigned candidates = joinGroup->incCandidates()+1;
+                    if (candidates > activity.abortLimit)
                     {
-                        while (currentPartKeyManager->lookup(true))
-                        {
-                            ++candidateCount;
-                            if (candidateCount > owner.atMost)
-                                break;
-                            KLBlobProviderAdapter adapter(currentPartKeyManager);
-                            byte const * keyRow = currentPartKeyManager->queryKeyBuffer();
-                            size_t fposOffset = currentPartKeyManager->queryRowSize() - sizeof(offset_t);
-                            offset_t fpos = rtlReadBigUInt8(keyRow + fposOffset);
-                            if (owner.helper->indexReadMatch(indexReadFieldsRow.getSelf(), keyRow, &adapter))
-                            {
-                                if (currentJG->rowsSeen() >= owner.keepLimit)
-                                    break;
-                                { CriticalBlock b(owner.statCrit);
-                                    owner.statsArr[AS_Accepted]++;
-                                }
-                                currentJG->notePendingN(1);
-
-                                RtlDynamicRowBuilder lookupRow(owner.keyLookupAllocator);
-                                LookupRowResult *lookupRowResult = (LookupRowResult *)lookupRow.getSelf();
-                                lookupRowResult->fpos = fpos;
-                                lookupRowResult->jg = currentJG;
-                                lookupRowResult->eog = false;
-                                if (!owner.needsDiskRead)
-                                {
-                                    void *joinFieldsPtr = (void *)(lookupRowResult+1);
-                                    RtlDynamicRowBuilder joinFieldsRow(owner.joinFieldsAllocator);
-                                    size32_t sz = owner.helper->extractJoinFields(joinFieldsRow, keyRow, &adapter);
-                                    const void *fJoinFieldsRow = joinFieldsRow.finalizeRowClear(sz);
-                                    memcpy(joinFieldsPtr, &fJoinFieldsRow, sizeof(const void *));
-                                }
-#ifdef TRACE_JOINGROUPS
-                                ::ActPrintLog(&owner, "CJoinGroup [result] %x from %d", currentJG, __LINE__);
-#endif
-                                noteStats(currentPartKeyManager->querySeeks(), currentPartKeyManager->queryScans());
-                                size32_t lorsz = owner.keyLookupAllocator->queryOutputMeta()->getRecordSize(lookupRow.getSelf());
-                                // must be easier way
-                                return lookupRow.finalizeRowClear(lorsz);
-                            }
-                            else
-                            {
-                                CriticalBlock b(owner.statCrit);
-                                owner.statsArr[AS_PostFiltered]++;
-                            }
-                        }
-                        currentPartKeyManager->releaseSegmentMonitors();
-                        noteStats(currentPartKeyManager->querySeeks(), currentPartKeyManager->queryScans());
-                        currentPartKeyManager = nullptr;
-                        if (owner.localKey)
-                        { // merger done
-                        }
-                        else if (!owner.keyHasTlk)
-                        {
-                            if (nextPart < partKeyManagers.ordinality())
-                            {
-                                currentPartKeyManager = &partKeyManagers.item(nextPart++);
-                                owner.helper->createSegmentMonitors(currentPartKeyManager, indexReadFieldsRow.getSelf());
-                                currentPartKeyManager->finishSegmentMonitors();
-                                currentPartKeyManager->reset();
-                            }
-                        }
+                        joinGroup->setAbortLimitHit(); // also clears existing rows
+                        break;
                     }
-                    else if (currentTlk)
+                    else if (candidates > activity.atMost) // atMost - filter out group if > max hard matches
                     {
-                        for (;;)
-                        {
-                            if (!tlkManager->lookup(false)) break;
-                            offset_t node = extractFpos(tlkManager);
-                            if (node) // don't bail out if part0 match, test again for 'real' tlk match.
-                            {
-                                unsigned partNo = (unsigned)node;
-                                partNo = owner.superWidth ? owner.superWidth*nextTlk+(partNo-1) : partNo-1;
-
-                                currentPartKeyManager = &partKeyManagers.item(partNo);
-                                owner.helper->createSegmentMonitors(currentPartKeyManager, indexReadFieldsRow.getSelf());
-                                currentPartKeyManager->finishSegmentMonitors();
-                                currentPartKeyManager->reset();
-                                break;
-                            }
-                        }
-                        if (!currentPartKeyManager)
-                        {
-                            if (++nextTlk < owner.tlkKeySet->numParts())
-                            {
-                                tlkManager->releaseSegmentMonitors();
-                                currentTlk = owner.tlkKeySet->queryPart(nextTlk);
-                                tlkManager->setKey(currentTlk);
-                                owner.helper->createSegmentMonitors(tlkManager, indexReadFieldsRow.getSelf());
-                                tlkManager->finishSegmentMonitors();
-                                tlkManager->reset();
-                            }
-                            else // end of input row processing
-                                currentTlk = NULL;
-                        }
+                        joinGroup->setAtMostLimitHit(); // also clears existing rows
+                        break;
                     }
-                    else
+                    KLBlobProviderAdapter adapter(keyManager);
+                    byte const * keyRow = keyManager->queryKeyBuffer();
+                    size_t fposOffset = keyManager->queryRowSize() - sizeof(offset_t);
+                    offset_t fpos = rtlReadBigUInt8(keyRow + fposOffset);
+                    if (helper->indexReadMatch(keyedFieldsRow, keyRow,  &adapter))
                     {
-                        if (currentJG)
+                        if (activity.needsDiskRead)
                         {
-                            if (!owner.preserveGroups && owner.needsDiskRead)
-                                owner.notePendingGroup();
-                            currentJG->noteEnd(0);
-                            if (tlkManager)
-                                tlkManager->releaseSegmentMonitors();
-
-                            RtlDynamicRowBuilder lookupRow(owner.keyLookupAllocator);
-                            LookupRowResult *lookupRowResult = (LookupRowResult *)lookupRow.getSelf();
-                            // output an end marker for the matches to this group
-
-                            lookupRowResult->fpos = candidateCount;
-                            lookupRowResult->jg = currentJG;
-                            lookupRowResult->eog = true;
-                            if (!owner.needsDiskRead) // need to mark null childrow
-                            {
-                                void *joinFieldsPtr = (void *)(lookupRowResult+1);
-                                const void *fJoinFieldsRow = NULL;
-                                memcpy(joinFieldsPtr, &fJoinFieldsRow, sizeof(const void *));
-                            }
-#ifdef TRACE_JOINGROUPS
-                            ::ActPrintLog(&owner, "CJoinGroup [end marker returned] %x from %d", currentJG, __LINE__);
-#endif
-                            if (currentPartKeyManager)
-                                noteStats(currentPartKeyManager->querySeeks(), currentPartKeyManager->queryScans());
-                            currentJG = NULL;
-                            size32_t lorsz = owner.keyLookupAllocator->queryOutputMeta()->getRecordSize(lookupRow.getSelf());
-                            // must be easier way
-                            return lookupRow.finalizeRowClear(lorsz);
-                        }                       
-
-                        currentJG = extractIndexFields(indexReadFieldsRow);
-                        //GH: More - reuse of indexReadFieldsRow without finalize means this could be leaking.
-                        if (!currentJG)
-                            break;
-
-                        currentJG->notePendingEndCandidate();
-
-                        candidateCount = 0;
-                        if (0 == partKeyManagers.ordinality()) // if empty key
-                        {
-                            // will terminate row/group next cycle
-                        }
-                        else if (!owner.keyHasTlk)
-                        {
-                            currentPartKeyManager = &partKeyManagers.item(0);
-                            if (!owner.localKey || 1 == partKeyManagers.ordinality())
-                                nextPart = 1;
-                            owner.helper->createSegmentMonitors(currentPartKeyManager, indexReadFieldsRow.getSelf());
-                            currentPartKeyManager->finishSegmentMonitors();
-                            currentPartKeyManager->reset();
+                            joinGroup->incPending();
+                            unsigned __int64 sequence = joinGroup->addRightMatchPending(partNo, fpos);
+                            if (NotFound == sequence) // means limit was hit and must have been caused by another handler
+                                break;
+                            sequence |= (((unsigned __int64)partNo) << 32);
+                            activity.fetchHandler->addRow(fpos, sequence, joinGroup);
                         }
                         else
                         {
-                            nextTlk = 0;
-                            currentTlk = owner.tlkKeySet->queryPart(nextTlk);
-                            tlkManager->setKey(currentTlk);
-                            owner.helper->createSegmentMonitors(tlkManager, indexReadFieldsRow.getSelf());
-                            tlkManager->finishSegmentMonitors();
-                            tlkManager->reset();
+                            RtlDynamicRowBuilder joinFieldsRowBuilder(activity.joinFieldsAllocator);
+                            size32_t sz = activity.helper->extractJoinFields(joinFieldsRowBuilder, keyRow, &adapter);
+                            const void *joinFieldsRow = joinFieldsRowBuilder.finalizeRowClear(sz);
+                            joinGroup->addRightMatch(partNo, joinFieldsRow, fpos);
                         }
                     }
                 }
+                keyManager->releaseSegmentMonitors();
+                joinGroup->decPending(); // Every queued lookup row triggered an inc., this is the corresponding dec.
             }
-            catch (IException *e)
-            {
-                ::ActPrintLog(&owner, e);
-                throw;
-            }
-            if (currentPartKeyManager)
-                noteStats(currentPartKeyManager->querySeeks(), currentPartKeyManager->queryScans());
-            return NULL;
         }
-
-        virtual void stop()
+        void queueLookup(const void *keyedFieldsRowWithJGPrefix)
         {
-            stopInput();
+            // NB: queueLookup() only called by readAhead() thread, so no protection for batchArray needed
+            LinkThorRow(keyedFieldsRowWithJGPrefix);
+            batchArray.append(keyedFieldsRowWithJGPrefix);
+            if (batchArray.ordinality() >= activity.keyLookupQueuedBatchSize)
+                enqueue(batchArray); // NB: enqueue takes ownership of rows, i.e batchArray is cleared after call
         }
-        virtual void setInput(IRowStream *_in)
+        void flush()
         {
-            in.set(_in);
-            reset();
+            // NB: flush()/flushPartLookups() only called by readAhead() thread, so no protection for batchArray needed
+            if (batchArray.ordinality())
+                enqueue(batchArray);
         }
-    };
-    class CPRowStream : implements IRowStreamSetInput, implements IThreadFactory, public CSimpleInterface
-    {
-        unsigned maxPoolSize, queueSize;
-        CKeyedJoinSlave &owner;
-        Linked<IRowStream> in;
-        SimpleInterThreadQueueOf<const void, false> lookupQ;
-        Owned<IThreadPool> keyLookupPool;
-        bool stopped;
-
-        void clear()
+    // IThreaded
+        virtual void threadmain() override
         {
-            OwnedConstThorRow row;
+            CThorExpandingRowArray processing(activity);
             do
             {
-                row.setown(lookupQ.dequeueNow());
-            } while (row);
-        }
-
-    public:
-        class CKeyLookupPoolMember : implements IPooledThread, public CSimpleInterface
-        {
-            Owned<IRowStreamSetInput> lookupStream;
-            CPRowStream &owner;
-        public:
-            IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-
-            CKeyLookupPoolMember(CPRowStream &_owner) : owner(_owner)
-            {
-                lookupStream.setown(new CKeyLocalLookup(owner.owner, owner.owner.helper->queryIndexRecordSize()->queryRecordAccessor(true)));
-            }
-            virtual void init(void *param) override
-            {
-                lookupStream->setInput(owner.in);
-            }
-            virtual void threadmain() override
-            {
-                do
                 {
-                    OwnedConstThorRow lookupRow = lookupStream->nextRow();
-                    if (!lookupRow)
+                    CriticalBlock b(queueCrit);
+                    if (0 == queue.ordinality())
+                    {
+                        if (state != ts_starting) // 1st time around the loop
+                            assertex(state == ts_running);
+                        state = ts_stopping; // only this thread can transition between ts_running and ts_stopping
                         break;
-                    if (owner.stopped)
-                        break;
-                    owner.lookupQ.enqueue(lookupRow.getClear());
-                } while (!owner.stopped);
+                    }
+                    else if (ts_starting)
+                        state = ts_running; // only this thread can transition between ts_starting and ts_running
+                    else
+                    {
+                        dbgassertex(state == ts_running);
+                    }
+                    queue.swap(processing);
+                }
+                process(processing);
+                processing.clearRows();
             }
-            virtual bool stop() override { return false; }
-            virtual bool canReuse() const override { return true; }
-        };
-        IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-
-        CPRowStream(CKeyedJoinSlave &_owner, unsigned _maxPoolSize, unsigned _queueSize) : owner(_owner), maxPoolSize(_maxPoolSize)
-        {
-            stopped = false;
-            queueSize = _queueSize<maxPoolSize?maxPoolSize:_queueSize;
-            lookupQ.setLimit(queueSize);
-
-            keyLookupPool.setown(createThreadPool("KeyLookupPool", this, &owner, maxPoolSize));
-            unsigned i=0;
-            for (; i<maxPoolSize; i++)
-                keyLookupPool->start(NULL);
+            while (true);
+            activity.lookupThreadLimiter.dec(); // unblocks any requests to start lookup threads
         }
-        ~CPRowStream()
-        {
-            clear();
-        }
-
-        // IThreadFactory impl.
-        IPooledThread *createNew()
-        {
-            return new CKeyLookupPoolMember(*this);
-        }
-
-        // IRowStreamSetInput impl.
-        const void *nextRow()
-        {
-            if (stopped) return NULL;
-            const void *row = lookupQ.dequeue();
-            if (!row)
-                stopped = true;
-            return row;
-        }
-        virtual void stop()
-        {
-            stopped = true;
-            if (keyLookupPool)
-            {
-                lookupQ.stop();
-                keyLookupPool.clear();
-                clear();
-            }
-        }
-        virtual void setInput(IRowStream *_in) { in.set(_in); }
-    friend class CKeyLookupPoolMember;
     };
-
-    bool getKeyManagers(IArrayOf<IKeyManager> &keyManagers)
+    class CLookupThread : implements IThreaded
     {
-        unsigned numIndexParts = indexParts.ordinality();
-        bool localMergedKey = localKey && (numIndexParts > 1);
-        Owned<IKeyIndexSet> partKeySet;
-        for (unsigned ip=0; ip<numIndexParts; ip++)
+        CKeyedJoinSlave &owner;
+        CThreaded threaded;
+    public:
+        CLookupThread(CKeyedJoinSlave &_owner) : owner(_owner), threaded("CLookupThread", this)
         {
-            IPartDescriptor &filePart = indexParts.item(ip);
-            unsigned crc=0;
-            filePart.getCrc(crc);
-            RemoteFilename rfn;
-            filePart.getFilename(0, rfn);
-            StringBuffer filename;
-            rfn.getPath(filename);
-
-            Owned<IDelayedFile> lfile = queryThor().queryFileCache().lookup(*this, indexName, filePart);
-
-            Owned<IKeyManager> klManager;
-            if (localMergedKey)
-            {
-                Owned<IKeyIndex> partIndex = createKeyIndex(filename.str(), crc, *lfile, false, false);
-                if (!partKeySet)
-                    partKeySet.setown(createKeyIndexSet());
-                partKeySet->addIndex(partIndex.getClear());
-            }
-            else
-            {
-                Owned<IKeyIndex> keyIndex = createKeyIndex(filename, crc, *lfile, false, false);
-                klManager.setown(createLocalKeyManager(helper->queryIndexRecordSize()->queryRecordAccessor(true), keyIndex, nullptr));
-                keyManagers.append(*klManager.getClear());
-            }
         }
-        if (localMergedKey)
+        void start()
         {
-            dbgassertex(0 == keyManagers.ordinality());
-            keyManagers.append(*createKeyMerger(helper->queryIndexRecordSize()->queryRecordAccessor(true), partKeySet, 0, nullptr));
+            threaded.start();
+        }
+        void join()
+        {
+            threaded.join();
+        }
+        void stop()
+        {
+            owner.stopReadAhead();
+            join();
+        }
+    // IThreaded
+        virtual void threadmain() override
+        {
+            owner.readAhead(); // can block
+        }
+    } lookupThread;
+
+
+    class CLimiter
+    {
+        unsigned max, leeway;
+        Semaphore sem;
+        CriticalSection crit;
+        unsigned count = 0;
+        unsigned blocked = 0;
+    public:
+        CLimiter() : max(0), leeway(0)
+        {
+        }
+        CLimiter(unsigned _max, unsigned _leeway=0) : max(_max), leeway(_leeway)
+        {
+        }
+        void set(unsigned _max, unsigned _leeway=0)
+        {
+            max = _max;
+            leeway = _leeway;
+        }
+        bool incNonBlocking()
+        {
+            {
+                CriticalBlock b(crit);
+                if (count++ < max+leeway)
+                    return false;
+                ++blocked;
+            }
             return true;
         }
-        else
-            return false;
-    }
-public:
-    IMPLEMENT_IINTERFACE_USING(CSlaveActivity);
-
-    CKeyedJoinSlave(CGraphElementBase *_container) : CSlaveActivity(_container)
-    {
-#ifdef TRACE_JOINGROUPS
-        groupsPendsNoted = fetchReadBack = groupPendsEnded = doneGroupsDeQueued = wroteToFetchPipe = groupsComplete = 0;
-#endif
-        inputHelper = NULL;
-        preserveGroups = preserveOrder = false;
-        eos = true; // keep as true until started.
-        resultDistStream = NULL;
-        tlkKeySet.setown(createKeyIndexSet());
-        pool = NULL;
-        currentMatchIdx = currentJoinGroupSize = currentAdded = currentMatched = 0;
-        portbase = 0;
-        pendingGroups = 0;
-        superWidth = 0;
-        additionalStats = 0;
-        lastSeeks = lastScans = 0;
-        onFailTransform = localKey = keyHasTlk = false;
-        remoteDataFiles = false;
-        fetchHandler = NULL;
-        globalFPosToNodeMap = NULL;
-        localFPosToNodeMap = NULL;
-
-#ifdef TRACE_USAGE
-        unsigned it=0;
-        for (; it<10; it++)
-            atomic_set(&debugats[it],0);
-        lastTick = 0;
-#endif
-        helper = (IHThorKeyedJoinArg *)queryHelper();
-        reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
-        appendOutputLinked(this);
-    }
-    ~CKeyedJoinSlave()
-    {
-        delete [] globalFPosToNodeMap;
-        delete [] localFPosToNodeMap;
-        while (doneGroups.ordinality())
+        void inc()
         {
-            CJoinGroup *jg = doneGroups.dequeue();
-            jg->Release();
+            if (!incNonBlocking())
+                return;
+            sem.wait();
         }
-        ::Release(fetchHandler);
-        ::Release(inputHelper);
-        if (portbase)
-            freePort(portbase, NUMSLAVEPORTS*3);
-        ::Release(resultDistStream);
-        defaultRight.clear();
-        if (pool) delete pool;
-    }
-    inline void resetLastStats()
-    {
-// NB: part manager retains seek/scan counts across setKey calls
-//      lastSeeks = lastScans = 0;
-    }
-
-#ifdef TRACE_USAGE
-    void trace()
-    {
-        StringBuffer s;
-        { CriticalBlock b(onCompleteCrit);
-            s.appendf("CJoinGroups=%d, doneGroups=%d, ",atomic_read(&debugats[0]), doneGroups.ordinality());
-            pool->getStats(s);
-        }
-        ActPrintLog(s.str());
-    }
-#endif
-
-    IFileIO *getFilePartIO(unsigned partNum)
-    {
-        assertex(partNum<dataParts.ordinality());
-        return fetchFiles.item(partNum).getFileIO();
-    }
-    inline void noteStats(unsigned seeks, unsigned scans)
-    {
-        CriticalBlock b(statCrit);
-        statsArr[AS_Seeks] += seeks-lastSeeks;
-        statsArr[AS_Scans] += scans-lastScans;
-        lastSeeks = seeks;
-        lastScans = scans;
-    }
-    void notePendingGroup()
-    {
-#ifdef TRACE_JOINGROUPS
-        ActPrintLog("notePendingGroup was: %d", pendingGroups);
-#endif
-        pendingGroupCrit.enter();
-#ifdef TRACE_JOINGROUPS
-        groupsPendsNoted++;
-#endif
-        ++pendingGroups;
-        pendingGroupCrit.leave();
-    }
-    void noteEndGroup()
-    {
-        pendingGroupCrit.enter();
-        --pendingGroups;
-#ifdef TRACE_JOINGROUPS
-        groupPendsEnded++;
-        ActPrintLog("noteEndGroup become: %d", pendingGroups);
-#endif
-        pendingGroupCrit.leave();
-        pendingGroupSem.signal();
-    }
-    bool waitPendingGroups()
-    {
-        for (;;)
+        void dec()
         {
+            CriticalBlock b(crit);
+            --count;
+            if (blocked && (count < max))
             {
-                if (eos)
-                    return false;
-                unsigned p;
-                {
-                    CriticalBlock b(pendingGroupCrit);
-                    p = pendingGroups;
-                }
-                CriticalBlock b(onCompleteCrit);
-                if (p)
-                {
-                    if (doneGroups.ordinality())
-                        return true;
-                    if (fetchHandler->resultsDone())
-                        return false;
-                    // if not wait for them.
-                }
-                else
-                {
-                    CriticalBlock b(onCompleteCrit);
-                    return 0 != doneGroups.ordinality();
-                }
+                sem.signal(blocked);
+                blocked = 0;
             }
-            pendingGroupSem.wait();
-            if (abortSoon)
-                return false;
         }
-        return true;
-    }
-    virtual void addJoinGroup(CJoinGroup *jg)
-    {
-#ifdef TRACE_JOINGROUPS
-        groupsComplete++;
-#endif
-        doneGroups.enqueue(jg);
-        if (needsDiskRead)
-            noteEndGroup();
-    }
-    virtual CJoinGroup *createJoinGroup(const void *row)
-    {
-        UNIMPLEMENTED;
-        return NULL;
-    }
-    virtual void createSegmentMonitors(IIndexReadContext *ctx, const void *row)
-    {
-        UNIMPLEMENTED;
-    }
-    virtual bool addMatch(CJoinGroup &match, const void *rhs, size32_t rhsSize, offset_t recptr)
-    {
-        UNIMPLEMENTED;
-        return false;
-    }
-    virtual void onComplete(CJoinGroup *jg)
-    {
-        // can be called by pulling end of input group, or end of group on result (i.e. thread contention)
-        CriticalBlock b(onCompleteCrit); // Keep record order the way we want it
-        pool->processCompletedGroups(jg, *this);
-    }
-    virtual bool leftCanMatch(const void *_left) { UNIMPLEMENTED; return false; }
+        void block()
+        {
+            sem.wait();
+        }
+    };
 
-#ifdef TRACE_USAGE
-    virtual atomic_t &getdebug(unsigned w)
-    {
-        return debugats[w];
-    }
-#endif
-    virtual CActivityBase *queryOwner() { return this; }
-    virtual void stopInput()
-    {
-        CriticalBlock b(stopInputCrit);
-        PARENT::stopInput(0);
-    }
+    IHThorKeyedJoinArg *helper = nullptr;
+    StringAttr indexName;
+    size32_t fixedRecordSize = 0;
+    bool localKey = false;
+    bool initialized = false;
+    bool preserveGroups = false, preserveOrder = false;
+    bool needsDiskRead = false;
+    bool onFailTransform = false;
+    bool keyHasTlk = false;
+    UnsignedArray tags;
+    std::vector<std::atomic<unsigned __int64>> statsArr; // (seeks, scans, accepted, prefiltered, postfiltered, diskSeeks, diskAccepted, diskRejected)
+
+    bool remoteDataFiles = false;
+    SafePointerArrayOf<CKeyLookupHandler> lookupHandlers;
+    CLimiter lookupThreadLimiter;
+    CLimiter pendingKeyLookupLimiter;
+    CLimiter doneListLimiter;
+    rowcount_t totalQueuedLookupRowCount = 0;
+    unsigned blockedKeyLookupThreads = 0;
+    unsigned blockedDoneGroupThreads = 0;
+
+    CPartDescriptorArray dataParts;
+    PointerArrayOf<IPartDescriptor> indexParts;
+    IArrayOf<IKeyIndex> tlkKeyIndexes;
+    Owned<IEngineRowAllocator> joinFieldsAllocator;
+    OwnedConstThorRow defaultRight;
+    unsigned node = 0;
+    unsigned joinFlags = 0;
+    unsigned filePartTotal = 0;
+    unsigned superWidth = 0;
+    IArrayOf<IDelayedFile> fetchFiles;
+    OwnedMalloc<FPosTableEntry> localFPosToNodeMap; // maps fpos->local part #
+    OwnedMalloc<FPosTableEntry> globalFPosToNodeMap; // maps fpos->node for all parts of file. If file is remote, localFPosToNodeMap will have all parts
+    Owned<IExpander> eexp;
+
+    unsigned atMost = 0, keepLimit = 0;
+    unsigned abortLimit = 0;
+    rowcount_t rowLimit = 0;
+    Linked<IHThorArg> inputHelper;
+    unsigned keyLookupQueuedBatchSize = DEFAULT_KEYLOOKUP_QUEUED_BATCHSIZE;
+    unsigned keyLookupMaxThreads = DEFAULT_KEYLOOKUP_MAX_THREADS;
+    unsigned keyLookupMaxQueued = DEFAULT_KEYLOOKUP_MAX_QUEUED;
+    unsigned keyLookupMaxDone = DEFAULT_KEYLOOKUP_MAX_DONE;
+
+    Owned<IEngineRowAllocator> keyLookupRowWithJGAllocator, transformAllocator;
+    bool endOfInput = false; // marked true when input exhausted, but may be groups in flight
+    bool eos = false; // marked true when everything processed
+    IArrayOf<IKeyManager> tlkKeyManagers;
+    CriticalSection onCompleteCrit, queuedCrit, runningLookupThreadsCrit;
+    std::atomic<bool> waitingForDoneGroups{false};
+    Semaphore waitingForDoneGroupsSem, doneGroupsExcessiveSem;
+    CJoinGroupList pendingJoinGroupList, doneJoinGroupList;
+    Owned<IException> abortLimitException;
+    Owned<CJoinGroup> currentJoinGroup;
+    unsigned currentMatchIdx = 0;
+    CJoinGroup::JoinGroupRhsState rhsState;
+
+    roxiemem::IRowManager *rowManager = nullptr;
+    unsigned currentAdded = 0;
+    unsigned currentJoinGroupSize = 0;
+    MapBetween<unsigned, unsigned, unsigned, unsigned> globalPartNoMap; // for local kj, maps global partNo (in TLK) to locally handled part index numbers
+
     void doAbortLimit(CJoinGroup *jg)
     {
         helper->onMatchAbortLimitExceeded();
         CommonXmlWriter xmlwrite(0);
         if (inputHelper && inputHelper->queryOutputMeta() && inputHelper->queryOutputMeta()->hasXML())
-        {
             inputHelper->queryOutputMeta()->toXML((byte *) jg->queryLeft(), xmlwrite);
-        }
         throw MakeActivityException(this, 0, "More than %d match candidates in keyed join for row %s", abortLimit, xmlwrite.str());
     }
-    bool checkAbortLimit(CJoinGroup *jg)
+    bool checkAbortLimit(CJoinGroup *joinGroup)
     {
-        if (jg->candidateCount() > abortLimit)
+        if (joinGroup->hasAbortLimitBeenHit())
         {
             if (0 == (joinFlags & JFmatchAbortLimitSkips))
-                doAbortLimit(jg);
+                doAbortLimit(joinGroup);
             return true;
         }
         return false;
     }
     bool abortLimitAction(CJoinGroup *jg, OwnedConstThorRow &row)
     {
-        Owned<IException> e;
+        Owned<IException> abortLimitException;
         try
         {
             return checkAbortLimit(jg);
@@ -1817,54 +1349,327 @@ public:
         {
             if (!onFailTransform)
                 throw;
-            e.setown(_e);
+            abortLimitException.setown(_e);
         }
         RtlDynamicRowBuilder trow(queryRowAllocator());
-        size32_t transformedSize = helper->onFailTransform(trow, jg->queryLeft(), defaultRight, 0, e.get());
+        size32_t transformedSize = helper->onFailTransform(trow, jg->queryLeft(), defaultRight, 0, abortLimitException.get());
         if (0 != transformedSize)
             row.setown(trow.finalizeRowClear(transformedSize));
         return true;
     }
-    virtual void onLimitExceeded() { return; }
-    
-    // IThorSlaveActivity overloaded methods
-    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData)
+    void queueLookupForPart(unsigned partNo, const void *keyedFieldsRowWithJGPrefix)
     {
-        parallelLookups = (unsigned)container.queryJob().getWorkUnitValueInt("parallelKJLookups", DEFAULTMAXRESULTPULLPOOL);
-        freeQSize = (unsigned)container.queryJob().getWorkUnitValueInt("freeQSize", DEFAULTFREEQSIZE);
-        joinFlags = helper->getJoinFlags();
-        additionalStats = 5; // (seeks, scans, accepted, prefiltered, postfiltered)
-        needsDiskRead = helper->diskAccessRequired();
-        globalFPosToNodeMap = NULL;
-        localFPosToNodeMap = NULL;
-        fetchHandler = NULL;
-        filePartTotal = 0;
-        keepLimit = 0;
-        atMost = 0;
-        atMostProvided = false;
-        abortLimit = 0;
-        rowLimit = 0;
+        KeyLookupHeader lookupKeyHeader;
+        getHeaderFromRow(keyedFieldsRowWithJGPrefix, lookupKeyHeader);
+        lookupKeyHeader.jg->incPending(); // each queued lookup pending a result
 
-        if (needsDiskRead)
-            additionalStats += 3; // (diskSeeks, diskAccepted, diskRejected)
-        unsigned aS = additionalStats;
-        while (aS--) _statsArr.append(0);
-        statsArr = _statsArr.getArray();
-        
-        fixedRecordSize = helper->queryIndexRecordSize()->getFixedSize(); // 0 if variable and unused
-        node = queryJobChannel().queryMyRank()-1;
-        onFailTransform = (0 != (joinFlags & JFonfail)) && (0 == (joinFlags & JFmatchAbortLimitSkips));
-
-        joinFieldsAllocator.setown(getRowAllocator(helper->queryJoinFieldsRecordSize()));
-        if (onFailTransform || (joinFlags & JFleftouter))
+        /* NB: there is 1 batchLookupArray/Thread per part
+         * There could be >1 per part, but I'm not sure there's a lot of point.
+         */
+        CKeyLookupHandler &lookupThread = *lookupHandlers.item(partNo);
+        lookupThread.queueLookup(keyedFieldsRowWithJGPrefix);
+    }
+    void flushPartLookups()
+    {
+    	ForEachItemIn(b, lookupHandlers)
+    	{
+    	    CKeyLookupHandler &lookupThread = *lookupHandlers.item(b);
+    	    lookupThread.flush();
+    	}
+    }
+    unsigned getTlkKeyManagers(IArrayOf<IKeyManager> &keyManagers)
+    {
+        keyManagers.clear();
+        ForEachItemIn(i, tlkKeyIndexes)
         {
-            RtlDynamicRowBuilder rr(joinFieldsAllocator);
-            size32_t sz = helper->createDefaultRight(rr);
-            defaultRight.setown(rr.finalizeRowClear(sz));
+            IKeyIndex *tlkKeyIndex = &tlkKeyIndexes.item(i);
+            const RtlRecord &keyRecInfo = helper->queryIndexRecordSize()->queryRecordAccessor(true);
+            Owned<IKeyManager> tlkManager = createLocalKeyManager(keyRecInfo, nullptr, nullptr);
+            tlkManager->setKey(tlkKeyIndex);
+            keyManagers.append(*tlkManager.getClear());
         }
+        return tlkKeyIndexes.ordinality();
+    }
+    IKeyManager *getPartKeyManager(unsigned which)
+    {
+        IPartDescriptor *filePart = indexParts.item(which);
+        assertex(filePart);
+        unsigned crc=0;
+        filePart->getCrc(crc);
+        RemoteFilename rfn;
+        filePart->getFilename(0, rfn);
+        StringBuffer filename;
+        rfn.getPath(filename);
 
-        // decode data from master
+        Owned<IDelayedFile> lfile = queryThor().queryFileCache().lookup(*this, indexName, *filePart);
 
+        Owned<IKeyIndex> keyIndex = createKeyIndex(filename, crc, *lfile, false, false);
+        return createLocalKeyManager(helper->queryIndexRecordSize()->queryRecordAccessor(true), keyIndex, nullptr);
+    }
+    const void *preparePendingLookupRow(void *row, size32_t maxSz, const void *lhsRow, size32_t keySz)
+    {
+        CJoinGroup *jg = new (rowManager, queryId()) CJoinGroup(*this, lhsRow, this);
+        memcpy(row, &jg, sizeof(CJoinGroup *)); // NB: row will release joinGroup on destruction
+        jg->incPending(); // prevent complete, must be an paired decPending() at some point
+        return keyLookupRowWithJGAllocator->finalizeRow(sizeof(KeyLookupHeader)+keySz, row, maxSz);
+    }
+    CJoinGroup *queueLookup(const void *lhsRow)
+    {
+        RtlDynamicRowBuilder keyFieldsRowBuilder(keyLookupRowWithJGAllocator);
+        CPrefixedRowBuilder keyFieldsPrefixBuilder(sizeof(KeyLookupHeader), keyFieldsRowBuilder);
+        size32_t keyedFieldsRowSize = helper->extractIndexReadFields(keyFieldsPrefixBuilder, lhsRow);
+        OwnedConstThorRow keyedFieldsRowWithJGPrefix;
+        const void *keyedFieldsRow = keyFieldsPrefixBuilder.row();
+        if (keyHasTlk)
+        {
+            ForEachItemIn(whichKm, tlkKeyManagers)
+            {
+                IKeyManager &keyManager = tlkKeyManagers.item(whichKm);
+                helper->createSegmentMonitors(&keyManager, keyedFieldsRow);
+                keyManager.finishSegmentMonitors();
+                keyManager.reset();
+                while (keyManager.lookup(false))
+                {
+                    offset_t node = extractFpos(&keyManager);
+                    if (node) // don't bail out if part0 match, test again for 'real' tlk match.
+                    {
+                        unsigned partNo = (unsigned)node;
+                        partNo = superWidth ? superWidth*whichKm+(partNo-1) : partNo-1;
+                        if (container.queryLocalData())
+                        {
+                            unsigned *mappedPartNo = globalPartNoMap.getValue(partNo);
+                            if (!mappedPartNo)
+                                continue; // this local kj slave is not dealing with part
+                            partNo = *mappedPartNo;
+                        }
+                        if (!keyedFieldsRowWithJGPrefix)
+                            keyedFieldsRowWithJGPrefix.setown(preparePendingLookupRow(keyFieldsRowBuilder.getUnfinalizedClear(), keyFieldsRowBuilder.getMaxLength(), lhsRow, keyedFieldsRowSize));
+                        queueLookupForPart(partNo, keyedFieldsRowWithJGPrefix);
+                    }
+                }
+                keyManager.releaseSegmentMonitors();
+            }
+        }
+        else
+        {
+            keyedFieldsRowWithJGPrefix.setown(preparePendingLookupRow(keyFieldsRowBuilder.getUnfinalizedClear(), keyFieldsRowBuilder.getMaxLength(), lhsRow, keyedFieldsRowSize));
+            ForEachItemIn(partNo, indexParts)
+                queueLookupForPart(partNo, keyedFieldsRowWithJGPrefix);
+        }
+        if (!keyedFieldsRowWithJGPrefix)
+            return nullptr;
+        KeyLookupHeader lookupKeyHeader;
+        getHeaderFromRow(keyedFieldsRowWithJGPrefix, lookupKeyHeader);
+        return LINK(lookupKeyHeader.jg);
+    }
+    void stopReadAhead()
+    {
+        flushPartLookups();
+        ForEachItemIn(h, lookupHandlers)
+            lookupHandlers.item(h)->join();
+
+        CriticalBlock b(onCompleteCrit); // protecting both pendingJoinGroupList and doneJoinGroupList
+        endOfInput = true;
+        bool expectedState = true;
+        if (waitingForDoneGroups.compare_exchange_strong(expectedState, false))
+            waitingForDoneGroupsSem.signal();
+    }
+    void readAhead()
+    {
+        endOfInput = false;
+        CJoinGroup *lastGroupMember = nullptr;
+        do
+        {
+            if (queryAbortSoon())
+                break;
+            OwnedConstThorRow lhsRow = inputStream->nextRow();
+            if (!lhsRow)
+            {
+                if (preserveGroups && lastGroupMember)
+                {
+                    lastGroupMember->addFlag(CJoinGroup::GroupFlags::gf_eog);
+                    lastGroupMember = nullptr;
+                }
+                lhsRow.setown(inputStream->nextRow());
+                if (!lhsRow)
+                {
+                    stopReadAhead();
+                    break;
+                }
+            }
+            Linked<CJoinGroup> jg;
+            if (helper->leftCanMatch(lhsRow))
+                jg.setown(queueLookup(lhsRow)); // NB: will block if excessive amount queued
+            else
+                statsArr[AS_PreFiltered]++;
+            if (!jg && ((joinFlags & JFleftonly) || (joinFlags & JFleftouter)))
+            {
+                size32_t maxSz;
+                void *unfinalizedRow = keyLookupRowWithJGAllocator->createRow(maxSz);
+                OwnedConstThorRow row = preparePendingLookupRow(unfinalizedRow, maxSz, lhsRow, 0);
+                KeyLookupHeader lookupKeyHeader;
+                getHeaderFromRow(row, lookupKeyHeader);
+                jg.set(lookupKeyHeader.jg);
+            }
+            if (jg)
+            {
+                if (preserveGroups)
+                {
+                    if (!lastGroupMember)
+                    {
+                        lastGroupMember = jg;
+                        lastGroupMember->addFlag(CJoinGroup::GroupFlags::gf_head);
+                    }
+                }
+                bool pendingBlock = false;
+                {
+                    CriticalBlock b(onCompleteCrit); // protecting both pendingJoinGroupList and doneJoinGroupList
+                    pendingJoinGroupList.addToTail(LINK(jg));
+                    pendingBlock = pendingKeyLookupLimiter.incNonBlocking();
+                }
+                if (pendingBlock)
+                {
+                    if (preserveOrder || preserveGroups)
+                        flushPartLookups(); // some of the batches that are not yet queued may be holding up join groups that are ahead of others that are complete.
+                    pendingKeyLookupLimiter.block();
+                }
+                jg->decPending(); // all lookups queued. joinGroup will complete when all lookups are done (i.e. they're running asynchronously)
+            }
+        }
+        while (!endOfInput);
+    }
+    const void *doDenormTransform(RtlDynamicRowBuilder &target, CJoinGroup &group)
+    {
+        offset_t fpos;
+        CJoinGroup::JoinGroupRhsState rhsState;
+        size32_t retSz = 0;
+        OwnedConstThorRow lhs;
+        lhs.set(group.queryLeft());
+        const void *rhs = group.queryFirstRhs(fpos, rhsState);
+        switch (container.getKind())
+        {
+            case TAKkeyeddenormalize:
+            {
+                unsigned added = 0;
+                unsigned idx = 0;
+                while (rhs)
+                {
+                    ++idx;
+                    size32_t transformedSize = helper->transform(target, lhs, rhs, fpos, idx);
+                    if (transformedSize)
+                    {
+                        retSz = transformedSize;
+                        added++;
+                        lhs.setown(target.finalizeRowClear(transformedSize));
+                        if (added==keepLimit)
+                            break;
+                    }
+                    rhs = group.queryNextRhs(fpos, rhsState);
+                }
+                if (retSz)
+                    return lhs.getClear();
+                break;
+            }
+            case TAKkeyeddenormalizegroup:
+            {
+                PointerArray rows;
+                while (rows.ordinality() < keepLimit)
+                {
+                    if (rhs) // can be null if helper->fetchMatch filtered some out
+                        rows.append((void *)rhs);
+                    rhs = group.queryNextRhs(fpos, rhsState);
+                }
+                retSz = helper->transform(target, lhs, rows.item(0), rows.ordinality(), (const void **)rows.getArray());
+                if (retSz)
+                    return target.finalizeRowClear(retSz);
+                break;
+            }
+            default:
+                assertex(false);
+        }
+        return nullptr;
+    }
+
+    bool transferToDoneList(CJoinGroup *joinGroup)
+    {
+        doneJoinGroupList.addToTail(joinGroup);
+        pendingKeyLookupLimiter.dec();
+        return doneListLimiter.incNonBlocking();
+    }
+public:
+    IMPLEMENT_IINTERFACE_USING(PARENT);
+
+    CKeyedJoinSlave(CGraphElementBase *_container) : PARENT(_container), lookupThread(*this), statsArr(8)
+    {
+        helper = static_cast <IHThorKeyedJoinArg *> (queryHelper());
+        reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
+
+        keyLookupQueuedBatchSize = getOptInt(THOROPT_KEYLOOKUP_QUEUED_BATCHSIZE, DEFAULT_KEYLOOKUP_QUEUED_BATCHSIZE);
+        keyLookupMaxThreads = getOptInt(THOROPT_KEYLOOKUP_MAX_THREADS, DEFAULT_KEYLOOKUP_MAX_THREADS);
+        keyLookupMaxQueued = getOptInt(THOROPT_KEYLOOKUP_MAX_QUEUED, DEFAULT_KEYLOOKUP_MAX_QUEUED);
+        keyLookupMaxDone = getOptInt(THOROPT_KEYLOOKUP_MAX_DONE, DEFAULT_KEYLOOKUP_MAX_DONE);
+
+        lookupThreadLimiter.set(keyLookupMaxThreads);
+        pendingKeyLookupLimiter.set(keyLookupMaxQueued, 100);
+        doneListLimiter.set(keyLookupMaxDone, 100);
+
+        transformAllocator.setown(getRowAllocator(queryOutputMeta(), (roxiemem::RoxieHeapFlags)(queryHeapFlags()|roxiemem::RHFpacked|roxiemem::RHFunique), AT_Transform));
+        rowManager = queryJobChannel().queryThorAllocator()->queryRowManager();
+
+        class CKeyLookupRowOutputMetaData : public CPrefixedOutputMeta
+        {
+        public:
+            CKeyLookupRowOutputMetaData(size32_t offset, IOutputMetaData *original) : CPrefixedOutputMeta(offset, original) { }
+            virtual unsigned getMetaFlags() { return original->getMetaFlags() | MDFneeddestruct; }
+            virtual void destruct(byte * self) override
+            {
+                CJoinGroup *joinGroup;
+                memcpy(&joinGroup, self, sizeof(CJoinGroup *));
+                joinGroup->Release();
+                CPrefixedOutputMeta::destruct(self);
+            }
+        };
+        Owned<IOutputMetaData> keyLookupRowOutputMetaData = new CKeyLookupRowOutputMetaData(sizeof(KeyLookupHeader), helper->queryIndexReadInputRecordSize());
+        keyLookupRowWithJGAllocator.setown(getRowAllocator(keyLookupRowOutputMetaData, (roxiemem::RoxieHeapFlags)(queryHeapFlags()|roxiemem::RHFpacked|roxiemem::RHFunique), AT_LookupWithJG));
+
+        appendOutputLinked(this);
+    }
+
+// IThorSlaveActivity overloaded methods
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
+    {
+        if (!initialized)
+        {
+            initialized = true;
+            joinFlags = helper->getJoinFlags();
+            needsDiskRead = helper->diskAccessRequired();
+            fixedRecordSize = helper->queryIndexRecordSize()->getFixedSize(); // 0 if variable and unused
+            node = queryJobChannel().queryMyRank()-1;
+            onFailTransform = (0 != (joinFlags & JFonfail)) && (0 == (joinFlags & JFmatchAbortLimitSkips));
+
+            joinFieldsAllocator.setown(getRowAllocator(helper->queryJoinFieldsRecordSize(), roxiemem::RHFnone, AT_JoinFields));
+            if (onFailTransform || (joinFlags & JFleftouter))
+            {
+                RtlDynamicRowBuilder rr(joinFieldsAllocator);
+                size32_t sz = helper->createDefaultRight(rr);
+                defaultRight.setown(rr.finalizeRowClear(sz));
+            }
+        }
+        else
+        {
+            tags.kill();
+            tlkKeyIndexes.kill();
+            indexParts.kill();
+            dataParts.kill();
+            localFPosToNodeMap.clear();
+            globalFPosToNodeMap.clear();
+            eexp.clear();
+            fetchFiles.kill();
+            globalPartNoMap.kill();
+        }
+        for (auto &a : statsArr)
+            a = 0;
+        // decode data from master. NB: can be resent and differ if in global loop
         data.read(indexName);
         unsigned numTags;
         data.read(numTags);
@@ -1875,9 +1680,7 @@ public:
             tags.append(tag);
             queryJobChannel().queryJobComm().flush(tag);
         }
-        indexParts.kill();
-        dataParts.kill();
-        tlkKeySet.setown(createKeyIndexSet());
+
         unsigned numIndexParts;
         data.read(numIndexParts);
         if (numIndexParts)
@@ -1885,29 +1688,10 @@ public:
             unsigned numSuperIndexSubs;
             data.read(superWidth);
             data.read(numSuperIndexSubs);
-            if (numSuperIndexSubs) // if 0 means not interleaved
-            {
-                CPartDescriptorArray _indexParts;
-                deserializePartFileDescriptors(data, _indexParts);
-                unsigned s, ip;
-                for (s=0; s<numSuperIndexSubs; s++)
-                {
-                    for (ip=0; ip<superWidth; ip++)
-                    {
-                        unsigned which = ip*numSuperIndexSubs+s;
-                        IPartDescriptor &part = _indexParts.item(which);
-                        indexParts.append(*LINK(&part));
-                    }
-                }
-            }
-            else
-                deserializePartFileDescriptors(data, indexParts);
-
-            localKey = indexParts.item(0).queryOwner().queryProperties().getPropBool("@local", false);
-
             data.read(keyHasTlk);
             if (keyHasTlk)
             {
+                MemoryBuffer tlkMb;
                 unsigned tlks;
                 size32_t tlkSz;
                 data.read(tlks);
@@ -1924,7 +1708,58 @@ public:
                     Owned<IFileIO> iFileIO = createIFileI(lenArray.item(p), tlkMb.toByteArray()+posArray.item(p));
                     StringBuffer name("TLK");
                     name.append('_').append(container.queryId()).append('_');
-                    tlkKeySet->addIndex(createKeyIndex(name.append(p).str(), 0, *iFileIO, true, false)); // MORE - not the right crc
+                    Owned<IKeyIndex> tlkKeyIndex = createKeyIndex(name.append(p).str(), 0, *iFileIO, true, false); // MORE - not the right crc
+                    tlkKeyIndexes.append(*tlkKeyIndex.getClear());
+                }
+            }
+
+            CPartDescriptorArray _indexParts;
+            deserializePartFileDescriptors(data, _indexParts);
+            IFileDescriptor &indexFileDesc = _indexParts.item(0).queryOwner();
+            localKey = indexFileDesc.queryProperties().getPropBool("@local", false);
+            if (numSuperIndexSubs && !localKey) // if numSuperIndexSubs==0 means not interleaved
+            {
+                IPartDescriptor *currentPart = &_indexParts.item(0);
+                ISuperFileDescriptor *superFdesc = currentPart->queryOwner().querySuperFileDescriptor();
+                assertex(superFdesc);
+                if (container.queryLocalData())
+                {
+                    ForEachItemIn(p, _indexParts)
+                    {
+                        IPartDescriptor *part = &_indexParts.item(p);
+                        unsigned partNo = part->queryPartIndex();
+                        unsigned subfile, subpartnum;
+                        superFdesc->mapSubPart(partNo, subfile, subpartnum);
+                        unsigned globalPartNo = superWidth*subfile+subpartnum;
+                        globalPartNoMap.setValue(globalPartNo, p);
+                        indexParts.append(LINK(part));
+                    }
+                }
+                else
+                {
+                    unsigned s, ip;
+                    for (s=0; s<numSuperIndexSubs; s++)
+                    {
+                        for (ip=0; ip<superWidth; ip++)
+                        {
+                            unsigned which = ip*numSuperIndexSubs+s;
+                            IPartDescriptor &part = _indexParts.item(which);
+                            indexParts.append(LINK(&part));
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ForEachItemIn(p, _indexParts)
+                {
+                    IPartDescriptor *part = &_indexParts.item(p);
+                    if (container.queryLocalData())
+                    {
+                        unsigned partNo = part->queryPartIndex();
+                        globalPartNoMap.setValue(partNo, p);
+                    }
+                    indexParts.append(LINK(part));
                 }
             }
             if (needsDiskRead)
@@ -1935,7 +1770,8 @@ public:
                 if (numDataParts)
                 {
                     deserializePartFileDescriptors(data, dataParts);
-                    localFPosToNodeMap = new FPosTableEntry[numDataParts];
+                    localFPosToNodeMap.allocateN(numDataParts);
+
                     unsigned f;
                     FPosTableEntry *e;
                     for (f=0, e=&localFPosToNodeMap[0]; f<numDataParts; f++, e++)
@@ -1956,9 +1792,9 @@ public:
                     data.read(filePartTotal);
                     if (filePartTotal)
                     {
-                        size32_t offsetMapSz = 0;
+                        size32_t offsetMapSz;
                         data.read(offsetMapSz);
-                        globalFPosToNodeMap = new FPosTableEntry[filePartTotal];
+                        globalFPosToNodeMap.allocateN(filePartTotal);
                         const void *offsetMapBytes = (FPosTableEntry *)data.readDirect(offsetMapSz);
                         memcpy(globalFPosToNodeMap, offsetMapBytes, offsetMapSz);
                     }
@@ -1974,74 +1810,39 @@ public:
                     memset(encryptedKey, 0, encryptedKeyLen);
                     free(encryptedKey);
                 }
-                Owned<IOutputMetaData> fetchInputMeta;
-                if (0 != helper->queryFetchInputRecordSize()->getMinRecordSize())
-                {
-                    fetchInputAllocator.setown(getRowAllocator(helper->queryFetchInputRecordSize()));
-                    fetchInputMeta.setown(createOutputMetaDataWithChildRow(fetchInputAllocator, FETCHKEY_HEADER_SIZE));
-                }
-                else
-                    fetchInputMeta.setown(createFixedSizeMetaData(FETCHKEY_HEADER_SIZE));
-                fetchInputMetaRowIf.setown(createRowInterfaces(fetchInputMeta));
-                fetchInputMetaAllocator.set(fetchInputMetaRowIf->queryRowAllocator());
 
-                Owned<IOutputMetaData> fetchOutputMeta = createOutputMetaDataWithChildRow(joinFieldsAllocator, FETCHKEY_HEADER_SIZE);
-                fetchOutputRowIf.setown(createRowInterfaces(fetchOutputMeta));
-
-                fetchHandler = new CKeyedFetchHandler(*this);
+                fetchHandler.setown(new CKeyedFetchHandler(*this));
 
                 FPosTableEntry *fPosToNodeMap = globalFPosToNodeMap ? globalFPosToNodeMap : localFPosToNodeMap;
-                unsigned c;
-                for (c=0; c<filePartTotal; c++)
+                for (unsigned c=0; c<filePartTotal; c++)
                 {
                     FPosTableEntry &e = fPosToNodeMap[c];
                     ActPrintLog("Table[%d] : base=%" I64F "d, top=%" I64F "d, slave=%d", c, e.base, e.top, e.index);
                 }
-                unsigned i=0;
-                for(; i<dataParts.ordinality(); i++)
+                for (unsigned i=0; i<dataParts.ordinality(); i++)
                 {
                     Owned<IDelayedFile> dFile = queryThor().queryFileCache().lookup(*this, indexName, dataParts.item(i), eexp);
                     fetchFiles.append(*dFile.getClear());
                 }
             }
+
+            unsigned currentNumLookupThreads = lookupHandlers.ordinality();
+            if (currentNumLookupThreads>numIndexParts)
+                lookupHandlers.removen(numIndexParts, currentNumLookupThreads-numIndexParts);
+            else
+            {
+                while (currentNumLookupThreads<numIndexParts)
+                    lookupHandlers.append(new CKeyLookupHandler(*this, currentNumLookupThreads++));
+            }
         }
         else
             needsDiskRead = false;
-
-        if (needsDiskRead)
-        {
-            Owned<IOutputMetaData> meta = createFixedSizeMetaData(KEYLOOKUP_HEADER_SIZE);
-            keyLookupAllocator.setown(getRowAllocator(meta));
-        }
-        else
-        {
-            Owned<IOutputMetaData> meta = createOutputMetaDataWithChildRow(joinFieldsAllocator, KEYLOOKUP_HEADER_SIZE);
-            keyLookupAllocator.setown(getRowAllocator(meta));
-        }
-
-        indexInputAllocator.setown(getRowAllocator(helper->queryIndexReadInputRecordSize()));
-
-        ////////////////////
-
-        pool = new CJoinGroupPool(*this);
-        if (parallelLookups > 1)
-        {
-            CPRowStream *seq = new CPRowStream(*this, parallelLookups, freeQSize);
-            resultDistStream = seq;
-        }
-        else
-        {
-            parallelLookups = 0;
-            resultDistStream = new CKeyLocalLookup(*this, helper->queryIndexRecordSize()->queryRecordAccessor(true));
-        }
     }
-    virtual void abort()
+    virtual void abort() override
     {
-        CSlaveActivity::abort();
-        if (resultDistStream)
-            resultDistStream->stop();
-        pendingGroupSem.signal();
+        PARENT::abort();
     }
+// IThorDataLink
     virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
@@ -2054,349 +1855,306 @@ public:
         {
             if (JFleftonly == (joinFlags & JFleftonly))
                 keepLimit = 1; // don't waste time and memory collating and returning record which will be discarded.
-            atMostProvided = false;
             atMost = (unsigned)-1;
         }
-        else
-            atMostProvided = true;
         abortLimit = helper->getMatchAbortLimit();
         if (abortLimit == 0) abortLimit = (unsigned)-1;
         if (keepLimit == 0) keepLimit = (unsigned)-1;
         if (abortLimit < atMost)
             atMost = abortLimit;
         rowLimit = (rowcount_t)helper->getRowLimit();
+        if (rowLimit < keepLimit)
+            keepLimit = rowLimit+1; // if keepLimit is small, let it reach rowLimit+1, but any more is pointless and a waste of time/resources.
 
-        eos = false;
-        inputHelper = LINK(input->queryFromActivity()->queryContainer().queryHelper());
-        preserveOrder = ((joinFlags & JFreorderable) == 0);
+        inputHelper.set(input->queryFromActivity()->queryContainer().queryHelper());
+        preserveOrder = 0 == (joinFlags & JFreorderable);
         preserveGroups = input->isGrouped();
-        ActPrintLog("KJ: parallelLookups=%d, freeQSize=%d, preserveGroups=%s, preserveOrder=%s", parallelLookups, freeQSize, preserveGroups?"true":"false", preserveOrder?"true":"false");
+        ActPrintLog("KJ: preserveGroups=%s, preserveOrder=%s", preserveGroups?"true":"false", preserveOrder?"true":"false");
 
-        pool->setOrdering(preserveGroups, preserveOrder);
-        resultDistStream->setInput(inputStream);
+        if (keyHasTlk)
+            getTlkKeyManagers(tlkKeyManagers);
+        currentMatchIdx = 0;
+        rhsState.clear();
+        currentAdded = 0;
+        eos = false;
+        endOfInput = false;
+        ForEachItemIn(b, lookupHandlers)
+            lookupHandlers.item(b)->init();
+        lookupThread.start();
     }
-    virtual void stop()
-    {
-        if (hasStarted())
-        {
-            if (fetchHandler)
-                fetchHandler->stop(true);
-            if (!eos)
-            {
-                eos = true;
-                resultDistStream->stop();
-            }
-        }
-        stopInput();
-        PARENT::stop();
-#ifdef TRACE_JOINGROUPS
-        ActPrintLog("groupsPendsNoted = %d", groupsPendsNoted);
-        ActPrintLog("fetchReadBack = %d", fetchReadBack);
-        ActPrintLog("groupPendsEnded = %d", groupPendsEnded);
-        ActPrintLog("doneGroupsDeQueued = %d", doneGroupsDeQueued);
-        ActPrintLog("wroteToFetchPipe = %d", wroteToFetchPipe);
-        ActPrintLog("groupsComplete = %d", groupsComplete);
-#endif
-    }
-    const void *doDenormTransform(RtlDynamicRowBuilder &target, CJoinGroup &group)
-    {
-        offset_t fpos;
-        unsigned idx = 0;
-        unsigned matched = djg->rowsSeen();
-        size32_t retSz = 0;
-        OwnedConstThorRow lhs;
-        lhs.set(group.queryLeft());
-        switch (container.getKind())
-        {
-            case TAKkeyeddenormalize:
-            {
-                while (idx < matched)
-                {
-                    const void *rhs = group.queryRow(idx, fpos);
-                    size32_t transformedSize = helper->transform(target, lhs, rhs, fpos, idx+1);
-                    if (transformedSize)
-                    {
-                        retSz = transformedSize;
-                        currentAdded++;
-                        lhs.setown(target.finalizeRowClear(transformedSize));
-                        if (currentAdded==keepLimit)
-                            break;
-                    }
-                    idx++;
-                }
-                if (retSz)
-                    return lhs.getClear();
-                break;
-            }
-            case TAKkeyeddenormalizegroup:
-            {
-                PointerArray rows;
-                while (idx < matched && idx < keepLimit)
-                {
-                    const void *rhs = group.queryRow(idx, fpos);
-                    rows.append((void *)rhs);
-                    idx++;
-                }
-                retSz = helper->transform(target, lhs, rows.item(0), rows.ordinality(), (const void **)rows.getArray());
-                if (retSz)
-                    return target.finalizeRowClear(retSz);
-                break;
-            }
-            default:
-                assertex(false);
-        }
-        return NULL;
-    }
-
     CATCH_NEXTROW()
     {
         ActivityTimer t(totalCycles, timeActivities);
-        if (!abortSoon && !eos)
+        OwnedConstThorRow ret;
+        while (!abortSoon && !eos)
         {
-            for (;;)
+            if (!currentJoinGroup)
             {
-                if (djg.get())
+                while (true)
                 {
-                    RtlDynamicRowBuilder row(queryRowAllocator(), false);
-                    size32_t transformedSize = 0;
-                    if (!currentMatched || djg->candidateCount() > atMost)
                     {
-                        switch (joinFlags & JFtypemask)
+                        CriticalBlock b(onCompleteCrit);
+                        currentJoinGroup.setown(doneJoinGroupList.removeHead());
+                        if (currentJoinGroup)
                         {
+                            doneListLimiter.dec();
+                            break;
+                        }
+                        if (endOfInput)
+                        {
+                            // if disk fetch involved, then there may still be pending rows
+                            if (!fetchHandler || !pendingJoinGroupList.queryCount())
+                            {
+                                eos = true;
+                                // all done
+                                return nullptr;
+                            }
+                        }
+                        waitingForDoneGroups = true;
+                    }
+                    waitingForDoneGroupsSem.wait();
+                }
+                bool eog = false;
+                if (preserveGroups)
+                {
+                    currentJoinGroupSize += currentAdded;
+                    if (currentJoinGroup->hasFlag(CJoinGroup::GroupFlags::gf_eog))
+                        eog = 0 != currentJoinGroupSize;
+                    currentJoinGroupSize = 0;
+                }
+                currentMatchIdx = 0;
+                rhsState.clear();
+                currentAdded = 0;
+                if (eog)
+                    return nullptr;
+            }
+            if ((0 == currentMatchIdx) && abortLimitAction(currentJoinGroup, ret)) // only any point in checking 1st Idx
+                currentJoinGroup.clear();
+            else
+            {
+                RtlDynamicRowBuilder rowBuilder(transformAllocator, false);
+                size32_t transformedSize = 0;
+                if (!currentJoinGroup->numRhsMatches() || currentJoinGroup->hasAtMostLimitBeenHit())
+                {
+                    switch (joinFlags & JFtypemask)
+                    {
                         case JFleftouter:
                         case JFleftonly:
                             switch (container.getKind())
                             {
                                 case TAKkeyedjoin:
                                 {
-                                    transformedSize = helper->transform(row.ensureRow(), djg->queryLeft(), defaultRight, (__uint64)0, 0U);
+                                    transformedSize = helper->transform(rowBuilder.ensureRow(), currentJoinGroup->queryLeft(), defaultRight, (__uint64)0, 0U);
+                                    if (transformedSize)
+                                        ret.setown(rowBuilder.finalizeRowClear(transformedSize));
                                     break;
                                 }
                                 case TAKkeyeddenormalize:
                                 {
                                     // return lhs, already finalized
-                                    OwnedConstThorRow ret;
-                                    ret.set(djg->queryLeft());
-                                    currentAdded++;
-                                    djg.clear();
-                                    dataLinkIncrement();
-                                    return ret.getClear();
+                                    ret.set(currentJoinGroup->queryLeft());
+                                    break;
                                 }
                                 case TAKkeyeddenormalizegroup:
                                 {
-                                    transformedSize = helper->transform(row.ensureRow(), djg->queryLeft(), NULL, 0, (const void **)NULL); // no dummrhs (hthor and roxie don't pass)
+                                    transformedSize = helper->transform(rowBuilder.ensureRow(), currentJoinGroup->queryLeft(), NULL, 0, (const void **)NULL); // no dummyrhs (hthor and roxie don't pass)
+                                    if (transformedSize)
+                                        ret.setown(rowBuilder.finalizeRowClear(transformedSize));
                                     break;
                                 }
                             }
-                            if (transformedSize)
+                            if (ret)
                                 currentAdded++;
-                        }
-                        djg.clear();
                     }
-                    else if (!(joinFlags & JFexclude))
-                    {
-                        switch (container.getKind())
-                        {
-                            case TAKkeyedjoin:
-                            {
-                                row.ensureRow();
-                                for (;;)
-                                {
-                                    if (currentMatchIdx >= currentMatched)
-                                    {
-                                        djg.clear();
-                                        break;
-                                    }
-                                    offset_t fpos;
-                                    const void *rhs = djg->queryRow(currentMatchIdx, fpos);
-                                    currentMatchIdx++;
-                                    transformedSize = helper->transform(row, djg->queryLeft(), rhs, fpos, currentMatchIdx);
-                                    if (transformedSize)
-                                    {
-                                        currentAdded++;
-                                        if (currentAdded==keepLimit)
-                                            djg.clear();
-                                        break;
-                                    }
-                                }
-                                break;
-                            }
-                            case TAKkeyeddenormalize:
-                            case TAKkeyeddenormalizegroup:
-                            {
-                                OwnedConstThorRow ret = doDenormTransform(row, *djg);
-                                djg.clear();
-                                if (ret)
-                                {
-                                    dataLinkIncrement();
-                                    return ret.getClear();
-                                }
-                                transformedSize = 0;
-                                break;
-                            }
-                            default:
-                                assertex(false);
-                        }
-                    }
-                    else
-                        djg.clear();
-                    if (transformedSize)
-                    {
-                        dataLinkIncrement();
-                        return row.finalizeRowClear(transformedSize);
-                    }
+                    currentJoinGroup.clear();
                 }
-                if (doneJG.get())
+                else if (!(joinFlags & JFexclude))
                 {
-                    if (preserveGroups)
+                    // will be at least 1 rhs match to be in this branch
+                    switch (container.getKind())
                     {
-                        currentJoinGroupSize += currentAdded;
-                        CJoinGroup *next = doneJG->next;
-                        doneJG->next = NULL;
-                        doneJG.setown(next);
-                        if (next) // if NULL == end-of-group marker
+                        case TAKkeyedjoin:
                         {
-                            next->prev = NULL;
-                            OwnedConstThorRow abortRow;
-                            if (abortLimitAction(doneJG, abortRow)) // discard lhs row (yes, even if it is an outer join)
+                            rowBuilder.ensureRow();
+                            offset_t fpos;
+                            const void *rhs;
+                            if (0 == currentMatchIdx)
+                                rhs = currentJoinGroup->queryFirstRhs(fpos, rhsState);
+                            else
+                                rhs = currentJoinGroup->queryNextRhs(fpos, rhsState);
+                            do
                             {
-                                // don't clear doneJG, in preserveGroups case, it will advance to next, next time around.
-                                if (!preserveGroups)
-                                    doneJG.clear();
-                                if (abortRow.get())
+                                if (!rhs)
                                 {
-                                    dataLinkIncrement();
-                                    return abortRow.getClear();
+                                    currentJoinGroup.clear();
+                                    break;
                                 }
-                                continue; // throw away this match
+                                ++currentMatchIdx;
+                                transformedSize = helper->transform(rowBuilder, currentJoinGroup->queryLeft(), rhs, fpos, currentMatchIdx);
+                                if (transformedSize)
+                                {
+                                    ret.setown(rowBuilder.finalizeRowClear(transformedSize));
+                                    currentAdded++;
+                                    if (currentAdded==keepLimit)
+                                        currentJoinGroup.clear();
+                                    break;
+                                }
+                                rhs = currentJoinGroup->queryNextRhs(fpos, rhsState);
                             }
-                            djg.set(next);
-                        }
-                        else
-                        {
-                            if (currentJoinGroupSize) // some recs, return eog.
-                                break;
-                            continue;
-                        }
-                    }
-                    else
-                        djg.setown(doneJG.getClear());
-                    currentAdded = 0;
-                    currentMatchIdx = 0;
-                    currentMatched = djg->rowsSeen();
-                }
-                else
-                {
-                    { 
-                        CriticalBlock b(onCompleteCrit);
-                        doneJG.setown(doneGroups.dequeue());
-                    }
-                    if (doneJG.get())
-                    {
-#ifdef TRACE_JOINGROUPS
-                        doneGroupsDeQueued++;
-#endif
-                        OwnedConstThorRow abortRow;
-                        if (!abortLimitAction(doneJG, abortRow))
-                        {
-                            djg.set(doneJG);
-                            currentMatched = djg->rowsSeen();
-                        }
-                        currentAdded = 0;
-                        currentMatchIdx = 0;
-                        if (preserveGroups)
-                            currentJoinGroupSize = 0;
-                        else
-                            doneJG.clear();
-                        if (abortRow.get())
-                        {
-                            dataLinkIncrement();
-                            return abortRow.getClear();
-                        }
-                    }
-                    else
-                    {
-                        OwnedConstThorRow resultRow = resultDistStream->nextRow();
-                        if (!resultRow)
-                        {
-                            if (doneGroups.ordinality())
-                                continue;
-                            else if (needsDiskRead)
-                            {
-                                fetchHandler->stop(false);
-                                if (waitPendingGroups())
-                                    continue;
-                            }
-                            eos = true;
-                            resultDistStream->stop();
+                            while (true);
                             break;
                         }
-
-                        const LookupRowResult *lookupRowResult = (const LookupRowResult *)resultRow.get();
-                        CJoinGroup *jg = lookupRowResult->jg;
-                        if (lookupRowResult->eog)
+                        case TAKkeyeddenormalize:
+                        case TAKkeyeddenormalizegroup:
                         {
-                            jg->noteCandidates((unsigned)lookupRowResult->fpos); // fpos holds candidates for end of group
-                            jg->noteEndCandidate(); // any onFail transform will be done when dequeued
-                            if (!onFailTransform) // unless going to transform later, check and abort now if necessary.
-                                checkAbortLimit(jg);
+                            ret.setown(doDenormTransform(rowBuilder, *currentJoinGroup));
+                            currentJoinGroup.clear();
+                            break;
                         }
-                        else
-                        {
-                            if (jg->rowsSeen() <= atMost)
-                            {
-                                if (needsDiskRead)
-                                {
-                                    jg->notePending();
-#ifdef TRACE_JOINGROUPS
-                                    wroteToFetchPipe++;
-#endif
-                                    fetchHandler->addRow(lookupRowResult->fpos, jg);
-                                }
-                                else
-                                {
-                                    const void *resultRowPtr = (const void *)(lookupRowResult+1);
-                                    const void *rhs = *((const void **)resultRowPtr);
-                                    LinkThorRow(rhs);
-                                    jg->addRightMatch(rhs, lookupRowResult->fpos);
-                                }
-                            }
-                            jg->noteEnd(0);
-                        }
+                        default:
+                            assertex(false);
                     }
                 }
+                else
+                    currentJoinGroup.clear();
+            }
+            if (ret)
+            {
+                // NB: If this KJ is a global activity, there will be an associated LIMIT activity beyond the KJ. This check spots if limit exceeded a slave level.
+                if (getDataLinkCount()+1 > rowLimit)
+                    helper->onLimitExceeded();
+
+                dataLinkIncrement();
+                return ret.getClear();
             }
         }
-        return NULL;
+        return nullptr;
     }
-
+    virtual void stop() override
+    {
+        endOfInput = true; // signals to readAhead which is reading input, that is should stop asap.
+        if (fetchHandler)
+            fetchHandler->stop(true);
+        lookupThread.join();
+        ForEachItemIn(b, lookupHandlers)
+            lookupHandlers.item(b)->stop();
+        PARENT::stop();
+    }
     virtual bool isGrouped() const override { return queryInput(0)->isGrouped(); }
-
-    void getMetaInfo(ThorDataLinkMetaInfo &info)
+    virtual void getMetaInfo(ThorDataLinkMetaInfo &info) override
     {
         initMetaInfo(info);
         info.canStall = true;
         info.unknownRowsOutput = true;
     }
-
-    void serializeStats(MemoryBuffer &mb)
+    virtual void serializeStats(MemoryBuffer &mb) override
     {
-        CSlaveActivity::serializeStats(mb);
-        ForEachItemIn(s, _statsArr)
-            mb.append(_statsArr.item(s));
+        PARENT::serializeStats(mb);
+        for (unsigned s : statsArr)
+            mb.append(s);
     }
-
-friend class CKeyedFetchHandler;
-friend class CKeyedFetchHandler::CKeyedFetchRequestProcessor;
-friend class CKeyedFetchHandler::CKeyedFetchResultProcessor;
-friend class CKeyLocalLookup;
-friend class CPRowStream;
-friend class CPRowStream::CKeyLookupPoolMember;
+    // IJoinProcessor
+    virtual void onComplete(CJoinGroup *joinGroup) override
+    {
+        bool doneListMaxHit = false;
+        // moves complete CJoinGroup's from pending list to done list
+        {
+            CriticalBlock b(onCompleteCrit); // protecting both pendingJoinGroupList and doneJoinGroupList
+            if (preserveOrder)
+            {
+                CJoinGroup *head = pendingJoinGroupList.queryHead();
+                if (joinGroup != head)
+                    return;
+                do
+                {
+                    if (!head->complete())
+                    {
+                        if (head == joinGroup) // i.e. none ready
+                            return;
+                        else
+                            break;
+                    }
+                    head = head->next;
+                    CJoinGroup *doneJG = pendingJoinGroupList.removeHead();
+                    if (transferToDoneList(doneJG))
+                        doneListMaxHit = true;
+                }
+                while (head);
+            }
+            else if (preserveGroups)
+            {
+                // NB: when preserveGroups, the lhs group will always be complete at same time, so this will traverse whole group
+                if (!joinGroup->hasFlag(CJoinGroup::GroupFlags::gf_head))
+                    return; // intermediate rows are completing, but can't output any of those until head finishes, at which point head marker will shift to next if necessary (see below)
+                unsigned numProcessed = 0;
+                CJoinGroup *current = joinGroup;
+                do
+                {
+                    if (!current->complete())
+                    {
+                        dbgassertex(numProcessed); // if onComplete called for a group, there should always be at least 1 complete group ready starting from signalled joinGroup
+                        // update current so now marked as new head of group, so that when it completes it will be processed.
+                        current->addFlag(CJoinGroup::GroupFlags::gf_head);
+                        break;
+                    }
+                    CJoinGroup *next = current->next;
+                    CJoinGroup *doneJG = pendingJoinGroupList.remove(current);
+                    if (transferToDoneList(doneJG))
+                        doneListMaxHit = true;
+                    current = next;
+                    ++numProcessed;
+                }
+                while (current);
+            }
+            else
+            {
+                CJoinGroup *doneJG = pendingJoinGroupList.remove(joinGroup);
+                doneListMaxHit = transferToDoneList(doneJG);
+            }
+            bool expectedState = true;
+            if (waitingForDoneGroups.compare_exchange_strong(expectedState, false))
+                waitingForDoneGroupsSem.signal();
+        }
+        if (doneListMaxHit) // outside of crit, done group dequeue and signal may already have happened
+            doneListLimiter.block();
+    }
+    virtual unsigned addRowEntry(unsigned partNo, const void *rhs, offset_t fpos, RowArray *&rowArrays, unsigned &numRowArrays) override
+    {
+        dbgassertex(partNo<lookupHandlers.ordinality());
+        if (!rowArrays)
+        {
+            // If preserving order, a row array per handler/part is used to ensure order is preserved.
+            numRowArrays = preserveOrder ? lookupHandlers.ordinality() : 1;
+            rowArrays = (RowArray *)rowManager->allocate(sizeof(RowArray)*numRowArrays, createCompoundActSeqId(queryId(), AT_JoinGroupRhsRows));
+            memset(rowArrays, 0, sizeof(RowArray)*numRowArrays);
+        }
+        RowArray &rowArray = rowArrays[preserveOrder ? partNo : 0];
+        if (!rowArray.rows)
+        {
+            rowArray.rows = (Row *)rowManager->allocate(sizeof(Row), createCompoundActSeqId(queryId(), AT_JoinGroupRhsRows));
+            rowArray.maxRows = RoxieRowCapacity(rowArray.rows) / sizeof(Row);
+            rowArray.numRows = 0;
+        }
+        else if (rowArray.numRows==rowArray.maxRows)
+        {
+            if (rowArray.maxRows<4)
+                ++rowArray.maxRows;
+            else
+                rowArray.maxRows += rowArray.maxRows/4;
+            memsize_t newCapacity;
+            rowManager->resizeRow(newCapacity, (void *&)rowArray.rows, RoxieRowCapacity(rowArray.rows), rowArray.maxRows*sizeof(Row), queryId());
+            rowArray.maxRows = newCapacity / sizeof(Row);
+        }
+        Row &row = rowArray.rows[rowArray.numRows++];
+        row.rhs = rhs;
+        row.fpos = fpos;
+        return rowArray.numRows-1;
+    }
 };
 
 
 CActivityBase *createKeyedJoinSlave(CGraphElementBase *container) 
 { 
-    return new CKeyedJoinSlave(container); 
+    return new CKeyedJoinSlave(container);
 }
 

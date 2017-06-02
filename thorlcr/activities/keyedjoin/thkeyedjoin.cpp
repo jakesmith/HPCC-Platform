@@ -26,14 +26,16 @@
 class CKeyedJoinMaster : public CMasterActivity
 {
     IHThorKeyedJoinArg *helper;
-    Owned<IFileDescriptor> dataFileDesc;
+    Owned<IFileDescriptor> dataFileDesc, indexFileDesc;
     Owned<CSlavePartMapping> dataFileMapping;
     MemoryBuffer offsetMapMb, initMb;
-    bool localKey, remoteDataFiles;
+    unsigned numPartsOffset = 0;
+    bool remoteDataFiles;
     unsigned numTags;
     mptag_t tags[4];
     ProgressInfoArray progressInfoArr;
     UnsignedArray progressKinds;
+    Owned<CSlavePartMapping> mapping; // for local keys only
 
 
 public:
@@ -55,7 +57,6 @@ public:
         }
         ForEachItemIn(l, progressKinds)
             progressInfoArr.append(*new ProgressInfo(queryJob()));
-        localKey = false;
         numTags = 0;
         tags[0] = tags[1] = tags[2] = tags[3] = TAG_NULL;
         reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
@@ -95,13 +96,12 @@ public:
         if (indexFile)
         {
             unsigned numParts = 0;
-            localKey = indexFile->queryAttributes().getPropBool("@local");
-
-            if (container.queryLocalData() && !localKey)
-                throw MakeActivityException(this, 0, "Keyed Join cannot be LOCAL unless supplied index is local");
+            bool localKey = indexFile->queryAttributes().getPropBool("@local");
+//            if (localKey && !container.queryLocalData())
+//                throw MakeActivityException(this, 0, "Global Keyed Join cannot be used with a local index");
 
             checkFormatCrc(this, indexFile, helper->getIndexFormatCrc(), true);
-            Owned<IFileDescriptor> indexFileDesc = indexFile->getFileDescriptor();
+            indexFileDesc.setown(indexFile->getFileDescriptor());
             IDistributedSuperFile *superIndex = indexFile->querySuperFile();
             unsigned superIndexWidth = 0;
             unsigned numSuperIndexSubs = 0;
@@ -132,6 +132,8 @@ public:
                             throw MakeActivityException(this, 0, "Local/Single part keys cannot be mixed with distributed(tlk) keys in keyedjoin");
                         if (keyHasTlk && superIndexWidth != f.numParts()-1)
                             throw MakeActivityException(this, 0, "Super sub keys of different width cannot be mixed with distributed(tlk) keys in keyedjoin");
+                        if (localKey && superIndexWidth != queryClusterWidth())
+                            throw MakeActivityException(this, 0, "Super keys of local index must be same width as target cluster");
                     }
                 }
                 if (keyHasTlk)
@@ -150,32 +152,15 @@ public:
                         --numParts;
                 }
             }
+            numPartsOffset = initMb.length();
+            if (localKey)
+                keyHasTlk = false; // JCSMORE, not used at least for now
             if (numParts)
             {
-                initMb.append(numParts);
+                initMb.append(numParts); // placeholder
                 initMb.append(superIndexWidth); // 0 if not superIndex
                 bool interleaved = superIndex && superIndex->isInterleaved();
-                initMb.append(interleaved ? numSuperIndexSubs : 0);
-                UnsignedArray parts;
-                if (!superIndex || interleaved) // serialize first numParts parts, TLK are at end and are serialized separately.
-                {
-                    for (unsigned p=0; p<numParts; p++)
-                        parts.append(p);
-                }
-                else // non-interleaved superindex
-                {
-                    unsigned p=0;
-                    for (unsigned i=0; i<numSuperIndexSubs; i++)
-                    {
-                        for (unsigned kp=0; kp<superIndexWidth; kp++)
-                            parts.append(p++);
-                        if (keyHasTlk)
-                            p++; // TLK's serialized separately.
-                    }
-                }
-                indexFileDesc->serializeParts(initMb, parts);
-                if (localKey)
-                    keyHasTlk = false; // not used
+                initMb.append(numSuperIndexSubs);
                 initMb.append(keyHasTlk);
                 if (keyHasTlk)
                 {
@@ -266,6 +251,32 @@ public:
                             indexFile.clear();
                     }
                 }
+                if (container.queryLocalData())
+                {
+                    mapping.setown(getFileSlaveMaps(indexFile->queryLogicalName(), *indexFileDesc, container.queryJob().queryUserDescriptor(), container.queryJob().querySlaveGroup(), false, true, NULL, indexFile->querySuperFile()));
+                    // leave seralizeMetaData to serialize the key parts
+                }
+                else
+                {
+                    UnsignedArray parts;
+                    if (!superIndex || interleaved) // serialize first numParts parts, TLK are at end and are serialized separately.
+                    {
+                        for (unsigned p=0; p<numParts; p++)
+                            parts.append(p);
+                    }
+                    else // non-interleaved superindex
+                    {
+                        unsigned p=0;
+                        for (unsigned i=0; i<numSuperIndexSubs; i++)
+                        {
+                            for (unsigned kp=0; kp<superIndexWidth; kp++)
+                                parts.append(p++);
+                            if (keyHasTlk)
+                                p++; // TLK's serialized separately.
+                        }
+                    }
+                    indexFileDesc->serializeParts(initMb, parts);
+                }
             }
             else
                 indexFile.clear();
@@ -277,13 +288,38 @@ public:
                 addReadFile(dataFile);
         }
         else
-            initMb.append((unsigned)0);
+            initMb.append((unsigned)0); // no key
     }
     virtual void serializeSlaveData(MemoryBuffer &dst, unsigned slave)
     {
-        dst.append(initMb);
+        unsigned numParts = 0;
+        if (mapping) // local only
+        {
+            IArrayOf<IPartDescriptor> parts;
+            mapping->getParts(slave, parts);
+            numParts = parts.ordinality();
+            if (0 == numParts)
+            {
+                initMb.setLength(numPartsOffset);
+                initMb.append(numParts);
+                dst.append(initMb);
+            }
+            else
+            {
+                initMb.writeDirect(numPartsOffset, sizeof(numParts), &numParts);
+                dst.append(initMb);
+
+                UnsignedArray partNumbers;
+                ForEachItemIn(p2, parts)
+                    partNumbers.append(parts.item(p2).queryPartIndex());
+                indexFileDesc->serializeParts(dst, partNumbers);
+            }
+        }
+        else
+            dst.append(initMb);
+
         IDistributedFile *indexFile = queryReadFile(0); // 0 == indexFile, 1 == dataFile
-        if (indexFile && helper->diskAccessRequired())
+        if (indexFile && helper->diskAccessRequired() && (!mapping || numParts))
         {
             IDistributedFile *dataFile = queryReadFile(1);
             if (dataFile)
