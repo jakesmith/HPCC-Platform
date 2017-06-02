@@ -90,11 +90,19 @@ interface IDiskUsage : extends IInterface
 interface IBackup;
 interface IFileInProgressHandler;
 interface IThorFileCache;
+interface IKJService : extends IInterface
+{
+    virtual void setCurrentJob(CJobBase &job) = 0;
+    virtual void reset() = 0;
+    virtual void start() = 0;
+    virtual void stop() = 0;
+};
 interface IThorResource
 {
     virtual IThorFileCache &queryFileCache() = 0;
     virtual IBackup &queryBackup() = 0;
     virtual IFileInProgressHandler &queryFileInProgressHandler() = 0;
+    virtual IKJService &queryKeyedJoinService() = 0;
 };
 
 interface IBarrier : extends IInterface
@@ -795,7 +803,7 @@ protected:
     StringBuffer wuid, user, scope, token;
     mutable CriticalSection wuDirty;
     mutable bool dirty;
-    mptag_t mpJobTag, slavemptag;
+    mptag_t slavemptag;
     Owned<IGroup> jobGroup, slaveGroup, nodeGroup;
     Owned<IPropertyTree> xgmml;
     Owned<IGraphTempHandler> tmpHandler;
@@ -829,7 +837,7 @@ protected:
         }
     } pluginCtx;
     SafePluginMap *pluginMap;
-    void endJob();
+    virtual void endJob();
 public:
     IMPLEMENT_IINTERFACE;
 
@@ -877,7 +885,6 @@ public:
     void setDiskUsage(offset_t _diskUsage) { diskUsage = _diskUsage; }
     const offset_t queryMaxDiskUsage() const { return maxDiskUsage; }
     mptag_t querySlaveMpTag() const { return slavemptag; }
-    mptag_t queryJobMpTag() const { return mpJobTag; }
     unsigned querySlaves() const { return slaveGroup->ordinality(); }
     unsigned queryNodes() const { return nodeGroup->ordinality()-1; }
     IGroup &queryJobGroup() const { return *jobGroup; }
@@ -1010,6 +1017,16 @@ public:
 
 interface IOutputMetaData;
 
+inline activity_id createCompoundActSeqId(activity_id actId, byte seq)
+{
+    if (seq)
+    {
+        dbgassertex(actId <= 0xffff); // normal max is MAX_ACTIVITY_ID (0xffffff), reserving 0x00ff0000 byte for seq if present
+        actId |= seq << 16;
+    }
+    return actId;
+}
+
 class graph_decl CActivityBase : implements CInterfaceOf<IThorRowInterfaces>, implements IExceptionHandler
 {
     Owned<IEngineRowAllocator> rowAllocator;
@@ -1059,7 +1076,7 @@ public:
     bool lastNode() { return container.queryJob().querySlaves() == container.queryJobChannel().queryMyRank(); }
     unsigned queryMaxCores() const { return container.queryMaxCores(); }
     IThorRowInterfaces *getRowInterfaces();
-    IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, roxiemem::RoxieHeapFlags flags=roxiemem::RHFnone) const;
+    IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, roxiemem::RoxieHeapFlags flags=roxiemem::RHFnone, byte seq=0) const;
 
     bool appendRowXml(StringBuffer & target, IOutputMetaData & meta, const void * row) const;
     void logRow(const char * prefix, IOutputMetaData & meta, const void * row);
@@ -1082,7 +1099,8 @@ public:
     void ActPrintLog(IException *e, const char *format, ...) __attribute__((format(printf, 3, 4)));
     void ActPrintLog(IException *e);
 
-    IThorRowInterfaces * createRowInterfaces(IOutputMetaData * meta);
+    IThorRowInterfaces * createRowInterfaces(IOutputMetaData * meta, byte seq=0);
+    IThorRowInterfaces * createRowInterfaces(IOutputMetaData * meta, roxiemem::RoxieHeapFlags heapFlags, byte seq=0);
 
 // IExceptionHandler
     bool fireException(IException *e);
@@ -1149,9 +1167,10 @@ public:
     IMPLEMENT_IINTERFACE;
 
 // IThorResource
-    virtual IThorFileCache &queryFileCache() { UNIMPLEMENTED; return *((IThorFileCache *)NULL); }
-    virtual IBackup &queryBackup() { UNIMPLEMENTED; return *((IBackup *)NULL); }
-    virtual IFileInProgressHandler &queryFileInProgressHandler() { UNIMPLEMENTED; return *((IFileInProgressHandler *)NULL); }
+    virtual IThorFileCache &queryFileCache() override { UNIMPLEMENTED; }
+    virtual IBackup &queryBackup() override  { UNIMPLEMENTED; }
+    virtual IFileInProgressHandler &queryFileInProgressHandler() override  { UNIMPLEMENTED; }
+    virtual IKJService &queryKeyedJoinService() override { UNIMPLEMENTED; }
 };
 
 class graph_decl CThorGraphResults : implements IThorGraphResults, public CInterface

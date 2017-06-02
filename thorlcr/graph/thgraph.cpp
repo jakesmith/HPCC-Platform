@@ -2610,7 +2610,6 @@ CJobBase::CJobBase(ILoadedDllEntry *_querySo, const char *_graphName) : querySo(
     maxDiskUsage = diskUsage = 0;
     dirty = true;
     aborted = false;
-    mpJobTag = TAG_NULL;
     globalMemoryMB = globals->getPropInt("@globalMemorySize"); // in MB
     numChannels = globals->getPropInt("@channelsPerSlave", 1);
     pluginMap = new SafePluginMap(&pluginCtx, true);
@@ -3084,9 +3083,16 @@ void CActivityBase::ActPrintLog(IException *e)
     ActPrintLog(e, "%s", "");
 }
 
-IThorRowInterfaces * CActivityBase::createRowInterfaces(IOutputMetaData * meta)
+IThorRowInterfaces * CActivityBase::createRowInterfaces(IOutputMetaData * meta, byte seq)
 {
-    return createThorRowInterfaces(queryRowManager(), meta, queryId(), queryHeapFlags(), queryCodeContext());
+    activity_id id = createCompoundActSeqId(queryId(), seq);
+    return createThorRowInterfaces(queryRowManager(), meta, id, queryHeapFlags(), queryCodeContext());
+}
+
+IThorRowInterfaces * CActivityBase::createRowInterfaces(IOutputMetaData * meta, roxiemem::RoxieHeapFlags heapFlags, byte seq)
+{
+    activity_id id = createCompoundActSeqId(queryId(), seq);
+    return createThorRowInterfaces(queryRowManager(), meta, id, heapFlags, queryCodeContext());
 }
 
 bool CActivityBase::fireException(IException *e)
@@ -3163,9 +3169,10 @@ IThorRowInterfaces *CActivityBase::getRowInterfaces()
     return createThorRowInterfaces(queryRowManager(), queryRowMetaData(), container.queryId(), queryHeapFlags(), queryCodeContext());
 }
 
-IEngineRowAllocator *CActivityBase::getRowAllocator(IOutputMetaData * meta, roxiemem::RoxieHeapFlags flags) const
+IEngineRowAllocator *CActivityBase::getRowAllocator(IOutputMetaData * meta, roxiemem::RoxieHeapFlags flags, byte seq) const
 {
-    return queryJobChannel().getRowAllocator(meta, queryId(), flags);
+    activity_id actId = createCompoundActSeqId(queryId(), seq);
+    return queryJobChannel().getRowAllocator(meta, actId, flags);
 }
 
 bool CActivityBase::receiveMsg(ICommunicator &comm, CMessageBuffer &mb, const rank_t rank, const mptag_t mpTag, rank_t *sender, unsigned timeout)
