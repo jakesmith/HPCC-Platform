@@ -1010,6 +1010,16 @@ public:
 
 interface IOutputMetaData;
 
+inline activity_id createCompoundActSeqId(activity_id actId, byte seq)
+{
+    if (seq)
+    {
+        dbgassertex(actId <= 0xffff); // normal max is MAX_ACTIVITY_ID (0xffffff), reserving 0x00ff0000 byte for seq if present
+        actId |= seq << 16;
+    }
+    return actId;
+}
+
 class graph_decl CActivityBase : implements CInterfaceOf<IThorRowInterfaces>, implements IExceptionHandler
 {
     Owned<IEngineRowAllocator> rowAllocator;
@@ -1059,7 +1069,7 @@ public:
     bool lastNode() { return container.queryJob().querySlaves() == container.queryJobChannel().queryMyRank(); }
     unsigned queryMaxCores() const { return container.queryMaxCores(); }
     IThorRowInterfaces *getRowInterfaces();
-    IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, roxiemem::RoxieHeapFlags flags=roxiemem::RHFnone) const;
+    IEngineRowAllocator *getRowAllocator(IOutputMetaData * meta, roxiemem::RoxieHeapFlags flags=roxiemem::RHFnone, byte seq=0) const;
 
     bool appendRowXml(StringBuffer & target, IOutputMetaData & meta, const void * row) const;
     void logRow(const char * prefix, IOutputMetaData & meta, const void * row);
@@ -1082,7 +1092,7 @@ public:
     void ActPrintLog(IException *e, const char *format, ...) __attribute__((format(printf, 3, 4)));
     void ActPrintLog(IException *e);
 
-    IThorRowInterfaces * createRowInterfaces(IOutputMetaData * meta);
+    IThorRowInterfaces * createRowInterfaces(IOutputMetaData * meta, byte seq=0);
 
 // IExceptionHandler
     bool fireException(IException *e);
