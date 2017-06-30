@@ -46,6 +46,7 @@ target_link_libraries ( datest
          remote 
          dalibase 
                  ${CPPUNIT_LIBRARIES}
+      ${BOOST_REGEX_LIBRARIES}
     )
 
 

@@ -26,6 +26,9 @@
 #include "jstring.hpp"
 
 #include <algorithm>
+#if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 9))
+#include <regex>
+#endif
 
 #define MAKE_LSTRING(name,src,length) \
     const char *name = (const char *) alloca((length)+1); \
@@ -2541,6 +2544,52 @@ void PTree::addLocal(size32_t l, const void *data, bool _binary, int pos)
         IptFlagClr(flags, ipt_binary);
 }
 
+// could move to JLIB ?
+static StringBuffer &translateToRegExp(const char *matchStr, unsigned matchStrLen, StringBuffer &result)
+{
+    result.append('^');
+    const char *m = matchStr;
+    while (matchStrLen--)
+    {
+        switch (*m)
+        {
+            case '\0':
+            {
+                throwUnexpected();
+            }
+            case '*':
+            {
+                result.append(".*");
+                break;
+            }
+            case '?':
+            {
+                result.append('.');
+                break;
+            }
+            case '(':
+            case ')':
+            case '[':
+            case ']':
+            case '$':
+            case '^':
+            case '.':
+            case '{':
+            case '}':
+            case '|':
+            case '\\':
+                result.append('\\');
+                // fall through
+            default:
+                result.append(*m);
+                break;
+        }
+        ++m;
+    }
+    return result.append('$');
+}
+
+#define WILDMATCH_LEN_THRESHOLD 1000 // inefficient to use above this threshold
 enum exprType { t_none, t_equality, t_inequality, t_lteq, t_lt, t_gt, t_gteq } tType;
 inline bool match(bool wild, bool numeric, const char *xpath, exprType t, const char *value, unsigned len, const char *pat, unsigned patLen, bool nocase)
 {
@@ -2552,7 +2601,24 @@ inline bool match(bool wild, bool numeric, const char *xpath, exprType t, const 
         m = lhsN<rhsN?-1:lhsN>rhsN?1:0;
     }
     else if (wild)
-        m = false==WildMatch(value, len, pat, patLen, nocase);
+    {
+        if (len <= WILDMATCH_LEN_THRESHOLD)
+            m = WildMatch(value, len, pat, patLen, nocase) ? 0 : 1;
+        else
+        {
+            StringBuffer regexString;
+            translateToRegExp(pat, patLen, regexString);
+#if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 9)) // std::regex not fully implemented before GCC 4.9
+            std::regex regExp;
+            regExp.assign(regexString, std::regex_constants::basic|std::regex_constants::icase);
+            m = std::regex_search(value, regExp) ? 0 : 1;
+#else
+            RegExpr regExp;
+            regExp.init(regexString, true);
+            m = (nullptr != regExp.find(value)) ? 0 : 1;
+#endif
+        }
+    }
     else
     {
         if (len == patLen)

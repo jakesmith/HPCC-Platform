@@ -16,10 +16,15 @@
 ############################################################################## */
 
 
+#include "boost/regex.hpp" // must precede platform.h ; n.b. this uses a #pragma comment(lib, ...) to link the appropriate .lib in MSVC
+#include <regex>
+#include <boost/exception/all.hpp>
+
 #include "platform.h"
 #include "jlib.hpp"
 #include "jexcept.hpp"
 #include "jmisc.hpp"
+#include "jregexp.hpp"
 #include "mpbase.hpp"
 #include "mpcomm.hpp"
 #include "sockfile.hpp"
@@ -3046,6 +3051,169 @@ void usage(const char *error=NULL)
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
+StringBuffer &translateToRegExp(const char *matchStr, StringBuffer &result)
+{
+    result.append('^');
+    const char *m = matchStr;
+    while (true)
+    {
+        switch (*m)
+        {
+            case '\0':
+                return result.append('$');
+            case '*':
+            {
+                result.append(".*");
+                break;
+            }
+            case '?':
+            {
+                result.append('.');
+                break;
+            }
+            case '(':
+            case ')':
+            case '[':
+            case ']':
+            case '$':
+            case '^':
+            case '.':
+            case '{':
+            case '}':
+            case '|':
+            case '\\':
+                result.append('\\');
+                // fall through
+            default:
+                result.append(*m);
+                break;
+        }
+        ++m;
+    }
+}
+
+StringBuffer &createRandomString(StringBuffer &result, unsigned len)
+{
+    Owned<IRandomNumberGenerator> rand = createRandomNumberGenerator();
+    for (unsigned i=0; i<len; i++)
+    {
+        byte start='A';
+        byte end='A';
+        char c = start + (i % ((end-start)+1));
+        result.append(c);
+    }
+    return result;
+}
+
+void testPattern(const char *type, const char *pattern, unsigned tests, unsigned valueStrSize)
+{
+    unsigned patternLen = strlen(pattern);
+    try
+    {
+        enum TestType { tt_null, tt_wild, tt_wildc, tt_boost, tt_c11, tt_hpcc } testType = tt_null;
+        if (strieq("wild", type))
+            testType = tt_wild;
+        else if (strieq("wildc", type))
+            testType = tt_wildc;
+        else if (strieq("boost", type))
+            testType = tt_boost;
+        else if (strieq("c11", type))
+            testType = tt_c11;
+        else if (strieq("hpcc", type))
+            testType = tt_hpcc;
+        else
+            throw MakeStringException(0, "Unknown test type: %s", type);
+
+        StringBuffer value;
+        createRandomString(value, valueStrSize);
+
+        unsigned matches = 0;
+        cycle_t searchTime = 0;
+        cycle_t createTime = 0;
+
+        boost::regex boostPattern;
+        std::regex c11Pattern;
+        RegExpr hpccPattern;
+        StringBuffer regexPattern;
+        for (unsigned t=0; t<tests; t++)
+        {
+            switch (testType)
+            {
+                case tt_wild:
+                {
+                    cycle_t cyclesSearchStart = get_cycles_now();
+                    if (WildMatch(value, value.length(), pattern, patternLen, true))
+                        ++matches;
+                    searchTime += get_cycles_now() - cyclesSearchStart;
+                    break;
+                }
+                case tt_wildc:
+                {
+                    cycle_t cyclesSearchStart = get_cycles_now();
+                    if (WildMatch(value, value.length(), pattern, patternLen, false))
+                        ++matches;
+                    searchTime += get_cycles_now() - cyclesSearchStart;
+                    break;
+                }
+                case tt_boost:
+                {
+                    cycle_t cyclesCreateStart = get_cycles_now();
+                    translateToRegExp(pattern, regexPattern.clear());
+                    boostPattern.set_expression(regexPattern, true);
+                    cycle_t cyclesSearchStart = get_cycles_now();
+                    createTime += cyclesSearchStart - cyclesCreateStart;
+                    if (boost::regex_search(value.str(), boostPattern))
+                        ++matches;
+                    searchTime += get_cycles_now() - cyclesSearchStart;
+                    break;
+                }
+                case tt_c11:
+                {
+                    cycle_t cyclesCreateStart = get_cycles_now();
+                    translateToRegExp(pattern, regexPattern.clear());
+                    c11Pattern.assign(regexPattern, std::regex_constants::basic); //|std::regex_constants::icase);
+                    cycle_t cyclesSearchStart = get_cycles_now();
+                    createTime += cyclesSearchStart - cyclesCreateStart;
+                    if (std::regex_search(value.str(), c11Pattern))
+                        ++matches;
+                    searchTime += get_cycles_now() - cyclesSearchStart;
+                    break;
+                }
+                case tt_hpcc:
+                {
+                    cycle_t cyclesCreateStart = get_cycles_now();
+                    translateToRegExp(pattern, regexPattern.clear());
+                    hpccPattern.init(regexPattern, true);
+                    cycle_t cyclesSearchStart = get_cycles_now();
+                    createTime += cyclesSearchStart - cyclesCreateStart;
+                    if (hpccPattern.find(value))
+                        ++matches;
+                    searchTime += get_cycles_now() - cyclesSearchStart;
+                    break;
+                }
+            }
+        }
+        unsigned searchUs =  static_cast<unsigned>(cycle_to_microsec(searchTime));
+        unsigned createUs =  static_cast<unsigned>(cycle_to_microsec(createTime));
+//        PROGLOG("%s regexp, pattern = %s, tests = %u, value size = %u, search time = %f ms, create(exp) time = %f ms", type, pattern, tests, valueStrSize, (float)searchUs/1000, ((float)createUs)/1000);
+
+        OwnedIFile iFile = createIFile("text");
+        OwnedIFileIO iFileIO = iFile->open(IFOcreate);
+        iFileIO->write(0, valueStrSize+1, value.str());
+        printf("|%s|%s|%u|%f|%f|%u|\n", type, pattern, valueStrSize, ((float)searchUs)/1000, ((float)createUs)/1000, matches);
+    }
+    catch (IException *e)
+    {
+        EXCLOG(e, nullptr);
+        e->Release();
+    }
+    catch (boost::exception const &e)
+    {
+        std::string diag = boost::diagnostic_information(e);
+        WARNLOG("boost exception : %s", diag.c_str());
+    }
+}
+
 int main(int argc, char* argv[])
 {   
     ReleaseAtomBlock rABlock;
@@ -3053,6 +3221,31 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
+#if 1
+//    const char *patterns[] = { "aab", "*aab", "aab*", "*aab*", "aaa*aab", "*aaa*aab*", nullptr };
+    const char *patterns[] = { "aab", "*aab", "aab*", "*aab*", "aaa*aab", nullptr };
+
+    const char *type = argv[1];
+    unsigned tests = atoi(argv[2]);
+    unsigned strSize = atoi(argv[3]);
+    const char *pattern = nullptr;
+    if (argc<4)
+    {
+        printf("Usage: datest [wild|hpcc|c11|boost] <num-tests> <value-string-size> [pattern]\n");
+        return 1;
+    }
+    if (argc>4)
+        testPattern(type, argv[4], tests, strSize);
+    else
+    {
+        for (const char **pattern=&patterns[0]; nullptr != *pattern; pattern++)
+        {
+    //        PROGLOG("Pattern = %s, tests = %u, test type = %s, str size = %u", *pattern, tests, type, strSize);
+            testPattern(type, *pattern, tests, strSize);
+        }
+    }
+    return 0;
+#endif
     try {
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
