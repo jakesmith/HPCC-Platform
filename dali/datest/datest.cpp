@@ -3053,6 +3053,30 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
+#if 1
+    {
+        memsize_t heapUsage = getMapInfo("heap");
+        PROGLOG("Heap usage : %" I64F "d bytes", (unsigned __int64)heapUsage);
+        CCycleTimer timer;
+        Owned<IPropertyTree> tree = createPTreeFromXMLFile(argv[1]);
+        unsigned elapsedMs = timer.elapsedMs();
+        heapUsage = getMapInfo("heap");
+        PROGLOG("Heap usage : %" I64F "d bytes", (unsigned __int64)heapUsage);
+
+        PROGLOG("Load time = %u ms", elapsedMs);
+        StringBuffer str;
+        str.ensureCapacity(700000000);
+        timer.reset();
+        toXML(tree, str);
+        PROGLOG("Serialization time = %u ms", timer.elapsedMs());
+        timer.reset();
+        Owned<IPropertyTree> copyTree = createPTreeFromIPT(tree);
+        PROGLOG("Copy time = %u ms", timer.elapsedMs());
+
+        return 0;
+    }
+#endif
+
     try {
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);

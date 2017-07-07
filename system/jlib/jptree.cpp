@@ -66,6 +66,7 @@ IPropertyTreeIterator *createNullPTreeIterator() { return LINK(nullPTreeIterator
 
 #ifdef USE_READONLY_ATOMTABLE
 RONameTable *AttrStrUnionWithTable::roNameTable = nullptr;
+RONameTable *AttrStrUnionWithValueTable::roValueTable = nullptr;
 #endif
 static AtomRefTable *keyTable = nullptr;
 static AtomRefTable *keyTableNC = nullptr;
@@ -82,12 +83,29 @@ static const char * roAttributes[] =
 #include "jptree-attrs.hpp"    // potentially auto-generated
     nullptr
 };
+static const char * roAttributeValues[] =
+{
+#include "jptree-attrvalues.hpp"    // potentially auto-generated
+    nullptr
+};
 
 void initializeRoTable()
 {
     for (const char **attr = roAttributes; *attr; attr++)
     {
         AttrStrUnionWithTable::roNameTable->find(*attr, true);
+    }
+    for (const char **value = roAttributeValues; *value; value++)
+    {
+        AttrStrUnionWithValueTable::roValueTable->find(*value, true);
+    }
+    // also populate read-only value table with unsigned 0-10000, many of which are very common
+    unsigned maxConstUnsigned=10000;
+    StringBuffer constStr;
+    for (unsigned c=0; c<maxConstUnsigned; c++)
+    {
+        constStr.clear().append(c);
+        AttrStrUnionWithValueTable::roValueTable->find(constStr.str(), true);
     }
 #ifdef TRACE_ATOM_SIZE
     // If you are wanting an idea of the savings from use of the RO hash table, it may be useful to reset
@@ -99,9 +117,16 @@ void initializeRoTable()
     for (const char **a = roAttributes; *a; a++)
     {
         // sanity check
-        unsigned idx = AttrStrUnionWithTable::roNameTable->findIndex(*a,AttrStrC::getHash(*a));
+        unsigned idx = AttrStrUnionWithTable::roNameTable->findIndex(*a, AttrStrC::getHash(*a));
         AttrStrC *val = AttrStrUnionWithTable::roNameTable->getIndex(idx);
         assert(val && val->eq(*a));
+    }
+    for (const char **v = roAttributeValues; *v; v++)
+    {
+        // sanity check
+        unsigned idx = AttrStrUnionWithValueTable::roValueTable->findIndex(*v, AttrStrC::getHash(*v));
+        AttrStrC *val = AttrStrUnionWithValueTable::roValueTable->getIndex(idx);
+        assert(val && val->eq(*v));
     }
 #endif
 }
@@ -112,6 +137,7 @@ MODULE_INIT(INIT_PRIORITY_JPTREE)
     nullPTreeIterator = new NullPTreeIterator;
 #ifdef USE_READONLY_ATOMTABLE
     AttrStrUnionWithTable::roNameTable = new RONameTable;
+    AttrStrUnionWithValueTable::roValueTable = new RONameTable;
     initializeRoTable();
 #endif
     keyTable = new AtomRefTable;
@@ -128,6 +154,7 @@ MODULE_EXIT()
     keyTableNC->Release();
 #ifdef USE_READONLY_ATOMTABLE
     delete AttrStrUnionWithTable::roNameTable;
+    delete AttrStrUnionWithValueTable::roValueTable;
 #endif
     free(freelist);
     freelist = NULL;
