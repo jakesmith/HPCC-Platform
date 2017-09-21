@@ -98,7 +98,18 @@ public:
                 assert(streq(graph->queryName(), "node"));
                 graph->setPropInt("@id", 2);
                 if (!graph->hasProp("hint[@name='dynamic']"))
-                    graph->addPropTree("hint", createPTreeFromXMLString("<hint name='dynamic'value='1'/>"));
+                    graph->addPropTree("hint", createPTreeFromXMLString("<hint name='dynamic' value='1'/>"));
+                const char *kindName = graph->queryProp("att[@name='_kind']/@value");
+                ThorActivityKind kind;
+                if (!kindName)
+                    kind = TAKdiskread;
+                else if (strieq(kindName, "DiskRead"))
+                    kind = TAKdiskread;
+                else
+                    throw MakeStringException(ROXIE_UNIMPLEMENTED_ERROR, "Unsupported dynamic activity: %s", kindName);
+                graph->removeProp("att[@name='_kind']");
+                graph->addPropTree("att", createPTreeFromXMLString("<att name='_kind'/>"));
+                graph->setPropInt("att[@name='_kind']/@value", kind);
                 Owned<IPropertyTree> newGraph = createPTreeFromXMLString(
                 "<graph>"
                 "<node id='1'>"
