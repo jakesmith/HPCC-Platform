@@ -235,7 +235,6 @@ protected:
     ThorActivityKind kind;
     ActivityArrayArray childQueries;
     UnsignedArray childQueryIndexes;
-    CachedOutputMetaData meta;
     mutable CriticalSection statsCrit;
     mutable CRuntimeStatisticCollection mystats;
     // MORE: Could be CRuntimeSummaryStatisticCollection to include derived stats, but stats are currently converted
