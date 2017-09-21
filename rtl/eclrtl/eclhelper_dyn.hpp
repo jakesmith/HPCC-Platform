@@ -24,5 +24,6 @@
 
 extern ECLRTL_API IHThorArg *createDiskReadArg(IPropertyTree &xgmml);
 extern ECLRTL_API IHThorArg *createWorkunitWriteArg(IPropertyTree &xgmml);
+extern ECLRTL_API IEclProcess* createDynamicEclProcess();
 
 #endif

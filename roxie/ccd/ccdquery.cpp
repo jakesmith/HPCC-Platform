@@ -80,6 +80,7 @@ class CQueryDll : implements IQueryDll, public CInterface
     StringAttr dllName;
     Owned <ILoadedDllEntry> dll;
     Owned <IConstWorkUnit> wu;
+    Owned <IPropertyTree> graph;
     static CriticalSection dllCacheLock;
     static CopyMapStringToMyClass<CQueryDll> dllCache;
 
@@ -89,7 +90,35 @@ public:
     CQueryDll(const char *_dllName, ILoadedDllEntry *_dll) : dllName(_dllName), dll(_dll)
     {
         StringBuffer wuXML;
-        if (!selfTestMode && getEmbeddedWorkUnitXML(dll, wuXML))
+        if (getEmbeddedGraphXML(dll, wuXML))
+        {
+            graph.setown(createPTreeFromXMLString(wuXML));
+            if (!graph->hasProp("node"))
+            {
+                assert(streq(graph->queryName(), "node"));
+                graph->setPropInt("@id", 2);
+                if (!graph->hasProp("hint[@name='dynamic']"))
+                    graph->addPropTree("hint", createPTreeFromXMLString("<hint name='dynamic'value='1'/>"));
+                Owned<IPropertyTree> newGraph = createPTreeFromXMLString(
+                "<graph>"
+                "<node id='1'>"
+                " <att>"
+                "  <graph>"
+                "   <att name='rootGraph' value='1'/>"
+                "    <edge id='2_0' source='2' target='3'/>"
+                "    <node id='3'>"
+                "     <att name='_kind' value='16'/>"
+                "     <hint name='dynamic' value='1'/>"
+                "    </node>"
+                "   </graph>"
+                "  </att>"
+                " </node>"
+                "</graph>");
+                newGraph->addPropTree("node/att/graph/node", graph.getClear());
+                graph.setown(newGraph.getClear());
+            }
+        }
+        else if (!selfTestMode && getEmbeddedWorkUnitXML(dll, wuXML))
         {
             Owned<ILocalWorkUnit> localWU = createLocalWorkUnit(wuXML);
             wu.setown(localWU->unlock());
@@ -140,6 +169,10 @@ public:
     virtual ILoadedDllEntry *queryDll() const
     {
         return dll;
+    }
+    virtual IPropertyTree *queryGraph() const
+    {
+        return graph;
     }
     virtual IConstWorkUnit *queryWorkUnit() const
     {
@@ -1265,6 +1298,23 @@ public:
                 }
             }
         }
+        else if (dll->queryGraph())
+        {
+            try
+            {
+                ActivityArray *activities = loadGraph(*dll->queryGraph(), "graph1");
+                graphMap.setValue("graph1", activities);
+            }
+            catch (IException *E)
+            {
+                StringBuffer m;
+                E->errorMessage(m);
+                suspend(m.str());
+                ERRLOG("Query %s suspended: %s", id.get(), m.str());
+                E->Release();
+            }
+
+        }
         hash64_t hv = rtlHash64Data(sizeof(channelNo), &channelNo, hashValue);
         SpinBlock b(queriesCrit);
         queryMap.setValue(hv, this);
@@ -1551,8 +1601,9 @@ public:
 protected:
     IPropertyTree *queryWorkflowTree() const
     {
-        assertex(dll->queryWorkUnit());
-        return dll->queryWorkUnit()->queryWorkflowTree();
+        if (dll->queryWorkUnit())
+            return dll->queryWorkUnit()->queryWorkflowTree();
+        return nullptr;
     }
 
     bool hasOnceSection() const
@@ -1676,7 +1727,8 @@ public:
 
 unsigned checkWorkunitVersionConsistency(const IConstWorkUnit *wu)
 {
-    assertex(wu);
+    if (!wu)
+        return ACTIVITY_INTERFACE_VERSION;
     unsigned wuVersion = wu->getCodeVersion();
     if (wuVersion == 0)
         throw makeStringException(ROXIE_MISMATCH, "Attempting to execute a workunit that hasn't been compiled");
@@ -1716,9 +1768,13 @@ extern IQueryFactory *createServerQueryFactory(const char *id, const IQueryDll *
     {
         checkWorkunitVersionConsistency(dll);
         Owned<ISharedOnceContext> sharedOnceContext;
-        IPropertyTree *workflow = dll->queryWorkUnit()->queryWorkflowTree();
-        if (workflow && workflow->hasProp("Item[@mode='once']"))
-            sharedOnceContext.setown(new CSharedOnceContext);
+        if (dll->queryWorkUnit())
+        {
+            assertex(dll->queryWorkUnit());
+            IPropertyTree *workflow = dll->queryWorkUnit()->queryWorkflowTree();
+            if (workflow && workflow->hasProp("Item[@mode='once']"))
+                sharedOnceContext.setown(new CSharedOnceContext);
+        }
         Owned<CRoxieServerQueryFactory> newFactory = new CRoxieServerQueryFactory(id, dll, dynamic_cast<const IRoxiePackage&>(package), hashValue, sharedOnceContext, isDynamic);
         newFactory->load(stateInfo);
         if (sharedOnceContext && preloadOnceData)

@@ -298,6 +298,7 @@ interface IQueryDll : public IInterface
     virtual HelperFactory *getFactory(const char *name) const = 0;
     virtual ILoadedDllEntry *queryDll() const = 0;
     virtual IConstWorkUnit *queryWorkUnit() const = 0;
+    virtual IPropertyTree *queryGraph() const = 0;
 };
 
 extern const IQueryDll *createQueryDll(const char *dllName);
