@@ -17,6 +17,7 @@
 
 #include <platform.h>
 #include <jlib.hpp>
+#include "eclhelper_dyn.hpp"
 
 #include "ccd.hpp"
 #include "ccdquery.hpp"
@@ -541,14 +542,19 @@ protected:
             rid |= ROXIE_SLA_PRIORITY;
             break;
         }
-        StringBuffer helperName;
-        node.getProp("att[@name=\"helper\"]/@value", helperName);
-        if (!helperName.length())
-            helperName.append("fAc").append(id);
-        HelperFactory *helperFactory = dll->getFactory(helperName);
-        if (!helperFactory)
-            throw MakeStringException(ROXIE_INTERNAL_ERROR, "Internal error: helper function %s not exported", helperName.str());
-
+        HelperFactory *helperFactory;
+        if (dll && !node.getPropBool("hint[@name='dynamic']/@value", false))
+        {
+            StringBuffer helperName;
+            node.getProp("att[@name=\"helper\"]/@value", helperName);
+            if (!helperName.length())
+                helperName.append("fAc").append(id);
+            helperFactory = dll->getFactory(helperName);
+            if (!helperFactory)
+                throw MakeStringException(ROXIE_INTERNAL_ERROR, "Internal error: helper function %s not exported", helperName.str());
+        }
+        else
+            helperFactory = nullptr;
         RemoteActivityId remoteId(rid, hashValue);
         RemoteActivityId remoteId2(rid | ROXIE_ACTIVITY_FETCH, hashValue);
 
@@ -877,6 +883,21 @@ protected:
             break;
         }
         throwUnexpected(); // unreachable, but some compilers will complain about missing return
+    }
+
+    virtual IHThorArg *createDynamicHelper(ThorActivityKind kind, IPropertyTree &node) const override
+    {
+        switch (kind)
+        {
+        case TAKworkunitwrite:
+            return createWorkunitWriteArg(node);
+        case TAKdiskread:
+            if (!node.getPropBool("att[@name='_isSpill']/@value", false) && !node.getPropBool("att[@name='_isSpillGlobal']/@value", false))
+                return createDiskReadArg(node);
+            // fall into...
+        default:
+            throw MakeStringException(ROXIE_UNIMPLEMENTED_ERROR, "Unimplemented dynamic activity %s required", getActivityText(kind));
+        }
     }
 
     IActivityFactory *findActivity(unsigned id) const

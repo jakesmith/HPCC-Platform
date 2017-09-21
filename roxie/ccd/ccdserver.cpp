@@ -393,7 +393,7 @@ public:
     IMPLEMENT_IINTERFACE;
 
     CRoxieServerActivityFactoryBase(unsigned _id, unsigned _subgraphId, IQueryFactory &_queryFactory, HelperFactory *_helperFactory, ThorActivityKind _kind, IPropertyTree &_graphNode)
-        : CActivityFactory(_id, _subgraphId, _queryFactory, _helperFactory, _kind)
+        : CActivityFactory(_id, _subgraphId, _queryFactory, _helperFactory, _kind, _graphNode)
     {
         processed = 0;
         started = 0;
@@ -457,10 +457,11 @@ public:
     }
     virtual IHThorArg &getHelper() const
     {
-        IHThorArg *helper = helperFactory();
-        // MORE - if helper is xgmml driven then pass in the xgmml here
-        printf("Yo\n");
-        return *helper;
+        // dynamic mode not yet implemented...
+        if (helperFactory)
+            return *helperFactory();
+        assertex(graphNode);
+        return *queryFactory.createDynamicHelper(kind, *graphNode);
     }
     virtual IRoxieServerActivity *createFunction(IHThorArg &arg, IProbeManager *_probeManager) const
     {

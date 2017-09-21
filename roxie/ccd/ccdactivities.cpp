@@ -97,7 +97,7 @@ extern void putStatsValue(StringBuffer &reply, const char *statName, const char 
     }
 }
 
-CActivityFactory::CActivityFactory(unsigned _id, unsigned _subgraphId, IQueryFactory &_queryFactory, HelperFactory *_helperFactory, ThorActivityKind _kind)
+CActivityFactory::CActivityFactory(unsigned _id, unsigned _subgraphId, IQueryFactory &_queryFactory, HelperFactory *_helperFactory, ThorActivityKind _kind, IPropertyTree &_graphNode)
   : id(_id),
     subgraphId(_subgraphId),
     queryFactory(_queryFactory),
@@ -105,6 +105,10 @@ CActivityFactory::CActivityFactory(unsigned _id, unsigned _subgraphId, IQueryFac
     kind(_kind),
     mystats(allStatistics)  // We COULD cut down this list but it would complicate the structure, and we do actually track more in the factory than in the activity
 {
+    if (!helperFactory)
+    {
+        graphNode.setown(createPTreeFromIPT(&_graphNode));
+    }
 }
 
 void CActivityFactory::addChildQuery(unsigned id, ActivityArray *childQuery) 
@@ -132,11 +136,13 @@ public:
     IMPLEMENT_IINTERFACE
 
     CSlaveActivityFactory(IPropertyTree &_graphNode, unsigned _subgraphId, IQueryFactory &_queryFactory, HelperFactory *_helperFactory) 
-        : CActivityFactory(_graphNode.getPropInt("@id", 0), _subgraphId, _queryFactory, _helperFactory, getActivityKind(_graphNode))
+        : CActivityFactory(_graphNode.getPropInt("@id", 0), _subgraphId, _queryFactory, _helperFactory, getActivityKind(_graphNode), _graphNode)
     {
     }
     virtual IHThorArg &getHelper() const
     {
+        // dynamic mode not yet implemented...
+        assertex(helperFactory);
         return *helperFactory();
     }
     virtual IQueryFactory &queryQueryFactory() const

@@ -443,6 +443,15 @@ const RtlRecord &COutputMetaData::queryRecordAccessor(bool expand) const
     return *useAccessor;
 }
 
+size32_t COutputMetaData::getRecordSize(const void * data)
+{
+    const RtlRecord &r = queryRecordAccessor(false);
+    unsigned numOffsets = r.getNumVarFields() + 1;
+    size_t * variableOffsets = (size_t *)alloca(numOffsets * sizeof(size_t));
+    RtlRow offsetCalculator(r, data, numOffsets, variableOffsets);
+    return offsetCalculator.getRecordSize();
+}
+
 class CVariableOutputRowSerializer : public COutputRowSerializer
 {
 public:
