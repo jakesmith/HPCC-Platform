@@ -62,6 +62,8 @@
 #define TREECOPYPOLLTIME  (60*1000*5)      // for tracing that delayed
 #define TREECOPYPRUNETIME (24*60*60*1000)  // 1 day
 
+static const unsigned __int64 defaultFileStreamChoosen = 100;
+
 #if SIMULATE_PACKETLOSS
 
 #define TESTING_FAILURE_RATE_LOST_SEND  10 // per 1000
@@ -3924,10 +3926,7 @@ IRowStream *createDiskReader(IHThorDiskReadArg &arg)
                         size32_t sizeRead = prefetchBuffer.queryRowSize();
                         size32_t thisSize;
                         if (segMonitorsMatch(next))
-                        {
-                            resultBuffer.clear();
                             thisSize = arg->transform(*outBuilder, next);
-                        }
                         else
                             thisSize = 0;
                         prefetchBuffer.finishedRow();
@@ -5788,6 +5787,7 @@ public:
          *   "kind" : "diskread",
          *   "fileName": "examplefilename",
          *   "keyfilter" : "f1='1    '",
+         *   "choosen" : "5",
          *   "input" : {
          *    "f1" : "string5",
          *    "f2" : "string5"
@@ -5834,13 +5834,16 @@ public:
         Owned<IOutputMetaData> out = new CDynamicOutputMetaData(*outputRecordTypeInfo);
 
 
-        Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in.getClear(), out.getClear());
+        Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in.getClear(), out.getLink());
 
         Owned<IRowStream> stream = createDiskReader(*arg);
 
-        for (unsigned i=0; i<3; i++)
+        unsigned __int64 recs = actNode->getPropInt64("choosen", defaultFileStreamChoosen);
+        for (unsigned __int64 i=0; i<recs; i++)
         {
             const byte *row = (const byte *)stream->nextRow();
+            if (!row)
+                break;
             SimpleOutputWriter xmlWriter;
             out->toXML(row, xmlWriter);
 

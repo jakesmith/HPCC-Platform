@@ -218,7 +218,9 @@ public:
         return getOffset(variableOffsets, numFields);
     }
 
-    virtual size32_t getMinRecordSize() const;
+    size32_t getMinRecordSize() const;
+    size32_t deserialize(ARowBuilder & rowBuilder, IRowDeserializerSource & in) const;
+    void readAhead(IRowDeserializerSource & in) const;
 
     inline unsigned getNumFields() const { return numFields; }
     inline unsigned getNumVarFields() const { return numVarFields; }
@@ -351,6 +353,7 @@ public:
     virtual IOutputMetaData * querySerializedDiskMeta() override    { return this; }
     virtual IOutputRowSerializer * createDiskSerializer(ICodeContext * ctx, unsigned activityId) override;
     virtual ISourceRowPrefetcher * createDiskPrefetcher(ICodeContext * ctx, unsigned activityId) override;
+    virtual IOutputRowDeserializer * createDiskDeserializer(ICodeContext * ctx, unsigned activityId) override;
     //Default internal serializers are the same as the disk versions
     virtual IOutputRowSerializer * createInternalSerializer(ICodeContext * ctx, unsigned activityId) override
     {

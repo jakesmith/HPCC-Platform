@@ -28,6 +28,7 @@
 #include "hqlir.hpp"
 #include "hqlutil.hpp"
 
+
 FuncCallStack::FuncCallStack(bool _hasMeta, int size)
 {
     hasMeta = _hasMeta;
