@@ -520,6 +520,15 @@ ISourceRowPrefetcher *COutputMetaData::defaultCreateDiskPrefetcher(ICodeContext 
     return NULL;
 }
 
+IOutputRowDeserializer *CDynamicOutputMetaData::createDiskDeserializer(ICodeContext * ctx, unsigned activityId)
+{
+    if (getFixedSize())
+        return new CFixedOutputRowDeserializer(activityId, getFixedSize());
+    else
+        UNIMPLEMENTED; // TBD
+}
+
+
 IOutputRowSerializer *CFixedOutputMetaData::createDiskSerializer(ICodeContext * ctx, unsigned activityId)
 {
     return new CFixedOutputRowSerializer(activityId, fixedSize);

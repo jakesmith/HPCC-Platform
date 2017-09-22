@@ -29,6 +29,9 @@
 #include "thorplugin.hpp"
 #include "layouttrans.hpp"
 
+#include "hqlerror.hpp"
+#include "hqlexpr.hpp"
+
 void ActivityArray::append(IActivityFactory &cur)
 {
     hash.setValue(cur.queryId(), activities.ordinality());
@@ -110,6 +113,9 @@ public:
                 graph->removeProp("att[@name='_kind']");
                 graph->addPropTree("att", createPTreeFromXMLString("<att name='_kind'/>"));
                 graph->setPropInt("att[@name='_kind']/@value", kind);
+                // Do ECL parsing here as we don't want lower dlls dependent on libhql.so
+                parseTypeInfo(graph, "input");
+                parseTypeInfo(graph, "output");
                 Owned<IPropertyTree> newGraph = createPTreeFromXMLString(
                 "<graph>"
                 "<node id='1'>"
@@ -119,12 +125,16 @@ public:
                 "    <edge id='2_0' source='2' target='3'/>"
                 "    <node id='3'>"
                 "     <att name='_kind' value='16'/>"
+                "     <att name='input_binary'/>"        // value filled in shortly
                 "     <hint name='dynamic' value='1'/>"
                 "    </node>"
                 "   </graph>"
                 "  </att>"
                 " </node>"
                 "</graph>");
+                MemoryBuffer outformat;
+                graph->getPropBin("att[@name='output_binary']/value", outformat);
+                newGraph->setPropBin("node/att/graph/node/att[@name='input_binary']/value", outformat.length(), outformat.toByteArray());
                 newGraph->addPropTree("node/att/graph/node", graph.getClear());
                 graph.setown(newGraph.getClear());
             }
@@ -189,6 +199,40 @@ public:
     {
         return wu;
     }
+private:
+    void parseTypeInfo(IPropertyTree *node, const char *key)
+    {
+        VStringBuffer xpath("att[@name='%s_binary']", key);
+        if (!node->hasProp(xpath))
+        {
+            const char *inrec = node->queryProp(xpath.setf("att[@name='%s']/@value", key));
+            if (!inrec)
+                inrec = node->queryProp(xpath.setf("att[@name='%s']/value", key));
+            if (!inrec)
+                throw MakeStringException(ROXIE_DATA_ERROR, "Missing %s record format", key);
+            // Let's be kind to the users...
+            StringBuffer ecl(inrec);
+            ecl.trimRight();
+            if (!ecl.length())
+                throw MakeStringException(ROXIE_DATA_ERROR, "Missing %s record format", key);
+            if (ecl.charAt(ecl.length()-1) != ';')
+                ecl.append(';');
+            ErrorReceiverSink errs;
+            OwnedHqlExpr record = parseQuery(ecl, &errs);
+            if (errs.errCount() || !record)
+            {
+                errs.clear();
+                record.setown(parseQuery(ecl.insert(0, '{').append("};"), &errs));
+                if (errs.errCount() || !record)
+                    throw MakeStringException(ROXIE_DATA_ERROR, "Failed to parse ECL record definition.");
+            }
+            MemoryBuffer bintype;
+            exportBinaryType(bintype, record);
+            node->addPropTree("att", createPTreeFromXMLString(xpath.setf("<att name='%s_binary'/>", key)));
+            node->setPropBin(xpath.setf("att[@name='%s_binary']/value", key), bintype.length(), bintype.toByteArray());
+        }
+    }
+
 };
 CriticalSection CQueryDll::dllCacheLock;
 CopyMapStringToMyClass<CQueryDll> CQueryDll::dllCache;

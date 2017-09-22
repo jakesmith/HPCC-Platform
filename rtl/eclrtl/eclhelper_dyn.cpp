@@ -29,65 +29,27 @@
 #include "rtlkey.hpp"
 
 //---------------------------------------------------------------------------
-
-
-
-
-const RtlStringTypeInfo ty2(0x4,5);
-const RtlFieldStrInfo rf1("f1",NULL,&ty2);
-const RtlFieldStrInfo rf2("f2",NULL,&ty2);
-const RtlFieldInfo * const tl3[] = { &rf1,&rf2, 0 };
-const RtlRecordTypeInfo ty1(0xd,10,tl3);
-const RtlStringTypeInfo ty5(0x404,0);
-const RtlFieldStrInfo rf3("f2",NULL,&ty5);
-const RtlFieldInfo * const tl6[] = { &rf3, 0 };
-const RtlRecordTypeInfo ty4(0x40d,4,tl6);
-
-struct mi2 : public CFixedOutputMetaData {
-    inline mi2() : CFixedOutputMetaData(10) {}
-    virtual const RtlTypeInfo * queryTypeInfo() const override { return &ty1; }
-} mx2;
-
-
-struct dmi1 : public COutputRowDeserializer {
-    inline dmi1(unsigned _activityId) : COutputRowDeserializer(_activityId) {}
-    virtual size32_t deserialize(ARowBuilder & crSelf, IRowDeserializerSource & in) override {
-        UNIMPLEMENTED;
-    }
-};
-
-extern IOutputRowDeserializer * crdmi1(ICodeContext * ctx, unsigned activityId) {
-    dmi1* p = new dmi1(activityId);
-    p->onCreate(ctx);
-    return p;
+static const RtlRecordTypeInfo &loadTypeInfo(IPropertyTree &xgmml, IRtlFieldTypeDeserializer *deserializer, const char *key)
+{
+    StringBuffer xpath;
+    MemoryBuffer binInfo;
+    xgmml.getPropBin(xpath.setf("att[@name='%s_binary']/value", key), binInfo);
+    assertex(binInfo.length());
+    const RtlTypeInfo *typeInfo = deserializer->deserialize(binInfo);
+    assertex(typeInfo && typeInfo->getType()==type_record);
+    return *(RtlRecordTypeInfo *) typeInfo;
 }
-
-struct pmi1 : public CSourceRowPrefetcher {
-    inline pmi1(unsigned _activityId) : CSourceRowPrefetcher(_activityId) {}
-    virtual void readAhead(IRowDeserializerSource & in) override {
-        // make sure there is enough data in input stream
-        UNIMPLEMENTED;
-    }
-};
-
-struct mi1 : public CVariableOutputMetaData {
-    inline mi1() : CVariableOutputMetaData(4) {}
-    virtual const RtlTypeInfo * queryTypeInfo() const override { return &ty4; }
-    virtual IOutputRowDeserializer * createDiskDeserializer(ICodeContext * ctx, unsigned activityId) override {
-        return crdmi1(ctx, activityId);
-    }
-    virtual CSourceRowPrefetcher * doCreateDiskPrefetcher(unsigned activityId) override {
-        return new pmi1(activityId);
-    }
-    virtual unsigned getMetaFlags() override { return 50; }
-} mx1;
 
 class ECLRTL_API CDynamicDiskReadArg : public CThorDiskReadArg
 {
 public:
     CDynamicDiskReadArg(IPropertyTree &_xgmml) : xgmml(_xgmml)
     {
-        inrec = &queryDiskRecordSize()->queryRecordAccessor(true);
+        indeserializer.setown(createRtlFieldTypeDeserializer());
+        outdeserializer.setown(createRtlFieldTypeDeserializer());
+        in.setown(new CDynamicOutputMetaData(loadTypeInfo(xgmml, indeserializer, "input")));
+        out.setown(new CDynamicOutputMetaData(loadTypeInfo(xgmml, outdeserializer, "output")));
+        inrec = &in->queryRecordAccessor(true);
         numOffsets = inrec->getNumVarFields() + 1;
         translator.setown(createRecordTranslator(queryOutputMeta()->queryRecordAccessor(true), *inrec));
         if (xgmml.hasProp("att[@name=\"keyfilter\"]"))
@@ -131,19 +93,15 @@ public:
 
     virtual IOutputMetaData * queryOutputMeta() override
     {
-        //UNIMPLEMENTED;
-        return &mx1;
-        return NULL;
+        return out;
     }
-    virtual const char * getFileName() override
+    virtual const char * getFileName() override final
     {
         return xgmml.queryProp("att[@name=\"_fileName\"]/@value");
     }
-    virtual IOutputMetaData * queryDiskRecordSize() override
+    virtual IOutputMetaData * queryDiskRecordSize() override final
     {
-        //UNIMPLEMENTED;
-        return &mx2;
-        return NULL;
+        return in;
     }
     virtual unsigned getFormatCrc() override
     {
@@ -155,16 +113,30 @@ public:
     }
 private:
     IPropertyTree &xgmml;
-    const RtlRecord *inrec = nullptr;
     unsigned numOffsets = 0;
-    Owned<const IDynamicTransform> translator;
     unsigned flags = 0;
+    Owned<IRtlFieldTypeDeserializer> indeserializer;   // Owns the resulting ITypeInfo structures, so needs to be kept around
+    Owned<IRtlFieldTypeDeserializer> outdeserializer;  // Owns the resulting ITypeInfo structures, so needs to be kept around
+    Owned<IOutputMetaData> in;
+    Owned<IOutputMetaData> out;
+    const RtlRecord *inrec = nullptr;
+    Owned<const IDynamicTransform> translator;
 };
 
 class ECLRTL_API CDynamicWorkUnitWriteArg : public CThorWorkUnitWriteArg
 {
-    virtual int getSequence() override { return 0; }
-    virtual IOutputMetaData * queryOutputMeta() override { return &mx1; }
+public:
+    CDynamicWorkUnitWriteArg(IPropertyTree &_xgmml) : xgmml(_xgmml)
+    {
+        indeserializer.setown(createRtlFieldTypeDeserializer());
+        in.setown(new CDynamicOutputMetaData(loadTypeInfo(xgmml, indeserializer, "input")));
+    }
+    virtual int getSequence() override final { return 0; }
+    virtual IOutputMetaData * queryOutputMeta() override final { return in; }
+private:
+    IPropertyTree &xgmml;
+    Owned<IRtlFieldTypeDeserializer> indeserializer;   // Owns the resulting ITypeInfo structures, so needs to be kept around
+    Owned<IOutputMetaData> in;
 };
 
 extern ECLRTL_API IHThorArg *createDiskReadArg(IPropertyTree &xgmml)
@@ -174,7 +146,7 @@ extern ECLRTL_API IHThorArg *createDiskReadArg(IPropertyTree &xgmml)
 
 extern ECLRTL_API IHThorArg *createWorkunitWriteArg(IPropertyTree &xgmml)
 {
-    return new CDynamicWorkUnitWriteArg();
+    return new CDynamicWorkUnitWriteArg(xgmml);
 }
 
 struct ECLRTL_API DynamicEclProcess : public EclProcess {

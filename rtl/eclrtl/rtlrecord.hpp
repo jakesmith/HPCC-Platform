@@ -374,6 +374,48 @@ protected:
     mutable RtlRecord *recordAccessor[2];
 };
 
+/**
+ * class CDynamicOutputMetaData
+ *
+ * An implementation of IOutputMetaData for use with a dynamically-created record type info structure
+ *
+ */
+
+class ECLRTL_API CDynamicOutputMetaData : public COutputMetaData
+{
+public:
+    CDynamicOutputMetaData(const RtlRecordTypeInfo & fields) : typeInfo(fields)
+    {
+    }
+
+    virtual const RtlTypeInfo * queryTypeInfo() const override { return &typeInfo; }
+    virtual size32_t getRecordSize(const void * row) override
+    {
+        //Allocate a temporary offset array on the stack to avoid runtime overhead.
+        const RtlRecord &offsetInformation = queryRecordAccessor(true);
+        unsigned numOffsets = offsetInformation.getNumVarFields() + 1;
+        size_t * variableOffsets = (size_t *)alloca(numOffsets * sizeof(size_t));
+        RtlRow offsetCalculator(offsetInformation, row, numOffsets, variableOffsets);
+        return offsetCalculator.getRecordSize();
+    }
+
+    virtual size32_t getFixedSize() const override
+    {
+        return queryRecordAccessor(true).getFixedSize();
+    }
+    // returns 0 for variable row size
+    virtual size32_t getMinRecordSize() const override
+    {
+        return queryRecordAccessor(true).getMinRecordSize();
+    }
+
+    virtual IOutputRowDeserializer * createDiskDeserializer(ICodeContext * ctx, unsigned activityId) override;
+
+protected:
+    const RtlTypeInfo &typeInfo;
+};
+
+
 class ECLRTL_API CFixedOutputMetaData : public COutputMetaData
 {
 public:
