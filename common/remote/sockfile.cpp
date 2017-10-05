@@ -41,6 +41,8 @@
 #include "remoteerr.hpp"
 #include <atomic>
 
+#include "rtldynfield.hpp"
+
 #define SOCKET_CACHE_MAX 500
 
 #define MIN_KEYFILTSUPPORT_VERSION 20
@@ -5663,9 +5665,38 @@ public:
 
         IPropertyTree *actNode = jsonTree->queryPropTree("node");
         const char *fileName = actNode->queryProp("fileName");
-        const char *input = actNode->queryProp("input");
-        const char *output = actNode->queryProp("input");
 
+        OwnedIFile iFile = createIFile(fileName);
+        OwnedIFileIO iFileIO = iFile->open(IFOread);
+        if (!iFileIO)
+        {
+            reply.append("Failed to open: ").append(fileName);
+            return false;
+        }
+        OwnedIFileIOStream stream = createBufferedIOStream(iFileIO);
+
+
+        Owned<IRtlFieldTypeDeserializer> inputFieldInfo = createRtlFieldTypeDeserializer();
+        Owned<IRtlFieldTypeDeserializer> outputFieldInfo = createRtlFieldTypeDeserializer();
+
+        const char *inputJson = actNode->queryProp("input");
+        if (inputJson)
+            inputFieldInfo->deserialize(inputJson);
+        else
+        {
+            MemoryBuffer mb;
+            actNode->getPropBin("inputBin", mb);
+            inputFieldInfo->deserialize(mb);
+        }
+        const char *outputJson = actNode->queryProp("output");
+        if (outputJson)
+            outputFieldInfo->deserialize(outputJson);
+        else
+        {
+            MemoryBuffer mb;
+            actNode->getPropBin("outputBin", mb);
+            outputFieldInfo->deserialize(mb);
+        }
 
 
         unsigned len = msg.length();

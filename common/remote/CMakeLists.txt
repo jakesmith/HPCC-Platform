@@ -59,6 +59,7 @@ include_directories (
          ./../../rtl/eclrtl
          ./../../system/security/securesocket
          ./../../testing/unittests
+         ./../../rtl/include
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DREMOTE_EXPORTS )
