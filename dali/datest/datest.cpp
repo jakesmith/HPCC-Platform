@@ -3053,6 +3053,14 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
+#if 0
+    {
+        Owned<IPropertyTree> tree = createPTreeFromXMLString(argv[1]);
+
+        toJSON(tree, jsonStr);
+        return 0;
+    }
+#endif
     try {
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);

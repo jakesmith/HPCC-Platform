@@ -326,6 +326,7 @@ enum {
     RFCreadfilteredindex,
     RFCreadfilteredindexcount,
     RFCreadfilteredindexblob,
+    RFCJson = '{',
     RFCmax,
     RFCunknown = 255 // 0 would have been more sensible, but can't break backward compatibility
 };
@@ -5637,6 +5638,42 @@ public:
         return false;
     }
 
+    bool cmdJson(MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler &client)
+    {
+        // this is an attempt to authenticate when we haven't got authentication turned on
+        if (TF_TRACE_CLIENT_STATS)
+        {
+            StringBuffer s(client.queryPeerName());
+            PROGLOG("Connect from %s",s.str());
+        }
+        Owned<IPropertyTree> jsonTree = createPTreeFromJSONString(msg.length(), msg.toByteArray());
+
+        /*
+         * {
+         *  "node" : {
+         *   "kind" : "diskread",
+         *   "fileName": "examplefilename",
+         *   "keyfilter" : "f1='1    '",
+         *   "input : "string5 f1; string5 f2",
+         *   "output" : "string f2; real f1"
+         *   }
+         * }
+         *
+         */
+
+        IPropertyTree *actNode = jsonTree->queryPropTree("node");
+        const char *fileName = actNode->queryProp("fileName");
+        const char *input = actNode->queryProp("input");
+        const char *output = actNode->queryProp("input");
+
+
+
+        unsigned len = msg.length();
+//        reply.append(len); // dafilesrv is big endian.
+        reply.append(len, msg.toByteArray());
+        return true;
+    }
+
     // legacy version
     bool cmdSetThrottle(MemoryBuffer & msg, MemoryBuffer & reply)
     {
@@ -5735,6 +5772,7 @@ public:
             case RFCgetinfo:
             case RFCfirewall:
             case RFCunlock:
+            case RFCJson:
                 stdCmdThrottler.addCommand(cmd, msg, client);
                 return;
             // NB: The following commands are still bound by the the thread pool
@@ -5792,6 +5830,7 @@ public:
                 MAPCOMMAND(RFCgetinfo, cmdGetInfo);
                 MAPCOMMAND(RFCfirewall, cmdFirewall);
                 MAPCOMMANDCLIENT(RFCunlock, cmdUnlock, *client);
+                MAPCOMMANDCLIENT(RFCJson, cmdJson, *client);
                 MAPCOMMANDCLIENT(RFCcopysection, cmdCopySection, *client);
                 MAPCOMMANDCLIENTTHROTTLE(RFCtreecopy, cmdTreeCopy, *client, &slowCmdThrottler);
                 MAPCOMMANDCLIENTTHROTTLE(RFCtreecopytmp, cmdTreeCopyTmp, *client, &slowCmdThrottler);

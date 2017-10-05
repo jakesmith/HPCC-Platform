@@ -44,6 +44,7 @@ bool sendFileAfterQuery = false;
 bool doLock = false;
 bool roxieLogMode = false;
 bool rawOnly = false;
+bool rawSend = false;
 
 StringBuffer sendFileName;
 StringAttr queryNameOverride;
@@ -523,9 +524,13 @@ int doSendQuery(const char * ip, unsigned port, const char * base)
 
     try
     {
-        if (!useHTTP)
+        if (!rawSend && !useHTTP)
             socket->write(&sendlen, sizeof(sendlen));
+
+        fprintf(stdout, "about to write %u <%s>\n", len, query);
+
         socket->write(query, len);
+
         if (sendFileAfterQuery)
         {
             FILE *in = fopen(sendFileName.str(), "rb");
@@ -658,6 +663,7 @@ void usage(int exitCode)
     printf("  -u<max>   run queries on separate threads\n");
     printf("  -cascade  cascade query (to all roxie nodes)\n");
     printf("  -lock     locked cascade query (to all roxie nodes)\n");
+    printf("  -x        raw send\n");
     
     exit(exitCode);
 }
@@ -727,6 +733,11 @@ int main(int argc, char **argv)
         else if (stricmp(argv[arg], "-f") == 0)
         {
             fromFile = true;
+            ++arg;
+        }
+        else if (stricmp(argv[arg], "-x") == 0)
+        {
+            rawSend = true;
             ++arg;
         }
         else if (stricmp(argv[arg], "-ff") == 0)
