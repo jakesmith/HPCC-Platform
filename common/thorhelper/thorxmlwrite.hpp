@@ -285,46 +285,6 @@ enum XMLWriterType{WTStandard, WTEncoding, WTEncodingData64, WTJSON} ;
 thorhelper_decl CommonXmlWriter * CreateCommonXmlWriter(unsigned _flags, unsigned initialIndent=0, IXmlStreamFlusher *_flusher=NULL, XMLWriterType xmlType=WTStandard);
 thorhelper_decl IXmlWriterExt * createIXmlWriterExt(unsigned _flags, unsigned initialIndent=0, IXmlStreamFlusher *_flusher=NULL, XMLWriterType xmlType=WTStandard);
 
-class thorhelper_decl SimpleOutputWriter : implements IXmlWriter, public CInterface
-{
-    void outputFieldSeparator();
-    bool separatorNeeded;
-public:
-    SimpleOutputWriter();
-    IMPLEMENT_IINTERFACE;
-
-    SimpleOutputWriter & clear();
-    unsigned length() const                                 { return out.length(); }
-    const char * str() const                                { return out.str(); }
-
-    virtual void outputQuoted(const char *text);
-    virtual void outputQString(unsigned len, const char *field, const char *fieldname);
-    virtual void outputString(unsigned len, const char *field, const char *fieldname);
-    virtual void outputBool(bool field, const char *fieldname);
-    virtual void outputData(unsigned len, const void *field, const char *fieldname);
-    virtual void outputReal(double field, const char *fieldname);
-    virtual void outputDecimal(const void *field, unsigned size, unsigned precision, const char *fieldname);
-    virtual void outputUDecimal(const void *field, unsigned size, unsigned precision, const char *fieldname);
-    virtual void outputUnicode(unsigned len, const UChar *field, const char *fieldname);
-    virtual void outputUtf8(unsigned len, const char *field, const char *fieldname);
-    virtual void outputBeginNested(const char *fieldname, bool nestChildren);
-    virtual void outputEndNested(const char *fieldname);
-    virtual void outputBeginDataset(const char *dsname, bool nestChildren){}
-    virtual void outputEndDataset(const char *dsname){}
-    virtual void outputBeginArray(const char *fieldname){}
-    virtual void outputEndArray(const char *fieldname){}
-    virtual void outputSetAll();
-    virtual void outputInlineXml(const char *text){} //for appending raw xml content
-    virtual void outputXmlns(const char *name, const char *uri){}
-
-    virtual void outputInt(__int64 field, unsigned size, const char *fieldname);
-    virtual void outputUInt(unsigned __int64 field, unsigned size, const char *fieldname);
-
-    void newline();
-
-protected:
-    StringBuffer out;
-};
 
 class thorhelper_decl CommonFieldProcessor : implements IFieldProcessor, public CInterface
 {

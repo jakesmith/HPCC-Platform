@@ -2288,6 +2288,7 @@ struct IHThorDiskReadBaseArg : extends IHThorCompoundBaseArg
 // common between Read, Normalize
 struct IHThorCompoundExtra : public IInterface
 {
+    // JCS->GH: Should constant should be move to common place (see eclhelper.hpp)
     virtual unsigned __int64 getChooseNLimit()              { return I64C(0x7fffffffffffffff); }
     virtual unsigned __int64 getRowLimit()                  { return (unsigned __int64) -1; }
     virtual void onLimitExceeded()                          { }
