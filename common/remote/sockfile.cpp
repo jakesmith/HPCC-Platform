@@ -3862,8 +3862,6 @@ IRowStream *createDiskReader(IHThorDiskReadArg &arg)
                 const char *fileName = arg->getFileName();
 
                 OwnedIFile iFile = createIFile(fileName);
-                if (!iFileIO)
-                    throw MakeStringException(0, "WTF!");
 
 #if 0
                 bool compressed = false; // isCompressedFile(iFileIO); // Should be passed with JSON
@@ -3884,6 +3882,8 @@ IRowStream *createDiskReader(IHThorDiskReadArg &arg)
                 else
 #endif
                     iFileIO.setown(iFile->open(IFOread));
+                if (!iFileIO)
+                    throw MakeStringException(0, "WTF!");
 
                 inputstream.setown(createFileSerialStream(iFileIO));
                 prefetchBuffer.setStream(inputstream);
@@ -5788,9 +5788,15 @@ public:
          *   "kind" : "diskread",
          *   "fileName": "examplefilename",
          *   "keyfilter" : "f1='1    '",
-         *   "input : "string5 f1; string5 f2",
-         *   "output" : "string f2; real f1"
+         *   "input" : {
+         *    "f1" : "string5",
+         *    "f2" : "string5"
+         *   },
+         *   "output" : {
+         *    "f2" : "string",
+         *    "f1" : "real"
          *   }
+         *  }
          * }
          *
          */
@@ -5802,18 +5808,18 @@ public:
         Owned<IRtlFieldTypeDeserializer> outputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
 
         const RtlTypeInfo *inputFieldInfo, *outputFieldInfo;
-        const char *inputJson = actNode->queryProp("input");
+        IPropertyTree *inputJson = actNode->queryPropTree("input");
         if (inputJson)
-            inputFieldInfo = inputFieldInfoDeserializer->deserialize(inputJson);
+            inputFieldInfo = inputFieldInfoDeserializer->deserialize(*inputJson);
         else
         {
             MemoryBuffer mb;
             actNode->getPropBin("inputBin", mb);
             inputFieldInfo = inputFieldInfoDeserializer->deserialize(mb);
         }
-        const char *outputJson = actNode->queryProp("output");
+        IPropertyTree *outputJson = actNode->queryPropTree("output");
         if (outputJson)
-            outputFieldInfo = outputFieldInfoDeserializer->deserialize(outputJson);
+            outputFieldInfo = outputFieldInfoDeserializer->deserialize(*outputJson);
         else
         {
             MemoryBuffer mb;
@@ -5828,7 +5834,7 @@ public:
         Owned<IOutputMetaData> out = new CDynamicOutputMetaData(*outputRecordTypeInfo);
 
 
-        Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in, out);
+        Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in.getClear(), out.getClear());
 
         Owned<IRowStream> stream = createDiskReader(*arg);
 

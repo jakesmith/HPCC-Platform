@@ -473,6 +473,25 @@ public:
      * <p>
      * Do not call more than once.
      *
+     * @param  _json JSON property tree to be deserialized, as created by CRtlFieldTypeSerializer
+     * @return Deserialized type object
+     */
+    virtual const RtlTypeInfo *deserialize(IPropertyTree &jsonTree) override
+    {
+        assertex(!base);
+        base = deserializeType(&jsonTree, &jsonTree);
+        return base;
+    }
+
+    /**
+     * Obtain the deserialized type information
+     * <p>
+     * Note that the RtlTypeInfo objects are not link-counted, so the lifetime of these objects
+     * is determined by the lifetime of the deserializer. They will be released once the deserializer
+     * that created them is deleted.
+     * <p>
+     * Do not call more than once.
+     *
      * @param  _json JSON text to be deserialized, as created by CRtlFieldTypeSerializer
      * @return Deserialized type object
      */
