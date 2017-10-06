@@ -663,4 +663,41 @@ protected:
     const byte * * cursor;
 };
 
+class MemoryBuffer;
+class ECLRTL_API MemoryBufferBuilder : public RtlRowBuilderBase
+{
+public:
+    MemoryBufferBuilder(MemoryBuffer & _buffer, unsigned _minSize)
+        : buffer(_buffer), minSize(_minSize)
+    {
+        reserved = 0;
+    }
+
+    virtual byte * ensureCapacity(size32_t required, const char * fieldName);
+
+    MemoryBufferBuilder &ensureRow()
+    {
+        ensureCapacity(minSize, nullptr);
+        return *this;
+    }
+
+    void finishRow(size32_t length);
+    virtual IEngineRowAllocator *queryAllocator() const
+    {
+        return NULL;
+    }
+
+protected:
+    virtual byte * createSelf()
+    {
+        return ensureCapacity(minSize, NULL);
+    }
+
+protected:
+    MemoryBuffer & buffer;
+    size32_t minSize;
+    size32_t reserved;
+};
+
+
 #endif

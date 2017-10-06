@@ -42,6 +42,13 @@
 #include <atomic>
 
 #include "rtldynfield.hpp"
+#include "rtlds_imp.hpp"
+#include "rtlread_imp.hpp"
+#include "rtlrecord.hpp"
+#include "eclhelper_dyn.hpp"
+
+#include "rtlcommon.hpp"
+
 
 #define SOCKET_CACHE_MAX 500
 
@@ -3827,6 +3834,131 @@ struct OpenFileInfo
 
 #define MAX_KEYDATA_SZ 0x10000
 
+IRowStream *createDiskReader(IHThorDiskReadArg &arg)
+{
+    class CDiskStream : public CSimpleInterfaceOf<IRowStream>
+    {
+        Linked<IHThorDiskReadArg> arg;
+        MemoryBuffer resultBuffer;
+        MemoryBufferBuilder *outBuilder = nullptr;
+        unsigned __int64 limit = 0;
+        unsigned __int64 stopAfter = 0;
+        IArrayOf<IKeySegmentMonitor> segMonitors;
+        Owned<ISourceRowPrefetcher> prefetcher;
+        CThorContiguousRowBuffer prefetchBuffer;
+        bool opened = false;
+        bool eofseen = false;
+        bool needTransform = true;
+        unsigned __int64 processed = 0, initialProcessed = 0;
+        Owned<ISerialStream> inputstream;
+        Owned<IFileIO> iFileIO;
+
+        void open()
+        {
+            if (!arg->canMatchAny())
+                eofseen = true;
+            else
+            {
+                const char *fileName = arg->getFileName();
+
+                OwnedIFile iFile = createIFile(fileName);
+                if (!iFileIO)
+                    throw MakeStringException(0, "WTF!");
+
+#if 0
+                bool compressed = false; // isCompressedFile(iFileIO); // Should be passed with JSON
+                StringBuffer encryptionkey;
+                if (compressed)
+                {
+                    Owned<IExpander> eexp;
+                    if (encryptionkey.length()!=0)
+                        eexp.setown(createAESExpander256((size32_t)encryptionkey.length(),encryptionkey.bufferBase()));
+                    iFileIO.setown(createCompressedFileReader(iFile,eexp));
+                    if(!iFileIO && !blockcompressed) //fall back to old decompression, unless dfs marked as new
+                    {
+                        iFileIO.setown(iFile->open(IFOread));
+                        if(iFileIO)
+                            rowcompressed = true;
+                    }
+                }
+                else
+#endif
+                    iFileIO.setown(iFile->open(IFOread));
+
+                inputstream.setown(createFileSerialStream(iFileIO));
+                prefetchBuffer.setStream(inputstream);
+                prefetcher.setown(arg->queryDiskRecordSize()->createDiskPrefetcher(nullptr, 0));
+
+                outBuilder = new MemoryBufferBuilder(resultBuffer, arg->queryOutputMeta()->getMinRecordSize());
+                stopAfter = arg->getChooseNLimit();
+                limit = arg->getRowLimit();
+            }
+
+            opened = true;
+        }
+        void close()
+        {
+            // TBD
+        }
+        bool segMonitorsMatch(const void *row) { return true; }
+    public:
+        CDiskStream(IHThorDiskReadArg &_arg) : arg(&_arg), prefetchBuffer(nullptr)
+        {
+        }
+        ~CDiskStream()
+        {
+            if (outBuilder)
+                delete outBuilder;
+        }
+        virtual const void *nextRow() override
+        {
+            if (!opened) open();
+            if (needTransform)
+            {
+                while (!eofseen && ((stopAfter == 0) || ((processed - initialProcessed) < stopAfter)))
+                {
+                    while (!prefetchBuffer.eos())
+                    {
+                        prefetcher->readAhead(prefetchBuffer);
+                        const byte * next = prefetchBuffer.queryRow();
+                        size32_t sizeRead = prefetchBuffer.queryRowSize();
+                        size32_t thisSize;
+                        if (segMonitorsMatch(next))
+                        {
+                            resultBuffer.clear();
+                            thisSize = arg->transform(*outBuilder, next);
+                        }
+                        else
+                            thisSize = 0;
+                        prefetchBuffer.finishedRow();
+
+                        if (thisSize)
+                        {
+                            if ((processed - initialProcessed) >=limit)
+                            {
+                                resultBuffer.clear();
+                                arg->onLimitExceeded();
+                                return NULL;
+                            }
+                            processed++;
+                            return resultBuffer.toByteArray();
+                        }
+                    }
+                    eofseen = true;
+                }
+            }
+            close();
+            return NULL;
+        }
+        virtual void stop() override
+        {
+            // TBD
+        }
+    };
+
+    return new CDiskStream(arg);
+}
+
 class CRemoteFileServer : implements IRemoteFileServer, public CInterface
 {
     class CThrottler;
@@ -5666,42 +5798,49 @@ public:
         IPropertyTree *actNode = jsonTree->queryPropTree("node");
         const char *fileName = actNode->queryProp("fileName");
 
-        OwnedIFile iFile = createIFile(fileName);
-        OwnedIFileIO iFileIO = iFile->open(IFOread);
-        if (!iFileIO)
-        {
-            reply.append("Failed to open: ").append(fileName);
-            return false;
-        }
-        OwnedIFileIOStream stream = createBufferedIOStream(iFileIO);
+        Owned<IRtlFieldTypeDeserializer> inputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
+        Owned<IRtlFieldTypeDeserializer> outputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
 
-
-        Owned<IRtlFieldTypeDeserializer> inputFieldInfo = createRtlFieldTypeDeserializer();
-        Owned<IRtlFieldTypeDeserializer> outputFieldInfo = createRtlFieldTypeDeserializer();
-
+        const RtlTypeInfo *inputFieldInfo, *outputFieldInfo;
         const char *inputJson = actNode->queryProp("input");
         if (inputJson)
-            inputFieldInfo->deserialize(inputJson);
+            inputFieldInfo = inputFieldInfoDeserializer->deserialize(inputJson);
         else
         {
             MemoryBuffer mb;
             actNode->getPropBin("inputBin", mb);
-            inputFieldInfo->deserialize(mb);
+            inputFieldInfo = inputFieldInfoDeserializer->deserialize(mb);
         }
         const char *outputJson = actNode->queryProp("output");
         if (outputJson)
-            outputFieldInfo->deserialize(outputJson);
+            outputFieldInfo = outputFieldInfoDeserializer->deserialize(outputJson);
         else
         {
             MemoryBuffer mb;
             actNode->getPropBin("outputBin", mb);
-            outputFieldInfo->deserialize(mb);
+            outputFieldInfo = outputFieldInfoDeserializer->deserialize(mb);
         }
+        const RtlRecordTypeInfo *inputRecordTypeInfo, *outputRecordTypeInfo;
+        inputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (inputFieldInfo);
+        outputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (outputFieldInfo);
+
+        Owned<IOutputMetaData> in = new CDynamicOutputMetaData(*inputRecordTypeInfo);
+        Owned<IOutputMetaData> out = new CDynamicOutputMetaData(*outputRecordTypeInfo);
 
 
-        unsigned len = msg.length();
-//        reply.append(len); // dafilesrv is big endian.
-        reply.append(len, msg.toByteArray());
+        Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in, out);
+
+        Owned<IRowStream> stream = createDiskReader(*arg);
+
+        for (unsigned i=0; i<3; i++)
+        {
+            const byte *row = (const byte *)stream->nextRow();
+            SimpleOutputWriter xmlWriter;
+            out->toXML(row, xmlWriter);
+
+            reply.append(xmlWriter.length(), xmlWriter.str());
+            reply.append('\n');
+        }
         return true;
     }
 

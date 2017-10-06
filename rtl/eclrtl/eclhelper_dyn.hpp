@@ -22,7 +22,8 @@
 #include "eclrtl.hpp"
 #include "eclhelper.hpp"
 
-extern ECLRTL_API IHThorArg *createDiskReadArg(IPropertyTree &xgmml);
+extern ECLRTL_API IHThorDiskReadArg *createDiskReadArg(IPropertyTree &xgmml);
+extern ECLRTL_API IHThorDiskReadArg *createDiskReadArg(const char *fileName, IOutputMetaData *in, IOutputMetaData *out);
 extern ECLRTL_API IHThorArg *createWorkunitWriteArg(IPropertyTree &xgmml);
 extern ECLRTL_API IEclProcess* createDynamicEclProcess();
 

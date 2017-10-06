@@ -43,7 +43,7 @@ static const RtlRecordTypeInfo &loadTypeInfo(IPropertyTree &xgmml, IRtlFieldType
 class ECLRTL_API CDynamicDiskReadArg : public CThorDiskReadArg
 {
 public:
-    CDynamicDiskReadArg(IPropertyTree &_xgmml) : xgmml(_xgmml)
+    CDynamicDiskReadArg(IPropertyTree &xgmml)
     {
         indeserializer.setown(createRtlFieldTypeDeserializer());
         outdeserializer.setown(createRtlFieldTypeDeserializer());
@@ -54,6 +54,13 @@ public:
         translator.setown(createRecordTranslator(queryOutputMeta()->queryRecordAccessor(true), *inrec));
         if (xgmml.hasProp("att[@name=\"keyfilter\"]"))
             flags |= TDRkeyed;
+        fileName.set(xgmml.queryProp("att[@name=\"_fileName\"]/@value"));
+    }
+    CDynamicDiskReadArg(const char *_fileName, IOutputMetaData *_in, IOutputMetaData *_out) : fileName(_fileName), in(_in), out(_out)
+    {
+        inrec = &in->queryRecordAccessor(true);
+        numOffsets = inrec->getNumVarFields() + 1;
+        translator.setown(createRecordTranslator(queryOutputMeta()->queryRecordAccessor(true), *inrec));
     }
     virtual bool needTransform() override
     {
@@ -66,6 +73,7 @@ public:
     }
     virtual void createSegmentMonitors(IIndexReadContext *irc) override
     {
+/*
         size_t * variableOffsets = (size_t *)alloca(numOffsets * sizeof(size_t));
         RtlRow offsetCalculator(*inrec, nullptr, numOffsets, variableOffsets);
         Owned<IPropertyTreeIterator> filters = xgmml.getElements("att[@name=\"keyfilter\"]");
@@ -89,6 +97,7 @@ public:
             printf("Filtering: %s(%u,%u)=%s\n", fieldName.str(), fieldOffset, fieldSize, fieldVal.str());
             irc->append(createSingleKeySegmentMonitor(false, fieldOffset, fieldSize, fieldVal.str()));
         }
+*/
     }
 
     virtual IOutputMetaData * queryOutputMeta() override
@@ -97,7 +106,7 @@ public:
     }
     virtual const char * getFileName() override final
     {
-        return xgmml.queryProp("att[@name=\"_fileName\"]/@value");
+        return fileName;
     }
     virtual IOutputMetaData * queryDiskRecordSize() override final
     {
@@ -105,14 +114,15 @@ public:
     }
     virtual unsigned getFormatCrc() override
     {
-        return xgmml.getPropInt("att[@name=\"formatCrc\"]/@value", 0);  // engines should treat 0 as 'ignore'
+        return 0;
+        //return xgmml.getPropInt("att[@name=\"formatCrc\"]/@value", 0);  // engines should treat 0 as 'ignore'
     }
     virtual size32_t transform(ARowBuilder & rowBuilder, const void * src) override
     {
         return translator->translate(rowBuilder, (const byte *) src);
     }
 private:
-    IPropertyTree &xgmml;
+    StringAttr fileName;
     unsigned numOffsets = 0;
     unsigned flags = 0;
     Owned<IRtlFieldTypeDeserializer> indeserializer;   // Owns the resulting ITypeInfo structures, so needs to be kept around
@@ -139,9 +149,14 @@ private:
     Owned<IOutputMetaData> in;
 };
 
-extern ECLRTL_API IHThorArg *createDiskReadArg(IPropertyTree &xgmml)
+extern ECLRTL_API IHThorDiskReadArg *createDiskReadArg(IPropertyTree &xgmml)
 {
     return new CDynamicDiskReadArg(xgmml);
+}
+
+extern ECLRTL_API IHThorDiskReadArg *createDiskReadArg(const char *fileName, IOutputMetaData *in, IOutputMetaData *out)
+{
+    return new CDynamicDiskReadArg(fileName, in, out);
 }
 
 extern ECLRTL_API IHThorArg *createWorkunitWriteArg(IPropertyTree &xgmml)
