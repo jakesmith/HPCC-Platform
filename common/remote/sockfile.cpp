@@ -3883,7 +3883,7 @@ IRowStream *createDiskReader(IHThorDiskReadArg &arg)
 #endif
                     iFileIO.setown(iFile->open(IFOread));
                 if (!iFileIO)
-                    throw MakeStringException(0, "WTF!");
+                    throw MakeStringException(0, "Failed to open: '%s'", fileName);
 
                 inputstream.setown(createFileSerialStream(iFileIO));
                 prefetchBuffer.setStream(inputstream);
