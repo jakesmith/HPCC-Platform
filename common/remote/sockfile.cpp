@@ -5826,9 +5826,11 @@ public:
 
         IPropertyTree *actNode = jsonTree->queryPropTree("node");
 
-        unsigned cursorHandle = actNode->getPropInt("cursor");
+        int cursorHandle = actNode->getPropInt("cursor");
+        Owned<IRowStream> stream;
         OpenFileInfo fileInfo;
-        if (!lookupFileIOHandle(cursorHandle))
+        Owned<IOutputMetaData> out;
+        if (!lookupFileIOHandle(cursorHandle, fileInfo))
         {
             const char *fileName = actNode->queryProp("fileName");
 
@@ -5859,18 +5861,19 @@ public:
             outputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (outputFieldInfo);
 
             Owned<IOutputMetaData> in = new CDynamicOutputMetaData(*inputRecordTypeInfo);
-            Owned<IOutputMetaData> out = new CDynamicOutputMetaData(*outputRecordTypeInfo);
+            out.setown(new CDynamicOutputMetaData(*outputRecordTypeInfo));
 
 
             Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in.getClear(), out.getLink());
 
-            Owned<IRowStream> stream = createDiskReader(*arg);
+            stream.setown(createDiskReader(*arg));
 
             {
                 CriticalBlock block(sect);
-                handle = getNextHandle();
+                cursorHandle = getNextHandle();
                 client.previdx = client.openFiles.ordinality();
-                client.openFiles.append(OpenFileInfo(handle, stream, fileName));
+                Owned<StringAttrItem> name = new StringAttrItem(fileName);
+                client.openFiles.append(OpenFileInfo(cursorHandle, stream, name));
             }
         }
         else
