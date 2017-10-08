@@ -3828,7 +3828,9 @@ struct OpenFileInfo
 {
     OpenFileInfo() { }
     OpenFileInfo(int _handle, IFileIO *_fileIO, StringAttrItem *_filename) : handle(_handle), fileIO(_fileIO), filename(_filename) { }
+    OpenFileInfo(int _handle, IRowStream *_rowStream, StringAttrItem *_filename) : handle(_handle), rowStream(_rowStream), filename(_filename) { }
     Linked<IFileIO> fileIO;
+    Linked<IRowStream> rowStream;
     Linked<StringAttrItem> filename; // for debug
     int handle = 0;
     unsigned flags = 0;
@@ -3836,9 +3838,14 @@ struct OpenFileInfo
 
 #define MAX_KEYDATA_SZ 0x10000
 
-IRowStream *createDiskReader(IHThorDiskReadArg &arg)
+interface IRemoteReadCursor : extends IRowStream
 {
-    class CDiskStream : public CSimpleInterfaceOf<IRowStream>
+    virtual void serialize(MemoryBuffer &tgt) const = 0;
+    virtual void restore(MemoryBuffer &src) = 0;
+};
+IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg)
+{
+    class CDiskStream : public CSimpleInterfaceOf<IRemoteReadCursor>
     {
         Linked<IHThorDiskReadArg> arg;
         MemoryBuffer resultBuffer;
@@ -3854,6 +3861,7 @@ IRowStream *createDiskReader(IHThorDiskReadArg &arg)
         unsigned __int64 processed = 0, initialProcessed = 0;
         Owned<ISerialStream> inputstream;
         Owned<IFileIO> iFileIO;
+        unsigned __int64 startPos;
 
         void open()
         {
@@ -3887,7 +3895,7 @@ IRowStream *createDiskReader(IHThorDiskReadArg &arg)
                 if (!iFileIO)
                     throw MakeStringException(0, "Failed to open: '%s'", fileName);
 
-                inputstream.setown(createFileSerialStream(iFileIO));
+                inputstream.setown(createFileSerialStream(iFileIO, startPos));
                 prefetchBuffer.setStream(inputstream);
                 prefetcher.setown(arg->queryDiskRecordSize()->createDiskPrefetcher(nullptr, 0));
 
@@ -3952,6 +3960,20 @@ IRowStream *createDiskReader(IHThorDiskReadArg &arg)
         virtual void stop() override
         {
             // TBD
+        }
+    // IRemoteReadCursor impl.
+        virtual void serialize(MemoryBuffer &tgt) const override
+        {
+            DelayedSizeMarker delayed(tgt);
+            tgt.append(prefetchBuffer.tell());
+            tgt.append(processed);
+        }
+        virtual void restore(MemoryBuffer &src) override
+        {
+            unsigned len;
+            src.read(len);
+            src.read(startPos);
+            src.read(processed);
         }
     };
 
@@ -5788,6 +5810,7 @@ public:
          *   "fileName": "examplefilename",
          *   "keyfilter" : "f1='1    '",
          *   "choosen" : "5",
+         *   "cursor" : "12345", // cursor handle
          *   "input" : {
          *    "f1" : "string5",
          *    "f2" : "string5"
@@ -5802,43 +5825,62 @@ public:
          */
 
         IPropertyTree *actNode = jsonTree->queryPropTree("node");
-        const char *fileName = actNode->queryProp("fileName");
 
-        Owned<IRtlFieldTypeDeserializer> inputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
-        Owned<IRtlFieldTypeDeserializer> outputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
+        unsigned cursorHandle = actNode->getPropInt("cursor");
+        OpenFileInfo fileInfo;
+        if (!lookupFileIOHandle(cursorHandle))
+        {
+            const char *fileName = actNode->queryProp("fileName");
 
-        const RtlTypeInfo *inputFieldInfo, *outputFieldInfo;
-        IPropertyTree *inputJson = actNode->queryPropTree("input");
-        if (inputJson)
-            inputFieldInfo = inputFieldInfoDeserializer->deserialize(*inputJson);
+            Owned<IRtlFieldTypeDeserializer> inputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
+            Owned<IRtlFieldTypeDeserializer> outputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
+
+            const RtlTypeInfo *inputFieldInfo, *outputFieldInfo;
+            IPropertyTree *inputJson = actNode->queryPropTree("input");
+            if (inputJson)
+                inputFieldInfo = inputFieldInfoDeserializer->deserialize(*inputJson);
+            else
+            {
+                MemoryBuffer mb;
+                actNode->getPropBin("inputBin", mb);
+                inputFieldInfo = inputFieldInfoDeserializer->deserialize(mb);
+            }
+            IPropertyTree *outputJson = actNode->queryPropTree("output");
+            if (outputJson)
+                outputFieldInfo = outputFieldInfoDeserializer->deserialize(*outputJson);
+            else
+            {
+                MemoryBuffer mb;
+                actNode->getPropBin("outputBin", mb);
+                outputFieldInfo = outputFieldInfoDeserializer->deserialize(mb);
+            }
+            const RtlRecordTypeInfo *inputRecordTypeInfo, *outputRecordTypeInfo;
+            inputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (inputFieldInfo);
+            outputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (outputFieldInfo);
+
+            Owned<IOutputMetaData> in = new CDynamicOutputMetaData(*inputRecordTypeInfo);
+            Owned<IOutputMetaData> out = new CDynamicOutputMetaData(*outputRecordTypeInfo);
+
+
+            Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in.getClear(), out.getLink());
+
+            Owned<IRowStream> stream = createDiskReader(*arg);
+
+            {
+                CriticalBlock block(sect);
+                handle = getNextHandle();
+                client.previdx = client.openFiles.ordinality();
+                client.openFiles.append(OpenFileInfo(handle, stream, fileName));
+            }
+        }
         else
         {
-            MemoryBuffer mb;
-            actNode->getPropBin("inputBin", mb);
-            inputFieldInfo = inputFieldInfoDeserializer->deserialize(mb);
+            stream.set(fileInfo.rowStream);
         }
-        IPropertyTree *outputJson = actNode->queryPropTree("output");
-        if (outputJson)
-            outputFieldInfo = outputFieldInfoDeserializer->deserialize(*outputJson);
-        else
-        {
-            MemoryBuffer mb;
-            actNode->getPropBin("outputBin", mb);
-            outputFieldInfo = outputFieldInfoDeserializer->deserialize(mb);
-        }
-        const RtlRecordTypeInfo *inputRecordTypeInfo, *outputRecordTypeInfo;
-        inputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (inputFieldInfo);
-        outputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (outputFieldInfo);
-
-        Owned<IOutputMetaData> in = new CDynamicOutputMetaData(*inputRecordTypeInfo);
-        Owned<IOutputMetaData> out = new CDynamicOutputMetaData(*outputRecordTypeInfo);
-
-
-        Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in.getClear(), out.getLink());
-
-        Owned<IRowStream> stream = createDiskReader(*arg);
 
         unsigned __int64 recs = actNode->getPropInt64("choosen", defaultFileStreamChoosen);
+
+
         for (unsigned __int64 i=0; i<recs; i++)
         {
             const byte *row = (const byte *)stream->nextRow();
