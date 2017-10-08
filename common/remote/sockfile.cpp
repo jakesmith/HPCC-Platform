@@ -62,7 +62,10 @@
 #define TREECOPYPOLLTIME  (60*1000*5)      // for tracing that delayed
 #define TREECOPYPRUNETIME (24*60*60*1000)  // 1 day
 
-static const unsigned __int64 defaultFileStreamChoosen = 100;
+static const unsigned __int64 defaultFileStreamChooseN = I64C(0x7fffffffffffffff); // constant should be move to common place (see eclhelper.hpp)
+static const unsigned __int64 defaultFileStreamSkipN = 0;
+static const unsigned __int64 defaultFileStreamRowLimit = (unsigned __int64) -1;
+static const unsigned __int64 defaultDaFSNumRecs = 100;
 
 #if SIMULATE_PACKETLOSS
 
@@ -3823,14 +3826,20 @@ public:
     }
 };
 
+interface IRemoteReadCursor : extends IRowStream
+{
+    virtual void serialize(MemoryBuffer &tgt) const = 0;
+    virtual void restore(MemoryBuffer &src) = 0;
+};
+
 enum OpenFileFlag { of_null=0x0, of_key=0x01 };
 struct OpenFileInfo
 {
     OpenFileInfo() { }
     OpenFileInfo(int _handle, IFileIO *_fileIO, StringAttrItem *_filename) : handle(_handle), fileIO(_fileIO), filename(_filename) { }
-    OpenFileInfo(int _handle, IRowStream *_rowStream, StringAttrItem *_filename) : handle(_handle), rowStream(_rowStream), filename(_filename) { }
+    OpenFileInfo(int _handle, IRemoteReadCursor *_rowStream, StringAttrItem *_filename) : handle(_handle), rowStream(_rowStream), filename(_filename) { }
     Linked<IFileIO> fileIO;
-    Linked<IRowStream> rowStream;
+    Linked<IRemoteReadCursor> rowStream;
     Linked<StringAttrItem> filename; // for debug
     int handle = 0;
     unsigned flags = 0;
@@ -3838,12 +3847,7 @@ struct OpenFileInfo
 
 #define MAX_KEYDATA_SZ 0x10000
 
-interface IRemoteReadCursor : extends IRowStream
-{
-    virtual void serialize(MemoryBuffer &tgt) const = 0;
-    virtual void restore(MemoryBuffer &src) = 0;
-};
-IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg)
+IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg, IRtlFieldTypeDeserializer &in, IRtlFieldTypeDeserializer &out)
 {
     class CDiskStream : public CSimpleInterfaceOf<IRemoteReadCursor>
     {
@@ -3851,17 +3855,19 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg)
         MemoryBuffer resultBuffer;
         MemoryBufferBuilder *outBuilder = nullptr;
         unsigned __int64 limit = 0;
-        unsigned __int64 stopAfter = 0;
+        unsigned __int64 chooseN = 0;
         IArrayOf<IKeySegmentMonitor> segMonitors;
         Owned<ISourceRowPrefetcher> prefetcher;
         CThorContiguousRowBuffer prefetchBuffer;
         bool opened = false;
         bool eofseen = false;
         bool needTransform = true;
-        unsigned __int64 processed = 0, initialProcessed = 0;
+        unsigned __int64 processed = 0;
         Owned<ISerialStream> inputstream;
         Owned<IFileIO> iFileIO;
         unsigned __int64 startPos;
+        Linked<IRtlFieldTypeDeserializer> inputFieldInfoDeserializer;
+        Linked<IRtlFieldTypeDeserializer> outputFieldInfoDeserializer;
 
         void open()
         {
@@ -3900,7 +3906,7 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg)
                 prefetcher.setown(arg->queryDiskRecordSize()->createDiskPrefetcher(nullptr, 0));
 
                 outBuilder = new MemoryBufferBuilder(resultBuffer, arg->queryOutputMeta()->getMinRecordSize());
-                stopAfter = arg->getChooseNLimit();
+                chooseN = arg->getChooseNLimit();
                 limit = arg->getRowLimit();
             }
 
@@ -3912,7 +3918,8 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg)
         }
         bool segMonitorsMatch(const void *row) { return true; }
     public:
-        CDiskStream(IHThorDiskReadArg &_arg) : arg(&_arg), prefetchBuffer(nullptr)
+        CDiskStream(IHThorDiskReadArg &_arg, IRtlFieldTypeDeserializer &_in, IRtlFieldTypeDeserializer &_out)
+            : arg(&_arg), inputFieldInfoDeserializer(&_in), outputFieldInfoDeserializer(&_out), prefetchBuffer(nullptr)
         {
         }
         ~CDiskStream()
@@ -3925,7 +3932,7 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg)
             if (!opened) open();
             if (needTransform)
             {
-                while (!eofseen && ((stopAfter == 0) || ((processed - initialProcessed) < stopAfter)))
+                while (!eofseen && ((chooseN == 0) || (processed < chooseN)))
                 {
                     while (!prefetchBuffer.eos())
                     {
@@ -3941,11 +3948,11 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg)
 
                         if (thisSize)
                         {
-                            if ((processed - initialProcessed) >=limit)
+                            if (processed >=limit)
                             {
                                 resultBuffer.clear();
                                 arg->onLimitExceeded();
-                                return NULL;
+                                return nullptr;
                             }
                             processed++;
                             return resultBuffer.toByteArray();
@@ -3955,7 +3962,7 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg)
                 }
             }
             close();
-            return NULL;
+            return nullptr;
         }
         virtual void stop() override
         {
@@ -3977,7 +3984,7 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg)
         }
     };
 
-    return new CDiskStream(arg);
+    return new CDiskStream(arg, in, out);
 }
 
 class CRemoteFileServer : implements IRemoteFileServer, public CInterface
@@ -5827,10 +5834,10 @@ public:
         IPropertyTree *actNode = jsonTree->queryPropTree("node");
 
         int cursorHandle = actNode->getPropInt("cursor");
-        Owned<IRowStream> stream;
+        Owned<IRemoteReadCursor> stream;
         OpenFileInfo fileInfo;
         Owned<IOutputMetaData> out;
-        if (!lookupFileIOHandle(cursorHandle, fileInfo))
+        if (!cursorHandle)
         {
             const char *fileName = actNode->queryProp("fileName");
 
@@ -5863,10 +5870,12 @@ public:
             Owned<IOutputMetaData> in = new CDynamicOutputMetaData(*inputRecordTypeInfo);
             out.setown(new CDynamicOutputMetaData(*outputRecordTypeInfo));
 
+            unsigned __int64 chooseN = actNode->getPropInt64("choosen", defaultFileStreamChooseN);
+            unsigned __int64 skipN = actNode->getPropInt64("skipN", defaultFileStreamSkipN);
+            unsigned __int64 rowLimit = actNode->getPropInt64("rowLimit", defaultFileStreamRowLimit);
+            Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in.getClear(), out.getLink(), chooseN, skipN, rowLimit);
 
-            Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in.getClear(), out.getLink());
-
-            stream.setown(createDiskReader(*arg));
+            stream.setown(createDiskReader(*arg, *inputFieldInfoDeserializer, *outputFieldInfoDeserializer));
 
             {
                 CriticalBlock block(sect);
@@ -5875,16 +5884,52 @@ public:
                 Owned<StringAttrItem> name = new StringAttrItem(fileName);
                 client.openFiles.append(OpenFileInfo(cursorHandle, stream, name));
             }
+
+            /* INPUT:
+             * + JSON request (with no handle)
+             */
+
+            /* OUTPUT:
+             * + reply code
+             * + # rows
+             * + records (upto max or choosen)
+             * + # processed
+             */
+        }
+        else if (!lookupFileIOHandle(cursorHandle, fileInfo))
+        {
+            enum RFCStreamResponse:unsigned { RFCSR_ok, RFCSR_unknownhandle, RFCSR_error };
+            reply.append(RFCSR_unknownhandle);
+
+            // challenge resposne ..
+
+            /* INPUT:
+             * + cursorHandle (unsigned)
+             */
+
+            /* OUTPUT:
+             * + reply code (RFCSR_unknownhandle)
+             * + [optional error - exception text serialized?]
+             */
         }
         else
         {
+            /* INPUT:
+             * + cursorHandle (unsigned)
+             */
+
+            /* OUTPUT:
+             * + reply code
+             * + # rows
+             * + records (upto max or choosen)
+             * + # processed
+             */
+
             stream.set(fileInfo.rowStream);
         }
 
-        unsigned __int64 recs = actNode->getPropInt64("choosen", defaultFileStreamChoosen);
 
-
-        for (unsigned __int64 i=0; i<recs; i++)
+        for (unsigned __int64 i=0; i<defaultDaFSNumRecs; i++)
         {
             const byte *row = (const byte *)stream->nextRow();
             if (!row)

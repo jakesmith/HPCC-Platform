@@ -56,7 +56,8 @@ public:
             flags |= TDRkeyed;
         fileName.set(xgmml.queryProp("att[@name=\"_fileName\"]/@value"));
     }
-    CDynamicDiskReadArg(const char *_fileName, IOutputMetaData *_in, IOutputMetaData *_out) : fileName(_fileName), in(_in), out(_out)
+    CDynamicDiskReadArg(const char *_fileName, IOutputMetaData *_in, IOutputMetaData *_out, unsigned __int64 _chooseN, unsigned __int64 _skipN, unsigned __int64 _rowLimit)
+        : fileName(_fileName), in(_in), out(_out), chooseN(_chooseN), skipN(_skipN), rowLimit(_rowLimit)
     {
         inrec = &in->queryRecordAccessor(true);
         numOffsets = inrec->getNumVarFields() + 1;
@@ -121,6 +122,8 @@ public:
     {
         return translator->translate(rowBuilder, (const byte *) src);
     }
+    virtual unsigned __int64 getChooseNLimit() { return chooseN; }
+    virtual unsigned __int64 getRowLimit() { return rowLimit; }
 private:
     StringAttr fileName;
     unsigned numOffsets = 0;
@@ -131,6 +134,9 @@ private:
     Owned<IOutputMetaData> out;
     const RtlRecord *inrec = nullptr;
     Owned<const IDynamicTransform> translator;
+    unsigned __int64 chooseN = I64C(0x7fffffffffffffff); // constant(s) should be commoned up somewhere
+    unsigned __int64 skipN = 0;
+    unsigned __int64 rowLimit = (unsigned __int64) -1;
 };
 
 class ECLRTL_API CDynamicWorkUnitWriteArg : public CThorWorkUnitWriteArg
@@ -154,9 +160,9 @@ extern ECLRTL_API IHThorDiskReadArg *createDiskReadArg(IPropertyTree &xgmml)
     return new CDynamicDiskReadArg(xgmml);
 }
 
-extern ECLRTL_API IHThorDiskReadArg *createDiskReadArg(const char *fileName, IOutputMetaData *in, IOutputMetaData *out)
+extern ECLRTL_API IHThorDiskReadArg *createDiskReadArg(const char *fileName, IOutputMetaData *in, IOutputMetaData *out, unsigned __int64 chooseN, unsigned __int64 skipN, unsigned __int64 rowLimit)
 {
-    return new CDynamicDiskReadArg(fileName, in, out);
+    return new CDynamicDiskReadArg(fileName, in, out, chooseN, skipN, rowLimit);
 }
 
 extern ECLRTL_API IHThorArg *createWorkunitWriteArg(IPropertyTree &xgmml)
