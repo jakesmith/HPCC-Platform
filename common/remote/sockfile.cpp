@@ -591,13 +591,10 @@ inline void sendBuffer(ISocket * socket, MemoryBuffer & src, byte specialCode=0)
     byte * buffer = (byte *)src.toByteArray();
     if (TF_TRACE_FULL)
         PROGLOG("sendBuffer size %d, data = %d %d %d %d",length, (int)buffer[4],(int)buffer[5],(int)buffer[6],(int)buffer[7]);
-    _WINCPYREV(buffer, &length, sizeof(unsigned));
     if (specialCode)
-    {
-        assertex(0 == (length & 0x80000000));
-        assertex(specialCode < 0x100);
-        *buffer = specialCode;
-    }
+        length |= 0x80000000;
+//    memcpy(buffer, &length, sizeof(unsigned))
+    _WINCPYREV(buffer, &length, sizeof(unsigned));
     SOCKWRITE(socket)(buffer, src.length());
 }
 
@@ -3840,6 +3837,7 @@ interface IRemoteReadCursor : extends IInterface
     virtual void serialize(MemoryBuffer &tgt) const = 0;
     virtual void restore(MemoryBuffer &src) = 0;
     virtual const void *nextRow(size32_t &sz) = 0;
+    virtual unsigned __int64 queryProcessed() const = 0;
 };
 
 enum OpenFileFlag { of_null=0x0, of_key=0x01 };
@@ -3988,6 +3986,10 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg, IRtlFieldTypeDeseria
             src.read(len);
             src.read(startPos);
             src.read(processed);
+        }
+        virtual unsigned __int64 queryProcessed() const override
+        {
+            return processed;
         }
     };
 
@@ -5816,7 +5818,8 @@ public:
             PROGLOG("Connect from %s",s.str());
         }
 
-        replyCode = 0;
+        replyCode = 1;
+        unsigned replyPos = reply.length();
         try
         {
             Owned<IPropertyTree> jsonTree = createPTreeFromJSONString(msg.length(), msg.toByteArray());
@@ -5919,12 +5922,11 @@ public:
                  * + # processed
                  */
 
-                // replyCode = 'R';
+                reply.append('J');
+                reply.append(cursorHandle);
             }
             else if (!lookupFileIOHandle(cursorHandle, fileInfo))
             {
-                replyCode = 'C';
-
                 // challenge response ..
 
                 /* INPUT:
@@ -5952,8 +5954,9 @@ public:
                 stream.set(fileInfo.rowStream);
             }
 
+            unsigned __int64 initProcessed = stream->queryProcessed();
             {
-                DelayedSizeMarker delayed(reply); // I think this should be # records instead
+                DelayedSizeMarker delayed(reply); // data length
                 for (unsigned __int64 i=0; i<defaultDaFSNumRecs; i++)
                 {
                     size32_t rowSz;
@@ -5984,12 +5987,17 @@ public:
                             break;
                     }
                 }
+                delayed.write();
             }
-            stream->serialize(reply);
+            DelayedSizeMarker delayed(reply); // cursor length
+            if (initProcessed < stream->queryProcessed())
+                stream->serialize(reply);
+            delayed.write();
         }
         catch (IException *)
         {
-            replyCode = '-';
+            reply.rewrite(replyPos);
+            reply.append('-');
             throw;
         }
         return true;

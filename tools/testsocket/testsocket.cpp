@@ -232,6 +232,8 @@ int readResults(ISocket * socket, bool readBlocked, bool useHTTP, StringBuffer &
         bool isSpecial = false;
         bool pluginRequest = false;
         bool dataBlockRequest = false;
+        bool remoteReadRequest = false;
+        MemoryBuffer remoteReadCursorMb;
         if (len & 0x80000000)
         {
             unsigned char flag;
@@ -267,12 +269,17 @@ int readResults(ISocket * socket, bool readBlocked, bool useHTTP, StringBuffer &
             case 'R':
                 isBlockedResult = true;
                 break;
+            case 'J':
+                remoteReadRequest = true;
+                break;
             }
             len &= 0x7FFFFFFF;
             len--;      // flag already read
         }
 
-        char * mem = (char*) malloc(len+1);
+        unsigned remoteReadCursorId;
+        MemoryBuffer mb;
+        char *mem = (char *)mb.reserveTruncate(len+1);
         char * t = mem;
         unsigned sendlen = len;
         t[len]=0;
@@ -323,6 +330,26 @@ int readResults(ISocket * socket, bool readBlocked, bool useHTTP, StringBuffer &
             _WINREV(offset);
             sendFileChunk(t+sizeof(offset), offset, socket);
         }
+        else if (remoteReadRequest)
+        {
+            mb.read(remoteReadCursorId);
+            size32_t dataLen;
+            mb.read(dataLen);
+            StringBuffer xml;
+            char *_xml = xml.reserveTruncate(dataLen);
+            memcpy(_xml, mb.readDirect(dataLen), dataLen);
+            if (echoResults)
+            {
+                fwrite(_xml, xml.length()+1, 1, stdout);
+                fflush(stdout);
+            }
+            size32_t cursorLen;
+            mb.read(cursorLen);
+            if (!cursorLen) // no cursor, means all read
+                break;
+            const void *cursor = mb.readDirect(cursorLen);
+            memcpy(remoteReadCursorMb.reserveTruncate(cursorLen), cursor, cursorLen);
+        }
         else
         {
             if (isBlockedResult)
@@ -340,7 +367,6 @@ int readResults(ISocket * socket, bool readBlocked, bool useHTTP, StringBuffer &
                 result.append(sendlen, t);
         }
 
-        free(mem);
         if (abortAfterFirst)
             return 0;
     }
