@@ -66,6 +66,8 @@ static const unsigned __int64 defaultFileStreamChooseN = I64C(0x7fffffffffffffff
 static const unsigned __int64 defaultFileStreamSkipN = 0;
 static const unsigned __int64 defaultFileStreamRowLimit = (unsigned __int64) -1;
 static const unsigned __int64 defaultDaFSNumRecs = 100;
+enum OutputFormat { outFmt_Binary, outFmt_Xml, outFmt_Json };
+
 
 #if SIMULATE_PACKETLOSS
 
@@ -583,13 +585,19 @@ inline MemoryBuffer & initSendBuffer(MemoryBuffer & buff)
     return buff;
 }
 
-inline void sendBuffer(ISocket * socket, MemoryBuffer & src)
+inline void sendBuffer(ISocket * socket, MemoryBuffer & src, byte specialCode=0)
 {
     unsigned length = src.length() - sizeof(unsigned);
     byte * buffer = (byte *)src.toByteArray();
     if (TF_TRACE_FULL)
         PROGLOG("sendBuffer size %d, data = %d %d %d %d",length, (int)buffer[4],(int)buffer[5],(int)buffer[6],(int)buffer[7]);
     _WINCPYREV(buffer, &length, sizeof(unsigned));
+    if (specialCode)
+    {
+        assertex(0 == (length & 0x80000000));
+        assertex(specialCode < 0x100);
+        *buffer = specialCode;
+    }
     SOCKWRITE(socket)(buffer, src.length());
 }
 
@@ -3689,6 +3697,7 @@ inline void appendCmdErr(MemoryBuffer &reply, RemoteFileCommandType e, int code,
 
 #define MAPCOMMAND(c,p) case c: { ret = this->p(msg, reply) ; break; }
 #define MAPCOMMANDCLIENT(c,p,client) case c: { ret = this->p(msg, reply, client); break; }
+#define MAPCOMMANDCLIENTSPECIAL(c,p,specialcode,client) case c: { ret = this->p(msg, reply, specialCode, client); break; }
 #define MAPCOMMANDCLIENTTHROTTLE(c,p,client,throttler) case c: { ret = this->p(msg, reply, client, throttler); break; }
 #define MAPCOMMANDSTATS(c,p,stats) case c: { ret = this->p(msg, reply, stats); break; }
 #define MAPCOMMANDCLIENTSTATS(c,p,client,stats) case c: { ret = this->p(msg, reply, client, stats); break; }
@@ -3826,10 +3835,11 @@ public:
     }
 };
 
-interface IRemoteReadCursor : extends IRowStream
+interface IRemoteReadCursor : extends IInterface
 {
     virtual void serialize(MemoryBuffer &tgt) const = 0;
     virtual void restore(MemoryBuffer &src) = 0;
+    virtual const void *nextRow(size32_t &sz) = 0;
 };
 
 enum OpenFileFlag { of_null=0x0, of_key=0x01 };
@@ -3847,7 +3857,7 @@ struct OpenFileInfo
 
 #define MAX_KEYDATA_SZ 0x10000
 
-IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg, IRtlFieldTypeDeserializer &in, IRtlFieldTypeDeserializer &out)
+IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg, IRtlFieldTypeDeserializer &in, IRtlFieldTypeDeserializer &out, OutputFormat outputFormat)
 {
     class CDiskStream : public CSimpleInterfaceOf<IRemoteReadCursor>
     {
@@ -3865,9 +3875,10 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg, IRtlFieldTypeDeseria
         unsigned __int64 processed = 0;
         Owned<ISerialStream> inputstream;
         Owned<IFileIO> iFileIO;
-        unsigned __int64 startPos;
+        unsigned __int64 startPos = 0;
         Linked<IRtlFieldTypeDeserializer> inputFieldInfoDeserializer;
         Linked<IRtlFieldTypeDeserializer> outputFieldInfoDeserializer;
+        OutputFormat outputFormat;
 
         void open()
         {
@@ -3918,8 +3929,8 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg, IRtlFieldTypeDeseria
         }
         bool segMonitorsMatch(const void *row) { return true; }
     public:
-        CDiskStream(IHThorDiskReadArg &_arg, IRtlFieldTypeDeserializer &_in, IRtlFieldTypeDeserializer &_out)
-            : arg(&_arg), inputFieldInfoDeserializer(&_in), outputFieldInfoDeserializer(&_out), prefetchBuffer(nullptr)
+        CDiskStream(IHThorDiskReadArg &_arg, IRtlFieldTypeDeserializer &_in, IRtlFieldTypeDeserializer &_out, OutputFormat _outputFormat)
+            : arg(&_arg), inputFieldInfoDeserializer(&_in), outputFieldInfoDeserializer(&_out), prefetchBuffer(nullptr), outputFormat(_outputFormat)
         {
         }
         ~CDiskStream()
@@ -3927,7 +3938,7 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg, IRtlFieldTypeDeseria
             if (outBuilder)
                 delete outBuilder;
         }
-        virtual const void *nextRow() override
+        virtual const void *nextRow(size32_t &rowSz) override
         {
             if (!opened) open();
             if (needTransform)
@@ -3939,14 +3950,13 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg, IRtlFieldTypeDeseria
                         prefetcher->readAhead(prefetchBuffer);
                         const byte * next = prefetchBuffer.queryRow();
                         size32_t sizeRead = prefetchBuffer.queryRowSize();
-                        size32_t thisSize;
                         if (segMonitorsMatch(next))
-                            thisSize = arg->transform(*outBuilder, next);
+                            rowSz = arg->transform(*outBuilder, next);
                         else
-                            thisSize = 0;
+                            rowSz = 0;
                         prefetchBuffer.finishedRow();
 
-                        if (thisSize)
+                        if (rowSz)
                         {
                             if (processed >=limit)
                             {
@@ -3962,11 +3972,8 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg, IRtlFieldTypeDeseria
                 }
             }
             close();
+            rowSz = 0;
             return nullptr;
-        }
-        virtual void stop() override
-        {
-            // TBD
         }
     // IRemoteReadCursor impl.
         virtual void serialize(MemoryBuffer &tgt) const override
@@ -3984,7 +3991,7 @@ IRemoteReadCursor *createDiskReader(IHThorDiskReadArg &arg, IRtlFieldTypeDeseria
         }
     };
 
-    return new CDiskStream(arg, in, out);
+    return new CDiskStream(arg, in, out, outputFormat);
 }
 
 class CRemoteFileServer : implements IRemoteFileServer, public CInterface
@@ -4195,8 +4202,8 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
         void processCommand(RemoteFileCommandType cmd, MemoryBuffer &msg, CThrottler *throttler)
         {
             MemoryBuffer reply;
-            parent->processCommand(cmd, msg, initSendBuffer(reply), this, throttler);
-            sendBuffer(socket, reply);
+            byte specialCode = parent->processCommand(cmd, msg, initSendBuffer(reply), this, throttler);
+            sendBuffer(socket, reply, specialCode);
         }
 
         bool immediateCommand() // returns false if socket closed or failure
@@ -5800,7 +5807,7 @@ public:
         return false;
     }
 
-    bool cmdJson(MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler &client)
+    bool cmdJson(MemoryBuffer & msg, MemoryBuffer & reply, byte &replyCode, CRemoteClientHandler &client)
     {
         // this is an attempt to authenticate when we haven't got authentication turned on
         if (TF_TRACE_CLIENT_STATS)
@@ -5808,137 +5815,182 @@ public:
             StringBuffer s(client.queryPeerName());
             PROGLOG("Connect from %s",s.str());
         }
-        Owned<IPropertyTree> jsonTree = createPTreeFromJSONString(msg.length(), msg.toByteArray());
 
-        /*
-         * {
-         *  "node" : {
-         *   "kind" : "diskread",
-         *   "fileName": "examplefilename",
-         *   "keyfilter" : "f1='1    '",
-         *   "choosen" : "5",
-         *   "cursor" : "12345", // cursor handle
-         *   "input" : {
-         *    "f1" : "string5",
-         *    "f2" : "string5"
-         *   },
-         *   "output" : {
-         *    "f2" : "string",
-         *    "f1" : "real"
-         *   }
-         *  }
-         * }
-         *
-         */
-
-        IPropertyTree *actNode = jsonTree->queryPropTree("node");
-
-        int cursorHandle = actNode->getPropInt("cursor");
-        Owned<IRemoteReadCursor> stream;
-        OpenFileInfo fileInfo;
-        Owned<IOutputMetaData> out;
-        if (!cursorHandle)
+        replyCode = 0;
+        try
         {
-            const char *fileName = actNode->queryProp("fileName");
+            Owned<IPropertyTree> jsonTree = createPTreeFromJSONString(msg.length(), msg.toByteArray());
 
-            Owned<IRtlFieldTypeDeserializer> inputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
-            Owned<IRtlFieldTypeDeserializer> outputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
+            /*
+             * {
+             *  "node" : {
+             *   "kind" : "diskread",
+             *   "fileName": "examplefilename",
+             *   "keyfilter" : "f1='1    '",
+             *   "format" : "xml",
+             *   "choosen" : "5",
+             *   "cursor" : "12345", // cursor handle
+             *   "input" : {
+             *    "f1" : "string5",
+             *    "f2" : "string5"
+             *   },
+             *   "output" : {
+             *    "f2" : "string",
+             *    "f1" : "real"
+             *   }
+             *  }
+             * }
+             *
+             */
 
-            const RtlTypeInfo *inputFieldInfo, *outputFieldInfo;
-            IPropertyTree *inputJson = actNode->queryPropTree("input");
-            if (inputJson)
-                inputFieldInfo = inputFieldInfoDeserializer->deserialize(*inputJson);
+            IPropertyTree *actNode = jsonTree->queryPropTree("node");
+
+            const char *format = actNode->queryProp("format");
+            OutputFormat outputFormat;
+            if (strieq("xml", format))
+                outputFormat = outFmt_Xml;
+            else if (strieq("json", format))
+                outputFormat = outFmt_Json;
             else
+                outputFormat = outFmt_Binary;
+
+
+            int cursorHandle = actNode->getPropInt("cursor");
+            Owned<IRemoteReadCursor> stream;
+            OpenFileInfo fileInfo;
+            Owned<IOutputMetaData> out;
+            if (!cursorHandle)
             {
-                MemoryBuffer mb;
-                actNode->getPropBin("inputBin", mb);
-                inputFieldInfo = inputFieldInfoDeserializer->deserialize(mb);
+                const char *fileName = actNode->queryProp("fileName");
+
+                Owned<IRtlFieldTypeDeserializer> inputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
+                Owned<IRtlFieldTypeDeserializer> outputFieldInfoDeserializer = createRtlFieldTypeDeserializer();
+
+                const RtlTypeInfo *inputFieldInfo, *outputFieldInfo;
+                IPropertyTree *inputJson = actNode->queryPropTree("input");
+                if (inputJson)
+                    inputFieldInfo = inputFieldInfoDeserializer->deserialize(*inputJson);
+                else
+                {
+                    MemoryBuffer mb;
+                    actNode->getPropBin("inputBin", mb);
+                    inputFieldInfo = inputFieldInfoDeserializer->deserialize(mb);
+                }
+                IPropertyTree *outputJson = actNode->queryPropTree("output");
+                if (outputJson)
+                    outputFieldInfo = outputFieldInfoDeserializer->deserialize(*outputJson);
+                else
+                {
+                    MemoryBuffer mb;
+                    actNode->getPropBin("outputBin", mb);
+                    outputFieldInfo = outputFieldInfoDeserializer->deserialize(mb);
+                }
+                const RtlRecordTypeInfo *inputRecordTypeInfo, *outputRecordTypeInfo;
+                inputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (inputFieldInfo);
+                outputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (outputFieldInfo);
+
+                Owned<IOutputMetaData> in = new CDynamicOutputMetaData(*inputRecordTypeInfo);
+                out.setown(new CDynamicOutputMetaData(*outputRecordTypeInfo));
+
+                unsigned __int64 chooseN = actNode->getPropInt64("choosen", defaultFileStreamChooseN);
+                unsigned __int64 skipN = actNode->getPropInt64("skipN", defaultFileStreamSkipN);
+                unsigned __int64 rowLimit = actNode->getPropInt64("rowLimit", defaultFileStreamRowLimit);
+                Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in.getClear(), out.getLink(), chooseN, skipN, rowLimit);
+
+                stream.setown(createDiskReader(*arg, *inputFieldInfoDeserializer, *outputFieldInfoDeserializer, outputFormat));
+
+                {
+                    CriticalBlock block(sect);
+                    cursorHandle = getNextHandle();
+                    client.previdx = client.openFiles.ordinality();
+                    Owned<StringAttrItem> name = new StringAttrItem(fileName);
+                    client.openFiles.append(OpenFileInfo(cursorHandle, stream, name));
+                }
+
+                /* INPUT:
+                 * + JSON request (with no handle)
+                 */
+
+                /* OUTPUT:
+                 * + reply code (ok)
+                 * + cursorHandle
+                 * + # rows
+                 * + row data (upto max or choosen)
+                 * + # processed
+                 */
+
+                // replyCode = 'R';
             }
-            IPropertyTree *outputJson = actNode->queryPropTree("output");
-            if (outputJson)
-                outputFieldInfo = outputFieldInfoDeserializer->deserialize(*outputJson);
-            else
+            else if (!lookupFileIOHandle(cursorHandle, fileInfo))
             {
-                MemoryBuffer mb;
-                actNode->getPropBin("outputBin", mb);
-                outputFieldInfo = outputFieldInfoDeserializer->deserialize(mb);
+                replyCode = 'C';
+
+                // challenge response ..
+
+                /* INPUT:
+                 * + cursorHandle (unsigned)
+                 */
+
+                /* OUTPUT:
+                 * + reply code (RFCSR_unknownhandle)
+                 * + [optional error - exception text serialized?]
+                 */
             }
-            const RtlRecordTypeInfo *inputRecordTypeInfo, *outputRecordTypeInfo;
-            inputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (inputFieldInfo);
-            outputRecordTypeInfo = static_cast<const RtlRecordTypeInfo *> (outputFieldInfo);
+            else // known handle, continuation
+            {
+                /* INPUT:
+                 * + cursorHandle (unsigned)
+                 */
 
-            Owned<IOutputMetaData> in = new CDynamicOutputMetaData(*inputRecordTypeInfo);
-            out.setown(new CDynamicOutputMetaData(*outputRecordTypeInfo));
+                /* OUTPUT:
+                 * + reply code
+                 * + # rows
+                 * + records (upto max or choosen)
+                 * + # processed
+                 */
 
-            unsigned __int64 chooseN = actNode->getPropInt64("choosen", defaultFileStreamChooseN);
-            unsigned __int64 skipN = actNode->getPropInt64("skipN", defaultFileStreamSkipN);
-            unsigned __int64 rowLimit = actNode->getPropInt64("rowLimit", defaultFileStreamRowLimit);
-            Owned<IHThorDiskReadArg> arg = createDiskReadArg(fileName, in.getClear(), out.getLink(), chooseN, skipN, rowLimit);
-
-            stream.setown(createDiskReader(*arg, *inputFieldInfoDeserializer, *outputFieldInfoDeserializer));
+                stream.set(fileInfo.rowStream);
+            }
 
             {
-                CriticalBlock block(sect);
-                cursorHandle = getNextHandle();
-                client.previdx = client.openFiles.ordinality();
-                Owned<StringAttrItem> name = new StringAttrItem(fileName);
-                client.openFiles.append(OpenFileInfo(cursorHandle, stream, name));
+                DelayedSizeMarker delayed(reply); // I think this should be # records instead
+                for (unsigned __int64 i=0; i<defaultDaFSNumRecs; i++)
+                {
+                    size32_t rowSz;
+                    const void *row = stream->nextRow(rowSz);
+                    if (!row)
+                        break;
+                    switch (outputFormat)
+                    {
+                        case outFmt_Xml:
+                        {
+                            SimpleOutputWriter xmlWriter;
+                            out->toXML((const byte *)row, xmlWriter);
+                            reply.append(xmlWriter.length(), xmlWriter.str());
+                            reply.append('\n');
+                            break;
+                        }
+                        case outFmt_Json:
+                        {
+                            // TBD
+                            SimpleOutputWriter xmlWriter;
+                            out->toXML((const byte *)row, xmlWriter);
+                            reply.append(xmlWriter.length(), xmlWriter.str());
+                            reply.append('\n');
+                            break;
+                        }
+                        default:
+                            reply.append(rowSz, row);
+                            break;
+                    }
+                }
             }
-
-            /* INPUT:
-             * + JSON request (with no handle)
-             */
-
-            /* OUTPUT:
-             * + reply code
-             * + # rows
-             * + records (upto max or choosen)
-             * + # processed
-             */
+            stream->serialize(reply);
         }
-        else if (!lookupFileIOHandle(cursorHandle, fileInfo))
+        catch (IException *)
         {
-            enum RFCStreamResponse:unsigned { RFCSR_ok, RFCSR_unknownhandle, RFCSR_error };
-            reply.append(RFCSR_unknownhandle);
-
-            // challenge resposne ..
-
-            /* INPUT:
-             * + cursorHandle (unsigned)
-             */
-
-            /* OUTPUT:
-             * + reply code (RFCSR_unknownhandle)
-             * + [optional error - exception text serialized?]
-             */
-        }
-        else
-        {
-            /* INPUT:
-             * + cursorHandle (unsigned)
-             */
-
-            /* OUTPUT:
-             * + reply code
-             * + # rows
-             * + records (upto max or choosen)
-             * + # processed
-             */
-
-            stream.set(fileInfo.rowStream);
-        }
-
-
-        for (unsigned __int64 i=0; i<defaultDaFSNumRecs; i++)
-        {
-            const byte *row = (const byte *)stream->nextRow();
-            if (!row)
-                break;
-            SimpleOutputWriter xmlWriter;
-            out->toXML(row, xmlWriter);
-
-            reply.append(xmlWriter.length(), xmlWriter.str());
-            reply.append('\n');
+            replyCode = '-';
+            throw;
         }
         return true;
     }
@@ -6056,10 +6108,11 @@ public:
         }
     }
 
-    bool processCommand(RemoteFileCommandType cmd, MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler *client, CThrottler *throttler)
+    unsigned processCommand(RemoteFileCommandType cmd, MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler *client, CThrottler *throttler)
     {
         Owned<CClientStats> stats = clientStatsTable.getClientReference(cmd, client->queryPeerName());
         bool ret = true;
+        byte specialCode = 0;
         try
         {
             switch(cmd)
@@ -6099,7 +6152,7 @@ public:
                 MAPCOMMAND(RFCgetinfo, cmdGetInfo);
                 MAPCOMMAND(RFCfirewall, cmdFirewall);
                 MAPCOMMANDCLIENT(RFCunlock, cmdUnlock, *client);
-                MAPCOMMANDCLIENT(RFCJson, cmdJson, *client);
+                MAPCOMMANDCLIENTSPECIAL(RFCJson, cmdJson, specialCode, *client);
                 MAPCOMMANDCLIENT(RFCcopysection, cmdCopySection, *client);
                 MAPCOMMANDCLIENTTHROTTLE(RFCtreecopy, cmdTreeCopy, *client, &slowCmdThrottler);
                 MAPCOMMANDCLIENTTHROTTLE(RFCtreecopytmp, cmdTreeCopyTmp, *client, &slowCmdThrottler);
@@ -6119,8 +6172,10 @@ public:
             e->Release();
         }
         if (!ret) // append error string
+        {
             appendError(cmd, client, cmd, reply);
-        return ret;
+        }
+        return specialCode;
     }
 
     IPooledThread *createCommandProcessor()
@@ -6362,8 +6417,8 @@ public:
         if (cmd != RFCgetver)
             cmd = RFCinvalid;
         MemoryBuffer reply;
-        processCommand(cmd, msg, initSendBuffer(reply), NULL, NULL);
-        sendBuffer(socket, reply);
+        byte specialCode = processCommand(cmd, msg, initSendBuffer(reply), NULL, NULL);
+        sendBuffer(socket, reply, specialCode);
     }
 
     bool checkAuthentication(ISocket *socket, IAuthenticatedUser *&ret)
