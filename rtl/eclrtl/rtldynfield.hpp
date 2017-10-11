@@ -55,7 +55,6 @@ interface IRtlFieldTypeDeserializer : public IInterface
      * @return     Deserialized RtlTypeInfo structure
      */
     virtual const RtlTypeInfo *deserialize(const char *json) = 0;
-    virtual const RtlTypeInfo *deserialize(IPropertyTree &json) = 0;
 
     /*
      * Create RtlTypeInfo structures from a serialized json representation
