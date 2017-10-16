@@ -130,6 +130,7 @@ unsigned getPathDrive(const char *s)
     return 0;
 }
 
+
 StringBuffer &swapPathDrive(StringBuffer &filename,unsigned fromdrvnum,unsigned todrvnum,const char *frommask,const char *tomask)
 {
     const char *s = filename.str();
@@ -149,6 +150,25 @@ StringBuffer &swapPathDrive(StringBuffer &filename,unsigned fromdrvnum,unsigned 
             tmp.swapWith(filename);
     }
     return filename;
+}
+
+
+const char* setStandardPosixPath(StringBuffer &path)
+{
+	const char *s = path.trim().replace('\\', '/').str();
+	bool startWithPathSepChar = isPathSepChar(s[0]);
+	if (startWithPathSepChar)
+		s++;			
+
+	if (*s && ((s[1]==':') || isShareChar(s[1])))
+	{
+		char c = tolower(s[0]);
+		if (!startWithPathSepChar)
+			path.insert(0, '/');
+		path.setCharAt(1, c);
+		path.setCharAt(2, '$');
+	}
+	return path.str();
 }
 
 

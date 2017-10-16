@@ -1834,7 +1834,10 @@ bool CFileSprayEx::onSprayFixed(IEspContext &context, IEspSprayFixed &req, IEspS
 
         MemoryBuffer& srcxml = (MemoryBuffer&)req.getSrcxml();
         const char* srcip = req.getSourceIP();
-        const char* srcfile = req.getSourcePath();
+        StringBuffer sourcePath(req.getSourcePath());
+
+        setStandardPosixPath(sourcePath);
+        const char* srcfile = sourcePath.str();
         if(srcxml.length() == 0)
         {
             if(!srcip || !*srcip)
@@ -2016,7 +2019,10 @@ bool CFileSprayEx::onSprayVariable(IEspContext &context, IEspSprayVariable &req,
 
         MemoryBuffer& srcxml = (MemoryBuffer&)req.getSrcxml();
         const char* srcip = req.getSourceIP();
-        const char* srcfile = req.getSourcePath();
+        StringBuffer sourcePath(req.getSourcePath());
+
+        setStandardPosixPath(sourcePath);
+        const char* srcfile = sourcePath.str();
         if(srcxml.length() == 0)
         {
             if(!srcip || !*srcip)
@@ -2294,8 +2300,9 @@ bool CFileSprayEx::onDespray(IEspContext &context, IEspDespray &req, IEspDespray
         PROGLOG("Despray %s", srcname);
         double version = context.getClientVersion();
         const char* destip = req.getDestIP();
-        StringBuffer fnamebuf(req.getDestPath());
-        const char* destfile = fnamebuf.trim().str();
+        StringBuffer destPath(req.getDestPath());
+        setStandardPosixPath(destPath);
+        const char* destfile = destPath.str();
 
         MemoryBuffer& dstxml = (MemoryBuffer&)req.getDstxml();
         if(dstxml.length() == 0)
