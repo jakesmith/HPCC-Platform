@@ -3053,6 +3053,54 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
+#if 1
+    {
+        MemoryBuffer mb;
+        void *mbptr = mb.reserveTruncate(10);
+        mb.append(12345);
+        Owned<IPropertyTree> tree = createPTree();
+#if 0
+        tree->addProp("prop", "textval1");
+        tree->addProp("prop", "textval2");
+        tree->addProp("prop", "textval3");
+        tree->setProp("prop[3]/@attr", "3");
+        tree->addProp("prop", "textval4");
+#else
+        tree->addProp("prop", "textval1");
+//        tree->setProp("prop[1]/@attr", "1");
+        tree->addProp("prop", "textval2");
+//        tree->setProp("prop[2]/@attr", "2");
+        tree->addPropBin("prop", mb.length(), mb.toByteArray());
+        tree->setProp("prop[3]/@attr", "3");
+        tree->addProp("prop", "textval3");
+        tree->setProp("prop[4]/@attr", "4");
+        tree->addProp("prop", "textval4");
+        tree->setProp("prop[5]/@attr", "5");
+
+
+        tree->addProp("prop2", "textval1");
+        tree->addProp("prop2", "textval2");
+        tree->addPropBin("prop2", mb.length(), mb.toByteArray());
+        tree->addPropBin("prop2", mb.length(), mb.toByteArray());
+        tree->addProp("prop2", "textval3");
+        tree->addProp("prop2", "textval4");
+#endif
+
+        StringBuffer xmlStr, jsonStr;
+        toXML(tree, xmlStr);
+        toJSON(tree, jsonStr);
+
+        PROGLOG("xmlStr = %s", xmlStr.str());
+        PROGLOG("jsonStr = %s", jsonStr.str());
+
+        tree.setown(createPTreeFromJSONString(jsonStr.str()));
+        toXML(tree, xmlStr.clear());
+        toJSON(tree, jsonStr.clear());
+        PROGLOG("xmlStr [reconstructed] = %s", xmlStr.str());
+        PROGLOG("jsonStr [reconstructed] = %s", jsonStr.str());
+        return 0;
+    }
+#endif
     try {
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
