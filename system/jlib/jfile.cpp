@@ -130,7 +130,6 @@ unsigned getPathDrive(const char *s)
     return 0;
 }
 
-
 StringBuffer &swapPathDrive(StringBuffer &filename,unsigned fromdrvnum,unsigned todrvnum,const char *frommask,const char *tomask)
 {
     const char *s = filename.str();
@@ -153,24 +152,24 @@ StringBuffer &swapPathDrive(StringBuffer &filename,unsigned fromdrvnum,unsigned 
 }
 
 
-const char* setStandardPosixPath(StringBuffer &path)
+StringBuffer &getStandardPosixPath(StringBuffer &result, const char *path)
 {
-	const char *s = path.trim().replace('\\', '/').str();
-	bool startWithPathSepChar = isPathSepChar(s[0]);
-	if (startWithPathSepChar)
-		s++;			
+    result.set(path);
+    const char *s = result.trim().replace('\\', '/').str();
+    bool startWithPathSepChar = isPathSepChar(s[0]);
+    if (startWithPathSepChar)
+        s++;
 
-	if (*s && ((s[1]==':') || isShareChar(s[1])))
-	{
-		char c = tolower(s[0]);
-		if (!startWithPathSepChar)
-			path.insert(0, '/');
-		path.setCharAt(1, c);
-		path.setCharAt(2, '$');
-	}
-	return path.str();
+    if (*s && ((s[1]==':') || isShareChar(s[1])))
+    {
+        char c = tolower(s[0]);
+        if (!startWithPathSepChar)
+            result.insert(0, '/');
+        result.setCharAt(1, c);
+        result.setCharAt(2, '$');
+    }
+    return result;
 }
-
 
 const char *pathTail(const char *path)
 {
