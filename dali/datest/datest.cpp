@@ -3053,6 +3053,25 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
+#if 1
+    {
+        const char *fname = "//192.168.1.115/c$/tmp2/testwrite";
+        if (argc>1)
+            fname = argv[1];
+        PROGLOG("Creating : %s", fname);
+        try
+        {
+            Owned<IFile> iFile = createIFile(fname);
+            Owned<IFileIO> iFileIO = iFile->open(IFOcreate);
+        }
+        catch (IException *e)
+        {
+            EXCLOG(e, nullptr);
+            e->Release();
+        }
+        return 0;
+    }
+#endif
     try {
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
