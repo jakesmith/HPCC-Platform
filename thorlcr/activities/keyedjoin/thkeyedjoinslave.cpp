@@ -959,10 +959,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             stopped = false;
             state = ts_initial;
-            if (NotFound == partNo) // localMerge manager
-                keyManager.setown(activity.getLocalMergeKeyManager());
-            else
-                keyManager.setown(activity.getPartKeyManager(partNo));
+            keyManager.setown(activity.getPartKeyManager(partNo));
         }
         void enqueue(CThorExpandingRowArray &newItems) // NB: enqueue starts thread
         {
@@ -1150,8 +1147,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     StringAttr indexName;
     size32_t fixedRecordSize = 0;
     bool localKey = false;
-    bool localMerge = false;
-    Owned<IBitSet> activeLocalKeyParts;
     bool initialized = false;
     bool preserveGroups = false, preserveOrder = false;
     bool needsDiskRead = false;
@@ -1168,7 +1163,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     rowcount_t totalQueuedLookupRowCount = 0;
     unsigned blockedKeyLookupThreads = 0;
 
-    CPartDescriptorArray indexParts, dataParts;
+    CPartDescriptorArray dataParts;
+    PointerArrayOf<IPartDescriptor> indexParts;
     IArrayOf<IKeyIndex> tlkKeyIndexes;
     Owned<IEngineRowAllocator> joinFieldsAllocator;
     OwnedConstThorRow defaultRight;
@@ -1206,6 +1202,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     roxiemem::IRowManager *rowManager = nullptr;
     unsigned currentAdded = 0;
     unsigned currentJoinGroupSize = 0;
+    MapBetween<unsigned, unsigned, unsigned, unsigned> globalPartNoMap; // for local kj, maps global partNo (in TLK) to locally handled part index numbers
 
     void doAbortLimit(CJoinGroup *jg)
     {
@@ -1310,9 +1307,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         /* NB: there is 1 batchLookupArray/Thread per part
          * There could be >1 per part, but I'm not sure there's a lot of point.
          */
-        if (localMerge)
-            partNo = 0; // only 1 lookup thread if using local merger
-
         CKeyLookupHandler &lookupThread = *lookupThreads.item(partNo);
         lookupThread.queueLookup(keyedFieldsRowWithJGPrefix);
     }
@@ -1339,35 +1333,19 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     }
     IKeyManager *getPartKeyManager(unsigned which)
     {
-        IPartDescriptor &filePart = indexParts.item(which);
+        IPartDescriptor *filePart = indexParts.item(which);
+        assertex(filePart);
         unsigned crc=0;
-        filePart.getCrc(crc);
+        filePart->getCrc(crc);
         RemoteFilename rfn;
-        filePart.getFilename(0, rfn);
+        filePart->getFilename(0, rfn);
         StringBuffer filename;
         rfn.getPath(filename);
 
-        Owned<IDelayedFile> lfile = queryThor().queryFileCache().lookup(*this, indexName, filePart);
+        Owned<IDelayedFile> lfile = queryThor().queryFileCache().lookup(*this, indexName, *filePart);
 
         Owned<IKeyIndex> keyIndex = createKeyIndex(filename, crc, *lfile, false, false);
         return createLocalKeyManager(helper->queryIndexRecordSize()->queryRecordAccessor(true), keyIndex, nullptr);
-    }
-    IKeyManager *getLocalMergeKeyManager()
-    {
-        Owned<IKeyIndexSet> partKeySet = createKeyIndexSet();
-        ForEachItemIn(i, indexParts)
-        {
-            IPartDescriptor &filePart = indexParts.item(i);
-            unsigned crc=0;
-            filePart.getCrc(crc);
-            RemoteFilename rfn;
-            filePart.getFilename(0, rfn);
-            StringBuffer filename;
-            rfn.getPath(filename);
-            Owned<IDelayedFile> lfile = queryThor().queryFileCache().lookup(*this, indexName, filePart);
-            partKeySet->addIndex(createKeyIndex(filename.str(), crc, *lfile, false, false));
-        }
-        return createKeyMerger(helper->queryIndexRecordSize()->queryRecordAccessor(true), partKeySet, 0, nullptr);
     }
     const void *preparePendingLookupRow(void *row, size32_t maxSz, const void *lhsRow, size32_t keySz)
     {
@@ -1385,7 +1363,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         const void *keyedFieldsRow = keyFieldsPrefixBuilder.row();
         if (keyHasTlk)
         {
-            // NB: this is handling localKey with TLK case too
             ForEachItemIn(whichKm, tlkKeyManagers)
             {
                 IKeyManager &keyManager = tlkKeyManagers.item(whichKm);
@@ -1399,12 +1376,16 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     {
                         unsigned partNo = (unsigned)node;
                         partNo = superWidth ? superWidth*whichKm+(partNo-1) : partNo-1;
-                        if (!localKey || activeLocalKeyParts->test(partNo))
+                        if (container.queryLocalOrGrouped())
                         {
-                            if (!keyedFieldsRowWithJGPrefix)
-                                keyedFieldsRowWithJGPrefix.setown(preparePendingLookupRow(keyFieldsRowBuilder.getUnfinalizedClear(), keyFieldsRowBuilder.getMaxLength(), lhsRow, keyedFieldsRowSize));
-                            queueLookupForPart(partNo, keyedFieldsRowWithJGPrefix);
+                            unsigned *globalPartNo = globalPartNoMap.getValue(partNo);
+                            if (!globalPartNo)
+                                continue; // this local kj slave is not dealing with part
+                            partNo = *globalPartNo;
                         }
+                        if (!keyedFieldsRowWithJGPrefix)
+                            keyedFieldsRowWithJGPrefix.setown(preparePendingLookupRow(keyFieldsRowBuilder.getUnfinalizedClear(), keyFieldsRowBuilder.getMaxLength(), lhsRow, keyedFieldsRowSize));
+                        queueLookupForPart(partNo, keyedFieldsRowWithJGPrefix);
                     }
                 }
                 keyManager.releaseSegmentMonitors();
@@ -1413,13 +1394,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         else
         {
             keyedFieldsRowWithJGPrefix.setown(preparePendingLookupRow(keyFieldsRowBuilder.getUnfinalizedClear(), keyFieldsRowBuilder.getMaxLength(), lhsRow, keyedFieldsRowSize));
-            if (localMerge)
-                queueLookupForPart(NotFound, keyedFieldsRowWithJGPrefix);
-            else // JCSMORE perhaps should use merger if not remote too
-            {
-                ForEachItemIn(partNo, indexParts)
-                    queueLookupForPart(partNo, keyedFieldsRowWithJGPrefix);
-            }
+            ForEachItemIn(partNo, indexParts)
+                queueLookupForPart(partNo, keyedFieldsRowWithJGPrefix);
         }
         if (!keyedFieldsRowWithJGPrefix)
             return nullptr;
@@ -1619,6 +1595,7 @@ public:
             globalFPosToNodeMap.clear();
             eexp.clear();
             fetchFiles.kill();
+            globalPartNoMap.kill();
         }
         for (auto &a : statsArr)
             a = 0;
@@ -1665,23 +1642,48 @@ public:
                     tlkKeyIndexes.append(*tlkKeyIndex.getClear());
                 }
             }
-            if (numSuperIndexSubs) // if 0 means not interleaved
+
+            CPartDescriptorArray _indexParts;
+            deserializePartFileDescriptors(data, _indexParts);
+            IFileDescriptor &indexFileDesc = _indexParts.item(0).queryOwner();
+            localKey = indexFileDesc.queryProperties().getPropBool("@local", false);
+            if (numSuperIndexSubs && !localKey) // if numSuperIndexSubs==0 means not interleaved
             {
-                CPartDescriptorArray _indexParts;
-                deserializePartFileDescriptors(data, _indexParts);
-                unsigned s, ip;
-                for (s=0; s<numSuperIndexSubs; s++)
+                IPartDescriptor *currentPart = &_indexParts.item(0);
+                ISuperFileDescriptor *superFdesc = currentPart->queryOwner().querySuperFileDescriptor();
+                assertex(superFdesc);
+                if (container.queryLocalOrGrouped())
                 {
-                    for (ip=0; ip<superWidth; ip++)
+                    ForEachItemIn(i, _indexParts)
                     {
-                        unsigned which = ip*numSuperIndexSubs+s;
-                        IPartDescriptor &part = _indexParts.item(which);
-                        indexParts.append(*LINK(&part));
+                        IPartDescriptor *part = &_indexParts.item(i);
+                        unsigned partNo = part->queryPartIndex();
+                        unsigned subfile, subpartnum;
+                        superFdesc->mapSubPart(partNo, subfile, subpartnum);
+                        unsigned globalPartNo = superWidth*subfile+subpartnum;
+                        globalPartNoMap.setValue(globalPartNo, i);
+                        indexParts.append(LINK(&_indexParts.item(i)));
+                    }
+                }
+                else
+                {
+                    unsigned s, ip;
+                    for (s=0; s<numSuperIndexSubs; s++)
+                    {
+                        for (ip=0; ip<superWidth; ip++)
+                        {
+                            unsigned which = ip*numSuperIndexSubs+s;
+                            IPartDescriptor &part = _indexParts.item(which);
+                            indexParts.append(LINK(&part));
+                        }
                     }
                 }
             }
             else
-                deserializePartFileDescriptors(data, indexParts);
+            {
+                ForEachItemIn(p, _indexParts)
+                    indexParts.append(LINK(&_indexParts.item(p)));
+            }
             if (needsDiskRead)
             {
                 data.read(remoteDataFiles); // if true, all fetch parts will be serialized
@@ -1746,37 +1748,12 @@ public:
                 }
             }
 
-            IFileDescriptor &indexFileDesc = indexParts.item(0).queryOwner();
-            localKey = indexFileDesc.queryProperties().getPropBool("@local", false);
-            if (localKey)
-            {
-                activeLocalKeyParts.setown(createBitSet());
-                ForEachItemIn(ip, indexParts)
-                {
-                    IPartDescriptor &part = indexParts.item(ip);
-                    unsigned partNo = part.queryPartIndex();
-                    if (numSuperIndexSubs) // interleaved
-                    {
-                        if (superWidth)
-                        {
-                            unsigned whichSuper = partNo / numSuperIndexSubs;
-                            unsigned interLeavedOffset = partNo - (whichSuper * superWidth);
-                            partNo = whichSuper + (interLeavedOffset * superWidth);
-                        }
-                        activeLocalKeyParts->set(partNo);
-                    }
-                    else
-                        activeLocalKeyParts->set(partNo);
-                }
-                localMerge = (numIndexParts > 1);
-            }
-            unsigned numLookupThreads = localMerge ? 1 : numIndexParts;
             unsigned currentNumLookupThreads = lookupThreads.ordinality();
-            if (currentNumLookupThreads>numLookupThreads)
-                lookupThreads.removen(numLookupThreads, currentNumLookupThreads-numLookupThreads);
+            if (currentNumLookupThreads>numIndexParts)
+                lookupThreads.removen(numIndexParts, currentNumLookupThreads-numIndexParts);
             else
             {
-                while (currentNumLookupThreads<numLookupThreads)
+                while (currentNumLookupThreads<numIndexParts)
                     lookupThreads.append(new CKeyLookupHandler(*this, currentNumLookupThreads++));
             }
         }

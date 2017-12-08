@@ -30,7 +30,7 @@ class CKeyedJoinMaster : public CMasterActivity
     Owned<CSlavePartMapping> dataFileMapping;
     MemoryBuffer offsetMapMb, initMb;
     unsigned numPartsOffset = 0;
-    bool localKey, remoteDataFiles;
+    bool remoteDataFiles;
     unsigned numTags;
     mptag_t tags[4];
     ProgressInfoArray progressInfoArr;
@@ -57,7 +57,6 @@ public:
         }
         ForEachItemIn(l, progressKinds)
             progressInfoArr.append(*new ProgressInfo(queryJob()));
-        localKey = false;
         numTags = 0;
         tags[0] = tags[1] = tags[2] = tags[3] = TAG_NULL;
         reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
@@ -97,10 +96,9 @@ public:
         if (indexFile)
         {
             unsigned numParts = 0;
-            localKey = indexFile->queryAttributes().getPropBool("@local");
-
-            if (container.queryLocalData() && !localKey)
-                throw MakeActivityException(this, 0, "Keyed Join cannot be LOCAL unless supplied index is local");
+            bool localKey = indexFile->queryAttributes().getPropBool("@local");
+            if (localKey && !container.queryLocalData())
+                throw MakeActivityException(this, 0, "Global Keyed Join cannot be used with a local index");
 
             checkFormatCrc(this, indexFile, helper->getIndexFormatCrc(), true);
             indexFileDesc.setown(indexFile->getFileDescriptor());
@@ -155,12 +153,14 @@ public:
                 }
             }
             numPartsOffset = initMb.length();
+            if (localKey)
+                keyHasTlk = false; // JCSMORE, not used at least for now
             if (numParts)
             {
                 initMb.append(numParts); // placeholder
                 initMb.append(superIndexWidth); // 0 if not superIndex
                 bool interleaved = superIndex && superIndex->isInterleaved();
-                initMb.append(interleaved ? numSuperIndexSubs : 0);
+                initMb.append(numSuperIndexSubs);
                 initMb.append(keyHasTlk);
                 if (keyHasTlk)
                 {
@@ -251,12 +251,9 @@ public:
                             indexFile.clear();
                     }
                 }
-                if (localKey)
+                if (container.queryLocalOrGrouped())
                 {
-                    // JCSMORE - tlk could still be useful to filter out of range values
-                    // keyHasTlk = false; // not used
-                    mapping.setown(getFileSlaveMaps(indexFile->queryLogicalName(), *indexFileDesc, container.queryJob().queryUserDescriptor(), container.queryJob().querySlaveGroup(), container.queryLocalOrGrouped(), true, NULL, indexFile->querySuperFile()));
-
+                    mapping.setown(getFileSlaveMaps(indexFile->queryLogicalName(), *indexFileDesc, container.queryJob().queryUserDescriptor(), container.queryJob().querySlaveGroup(), false, true, NULL, indexFile->querySuperFile()));
                     // leave seralizeMetaData to serialize the key parts
                 }
                 else
@@ -295,7 +292,7 @@ public:
     }
     virtual void serializeSlaveData(MemoryBuffer &dst, unsigned slave)
     {
-        if (mapping) // local keys only
+        if (mapping) // local only
         {
             IArrayOf<IPartDescriptor> parts;
             mapping->getParts(slave, parts);
