@@ -74,6 +74,7 @@
 #define DEFAULT_KEYLOOKUP_MAX_LOOKUP_BATCHSIZE 1000
 #define DEFAULT_KEYLOOKUP_MAX_THREADS 10
 #define DEFAULT_KEYLOOKUP_MAX_QUEUED 10000
+#define DEFAULT_KEYLOOKUP_MAX_DONE 10000
 
 class CJoinGroup;
 struct FetchRequestHeader
@@ -244,6 +245,7 @@ public:
 class CJoinGroupList
 {
     CJoinGroup *head = nullptr, *tail = nullptr;
+    unsigned count = 0;
 
 public:
     CJoinGroupList() { }
@@ -256,6 +258,7 @@ public:
             head = next;
         }
     }
+    inline unsigned queryCount() const { return count; }
     inline CJoinGroup *queryHead() const { return head; }
     CJoinGroup *removeHead()
     {
@@ -268,9 +271,10 @@ public:
             head->prev = nullptr;
         else
             tail = nullptr;
+        --count;
         return ret;
     }
-    void remove(CJoinGroup *joinGroup)
+    CJoinGroup *remove(CJoinGroup *joinGroup)
     {
         CJoinGroup *prev = joinGroup->prev;
         CJoinGroup *next = joinGroup->next;
@@ -284,6 +288,8 @@ public:
             prev->next = next;
         joinGroup->prev = nullptr;
         joinGroup->next = nullptr;
+        --count;
+        return joinGroup; // now detached
     }
     void addToTail(CJoinGroup *joinGroup)
     {
@@ -295,6 +301,7 @@ public:
             joinGroup->prev = tail;
             tail = joinGroup;
         }
+        ++count;
     }
 };
 
@@ -990,7 +997,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     b.leave();
                     // stopping/stopped
                     threaded.join(); // must be sure finished
-                    activity.decRunningLookups(); // unblocks any requests to start lookup threads
                     b.enter();
                     // cycle around to start thread again, or bail out if someone else already has.
                 }
@@ -1084,7 +1090,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             {
                 CriticalBlock b(queueCrit);
                 if (0 == queue.ordinality())
+                {
+                    activity.decRunningLookups(); // unblocks any requests to start lookup threads
                     return;
+                }
                 assertex(state == ts_starting);
                 state = ts_running; // only this thread can transition between ts_starting and ts_running
                 if (queue.ordinality() <= activity.keyLookupMaxLookupBatchSize)
@@ -1096,6 +1105,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             {
                 process(processing);
                 activity.decAndRelease(processing.ordinality());
+                processing.clearRows();
 
                 {
                     CriticalBlock b(queueCrit);
@@ -1105,7 +1115,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         state = ts_stopping; // only this thread can transition between ts_running and ts_stopping
                         break;
                     }
-                    processing.clearRows();
                     if (queue.ordinality() <= activity.keyLookupMaxLookupBatchSize)
                         queue.swap(processing);
                     else
@@ -1113,6 +1122,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 }
             }
             while (true);
+            activity.decRunningLookups(); // unblocks any requests to start lookup threads
         }
     };
     class CLookupThread : implements IThreaded
@@ -1185,6 +1195,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     unsigned keyLookupMaxLookupBatchSize = DEFAULT_KEYLOOKUP_MAX_LOOKUP_BATCHSIZE;
     unsigned keyLookupMaxThreads = DEFAULT_KEYLOOKUP_MAX_THREADS;
     unsigned keyLookupMaxQueued = DEFAULT_KEYLOOKUP_MAX_QUEUED;
+    unsigned keyLookupMaxDone = DEFAULT_KEYLOOKUP_MAX_DONE;
 
     Owned<IEngineRowAllocator> keyLookupRowWithJGAllocator, transformAllocator;
     CJoinGroup *currentPendingLhsGroupHead = nullptr;
@@ -1193,7 +1204,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     IArrayOf<IKeyManager> tlkKeyManagers;
     CriticalSection onCompleteCrit, queuedCrit, runningLookupThreadsCrit;
     std::atomic<bool> waitingForDoneGroups{false};
-    Semaphore waitingForDoneGroupsSem;
+    bool excessiveDoneGroups = false;
+    Semaphore waitingForDoneGroupsSem, excessiveDoneGroupsSem;
     CJoinGroupList pendingJoinGroupList, doneJoinGroupList;
     Owned<IException> abortLimitException;
     Owned<CJoinGroup> currentJoinGroup;
@@ -1542,6 +1554,7 @@ public:
         keyLookupQueuedBatchSize = getOptInt(THOROPT_KEYLOOKUP_QUEUED_BATCHSIZE, DEFAULT_KEYLOOKUP_QUEUED_BATCHSIZE);
         keyLookupMaxThreads = getOptInt(THOROPT_KEYLOOKUP_MAX_THREADS, DEFAULT_KEYLOOKUP_MAX_THREADS);
         keyLookupMaxQueued = getOptInt(THOROPT_KEYLOOKUP_MAX_QUEUED, DEFAULT_KEYLOOKUP_MAX_QUEUED);
+        keyLookupMaxDone = getOptInt(THOROPT_KEYLOOKUP_MAX_DONE, DEFAULT_KEYLOOKUP_MAX_DONE);
 
         transformAllocator.setown(getRowAllocator(queryOutputMeta(), (roxiemem::RoxieHeapFlags)(queryHeapFlags()|roxiemem::RHFpacked|roxiemem::RHFunique)));
         rowManager = queryJobChannel().queryThorAllocator()->queryRowManager();
@@ -1818,7 +1831,11 @@ public:
                         CriticalBlock b(onCompleteCrit);
                         currentJoinGroup.setown(doneJoinGroupList.removeHead());
                         if (currentJoinGroup)
+                        {
+                            if (excessiveDoneGroups)
+                                excessiveDoneGroupsSem.signal();
                             break;
+                        }
                         if (endOfInput && (nullptr == pendingJoinGroupList.queryHead()))
                         {
                             eos = true;
@@ -1968,30 +1985,44 @@ public:
     // IJoinProcessor
     virtual void onComplete(CJoinGroup *joinGroup) override
     {
+        bool excessive = false;
         // moves complete CJoinGroup's from pending list to done list
-        CriticalBlock b(onCompleteCrit); // protecting both pendingJoinGroupList and doneJoinGroupList
-        if (preserveOrder)
         {
-            // NB: when preserveGroups, the lhs group will always be complete at same time, so this will traverse whole group
-            CJoinGroup *finger = pendingJoinGroupList.queryHead();
-            while (finger)
+            CriticalBlock b(onCompleteCrit); // protecting both pendingJoinGroupList and doneJoinGroupList
+            if (preserveOrder)
             {
-                if (!finger->complete())
+                // NB: when preserveGroups, the lhs group will always be complete at same time, so this will traverse whole group
+                CJoinGroup *head = pendingJoinGroupList.queryHead();
+                CJoinGroup *finger = head;
+                while (finger)
                 {
-                    if (finger == pendingJoinGroupList.queryHead()) // i.e. none ready
-                        return;
+                    if (!finger->complete())
+                    {
+                        if (finger == head) // i.e. none ready
+                            return;
+                        else
+                            break;
+                    }
+                    CJoinGroup *next = finger->next;
+                    CJoinGroup *detached = pendingJoinGroupList.remove(finger);
+                    doneJoinGroupList.addToTail(detached);
+                    finger = next;
                 }
-                CJoinGroup *next = finger->next;
-                pendingJoinGroupList.remove(finger);
-                doneJoinGroupList.addToTail(LINK(finger));
-                finger = next;
+            }
+            else
+                doneJoinGroupList.addToTail(LINK(joinGroup)); // takes ownership
+            bool expectedState = true;
+            if (waitingForDoneGroups.compare_exchange_strong(expectedState, false))
+                waitingForDoneGroupsSem.signal();
+
+            if (doneJoinGroupList.queryCount() >= keyLookupMaxDone)
+            {
+                excessiveDoneGroups = true;
+                excessive = true;
             }
         }
-        else
-            doneJoinGroupList.addToTail(LINK(joinGroup)); // takes ownership
-        bool expectedState = true;
-        if (waitingForDoneGroups.compare_exchange_strong(expectedState, false))
-            waitingForDoneGroupsSem.signal();
+        if (excessive) // outside of crit, done group dequeue and signal may already have happened
+            excessiveDoneGroupsSem.wait();
     }
 };
 

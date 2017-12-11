@@ -97,8 +97,8 @@ public:
         {
             unsigned numParts = 0;
             bool localKey = indexFile->queryAttributes().getPropBool("@local");
-            if (localKey && !container.queryLocalData())
-                throw MakeActivityException(this, 0, "Global Keyed Join cannot be used with a local index");
+//            if (localKey && !container.queryLocalData())
+//                throw MakeActivityException(this, 0, "Global Keyed Join cannot be used with a local index");
 
             checkFormatCrc(this, indexFile, helper->getIndexFormatCrc(), true);
             indexFileDesc.setown(indexFile->getFileDescriptor());
@@ -292,11 +292,12 @@ public:
     }
     virtual void serializeSlaveData(MemoryBuffer &dst, unsigned slave)
     {
+        unsigned numParts = 0;
         if (mapping) // local only
         {
             IArrayOf<IPartDescriptor> parts;
             mapping->getParts(slave, parts);
-            unsigned numParts = parts.ordinality();
+            numParts = parts.ordinality();
             if (0 == numParts)
             {
                 initMb.setLength(numPartsOffset);
@@ -318,7 +319,7 @@ public:
             dst.append(initMb);
 
         IDistributedFile *indexFile = queryReadFile(0); // 0 == indexFile, 1 == dataFile
-        if (indexFile && helper->diskAccessRequired())
+        if (indexFile && helper->diskAccessRequired() && (!mapping || numParts))
         {
             IDistributedFile *dataFile = queryReadFile(1);
             if (dataFile)
