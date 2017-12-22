@@ -1084,7 +1084,7 @@ IKeyIndex *CKeyStore::doload(const char *fileName, unsigned crc, IReplicatedFile
             if (iMappedFile)
             {
                 assert(!iFileIO && !part);
-                keyIndex = new CMemKeyIndex(getUniqId(), LINK(iMappedFile), fname, isTLK);
+                keyIndex = new CMemoryMappedKeyIndex(getUniqId(), LINK(iMappedFile), fname, isTLK);
             }
             else if (iFileIO)
             {
@@ -1138,6 +1138,21 @@ IKeyIndex *CKeyStore::load(const char *fileName, unsigned crc, IReplicatedFile &
 IKeyIndex *CKeyStore::load(const char *fileName, unsigned crc, bool isTLK, bool allowPreload)
 {
     return doload(fileName, crc, NULL, NULL, NULL, isTLK, allowPreload);
+}
+
+IKeyIndex *CKeyStore::load(const char *fileName, unsigned crc, size32_t sz, const void *data, bool isTLK)
+{
+    MTIME_SECTION(queryActiveTimer(), "CKeyStore_load");
+    StringBuffer fname;
+    fname.append(fileName).append('/').append(crc);
+    // MORE - holds onto the mutex way too long
+    synchronized block(mutex);
+    IKeyIndex *keyIndex = keyIndexCache.query(fname);
+    if (keyIndex)
+        return LINK(keyIndex);
+    keyIndex = new CInMemoryKeyIndex(getUniqId(), sz, data, fname, isTLK);
+    keyIndexCache.add(fname, *LINK(keyIndex));
+    return keyIndex;
 }
 
 StringBuffer &CKeyStore::getMetrics(StringBuffer &xml)
@@ -1248,43 +1263,20 @@ void CKeyStore::clearCacheEntry(const IFileIO *io)
     }
 }
 
-// CKeyIndex impl.
 
-CKeyIndex::CKeyIndex(int _iD, const char *_name) : name(_name)
+// CKeyIndexBase impl.
+
+CKeyIndexBase::CKeyIndexBase(int _iD, const char *_name) : name(_name)
 {
     iD = _iD;
-    cache = queryNodeCache(); // use one node cache for all key indexes;
-    cache->Link();
     keyHdr = NULL;
     rootNode = NULL;
-    cachedBlobNodePos = 0;
     keySeeks.store(0);
     keyScans.store(0);
     latestGetNodeOffset = 0;
 }
 
-void CKeyIndex::cacheNodes(CNodeCache *cache, offset_t nodePos, bool isTLK)
-{
-    bool first = true;
-    while (nodePos)
-    {
-        Owned<CJHTreeNode> node = loadNode(nodePos);
-        if (node->isLeaf())
-        {
-            if (!isTLK)
-                return;
-        }
-        else if (first)
-        {
-            cacheNodes(cache, node->getFPosAt(0), isTLK);
-            first = false;
-        }
-        cache->preload(node, iD, nodePos, NULL);
-        nodePos = node->getRightSib();
-    }
-}
-
-void CKeyIndex::init(KeyHdr &hdr, bool isTLK, bool allowPreload)
+void CKeyIndexBase::init(KeyHdr &hdr, bool isTLK)
 {
     if (isTLK)
         hdr.ktype |= HTREE_TOPLEVEL_KEY; // thor does not set
@@ -1302,97 +1294,32 @@ void CKeyIndex::init(KeyHdr &hdr, bool isTLK, bool allowPreload)
         throw ke2;
     }
     offset_t rootPos = keyHdr->getRootFPos();
-    Linked<CNodeCache> nodeCache = queryNodeCache();
-    if (allowPreload)
-    {
-        if (nodeCache->getNodeCachePreload() && !nodeCache->isPreloaded(iD, rootPos))
-        {
-            cacheNodes(nodeCache, rootPos, isTLK);
-        }
-    }
-    rootNode = nodeCache->getNode(this, iD, rootPos, NULL, isTLK);
+    rootNode = getNode(rootPos, nullptr);
 }
 
-CKeyIndex::~CKeyIndex()
+CKeyIndexBase::~CKeyIndexBase()
 {
     ::Release(keyHdr);
-    ::Release(cache);
     ::Release(rootNode);
 }
 
-CMemKeyIndex::CMemKeyIndex(int _iD, IMemoryMappedFile *_io, const char *_name, bool isTLK)
-    : CKeyIndex(_iD, _name)
-{
-    io.setown(_io);
-    assertex(io->offset()==0);                  // mapped whole file
-    assertex(io->length()==io->fileSize());     // mapped whole file
-    KeyHdr hdr;
-    if (io->length() < sizeof(hdr))
-        throw MakeStringException(0, "Failed to read key header: file too small, could not read %u bytes", (unsigned) sizeof(hdr));
-    memcpy(&hdr, io->base(), sizeof(hdr));
-    init(hdr, isTLK, false);
-}
 
-CJHTreeNode *CMemKeyIndex::loadNode(offset_t pos)
-{
-    nodesLoaded++;
-    if (pos + keyHdr->getNodeSize() > io->fileSize())
-    {
-        IException *E = MakeStringException(errno, "Error reading node at position %" I64F "x past EOF", pos); 
-        StringBuffer m;
-        m.appendf("In key %s, position 0x%" I64F "x", name.get(), pos);
-        EXCLOG(E, m.str());
-        throw E;
-    }
-    char *nodeData = (char *) (io->base() + pos);
-    MTIME_SECTION(queryActiveTimer(), "JHTREE read node");
-    return CKeyIndex::loadNode(nodeData, pos, false);
-}
-
-CDiskKeyIndex::CDiskKeyIndex(int _iD, IFileIO *_io, const char *_name, bool isTLK, bool allowPreload)
-    : CKeyIndex(_iD, _name)
-{
-    io.setown(_io);
-    KeyHdr hdr;
-    if (io->read(0, sizeof(hdr), &hdr) != sizeof(hdr))
-        throw MakeStringException(0, "Failed to read key header: file too small, could not read %u bytes", (unsigned) sizeof(hdr));
-    init(hdr, isTLK, allowPreload);
-}
-
-CJHTreeNode *CDiskKeyIndex::loadNode(offset_t pos) 
-{
-    nodesLoaded++;
-    unsigned nodeSize = keyHdr->getNodeSize();
-    MemoryAttr ma;
-    char *nodeData = (char *) ma.allocate(nodeSize);
-    MTIME_SECTION(queryActiveTimer(), "JHTREE read node");
-    if (io->read(pos, nodeSize, nodeData) != nodeSize)
-    {
-        IException *E = MakeStringException(errno, "Error %d reading node at position %" I64F "x", errno, pos); 
-        StringBuffer m;
-        m.appendf("In key %s, position 0x%" I64F "x", name.get(), pos);
-        EXCLOG(E, m.str());
-        throw E;
-    }
-    return CKeyIndex::loadNode(nodeData, pos, true);
-}
-
-CJHTreeNode *CKeyIndex::loadNode(char *nodeData, offset_t pos, bool needsCopy) 
+CJHTreeNode *CKeyIndexBase::loadNode(const void *nodeData, offset_t pos, bool needsCopy)
 {
     try
     {
         Owned<CJHTreeNode> ret;
-        char leafFlag = ((NodeHdr *) nodeData)->leafFlag;
+        char leafFlag = ((const NodeHdr *) nodeData)->leafFlag;
         switch(leafFlag)
         {
         case 0:
             ret.setown(new CJHTreeNode());
             break;
         case 1:
-        	if (keyHdr->isVariable())
-        		ret.setown(new CJHVarTreeNode());
-        	else
-        		ret.setown(new CJHTreeNode());
+            if (keyHdr->isVariable())
+                ret.setown(new CJHVarTreeNode());
+            else
+                ret.setown(new CJHTreeNode());
             break;
         case 2:
             ret.setown(new CJHTreeBlobNode());
@@ -1423,25 +1350,19 @@ CJHTreeNode *CKeyIndex::loadNode(char *nodeData, offset_t pos, bool needsCopy)
     }
 }
 
-bool CKeyIndex::isTopLevelKey()
+bool CKeyIndexBase::isTopLevelKey()
 {
     return (keyHdr->getKeyType() & HTREE_TOPLEVEL_KEY) != 0;
 }
 
-bool CKeyIndex::isFullySorted()
+bool CKeyIndexBase::isFullySorted()
 {
     return (keyHdr->getKeyType() & HTREE_FULLSORT_KEY) != 0;
 }
 
-IKeyCursor *CKeyIndex::getCursor(IContextLogger *ctx)
+IKeyCursor *CKeyIndexBase::getCursor(IContextLogger *ctx)
 {
     return new CKeyCursor(*this, ctx);      // MORE - pool them?
-}
-
-CJHTreeNode *CKeyIndex::getNode(offset_t offset, IContextLogger *ctx) 
-{ 
-    latestGetNodeOffset = offset;
-    return cache->getNode(this, iD, offset, ctx, isTopLevelKey()); 
 }
 
 void dumpNode(FILE *out, CJHTreeNode *node, int length, unsigned rowCount, bool raw)
@@ -1470,45 +1391,34 @@ void dumpNode(FILE *out, CJHTreeNode *node, int length, unsigned rowCount, bool 
         fprintf(out, "==========\n");
 }
 
-void CKeyIndex::dumpNode(FILE *out, offset_t pos, unsigned count, bool isRaw)
+void CKeyIndexBase::dumpNode(FILE *out, offset_t pos, unsigned count, bool isRaw)
 {
     Owned<CJHTreeNode> node = loadNode(pos);
     ::dumpNode(out, node, keySize(), count, isRaw);
 }
 
-bool CKeyIndex::hasSpecialFileposition() const
+bool CKeyIndexBase::hasSpecialFileposition() const
 {
     return keyHdr->hasSpecialFileposition();
 }
 
-size32_t CKeyIndex::keySize()
+size32_t CKeyIndexBase::keySize()
 {
     size32_t fileposSize = keyHdr->hasSpecialFileposition() ? sizeof(offset_t) : 0;
     return keyHdr->getMaxKeyLength() + fileposSize;
 }
 
-size32_t CKeyIndex::keyedSize()
+size32_t CKeyIndexBase::keyedSize()
 {
     return keyHdr->getNodeKeyLength();
 }
 
-bool CKeyIndex::hasPayload()
+bool CKeyIndexBase::hasPayload()
 {
     return keyHdr->hasPayload();
 }
 
-CJHTreeBlobNode *CKeyIndex::getBlobNode(offset_t nodepos)
-{
-    CriticalBlock b(blobCacheCrit);
-    if (nodepos != cachedBlobNodePos)
-    {
-        cachedBlobNode.setown(QUERYINTERFACE(loadNode(nodepos), CJHTreeBlobNode)); // note - don't use the cache
-        cachedBlobNodePos = nodepos;
-    }
-    return cachedBlobNode.getLink();
-}
-
-const byte *CKeyIndex::loadBlob(unsigned __int64 blobid, size32_t &blobSize)
+const byte *CKeyIndexBase::loadBlob(unsigned __int64 blobid, size32_t &blobSize)
 {
     offset_t nodepos = blobid & I64C(0xffffffffffff);
     size32_t offset = (size32_t) ((blobid & I64C(0xffff000000000000)) >> 44);
@@ -1532,14 +1442,14 @@ const byte *CKeyIndex::loadBlob(unsigned __int64 blobid, size32_t &blobSize)
     return ret;
 }
 
-offset_t CKeyIndex::queryMetadataHead()
+offset_t CKeyIndexBase::queryMetadataHead()
 {
     offset_t ret = keyHdr->getHdrStruct()->metadataHead;
     if(ret == static_cast<offset_t>(-1)) ret = 0; // index created before introduction of metadata would have FFFF... in this space
     return ret;
 }
 
-IPropertyTree * CKeyIndex::getMetadata()
+IPropertyTree * CKeyIndexBase::getMetadata()
 {
     offset_t nodepos = queryMetadataHead();
     if(!nodepos)
@@ -1567,7 +1477,198 @@ IPropertyTree * CKeyIndex::getMetadata()
     return ret;
 }
 
-CKeyCursor::CKeyCursor(CKeyIndex &_key, IContextLogger *_ctx)
+CJHTreeBlobNode *CKeyIndexBase::getBlobNode(offset_t nodepos)
+{
+    return static_cast<CJHTreeBlobNode *>(loadNode(nodepos));
+}
+
+// CKeyIndex impl.
+
+CKeyIndex::CKeyIndex(int iD, const char *name) : CKeyIndexBase(iD, name)
+{
+    cache = queryNodeCache(); // use one node cache for all key indexes;
+    cache->Link();
+    cachedBlobNodePos = 0;
+}
+
+void CKeyIndex::cacheNodes(CNodeCache *cache, offset_t nodePos, bool isTLK)
+{
+    bool first = true;
+    while (nodePos)
+    {
+        Owned<CJHTreeNode> node = loadNode(nodePos);
+        if (node->isLeaf())
+        {
+            if (!isTLK)
+                return;
+        }
+        else if (first)
+        {
+            cacheNodes(cache, node->getFPosAt(0), isTLK);
+            first = false;
+        }
+        cache->preload(node, iD, nodePos, NULL);
+        nodePos = node->getRightSib();
+    }
+}
+
+void CKeyIndex::init(KeyHdr &hdr, bool isTLK, bool allowPreload)
+{
+    preload = allowPreload;
+    PARENT::init(hdr, isTLK);
+}
+
+CKeyIndex::~CKeyIndex()
+{
+    ::Release(cache);
+}
+
+CJHTreeNode *CKeyIndex::getNode(offset_t offset, IContextLogger *ctx) 
+{
+    if (preload)
+    {
+        preload = false;
+        offset_t rootPos = keyHdr->getRootFPos();
+        Linked<CNodeCache> nodeCache = queryNodeCache();
+        if (nodeCache->getNodeCachePreload() && !nodeCache->isPreloaded(iD, rootPos))
+            cacheNodes(nodeCache, rootPos, keyHdr->getKeyType() & HTREE_TOPLEVEL_KEY);
+    }
+    latestGetNodeOffset = offset;
+    return cache->getNode(this, iD, offset, ctx, isTopLevelKey()); 
+}
+
+CJHTreeBlobNode *CKeyIndex::getBlobNode(offset_t nodepos)
+{
+    CriticalBlock b(blobCacheCrit);
+    if (nodepos != cachedBlobNodePos)
+    {
+        cachedBlobNode.setown(QUERYINTERFACE(PARENT::getBlobNode(nodepos), CJHTreeBlobNode)); // note - don't use the cache
+        cachedBlobNodePos = nodepos;
+    }
+    return cachedBlobNode.getLink();
+}
+
+/////
+
+CMemoryMappedKeyIndex::CMemoryMappedKeyIndex(int _iD, IMemoryMappedFile *_io, const char *_name, bool isTLK)
+    : CKeyIndex(_iD, _name)
+{
+    io.setown(_io);
+    assertex(io->offset()==0);                  // mapped whole file
+    assertex(io->length()==io->fileSize());     // mapped whole file
+    KeyHdr hdr;
+    if (io->length() < sizeof(hdr))
+        throw MakeStringException(0, "Failed to read key header: file too small, could not read %u bytes", (unsigned) sizeof(hdr));
+    memcpy(&hdr, io->base(), sizeof(hdr));
+    init(hdr, isTLK, false);
+}
+
+CJHTreeNode *CMemoryMappedKeyIndex::loadNode(offset_t pos)
+{
+    nodesLoaded++;
+    if (pos + keyHdr->getNodeSize() > io->fileSize())
+    {
+        IException *E = MakeStringException(errno, "Error reading node at position %" I64F "x past EOF", pos);
+        StringBuffer m;
+        m.appendf("In key %s, position 0x%" I64F "x", name.get(), pos);
+        EXCLOG(E, m.str());
+        throw E;
+    }
+    const void *nodeData = (const byte *) (io->base() + pos);
+    MTIME_SECTION(queryActiveTimer(), "JHTREE read node");
+    return CKeyIndexBase::loadNode(nodeData, pos, false);
+}
+
+////////////
+
+CDiskKeyIndex::CDiskKeyIndex(int _iD, IFileIO *_io, const char *_name, bool isTLK, bool allowPreload)
+    : CKeyIndex(_iD, _name)
+{
+    io.setown(_io);
+    KeyHdr hdr;
+    if (io->read(0, sizeof(hdr), &hdr) != sizeof(hdr))
+        throw MakeStringException(0, "Failed to read key header: file too small, could not read %u bytes", (unsigned) sizeof(hdr));
+    init(hdr, isTLK, allowPreload);
+}
+
+CJHTreeNode *CDiskKeyIndex::loadNode(offset_t pos)
+{
+    nodesLoaded++;
+    unsigned nodeSize = keyHdr->getNodeSize();
+    MemoryAttr ma;
+    char *nodeData = (char *) ma.allocate(nodeSize);
+    MTIME_SECTION(queryActiveTimer(), "JHTREE read node");
+    if (io->read(pos, nodeSize, nodeData) != nodeSize)
+    {
+        IException *E = MakeStringException(errno, "Error %d reading node at position %" I64F "x", errno, pos);
+        StringBuffer m;
+        m.appendf("In key %s, position 0x%" I64F "x", name.get(), pos);
+        EXCLOG(E, m.str());
+        throw E;
+    }
+    return CKeyIndexBase::loadNode(nodeData, pos, true);
+}
+
+////////////
+
+CInMemoryKeyIndex::CInMemoryKeyIndex(int _iD, size32_t indexSz, const void *_indexData, const char *_name, bool isTLK)
+    : CKeyIndexBase(_iD, _name)
+{
+    KeyHdr hdr;
+    if (indexSz < sizeof(hdr))
+        throw MakeStringException(0, "Failed to read key header: file too small, could not read %u bytes", (unsigned) sizeof(hdr));
+    indexData.append(indexSz, _indexData);
+    memcpy(&hdr, _indexData, sizeof(hdr));
+    init(hdr, isTLK);
+}
+
+CJHTreeNode *CInMemoryKeyIndex::loadNode(offset_t pos)
+{
+    if (pos + keyHdr->getNodeSize() > indexData.length())
+    {
+        IException *E = MakeStringException(errno, "Error reading node at position %" I64F "x past EOF", pos);
+        StringBuffer m;
+        m.appendf("In key %s, position 0x%" I64F "x", name.get(), pos);
+        EXCLOG(E, m.str());
+        throw E;
+    }
+    dbgassertex(0 == (pos % keyHdr->getNodeSize()));
+    unsigned nodeNum = pos / keyHdr->getNodeSize();
+    CJHTreeNode *node = nullptr;
+    CriticalBlock b(crit);
+    if (nodeNum<nodes.ordinality())
+    {
+        node = nodes.item(nodeNum);
+        if (node)
+            return LINK(node);
+    }
+    else
+    {
+        while (nodes.ordinality()<nodeNum)
+            nodes.append(nullptr);
+    }
+    nodesLoaded++;
+    {
+        MTIME_SECTION(queryActiveTimer(), "JHTREE read node");
+        const void *nodeData = ((const byte *)indexData.toByteArray()) + pos;
+        node = PARENT::loadNode(nodeData, pos, false);
+    }
+    if (nodeNum == nodes.ordinality())
+        nodes.append(node);
+    else
+        nodes.replace(node, nodeNum);
+    return LINK(node);
+}
+
+
+CJHTreeNode *CInMemoryKeyIndex::getNode(offset_t offset, IContextLogger *ctx)
+{
+    return loadNode(offset);
+}
+
+///////////
+
+CKeyCursor::CKeyCursor(CKeyIndexBase &_key, IContextLogger *_ctx)
     : key(_key), ctx(_ctx)
 {
     key.Link();
@@ -1899,6 +2000,8 @@ void CKeyCursor::releaseBlobs()
     activeBlobs.kill();
 }
 
+////////////
+
 class CLazyKeyIndex : implements IKeyIndex, public CInterface
 {
     StringAttr keyfile;
@@ -1984,6 +2087,17 @@ extern jhtree_decl IKeyIndex *createKeyIndex(IReplicatedFile &part, unsigned crc
 extern jhtree_decl IKeyIndex *createKeyIndex(const char *keyfile, unsigned crc, IDelayedFile &iFileIO, bool isTLK, bool preloadAllowed)
 {
     return new CLazyKeyIndex(keyfile, crc, &iFileIO, isTLK, preloadAllowed);
+}
+
+
+extern jhtree_decl IKeyIndex *createKeyIndex(const char *filename, unsigned crc, IMemoryMappedFile &iMappedFile, bool isTLK, bool preloadAllowed)
+{
+    return queryKeyStore()->load(filename, crc, &iMappedFile, isTLK, preloadAllowed);
+}
+
+extern jhtree_decl IKeyIndex *createInMemoryKeyIndex(const char *filename, unsigned crc, size32_t sz, const void *data, bool isTLK)
+{
+    return queryKeyStore()->load(filename, crc, sz, data, isTLK);
 }
 
 extern jhtree_decl void clearKeyStoreCache(bool killAll)
