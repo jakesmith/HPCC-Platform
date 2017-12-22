@@ -1428,7 +1428,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 helper->createSegmentMonitors(&keyManager, keyedFieldsRow);
                 keyManager.finishSegmentMonitors();
                 keyManager.reset();
-                while (keyManager.lookup(false))
+                while (keyManager.lookup(false)) // JCSMORE !! even though the TLK's are in-memory keys, this is going via the node cache and blocking !!
                 {
                     offset_t node = extractFpos(&keyManager);
                     if (node) // don't bail out if part0 match, test again for 'real' tlk match.
@@ -1693,9 +1693,10 @@ public:
             {
                 MemoryBuffer tlkMb;
                 unsigned tlks;
-                size32_t tlkSz;
                 data.read(tlks);
+#if 0
                 UnsignedArray posArray, lenArray;
+                size32_t tlkSz;
                 while (tlks--)
                 {
                     data.read(tlkSz);
@@ -1711,6 +1712,20 @@ public:
                     Owned<IKeyIndex> tlkKeyIndex = createKeyIndex(name.append(p).str(), 0, *iFileIO, true, false); // MORE - not the right crc
                     tlkKeyIndexes.append(*tlkKeyIndex.getClear());
                 }
+#else
+                unsigned p = 0;
+                while (tlks--)
+                {
+                    size32_t tlkSz;
+                    data.read(tlkSz);
+                    const void *tlkData = data.readDirect(tlkSz);
+
+                    StringBuffer name("TLK");
+                    name.append('_').append(container.queryId()).append('_');
+                    Owned<IKeyIndex> tlkKeyIndex = createInMemoryKeyIndex(name.append(p++), 0, tlkSz, tlkData, true); // MORE - not the right crc
+                    tlkKeyIndexes.append(*tlkKeyIndex.getClear());
+                }
+#endif
             }
 
             CPartDescriptorArray _indexParts;

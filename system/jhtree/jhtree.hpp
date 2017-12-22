@@ -119,6 +119,8 @@ extern jhtree_decl IKeyIndex *createKeyIndex(const char *filename, unsigned crc,
 extern jhtree_decl IKeyIndex *createKeyIndex(const char *filename, unsigned crc, IFileIO &ifile, bool isTLK, bool preloadAllowed);
 extern jhtree_decl IKeyIndex *createKeyIndex(IReplicatedFile &part, unsigned crc, bool isTLK, bool preloadAllowed);
 extern jhtree_decl IKeyIndex *createKeyIndex(const char *filename, unsigned crc, IDelayedFile &ifile, bool isTLK, bool preloadAllowed);
+extern jhtree_decl IKeyIndex *createInMemoryKeyIndex(const char *name, unsigned crc, size32_t sz, const void *data, bool isTLK);
+
 
 extern jhtree_decl bool isKeyFile(const char *keyfile);
 extern jhtree_decl void validateKeyFile(const char *keyfile, offset_t nodepos = 0);
