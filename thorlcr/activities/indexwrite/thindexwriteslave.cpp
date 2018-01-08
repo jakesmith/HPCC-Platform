@@ -478,10 +478,13 @@ public:
                         try
                         {
                             open(*tlkDesc, true, helper->queryDiskRecordSize()->isVariableSize(), true);
-                            if (tlkRows.length())
+                            if (!getOptBool("suppressMaxLastTlkEntry", false))
                             {
-                                CNodeInfo &lastNode = tlkRows.item(tlkRows.length()-1);
-                                memset(lastNode.value, 0xff, lastNode.size);
+                                if (tlkRows.length())
+                                {
+                                    CNodeInfo &lastNode = tlkRows.item(tlkRows.length()-1);
+                                    memset(lastNode.value, 0xff, lastNode.size);
+                                }
                             }
                             ForEachItemIn(idx, tlkRows)
                             {

@@ -2667,6 +2667,12 @@ void CJobBase::init()
     sharedMemoryLimitPercentage = (unsigned)getWorkUnitValueInt("globalMemoryLimitPC", globals->getPropInt("@sharedMemoryLimit", 90));
     sharedMemoryMB = globalMemoryMB*sharedMemoryLimitPercentage/100;
 
+    unsigned memTraceLevel = getOptInt("memTraceLevel", NotFound);
+    if (NotFound != memTraceLevel)
+    {
+        PROGLOG("Setting memTraceLevel to %d", memTraceLevel);
+        roxiemem::setMemTraceLevel(memTraceLevel);
+    }
     PROGLOG("Global memory size = %d MB, shared memory = %d%%, memory spill at = %d%%", globalMemoryMB, sharedMemoryLimitPercentage, memorySpillAtPercentage);
     StringBuffer tracing("maxActivityCores = ");
     if (maxActivityCores)
@@ -3088,6 +3094,12 @@ IThorRowInterfaces * CActivityBase::createRowInterfaces(IOutputMetaData * meta, 
 {
     activity_id id = createCompoundActSeqId(queryId(), seq);
     return createThorRowInterfaces(queryRowManager(), meta, id, queryHeapFlags(), queryCodeContext());
+}
+
+IThorRowInterfaces * CActivityBase::createRowInterfaces(IOutputMetaData * meta, roxiemem::RoxieHeapFlags heapFlags, byte seq)
+{
+    activity_id id = createCompoundActSeqId(queryId(), seq);
+    return createThorRowInterfaces(queryRowManager(), meta, id, heapFlags, queryCodeContext());
 }
 
 bool CActivityBase::fireException(IException *e)

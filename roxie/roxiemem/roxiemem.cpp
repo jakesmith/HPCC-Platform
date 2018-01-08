@@ -6074,7 +6074,13 @@ const void * CChunkedHeap::newCompactRow(const void * ptr, NewHeapCompactState &
 
 void * CChunkedHeap::doAllocate(unsigned activityId, unsigned maxSpillCost)
 {
-    return doAllocateRow(activityId, maxSpillCost);
+    void *ret = doAllocateRow(activityId, maxSpillCost);
+    if (memTraceLevel >= 1000)
+    {
+        DBGLOG("doAllocate: Pointer %p", ret);
+        PrintStackReport();
+    }
+    return ret;
 }
 
 void CChunkedHeap::checkScans(unsigned allocatorId)

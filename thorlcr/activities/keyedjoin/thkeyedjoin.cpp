@@ -15,6 +15,7 @@
     limitations under the License.
 ############################################################################## */
 
+#include <vector>
 #include "dasess.hpp"
 #include "dadfs.hpp"
 #include "thexception.hpp"
@@ -25,17 +26,18 @@
 
 class CKeyedJoinMaster : public CMasterActivity
 {
-    IHThorKeyedJoinArg *helper;
+    IHThorKeyedJoinArg *helper = nullptr;
     Owned<IFileDescriptor> dataFileDesc, indexFileDesc;
     Owned<CSlavePartMapping> dataFileMapping;
-    MemoryBuffer offsetMapMb, initMb;
+    MemoryBuffer initMb;
     unsigned numPartsOffset = 0;
-    bool remoteDataFiles;
-    unsigned numTags;
-    mptag_t tags[4];
+    bool remoteDataFiles = false;
+    unsigned numTags = 0;
+    std::vector<mptag_t> tags;
     ProgressInfoArray progressInfoArr;
     UnsignedArray progressKinds;
     Owned<CSlavePartMapping> mapping; // for local keys only
+    bool remoteKeyedLookups = false;
 
 
 public:
@@ -57,17 +59,14 @@ public:
         }
         ForEachItemIn(l, progressKinds)
             progressInfoArr.append(*new ProgressInfo(queryJob()));
-        numTags = 0;
-        tags[0] = tags[1] = tags[2] = tags[3] = TAG_NULL;
         reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
         remoteDataFiles = false;
+        remoteKeyedLookups = getOptBool("remoteKeyedLookus");
     }
     ~CKeyedJoinMaster()
     {
-        unsigned i;
-        for (i=0; i<4; i++)
-            if (TAG_NULL != tags[i])
-                container.queryJob().freeMPTag(tags[i]);
+        for (const mptag_t &tag : tags)
+            container.queryJob().freeMPTag(tag);
     }
     virtual void init()
     {
@@ -80,16 +79,18 @@ public:
         if (!keyReadWidth || keyReadWidth>container.queryJob().querySlaves())
             keyReadWidth = container.queryJob().querySlaves();
         
-
         initMb.clear();
         initMb.append(indexFileName.get());
+        if (remoteKeyedLookups)
+            ++numTags;
         if (helper->diskAccessRequired())
             numTags += 2;
         initMb.append(numTags);
         unsigned t=0;
         for (; t<numTags; t++)
         {
-            tags[t] = container.queryJob().allocateMPTag();
+            mptag_t tag = container.queryJob().allocateMPTag();
+            tags.push_back(tag);
             initMb.append(tags[t]);
         }
         bool keyHasTlk = false;
@@ -248,14 +249,13 @@ public:
                                     dataReadWidth = container.queryJob().querySlaves();
                                 Owned<IGroup> grp = container.queryJob().querySlaveGroup().subset((unsigned)0, dataReadWidth);
                                 dataFileMapping.setown(getFileSlaveMaps(dataFile->queryLogicalName(), *dataFileDesc, container.queryJob().queryUserDescriptor(), *grp, false, false, NULL));
-                                dataFileMapping->serializeFileOffsetMap(offsetMapMb.clear());
                             }
                         }
                         else
                             indexFile.clear();
                     }
                 }
-                if (container.queryLocalData())
+                if (container.queryLocalData() || remoteKeyedLookups)
                 {
                     mapping.setown(getFileSlaveMaps(indexFile->queryLogicalName(), *indexFileDesc, container.queryJob().queryUserDescriptor(), container.queryJob().querySlaveGroup(), false, true, NULL, indexFile->querySuperFile()));
                     // leave seralizeMetaData to serialize the key parts
@@ -297,7 +297,7 @@ public:
     virtual void serializeSlaveData(MemoryBuffer &dst, unsigned slave)
     {
         unsigned numParts = 0;
-        if (mapping) // local only
+        if (mapping)
         {
             IArrayOf<IPartDescriptor> parts;
             mapping->getParts(slave, parts);
@@ -313,10 +313,20 @@ public:
                 initMb.writeDirect(numPartsOffset, sizeof(numParts), &numParts);
                 dst.append(initMb);
 
-                UnsignedArray partNumbers;
-                ForEachItemIn(p2, parts)
-                    partNumbers.append(parts.item(p2).queryPartIndex());
-                indexFileDesc->serializeParts(dst, partNumbers);
+                if (remoteKeyedLookups)
+                {
+                    mapping->serializeMap(slave, dst, false);
+                    dst.append(mapping->queryParts());
+                    for (unsigned p=0; p<mapping->queryParts(); p++)
+                        dst.append(mapping->queryNode(p));
+                }
+                else
+                {
+                    UnsignedArray partNumbers;
+                    ForEachItemIn(p2, parts)
+                        partNumbers.append(parts.item(p2).queryPartIndex());
+                    indexFileDesc->serializeParts(dst, partNumbers);
+                }
             }
         }
         else
@@ -339,7 +349,7 @@ public:
                 else
                 {
                     dataFileMapping->serializeMap(slave, dst);
-                    dst.append(offsetMapMb);
+                    dataFileMapping->serializeFileOffsetMap(dst);
                 }
             }
             else

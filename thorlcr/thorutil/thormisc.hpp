@@ -78,9 +78,12 @@
 #define THOROPT_SORT_COMPBLKSZ        "sortCompBlkSz"           // Block size used by compressed spill in a spilling sort                        (default = 0, uses row writer default)
 #define THOROPT_KEYLOOKUP_QUEUED_BATCHSIZE "keyLookupQueuedBatchSize" // Number of rows candidates to gather before performing lookup against part (default = 100)
 #define THOROPT_KEYLOOKUP_MAX_LOOKUP_BATCHSIZE "keyLookupMaxLookupBatchSize"  // Maximum chunk of rows to process per cycle in lookup handler    (default = 1000)
-#define THOROPT_KEYLOOKUP_MAX_THREADS "keyLookupMaxThreads"     // Maximum number of threads performing keyed lookups                            (default = 10)
+#define THOROPT_KEYLOOKUP_MAX_REQUEST_THREADS "keyLookupMaxRequestThreads" // Maximum number of threads performing keyed lookups                 (default = 10)
+#define THOROPT_KEYLOOKUP_MAX_PROCESS_THREADS "keyLookupMaxProcessThreads" // Maximum number of threads performing keyed lookups                 (default = 10)
 #define THOROPT_KEYLOOKUP_MAX_QUEUED  "keyLookupMaxQueued"      // Total maximum number of rows (across all parts/threads) to queue              (default = 10000)
 #define THOROPT_KEYLOOKUP_MAX_DONE    "keyLookupMaxDone"        // Maximum number of done items pending to be ready by next activity             (default = 10000)
+#define THOROPT_REMOTE_KEYED_LOOKUPS  "remoteKeyedLookus"       // Send key request to remote node unless part is local                          (default = false)
+#define THOROPT_FORCE_REMOTE_KEYED_LOOKUPS "forceRemoteKeyedLookups" // force all keyed lookups, even where part local to be sent as if remote   (default = false)
 
 
 #define INITIAL_SELFJOIN_MATCH_WARNING_LEVEL 20000  // max of row matches before selfjoin emits warning
