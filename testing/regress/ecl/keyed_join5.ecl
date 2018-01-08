@@ -53,17 +53,17 @@ END;
 
 // a test with a expression on a lhs field - tests helper->leftCanMatch() handling
 j1hk := JOIN(lhs, i, LEFT.lhsKey>1 AND LEFT.lhsKey=RIGHT.key);
-j1fk := JOIN(lhs, rhsDs, LEFT.lhsKey>1 AND LEFT.lhsKey=RIGHT.key, KEYED(i));
+j1fk := JOIN(lhs, rhsDs, LEFT.lhsKey>1 AND LEFT.lhsKey=RIGHT.key, TRANSFORM({lhsRec, rhsRec}, SELF := LEFT; SELF := RIGHT), KEYED(i));
 
 
 // All the tests below with KEEP(2) have a filter with some kind to remove one of the '1' set matches.
 
 // a test with a expression on a rhs index field - tests helper->indexReadMatch() handling
 j2hk := JOIN(lhs, i, LEFT.lhsKey=RIGHT.key AND RIGHT.f1 != 'a2', KEEP(2));
-j2fk := JOIN(lhs, rhsDs, LEFT.lhsKey=RIGHT.key AND RIGHT.f1 != 'a2', KEYED(i), KEEP(2));
+j2fk := JOIN(lhs, rhsDs, LEFT.lhsKey=RIGHT.key AND RIGHT.f1 != 'a2', TRANSFORM({lhsRec, rhsRec}, SELF := LEFT; SELF := RIGHT), KEYED(i), KEEP(2));
 
 // a test with a expression on a rhs fetch field - tests helper->fetchMatch() handling
-j3fk := JOIN(lhs, rhsDs, LEFT.lhsKey=RIGHT.key AND RIGHT.f2 != 'b2', KEYED(i), KEEP(2));
+j3fk := JOIN(lhs, rhsDs, LEFT.lhsKey=RIGHT.key AND RIGHT.f2 != 'b2', TRANSFORM({lhsRec, rhsRec}, SELF := LEFT; SELF := RIGHT), KEYED(i), KEEP(2));
 
 // a test with a transform that skips
 j4hk := JOIN(lhs, i, LEFT.lhsKey=RIGHT.key, doHKJoinTrans(LEFT, RIGHT), KEEP(2));

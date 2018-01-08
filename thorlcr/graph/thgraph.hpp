@@ -1093,6 +1093,7 @@ public:
     void ActPrintLog(IException *e);
 
     IThorRowInterfaces * createRowInterfaces(IOutputMetaData * meta, byte seq=0);
+    IThorRowInterfaces * createRowInterfaces(IOutputMetaData * meta, roxiemem::RoxieHeapFlags heapFlags, byte seq=0);
 
 // IExceptionHandler
     bool fireException(IException *e);

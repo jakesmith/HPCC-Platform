@@ -1304,7 +1304,7 @@ CKeyIndexBase::~CKeyIndexBase()
 }
 
 
-CJHTreeNode *CKeyIndexBase::loadNode(const void *nodeData, offset_t pos, bool needsCopy)
+CJHTreeNode *CKeyIndexBase::createNode(const void *nodeData, offset_t pos, bool needsCopy)
 {
     try
     {
@@ -1576,7 +1576,7 @@ CJHTreeNode *CMemoryMappedKeyIndex::loadNode(offset_t pos)
     }
     const void *nodeData = (const byte *) (io->base() + pos);
     MTIME_SECTION(queryActiveTimer(), "JHTREE read node");
-    return CKeyIndexBase::loadNode(nodeData, pos, false);
+    return createNode(nodeData, pos, false);
 }
 
 ////////////
@@ -1606,7 +1606,7 @@ CJHTreeNode *CDiskKeyIndex::loadNode(offset_t pos)
         EXCLOG(E, m.str());
         throw E;
     }
-    return CKeyIndexBase::loadNode(nodeData, pos, true);
+    return createNode(nodeData, pos, true);
 }
 
 ////////////
@@ -1651,7 +1651,7 @@ CJHTreeNode *CInMemoryKeyIndex::loadNode(offset_t pos)
     {
         MTIME_SECTION(queryActiveTimer(), "JHTREE read node");
         const void *nodeData = ((const byte *)indexData.toByteArray()) + pos;
-        node = PARENT::loadNode(nodeData, pos, false);
+        node = createNode(nodeData, pos, false);
     }
     if (nodeNum == nodes.ordinality())
         nodes.append(node);
@@ -1663,6 +1663,8 @@ CJHTreeNode *CInMemoryKeyIndex::loadNode(offset_t pos)
 
 CJHTreeNode *CInMemoryKeyIndex::getNode(offset_t offset, IContextLogger *ctx)
 {
+    if (0 == offset)
+        return nullptr;
     return loadNode(offset);
 }
 

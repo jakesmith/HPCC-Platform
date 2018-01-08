@@ -85,7 +85,7 @@ protected:
     RelaxedAtomic<unsigned> keyScans;
     offset_t latestGetNodeOffset;
 
-    CJHTreeNode *loadNode(const void *nodeData, offset_t pos, bool needsCopy);
+    CJHTreeNode *createNode(const void *nodeData, offset_t pos, bool needsCopy);
 
     CKeyIndexBase(int _iD, const char *_name);
     ~CKeyIndexBase();
