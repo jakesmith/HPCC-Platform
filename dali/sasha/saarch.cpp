@@ -600,6 +600,7 @@ static bool doArchiveWorkUnit(IWorkUnitFactory *wufactory,const char *wuid, Stri
     else
         res.append("BACKUP: ");
     res.append(wuid).append(" ");
+    PROGLOG("Attempting: %s", res.str());
     if (wufactory) {
         Owned<IWorkUnit> wu;
         try {
