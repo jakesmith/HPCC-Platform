@@ -62,6 +62,15 @@ public:
         reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
         remoteDataFiles = false;
         remoteKeyedLookups = getOptBool(THOROPT_REMOTE_KEYED_LOOKUPS, getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS));
+        if (remoteKeyedLookups)
+            ++numTags;
+        if (helper->diskAccessRequired())
+            numTags += 2;
+        for (unsigned t=0; t<numTags; t++)
+        {
+            mptag_t tag = container.queryJob().allocateMPTag();
+            tags.push_back(tag);
+        }
     }
     ~CKeyedJoinMaster()
     {
@@ -81,18 +90,9 @@ public:
         
         initMb.clear();
         initMb.append(indexFileName.get());
-        if (remoteKeyedLookups)
-            ++numTags;
-        if (helper->diskAccessRequired())
-            numTags += 2;
         initMb.append(numTags);
-        unsigned t=0;
-        for (; t<numTags; t++)
-        {
-            mptag_t tag = container.queryJob().allocateMPTag();
-            tags.push_back(tag);
-            initMb.append(tags[t]);
-        }
+        for (auto &tag: tags)
+            initMb.append(tag);
         bool keyHasTlk = false;
         if (indexFile)
         {
@@ -100,8 +100,6 @@ public:
                 throw MakeActivityException(this, 0, "Attempting to read flat file as an index: %s", indexFileName.get());
             unsigned numParts = 0;
             bool localKey = indexFile->queryAttributes().getPropBool("@local");
-//            if (localKey && !container.queryLocalData())
-//                throw MakeActivityException(this, 0, "Global Keyed Join cannot be used with a local index");
 
             checkFormatCrc(this, indexFile, helper->getIndexFormatCrc(), true);
             indexFileDesc.setown(indexFile->getFileDescriptor());

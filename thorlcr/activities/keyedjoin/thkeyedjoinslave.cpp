@@ -1086,6 +1086,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         IHThorKeyedJoinArg *helper = nullptr;
         CThorExpandingRowArray batchArray;
         bool stopped = false;
+        bool local = true;
     public:
         CKeyLookupHandler(CKeyedJoinSlave &_activity, unsigned _partNo) : threaded("CKeyLookupHandler", this),
             activity(_activity), partNo(_partNo), queue(_activity, _activity.keyLookupRowWithJGRowIf), batchArray(_activity)
@@ -1095,6 +1096,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         ~CKeyLookupHandler()
         {
             stop();
+        }
+        bool isLocal() const
+        {
+            return local;
         }
         void join()
         {
@@ -1309,11 +1314,15 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     ++candidates;
                     if (candidates > activity.abortLimit)
                     {
+                        replyRows.clearRows();
+                        fposs.clear();
                         flags = gf_limitabort;
                         break;
                     }
                     else if (candidates > activity.atMost) // atMost - filter out group if > max hard matches
                     {
+                        replyRows.clearRows();
+                        fposs.clear();
                         flags = gf_limitatmost;
                         break;
                     }
@@ -1440,7 +1449,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                             replyMb.clear();
                         }
                     }
-                    partNo = NotFound; // mark thta this processor is no longer processing anything (see stop condition at start of this method)
+                    partNo = NotFound; // mark that this processor is no longer processing anything (see stop condition at start of this method)
                     owner.addAvailableProcessor(*this);
                 }
             }
@@ -1526,11 +1535,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         if (aborted)
                             return nullptr;
                         getAvailableBlocked = true;
-                        break;
                     }
-                    CKeyedRemoteLookupProcessor *processor = availableProcessors.back();
-                    availableProcessors.pop_back();
-                    return processor;
+                    else
+                    {
+                        CKeyedRemoteLookupProcessor *processor = availableProcessors.back();
+                        availableProcessors.pop_back();
+                        return processor;
+                    }
                 }
                 getAvailableSem.wait();
             }
@@ -1540,6 +1551,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             numFinished = 0;
             remoteHandlersFinished->reset();
+            ForEachItemIn(h, activity.lookupHandlers)
+            {
+                CKeyLookupHandler *lookupHandler = activity.lookupHandlers.item(h);
+                if (!lookupHandler || lookupHandler->isLocal())
+                    remoteHandlersFinished->set(h);
+            }
             aborted = false;
             ForEachItemIn(p, processors)
                 processors.item(p).start(); // NB: waits for requests to handle
@@ -1591,17 +1608,17 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         break;
                     mptag_t replyTag;
                     msg.read((unsigned &)replyTag);
+                    unsigned partNo;
+                    msg.read(partNo);
                     if (TAG_NULL == replyTag) // signals end
                     {
-                        verifyex(!remoteHandlersFinished->testSet(sender-1));
+                        verifyex(!remoteHandlersFinished->testSet(partNo));
                         ++numFinished;
-                        if (numFinished == activity.remoteParts)
+                        if (numFinished == activity.lookupHandlers.ordinality())
                             break;
                     }
                     else
                     {
-                        unsigned partNo;
-                        msg.read(partNo);
                         unsigned count;
                         msg.read(count);
                         CThorExpandingRowArray received(activity, keyLookupRowWithJGRefRowIf);
@@ -1633,6 +1650,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             lookupSlave = (rank_t)activity.partToNodeMap[partNo] + 1; // +1 because 0 == master, 1st slave == 1
             replyTag = activity.queryMPServer().createReplyTag();
+            local = false;
         }
         virtual void process(CThorExpandingRowArray &processing) override
         {
@@ -1717,6 +1735,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             join();
             CMessageBuffer msg;
             msg.append(TAG_NULL);
+            msg.append(partNo);
             ICommunicator &comm = activity.queryJobChannel().queryJobComm();
             if (!comm.send(msg, lookupSlave, activity.keyLookupMpTag, LONGTIMEOUT))
                 throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
@@ -2189,6 +2208,7 @@ public:
             fetchFiles.kill();
             globalPartNoMap.kill();
             lookupHandlers.kill();
+            lookupIndexPartMap.clear();
         }
         for (auto &a : statsArr)
             a = 0;
@@ -2395,6 +2415,7 @@ public:
             }
             if (remoteKeyedLookups)
             {
+                remoteParts = 0;
                 for (unsigned p=0; p<indexWidth; p++)
                 {
                     if ((nullptr == lookupHandlers.item(p)) || getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS))
