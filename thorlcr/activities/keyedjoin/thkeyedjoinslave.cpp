@@ -154,6 +154,7 @@ public:
             rhsState.arr++;
             rhsState.pos = 0;
         }
+        fpos = 0;
         return nullptr;
     }
     void freeRows()
@@ -244,7 +245,10 @@ public:
     {
         CriticalBlock b(crit);
         if (!rowArrays)
+        {
+            fpos = 0;
             return nullptr;
+        }
         rhsState.arr = &rowArrays[0];
         rhsState.pos = 0;
         return _queryNextRhs(fpos, rhsState);
@@ -425,21 +429,23 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             max = _max;
             leeway = _leeway;
         }
-        bool incNonBlocking()
+        bool incNonBlocking(bool pre) // if pre=true, allows increment above max, then blocks
         {
             {
                 CriticalBlock b(crit);
-                if (count++ < max+leeway)
+                if (count < max+leeway)
+                {
+                    ++count;
                     return false;
+                }
                 ++blocked;
             }
             return true;
         }
         void inc()
         {
-            if (!incNonBlocking())
-                return;
-            sem.wait();
+            while (incNonBlocking(false))
+                sem.wait();
         }
         void dec()
         {
@@ -465,7 +471,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         IHThorKeyedJoinArg *helper = nullptr;
         std::vector<CThorExpandingRowArray *> queues;
         unsigned totalQueued = 0;
-        CriticalSection queueCrit;
+        CriticalSection queueCrit, batchCrit;
         CThreaded threaded;
         std::atomic<bool> running{false};
         std::atomic<bool> stopping{false};
@@ -539,7 +545,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             CLeavableCriticalBlock b(queueCrit);
             totalQueued += newItems.ordinality();
             queues[partsIdx]->appendRows(newItems, true);
-
             do
             {
                 if (state == ts_running) // as long as running here, we know thread will process queue
@@ -552,7 +557,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     b.leave();
                     activity.lookupThreadLimiter.inc(); // blocks if hit lookup thread limit
                     if (activity.abortSoon)
+                    {
+                        activity.lookupThreadLimiter.dec(); // normally handled at end of thread
                         return;
+                    }
                     threaded.start();
                     break;
                 }
@@ -568,6 +576,11 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             }
             while (true);
         }
+        void queueLookupTS(const void *row, unsigned partNo) // thread-safe queueLookup
+        {
+            CriticalBlock b(batchCrit);
+            queueLookup(row, partNo);
+        }
         void queueLookup(const void *row, unsigned partNo)
         {
             // NB: queueLookup() must be protected from re-entry by caller
@@ -577,6 +590,16 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             batchArray.append(row);
             if (batchArray.ordinality() >= lookupQueuedBatchSize)
                 enqueue(batchArray, partsIdx); // NB: enqueue takes ownership of rows, i.e batchArray is cleared after call
+        }
+        void flushTS() // thread-safe flush
+        {
+            for (unsigned b=0; b<batchArrays.size(); b++)
+            {
+                CThorExpandingRowArray *batchArray = batchArrays[b];
+                CriticalBlock block(batchCrit);
+                if (batchArray->ordinality())
+                    enqueue(*batchArray, b);
+            }
         }
         void flush()
         {
@@ -1187,13 +1210,27 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             return partIdxToHandler[partNo];
         }
-        void flush()
+        void flushTS() // thread-safe flush()
         {
             ForEachItemIn(h, handlers)
             {
                 CLookupHandler *lookupHandler = handlers.item(h);
                 if (lookupHandler)
-                    lookupHandler->flush();
+                    lookupHandler->flushTS();
+            }
+        }
+        void flush(bool protect)
+        {
+            ForEachItemIn(h, handlers)
+            {
+                CLookupHandler *lookupHandler = handlers.item(h);
+                if (lookupHandler)
+                {
+                    if (protect)
+                        lookupHandler->flushTS();
+                    else
+                        lookupHandler->flush();
+                }
             }
         }
         void stop()
@@ -1409,6 +1446,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     }
     void queueLookupForPart(unsigned partNo, const void *indexLookupRow)
     {
+        // NB: only 1 thread calling this method, so call to lookupHandler->queueLookup() doesn't need protecting
         KeyLookupHeader lookupKeyHeader;
         getHeaderFromRow(indexLookupRow, lookupKeyHeader);
         lookupKeyHeader.jg->incPending(); // each queued lookup pending a result
@@ -1529,11 +1567,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         CLookupHandler *fetchLookupHandler = fetchLookupHandlers.queryHandler(partNo);
         if (!fetchLookupHandler)
         {
-            // only poss if ,LOCAL
+            // only poss. if ,LOCAL
             return;
         }
-        CriticalBlock b(fetchQueueCrit); // might be called from multiple key lookup handlers
-        fetchLookupHandler->queueLookup(fetchLookupRow, partNo);
+        fetchLookupHandler->queueLookupTS(fetchLookupRow, partNo);
     }
     void queueFetchLookup(offset_t fpos, unsigned __int64 sequence, CJoinGroup *jg)
     {
@@ -1576,9 +1613,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     }
     void stopReadAhead()
     {
-        keyLookupHandlers.flush();
+        keyLookupHandlers.flush(false);
         keyLookupHandlers.join(); // wait for pending handling, there may be more fetch items as a result
-        fetchLookupHandlers.flush();
+        fetchLookupHandlers.flush(true);
         fetchLookupHandlers.join();
 
         // remote handlers will signal to other side that we are done
@@ -1642,15 +1679,15 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 {
                     CriticalBlock b(onCompleteCrit); // protecting both pendingJoinGroupList and doneJoinGroupList
                     pendingJoinGroupList.addToTail(LINK(jg));
-                    pendingBlock = pendingKeyLookupLimiter.incNonBlocking();
+                    pendingBlock = pendingKeyLookupLimiter.incNonBlocking(true);
                 }
                 if (pendingBlock)
                 {
                     if (preserveOrder || preserveGroups)
                     {
                         // some of the batches that are not yet queued may be holding up join groups that are ahead of others that are complete.
-                        keyLookupHandlers.flush();
-                        fetchLookupHandlers.flush();
+                        keyLookupHandlers.flush(false);
+                        fetchLookupHandlers.flush(true);
                     }
                     pendingKeyLookupLimiter.block();
                 }
@@ -1714,7 +1751,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     {
         doneJoinGroupList.addToTail(joinGroup);
         pendingKeyLookupLimiter.dec();
-        return doneListLimiter.incNonBlocking();
+        return doneListLimiter.incNonBlocking(true);
     }
 
     void addPartToHandler(CHandlerContainer &handlerContainer, const std::vector<unsigned> &partToSlaveMap, unsigned partIdx, HandlerType hType, std::vector<unsigned> &handlerCounts, std::vector<std::vector<CLookupHandler *>> &slaveHandlers, std::vector<unsigned> &slaveHandlersRR)
@@ -2041,7 +2078,7 @@ public:
                     e->top = e->base + part.queryProperties().getPropInt64("@size");
                     e->index = f;
                 }
-                std::sort(globalFPosToSlaveMap.begin(), globalFPosToSlaveMap.end(), [](FPosTableEntry &a, FPosTableEntry &b) { return a.base < b.base; });
+                std::sort(globalFPosToSlaveMap.begin(), globalFPosToSlaveMap.end(), [](const FPosTableEntry &a, const FPosTableEntry &b) { return a.base < b.base; });
                 for (unsigned c=0; c<totalDataParts; c++)
                 {
                     FPosTableEntry &e = globalFPosToSlaveMap[c];

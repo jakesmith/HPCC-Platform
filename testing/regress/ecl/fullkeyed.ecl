@@ -19,6 +19,8 @@
 //class=index
 //version multiPart=false
 //version multiPart=true
+//version multiPart=false,forceRemoteKeyedLookup=true,forceRemoteKeyedFetch=true
+//version multiPart=true,forceRemoteKeyedLookup=true,forceRemoteKeyedFetch=true
 
 import ^ as root;
 multiPart := #IFDEFINED(root.multiPart, true);
