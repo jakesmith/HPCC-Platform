@@ -82,7 +82,7 @@
 #define THOROPT_KEYLOOKUP_MAX_PROCESS_THREADS "keyLookupMaxProcessThreads" // Maximum number of threads performing keyed lookups                 (default = 10)
 #define THOROPT_KEYLOOKUP_MAX_QUEUED  "keyLookupMaxQueued"      // Total maximum number of rows (across all parts/threads) to queue              (default = 10000)
 #define THOROPT_KEYLOOKUP_MAX_DONE    "keyLookupMaxDone"        // Maximum number of done items pending to be ready by next activity             (default = 10000)
-#define THOROPT_REMOTE_KEYED_LOOKUPS  "remoteKeyedLookus"       // Send key request to remote node unless part is local                          (default = false)
+#define THOROPT_REMOTE_KEYED_LOOKUPS  "remoteKeyedLookups"      // Send key request to remote node unless part is local                          (default = false)
 #define THOROPT_FORCE_REMOTE_KEYED_LOOKUPS "forceRemoteKeyedLookups" // force all keyed lookups, even where part local to be sent as if remote   (default = false)
 
 

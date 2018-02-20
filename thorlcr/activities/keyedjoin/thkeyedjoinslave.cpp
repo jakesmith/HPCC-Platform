@@ -1410,19 +1410,22 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         ++count;
                         GroupFlags flags = processRow(row, keyManager, replyRows, fposs);
                         replyMb.append(flags);
-                        unsigned candidates = fposs.size();
-                        replyMb.append(candidates);
                         if (gf_null == flags)
                         {
-                            if (!activity.needsDiskRead)
+                            unsigned candidates = fposs.size();
+                            replyMb.append(candidates);
+                            if (candidates)
                             {
-                                DelayedSizeMarker sizeMark(replyMb);
-                                replyRows.serialize(replyMb);
-                                replyRows.clearRows();
-                                sizeMark.write();
+                                if (!activity.needsDiskRead)
+                                {
+                                    DelayedSizeMarker sizeMark(replyMb);
+                                    replyRows.serialize(replyMb);
+                                    replyRows.clearRows();
+                                    sizeMark.write();
+                                }
+                                replyMb.append(candidates * sizeof(unsigned __int64), &fposs[0]);
+                                fposs.clear();
                             }
-                            replyMb.append(candidates * sizeof(unsigned __int64), &fposs[0]);
-                            fposs.clear();
                         }
                         bool last = r == rows.ordinality();
                         if (last || (replyMb.length() >= DEFAULT_KEYLOOKUP_MAXREPLYSZ))
@@ -1673,32 +1676,35 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     {
                         unsigned candidates;
                         mb.read(candidates);
-                        if (!activity.needsDiskRead)
+                        if (candidates)
                         {
-                            size32_t sz;
-                            mb.read(sz);
-                            replyRows.deserialize(sz, mb.readDirect(sz));
-                        }
-                        std::vector<unsigned __int64> fposs(candidates);
-                        mb.read(candidates * sizeof(unsigned __int64), &fposs[0]); // JCSMORE shame to serialize these if not needed, does codegen give me a tip?
-                        for (unsigned r=0; r<candidates; r++)
-                        {
-                            if (activity.needsDiskRead)
+                            if (!activity.needsDiskRead)
                             {
-                                joinGroup->incPending();
-                                unsigned __int64 sequence = joinGroup->addRightMatchPending(partNo, fposs[r]);
-                                if (NotFound == sequence) // means limit was hit and must have been caused by another handler
-                                    break;
-                                sequence |= (((unsigned __int64)partNo) << 32);
-                                activity.fetchHandler->addRow(fposs[r], sequence, joinGroup);
+                                size32_t sz;
+                                mb.read(sz);
+                                replyRows.deserialize(sz, mb.readDirect(sz));
                             }
-                            else
+                            std::vector<unsigned __int64> fposs(candidates);
+                            mb.read(candidates * sizeof(unsigned __int64), &fposs[0]); // JCSMORE shame to serialize these if not needed, does codegen give me a tip?
+                            for (unsigned r=0; r<candidates; r++)
                             {
-                                OwnedConstThorRow row = replyRows.getClear(r);
-                                joinGroup->addRightMatch(partNo, row.getClear(), fposs[r]);
+                                if (activity.needsDiskRead)
+                                {
+                                    joinGroup->incPending();
+                                    unsigned __int64 sequence = joinGroup->addRightMatchPending(partNo, fposs[r]);
+                                    if (NotFound == sequence) // means limit was hit and must have been caused by another handler
+                                        break;
+                                    sequence |= (((unsigned __int64)partNo) << 32);
+                                    activity.fetchHandler->addRow(fposs[r], sequence, joinGroup);
+                                }
+                                else
+                                {
+                                    OwnedConstThorRow row = replyRows.getClear(r);
+                                    joinGroup->addRightMatch(partNo, row.getClear(), fposs[r]);
+                                }
                             }
+                            replyRows.clearRows();
                         }
-                        replyRows.clearRows();
                     }
                     joinGroup->decPending(); // Every queued lookup row triggered an inc., this is the corresponding dec.
                 }
@@ -2169,6 +2175,7 @@ public:
                 size32_t sz = helper->createDefaultRight(rr);
                 defaultRight.setown(rr.finalizeRowClear(sz));
             }
+            ActPrintLog("Remote Keyed Lookups = %s (forced = %s)", boolToStr(remoteKeyedLookups), boolToStr(getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS)));
         }
         else
         {
@@ -2371,7 +2378,7 @@ public:
             }
 
             unsigned indexWidth = indexFileDesc.numParts();
-            if (keyHasTlk)
+            if (keyHasTlk || (localKey && indexWidth>1))
                 indexWidth -= numSuperIndexSubs ? numSuperIndexSubs : 1;
             for (unsigned p=0; p<indexWidth; p++)
             {
@@ -2390,13 +2397,13 @@ public:
             {
                 for (unsigned p=0; p<indexWidth; p++)
                 {
-                    if ((nullptr == lookupHandlers.item(p)) || getOptBool("forceRemoteKeyedLookups"))
+                    if ((nullptr == lookupHandlers.item(p)) || getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS))
                     {
                         CKeyLookupHandler *lookupHandler = new CKeyLookupRemoteHandler(*this, p);
                         lookupHandlers.replace(lookupHandler, p);
+                        ++remoteParts;
                     }
                 }
-                remoteParts = indexWidth-numIndexParts;
             }
 #ifdef _DEBUG
             for (unsigned i=0; i<lookupHandlers.ordinality(); i++)

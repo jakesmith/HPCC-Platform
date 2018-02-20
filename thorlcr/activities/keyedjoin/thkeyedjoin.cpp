@@ -61,7 +61,7 @@ public:
             progressInfoArr.append(*new ProgressInfo(queryJob()));
         reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
         remoteDataFiles = false;
-        remoteKeyedLookups = getOptBool("remoteKeyedLookus");
+        remoteKeyedLookups = getOptBool(THOROPT_REMOTE_KEYED_LOOKUPS, getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS));
     }
     ~CKeyedJoinMaster()
     {
