@@ -813,14 +813,14 @@
                replicateAsync="false"
                replicateOutputs="false"
                slaveport="20100"
-               slavesPerNode="1"
-               valgrindOptions="--tool=memcheck --leak-check=full --show-leak-kinds=all -v"
+               slavesPerNode="2"
+               xvalgrindOptions="--tool=memcheck --leak-check=full --show-leak-kinds=all -v"
                watchdogEnabled="true"
                watchdogProgressEnabled="true">
    <SwapNode AutoSwapNode="false"/>
    <ThorSlaveProcess computer="localhost" name="s1"/>
    <ThorMasterProcess computer="localhost" name="m1"/>
-   <Debug/>
+   <Debug remoteKeyedLookup="true" remoteKeyedFetch="true" forceRemoteKeyedLookup="false" forceRemoteKeyedFetch="false"/>
    <SSH SSHidentityfile="$HOME/.ssh/id_rsa"
         SSHpassword=""
         SSHretries="3"

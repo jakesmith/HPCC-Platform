@@ -2610,7 +2610,6 @@ CJobBase::CJobBase(ILoadedDllEntry *_querySo, const char *_graphName) : querySo(
     maxDiskUsage = diskUsage = 0;
     dirty = true;
     aborted = false;
-    mpJobTag = TAG_NULL;
     globalMemoryMB = globals->getPropInt("@globalMemorySize"); // in MB
     numChannels = globals->getPropInt("@channelsPerSlave", 1);
     pluginMap = new SafePluginMap(&pluginCtx, true);
