@@ -21,6 +21,9 @@
 //version multiPart=true
 //version multiPart=true,useLocal=true
 //version multiPart=true,useTranslation=true
+//version multiPart=false,forceRemoteKeyedLookup=true,forceRemoteKeyedFetch=true
+//version multiPart=true,forceRemoteKeyedLookup=true,forceRemoteKeyedFetch=true
+//version multiPart=true,useTranslation=true,forceRemoteKeyedLookup=true,forceRemoteKeyedFetch=true
 
 import ^ as root;
 multiPart := #IFDEFINED(root.multiPart, true);

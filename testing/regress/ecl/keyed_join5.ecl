@@ -15,6 +15,8 @@
     limitations under the License.
 ############################################################################## */
 
+//version forceRemoteKeyedLookup=true,forceRemoteKeyedFetch=true
+//version forceRemoteKeyedLookup=true,forceRemoteKeyedFetch=true
 
 rhsRec := RECORD
  unsigned4 key;

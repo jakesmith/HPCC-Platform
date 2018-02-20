@@ -90,11 +90,19 @@ interface IDiskUsage : extends IInterface
 interface IBackup;
 interface IFileInProgressHandler;
 interface IThorFileCache;
+interface IKJService : extends IInterface
+{
+    virtual void setCurrentJob(CJobBase &job) = 0;
+    virtual void reset() = 0;
+    virtual void start() = 0;
+    virtual void stop() = 0;
+};
 interface IThorResource
 {
     virtual IThorFileCache &queryFileCache() = 0;
     virtual IBackup &queryBackup() = 0;
     virtual IFileInProgressHandler &queryFileInProgressHandler() = 0;
+    virtual IKJService &queryKeyedJoinService() = 0;
 };
 
 interface IBarrier : extends IInterface
@@ -795,7 +803,7 @@ protected:
     StringBuffer wuid, user, scope, token;
     mutable CriticalSection wuDirty;
     mutable bool dirty;
-    mptag_t mpJobTag, slavemptag;
+    mptag_t slavemptag;
     Owned<IGroup> jobGroup, slaveGroup, nodeGroup;
     Owned<IPropertyTree> xgmml;
     Owned<IGraphTempHandler> tmpHandler;
@@ -829,7 +837,7 @@ protected:
         }
     } pluginCtx;
     SafePluginMap *pluginMap;
-    void endJob();
+    virtual void endJob();
 public:
     IMPLEMENT_IINTERFACE;
 
@@ -877,7 +885,6 @@ public:
     void setDiskUsage(offset_t _diskUsage) { diskUsage = _diskUsage; }
     const offset_t queryMaxDiskUsage() const { return maxDiskUsage; }
     mptag_t querySlaveMpTag() const { return slavemptag; }
-    mptag_t queryJobMpTag() const { return mpJobTag; }
     unsigned querySlaves() const { return slaveGroup->ordinality(); }
     unsigned queryNodes() const { return nodeGroup->ordinality()-1; }
     IGroup &queryJobGroup() const { return *jobGroup; }
@@ -1160,9 +1167,10 @@ public:
     IMPLEMENT_IINTERFACE;
 
 // IThorResource
-    virtual IThorFileCache &queryFileCache() { UNIMPLEMENTED; return *((IThorFileCache *)NULL); }
-    virtual IBackup &queryBackup() { UNIMPLEMENTED; return *((IBackup *)NULL); }
-    virtual IFileInProgressHandler &queryFileInProgressHandler() { UNIMPLEMENTED; return *((IFileInProgressHandler *)NULL); }
+    virtual IThorFileCache &queryFileCache() override { UNIMPLEMENTED; }
+    virtual IBackup &queryBackup() override  { UNIMPLEMENTED; }
+    virtual IFileInProgressHandler &queryFileInProgressHandler() override  { UNIMPLEMENTED; }
+    virtual IKJService &queryKeyedJoinService() override { UNIMPLEMENTED; }
 };
 
 class graph_decl CThorGraphResults : implements IThorGraphResults, public CInterface
