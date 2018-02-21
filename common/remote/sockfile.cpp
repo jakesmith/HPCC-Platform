@@ -274,7 +274,7 @@ static byte traceFlags=0x20;
 #define TF_TRACE_TREE_COPY (traceFlags&0x10)
 #define TF_TRACE_CLIENT_STATS (traceFlags&0x20)
 
-
+#define TF_TRACE_TEST (traceFlags&0x40)
 
 enum {
     RFCopenIO,                                      // 0
@@ -4540,12 +4540,14 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
         if (!lookupFileIOHandle(handle, fileInfo, of_key))
         {
             VStringBuffer errStr("Error opening key file : %s", keyname);
+            WARNLOG("%s", errStr.str());
             throw createDafsException(RFSERR_InvalidFileIOHandle, errStr.str());
         }
         Owned<IKeyIndex> index = createKeyIndex(keyname, 0, *fileInfo.fileIO, false, false);
         if (!index)
         {
             VStringBuffer errStr("Error opening key file : %s", keyname);
+            WARNLOG("%s", errStr.str());
             throw createDafsException(RFSERR_KeyIndexFailed, errStr.str());
         }
         Owned<IKeyManager> keyManager = createLocalKeyManager(index, keySize, nullptr);
@@ -4764,8 +4766,13 @@ public:
 
     bool checkFileIOHandle(MemoryBuffer &reply, int handle, IFileIO *&fileio, bool del=false)
     {
-        if (!checkFileIOHandle(handle, fileio, del))
+        if (!checkFileIOHandle(handle, fileio, del) || TF_TRACE_TEST)
         {
+            if (TF_TRACE)
+            {
+                WARNLOG("Could not find handle: %d, del=%s", handle, boolToStr(del));
+                PrintStackReport();
+            }
             appendErr(reply, RFSERR_InvalidFileIOHandle);
             return false;
         }
