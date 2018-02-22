@@ -104,6 +104,13 @@ public:
             checkFormatCrc(this, indexFile, helper->getIndexFormatCrc(), true);
             indexFileDesc.setown(indexFile->getFileDescriptor());
             IDistributedSuperFile *superIndex = indexFile->querySuperFile();
+
+            if (container.queryLocalData() || remoteKeyedLookups)
+            {
+                mapping.setown(getFileSlaveMaps(indexFile->queryLogicalName(), *indexFileDesc, container.queryJob().queryUserDescriptor(), container.queryJob().querySlaveGroup(), false, true, nullptr, superIndex));
+                // leave seralizeMetaData to serialize the key parts
+            }
+
             unsigned superIndexWidth = 0;
             unsigned numSuperIndexSubs = 0;
             if (superIndex)
@@ -153,15 +160,47 @@ public:
                         --numParts;
                 }
             }
-            numPartsOffset = initMb.length();
             if (localKey)
                 keyHasTlk = false; // JCSMORE, not used at least for now
+            initMb.append(numParts); // total
+            if (remoteKeyedLookups)
+            {
+                if (!superIndex || !superIndex->isInterleaved())
+                {
+                    for (unsigned p=0; p<mapping->queryParts(); p++)
+                        initMb.append(mapping->queryNode(p));
+                }
+                else
+                {
+                    // This is super and interleaved (std.), create part->node map as if whole of sub1 part proceed sub2 etc.
+                    ISuperFileDescriptor *superFileDesc = indexFileDesc->querySuperFileDescriptor();
+                    dbgassertex(superFileDesc);
+                    IArrayOf<IPartDescriptor> slaveParts;
+                    std::vector<unsigned> partToNode(numParts);
+                    for (unsigned s=0; s<queryJob().querySlaves(); s++)
+                    {
+                        mapping->getParts(s, slaveParts);
+                        ForEachItemIn(p, slaveParts)
+                        {
+                            IPartDescriptor &part = slaveParts.item(p);
+                            unsigned origPartIdx = part.queryPartIndex();
+                            unsigned subfile, subpartnum;
+                            superFileDesc->mapSubPart(origPartIdx, subfile, subpartnum);
+                            unsigned partIdx = superIndexWidth*subfile+subpartnum;
+                            partToNode[partIdx] = mapping->queryNode(origPartIdx);
+                        }
+                        slaveParts.kill();
+                    }
+                    initMb.append(numParts * sizeof(unsigned), &partToNode[0]);
+                }
+            }
+            numPartsOffset = initMb.length();
             if (numParts)
             {
-                initMb.append(numParts); // placeholder
+                initMb.append((unsigned)0); // # serialized - placeholder
                 initMb.append(superIndexWidth); // 0 if not superIndex
                 bool interleaved = superIndex && superIndex->isInterleaved();
-                initMb.append(numSuperIndexSubs);
+                initMb.append(interleaved ? numSuperIndexSubs : 0);
                 initMb.append(keyHasTlk);
                 if (keyHasTlk)
                 {
@@ -253,12 +292,7 @@ public:
                             indexFile.clear();
                     }
                 }
-                if (container.queryLocalData() || remoteKeyedLookups)
-                {
-                    mapping.setown(getFileSlaveMaps(indexFile->queryLogicalName(), *indexFileDesc, container.queryJob().queryUserDescriptor(), container.queryJob().querySlaveGroup(), false, true, NULL, indexFile->querySuperFile()));
-                    // leave seralizeMetaData to serialize the key parts
-                }
-                else
+                if (!remoteKeyedLookups && !container.queryLocalData())
                 {
                     UnsignedArray parts;
                     if (!superIndex || interleaved) // serialize first numParts parts, TLK are at end and are serialized separately.
@@ -310,15 +344,12 @@ public:
             {
                 initMb.writeDirect(numPartsOffset, sizeof(numParts), &numParts);
                 dst.append(initMb);
-
+            }
+            if (numParts)
+            {
                 if (remoteKeyedLookups)
-                {
                     mapping->serializeMap(slave, dst, false);
-                    dst.append(mapping->queryParts());
-                    for (unsigned p=0; p<mapping->queryParts(); p++)
-                        dst.append(mapping->queryNode(p));
-                }
-                else
+                else // local KJ (queryLocalData() == true)
                 {
                     UnsignedArray partNumbers;
                     ForEachItemIn(p2, parts)

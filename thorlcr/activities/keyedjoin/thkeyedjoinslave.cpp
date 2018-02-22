@@ -1097,10 +1097,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             stop();
         }
-        bool isLocal() const
-        {
-            return local;
-        }
+        unsigned queryPartNo() const { return partNo; }
+        bool isLocal() const { return local; }
         void join()
         {
             {
@@ -1278,7 +1276,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         std::vector<std::vector<IKeyManager *>> partKeyManagers;
         CriticalSection partKeyManagerCrit;
         Owned<IThorRowInterfaces> keyLookupRowWithJGRefRowIf;
-        Owned<IBitSet> remoteHandlersFinished;
         unsigned numFinished = 0;
         Semaphore completeSem;
 
@@ -1503,7 +1500,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 processors.append(*processor);
                 availableProcessors.push_back(processor);
             }
-            remoteHandlersFinished.setown(createBitSet(activity.remoteParts));
         }
         ~CKeyedRemoteLookupReceiver()
         {
@@ -1550,13 +1546,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         void start()
         {
             numFinished = 0;
-            remoteHandlersFinished->reset();
-            ForEachItemIn(h, activity.lookupHandlers)
-            {
-                CKeyLookupHandler *lookupHandler = activity.lookupHandlers.item(h);
-                if (!lookupHandler || lookupHandler->isLocal())
-                    remoteHandlersFinished->set(h);
-            }
             aborted = false;
             ForEachItemIn(p, processors)
                 processors.item(p).start(); // NB: waits for requests to handle
@@ -1612,9 +1601,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     msg.read(partNo);
                     if (TAG_NULL == replyTag) // signals end
                     {
-                        verifyex(!remoteHandlersFinished->testSet(partNo));
                         ++numFinished;
-                        if (numFinished == activity.lookupHandlers.ordinality())
+                        if (numFinished == activity.remoteLookupRequesters)
                             break;
                     }
                     else
@@ -1661,6 +1649,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             msg.append(numRows);
             processing.serializeCompress(msg);
             ICommunicator &comm = activity.queryJobChannel().queryJobComm();
+
+            // JCSMORE - hmm, is it okay that multiple threads could be sending to same slave on same tag in parallel?
             if (!comm.send(msg, lookupSlave, activity.keyLookupMpTag, LONGTIMEOUT))
                 throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
 
@@ -1790,7 +1780,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     bool remoteDataFiles = false;
     IPointerArrayOf<CKeyLookupHandler> lookupHandlers;
     std::vector<unsigned> lookupIndexPartMap;
-    unsigned remoteParts = 0;
+    unsigned remoteLookupRequesters = 0;
     CLimiter lookupThreadLimiter;
     CLimiter pendingKeyLookupLimiter;
     CLimiter doneListLimiter;
@@ -1807,6 +1797,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     unsigned joinFlags = 0;
     unsigned filePartTotal = 0;
     unsigned superWidth = 0;
+    unsigned totalParts = 0;
     IArrayOf<IDelayedFile> fetchFiles;
     OwnedMalloc<FPosTableEntry> localFPosToNodeMap; // maps fpos->local part #
     OwnedMalloc<FPosTableEntry> globalFPosToNodeMap; // maps fpos->node for all parts of file. If file is remote, localFPosToNodeMap will have all parts
@@ -1843,7 +1834,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     roxiemem::IRowManager *rowManager = nullptr;
     unsigned currentAdded = 0;
     unsigned currentJoinGroupSize = 0;
-    MapBetween<unsigned, unsigned, unsigned, unsigned> globalPartNoMap; // for local kj, maps global partNo (in TLK) to locally handled part index numbers
 
     void doAbortLimit(CJoinGroup *jg)
     {
@@ -1882,7 +1872,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             row.setown(trow.finalizeRowClear(transformedSize));
         return true;
     }
-    void queueLookupForPart(unsigned partNo, const void *keyedFieldsRowWithJGPrefix)
+    void queueLookupForHandler(CKeyLookupHandler &lookupHandler, const void *keyedFieldsRowWithJGPrefix)
     {
         KeyLookupHeader lookupKeyHeader;
         getHeaderFromRow(keyedFieldsRowWithJGPrefix, lookupKeyHeader);
@@ -1891,11 +1881,14 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         /* NB: there is 1 batchLookupArray/Thread per part
          * There could be >1 per part, but I'm not sure there's a lot of point.
          */
-        CKeyLookupHandler &lookupHandler = *lookupHandlers.item(partNo);
         lookupHandler.queueLookup(keyedFieldsRowWithJGPrefix);
 #ifdef _DEBUG
-        lookupCounts[partNo]++;
+        lookupCounts[lookupHandler.queryPartNo()]++;
 #endif
+    }
+    void queueLookupForPart(unsigned partNo, const void *keyedFieldsRowWithJGPrefix)
+    {
+        queueLookupForHandler(*lookupHandlers.item(partNo), keyedFieldsRowWithJGPrefix);
     }
     void flushPartLookups()
     {
@@ -1970,10 +1963,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         partNo = superWidth ? superWidth*whichKm+(partNo-1) : partNo-1;
                         if (container.queryLocalData())
                         {
-                            unsigned *mappedPartNo = globalPartNoMap.getValue(partNo);
-                            if (!mappedPartNo)
-                                continue; // this local kj slave is not dealing with part
-                            partNo = *mappedPartNo;
+                            if (NotFound == lookupIndexPartMap[partNo])
+                                continue;
                         }
                         if (!keyedFieldsRowWithJGPrefix)
                             keyedFieldsRowWithJGPrefix.setown(preparePendingLookupRow(keyFieldsRowBuilder.getUnfinalizedClear(), keyFieldsRowBuilder.getMaxLength(), lhsRow, keyedFieldsRowSize));
@@ -1986,8 +1977,19 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         else
         {
             keyedFieldsRowWithJGPrefix.setown(preparePendingLookupRow(keyFieldsRowBuilder.getUnfinalizedClear(), keyFieldsRowBuilder.getMaxLength(), lhsRow, keyedFieldsRowSize));
-            ForEachItemIn(partNo, indexParts)
-                queueLookupForPart(partNo, keyedFieldsRowWithJGPrefix);
+            if (container.queryLocalData() || !remoteKeyedLookups)
+            {
+                ForEachItemIn(partNo, indexParts)
+                    queueLookupForPart(indexParts.item(partNo).queryPartIndex(), keyedFieldsRowWithJGPrefix);
+            }
+            else
+            {
+                ForEachItemIn(h, lookupHandlers)
+                {
+                    CKeyLookupHandler *lookupHandler = lookupHandlers.item(h);
+                    queueLookupForHandler(*lookupHandler, keyedFieldsRowWithJGPrefix);
+                }
+            }
         }
         if (!keyedFieldsRowWithJGPrefix)
             return nullptr;
@@ -2206,7 +2208,6 @@ public:
             globalFPosToNodeMap.clear();
             eexp.clear();
             fetchFiles.kill();
-            globalPartNoMap.kill();
             lookupHandlers.kill();
             lookupIndexPartMap.clear();
         }
@@ -2224,11 +2225,20 @@ public:
             queryJobChannel().queryJobComm().flush(tag);
         }
 
+        data.read(totalParts);
+        if (remoteKeyedLookups)
+        {
+            partToNodeMap.allocateN(totalParts);
+            const void *map = data.readDirect(totalParts * sizeof(unsigned));
+            memcpy(partToNodeMap, map, totalParts * sizeof(unsigned));
+            keyLookupMpTag = tags.back();
+            tags.pop_back();
+        }
         unsigned numIndexParts;
         data.read(numIndexParts);
+        unsigned numSuperIndexSubs = 0;
         if (numIndexParts)
         {
-            unsigned numSuperIndexSubs;
             data.read(superWidth);
             data.read(numSuperIndexSubs);
             data.read(keyHasTlk);
@@ -2274,65 +2284,9 @@ public:
                 }
             }
 
-            CPartDescriptorArray _indexParts;
-            deserializePartFileDescriptors(data, _indexParts);
-            if (remoteKeyedLookups)
-            {
-                unsigned parts;
-                data.read(parts);
-                partToNodeMap.allocateN(parts);
-                const void *map = data.readDirect(parts * sizeof(unsigned));
-                memcpy(partToNodeMap, map, parts * sizeof(unsigned));
-                keyLookupMpTag = tags.back();
-                tags.pop_back();
-            }
-            IFileDescriptor &indexFileDesc = _indexParts.item(0).queryOwner();
+            deserializePartFileDescriptors(data, indexParts);
+            IFileDescriptor &indexFileDesc = indexParts.item(0).queryOwner();
             localKey = indexFileDesc.queryProperties().getPropBool("@local", false);
-            if (numSuperIndexSubs && !localKey) // if numSuperIndexSubs==0 means not interleaved
-            {
-                IPartDescriptor *currentPart = &_indexParts.item(0);
-                ISuperFileDescriptor *superFdesc = currentPart->queryOwner().querySuperFileDescriptor();
-                assertex(superFdesc);
-                if (container.queryLocalData())
-                {
-                    ForEachItemIn(p, _indexParts)
-                    {
-                        IPartDescriptor *part = &_indexParts.item(p);
-                        unsigned partNo = part->queryPartIndex();
-                        unsigned subfile, subpartnum;
-                        superFdesc->mapSubPart(partNo, subfile, subpartnum);
-                        unsigned globalPartNo = superWidth*subfile+subpartnum;
-                        globalPartNoMap.setValue(globalPartNo, p);
-                        indexParts.append(*LINK(part));
-                    }
-                }
-                else
-                {
-                    unsigned s, ip;
-                    for (s=0; s<numSuperIndexSubs; s++)
-                    {
-                        for (ip=0; ip<superWidth; ip++)
-                        {
-                            unsigned which = ip*numSuperIndexSubs+s;
-                            IPartDescriptor &part = _indexParts.item(which);
-                            indexParts.append(*LINK(&part));
-                        }
-                    }
-                }
-            }
-            else
-            {
-                ForEachItemIn(p, _indexParts)
-                {
-                    IPartDescriptor *part = &_indexParts.item(p);
-                    if (container.queryLocalData())
-                    {
-                        unsigned partNo = part->queryPartIndex();
-                        globalPartNoMap.setValue(partNo, p);
-                    }
-                    indexParts.append(*LINK(part));
-                }
-            }
             if (needsDiskRead)
             {
                 data.read(remoteDataFiles); // if true, all fetch parts will be serialized
@@ -2396,43 +2350,82 @@ public:
                     fetchFiles.append(*dFile.getClear());
                 }
             }
-
-            unsigned indexWidth = indexFileDesc.numParts();
-            if (keyHasTlk || (localKey && indexWidth>1))
-                indexWidth -= numSuperIndexSubs ? numSuperIndexSubs : 1;
-            for (unsigned p=0; p<indexWidth; p++)
-            {
-                lookupHandlers.append(nullptr);
-                lookupIndexPartMap.push_back(NotFound);
-            }
-            for (unsigned p=0; p<numIndexParts; p++)
-            {
-                IPartDescriptor &indexPart = indexParts.item(p);
-                unsigned partIdx = indexPart.queryPartIndex();
-                CKeyLookupHandler *lookupHandler = new CKeyLookupLocalHandler(*this, partIdx);
-                lookupHandlers.replace(lookupHandler, partIdx);
-                lookupIndexPartMap[partIdx] = p;
-            }
-            if (remoteKeyedLookups)
-            {
-                remoteParts = 0;
-                for (unsigned p=0; p<indexWidth; p++)
-                {
-                    if ((nullptr == lookupHandlers.item(p)) || getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS))
-                    {
-                        CKeyLookupHandler *lookupHandler = new CKeyLookupRemoteHandler(*this, p);
-                        lookupHandlers.replace(lookupHandler, p);
-                        ++remoteParts;
-                    }
-                }
-            }
-#ifdef _DEBUG
-            for (unsigned i=0; i<lookupHandlers.ordinality(); i++)
-                lookupCounts.push_back(0);
-#endif
         }
         else
             needsDiskRead = false;
+
+        if (totalParts)
+        {
+            unsigned currentPart = 0;
+            CKeyLookupHandler *lookupHandler;
+            unsigned localLookupHandlers = 0;
+            unsigned remoteLookupHandlers = 0;
+            unsigned p =0;
+            unsigned partIdx = 0;
+            ISuperFileDescriptor *superFdesc = superWidth ? indexParts.item(0).queryOwner().querySuperFileDescriptor() : nullptr;
+            bool reorder = superFdesc && numSuperIndexSubs && !localKey; // if numSuperIndexSubs==0 means not interleaved
+            while (p<totalParts)
+            {
+                if (currentPart<numIndexParts)
+                {
+                    IPartDescriptor &part = indexParts.item(currentPart++);
+                    /* When interleaved (std.), flatten out so handlers for each part of sub1 proceed handlers for sub2 etc.
+                     * This makes it easier when performing the lookup to map the TLK part no to the handler
+                     */
+                    if (reorder)
+                    {
+                        unsigned partNo = part.queryPartIndex();
+                        unsigned subfile, subpartnum;
+                        superFdesc->mapSubPart(partNo, subfile, subpartnum);
+                        partIdx = superWidth*subfile+subpartnum;
+                    }
+                    else
+                        partIdx = part.queryPartIndex();
+                }
+                else
+                    partIdx = totalParts;
+
+                while (p<partIdx)
+                {
+                    dbgassertex(p == lookupHandlers.ordinality());
+                    if (remoteKeyedLookups)
+                    {
+                        lookupHandler = new CKeyLookupRemoteHandler(*this, p);
+                        ++remoteLookupHandlers;
+                    }
+                    else // no handler if local KJ and part not local
+                        lookupHandler = nullptr;
+                    lookupHandlers.append(lookupHandler);
+                    lookupIndexPartMap.push_back(NotFound);
+                    ++p;
+                }
+                if (p==totalParts)
+                    break;
+                if (getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS)) // NB: if this option is true, remoteKeyedLookups == true
+                {
+                    lookupHandler = new CKeyLookupRemoteHandler(*this, p);
+                    lookupIndexPartMap.push_back(NotFound);
+                }
+                else
+                {
+                    lookupHandler = new CKeyLookupLocalHandler(*this, p);
+                    lookupIndexPartMap.push_back(currentPart-1);
+                    ++localLookupHandlers;
+                }
+                dbgassertex(p == lookupHandlers.ordinality());
+                lookupHandlers.append(lookupHandler);
+                ++p;
+            }
+            if (remoteKeyedLookups && !container.queryLocalData())
+            {
+                // # of remoteHandlers that will make requests to this slaves receiver (used to count end() notifications)
+                remoteLookupRequesters = localLookupHandlers * (queryJob().querySlaves()-1);
+            }
+        }
+#ifdef _DEBUG
+        for (unsigned i=0; i<lookupHandlers.ordinality(); i++)
+            lookupCounts.push_back(0);
+#endif
     }
     virtual void abort() override
     {
@@ -2447,7 +2440,7 @@ public:
         assertex(inputs.ordinality() == 1);
         PARENT::start();
 
-        if (remoteParts)
+        if (remoteLookupRequesters)
         {
             if (!lookupReceiver)
                 lookupReceiver.setown(new CKeyedRemoteLookupReceiver(*this, keyLookupMpTag));
