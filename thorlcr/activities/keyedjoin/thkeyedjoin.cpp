@@ -372,7 +372,7 @@ public:
     }
     virtual void serializeSlaveData(MemoryBuffer &dst, unsigned slave)
     {
-        if (remoteKeyedLookups || container.queryLocalData())
+        if (totalIndexParts && (remoteKeyedLookups || container.queryLocalData()))
         {
             std::vector<unsigned> &parts = slavePartMap[slave];
             unsigned numParts = slavePartMap[slave].size();
@@ -381,6 +381,7 @@ public:
             if (numParts)
                 indexFileDesc->serializeParts(dst, &parts[0], parts.size());
         }
+
         else
             dst.append(initMb);
 
