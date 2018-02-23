@@ -752,8 +752,8 @@
                replicateAsync="false"
                replicateOutputs="false"
                slaveport="20100"
-               slavesPerNode="1"
-               valgrindOptions="--tool=memcheck --leak-check=full --show-leak-kinds=all -v"
+               slavesPerNode="4"
+               xvalgrindOptions="--tool=memcheck --leak-check=full --show-leak-kinds=all -v"
                watchdogEnabled="true"
                watchdogProgressEnabled="true">
    <SwapNode AutoSwapNode="false"/>

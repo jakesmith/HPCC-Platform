@@ -113,11 +113,11 @@ public:
 
         Owned<IDistributedFile> dataFile;
         Owned<IDistributedFile> indexFile = queryThorFileManager().lookup(container.queryJob(), indexFileName, false, 0 != (helper->getJoinFlags() & JFindexoptional), true);
-        IDistributedSuperFile *superIndex = indexFile->querySuperFile();
         if (indexFile)
         {
             if (!isFileKey(indexFile))
                 throw MakeActivityException(this, 0, "Attempting to read flat file as an index: %s", indexFileName.get());
+            IDistributedSuperFile *superIndex = indexFile->querySuperFile();
             if (helper->diskAccessRequired())
             {
                 OwnedRoxieString fetchFilename(helper->getFileName());
@@ -243,6 +243,7 @@ public:
                     IGroup &dfsGroup = queryDfsGroup();
 
                     unsigned startN = 0;
+                    slavePartMap.resize(dfsGroup.ordinality());
                     for (unsigned p=0; p<indexFileDesc->numParts(); p++)
                     {
                         IPartDescriptor *part = indexFileDesc->queryPart(p);
@@ -257,8 +258,6 @@ public:
                                 r = findNode(dfsGroup, *node, startN);
                                 if (NotFound != r)
                                 {
-                                    if (r <= slavePartMap.size())
-                                        slavePartMap.resize(r+1);
                                     std::vector<unsigned> &slaveParts = slavePartMap[r];
                                     slaveParts.push_back(p);
                                     break;
@@ -362,6 +361,8 @@ public:
                     indexFile.clear();
             }
         }
+        else
+            initMb.append(totalIndexParts); // 0
         if (indexFile)
         {
             addReadFile(indexFile);
@@ -373,11 +374,12 @@ public:
     {
         if (remoteKeyedLookups || container.queryLocalData())
         {
+            std::vector<unsigned> &parts = slavePartMap[slave];
             unsigned numParts = slavePartMap[slave].size();
             initMb.writeDirect(numPartsOffset, sizeof(unsigned), &numParts);
             dst.append(initMb);
-            std::vector<unsigned> &parts = slavePartMap[slave];
-            indexFileDesc->serializeParts(dst, &parts[0], parts.size());
+            if (numParts)
+                indexFileDesc->serializeParts(dst, &parts[0], parts.size());
         }
         else
             dst.append(initMb);

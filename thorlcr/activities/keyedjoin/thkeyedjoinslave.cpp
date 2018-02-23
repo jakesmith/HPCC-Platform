@@ -2291,124 +2291,121 @@ public:
             }
             unsigned numIndexParts;
             data.read(numIndexParts);
-            if (numIndexParts)
+            partToNodeMap.allocateN(totalParts);
+            const void *map = data.readDirect(totalParts * sizeof(unsigned));
+            memcpy(partToNodeMap, map, totalParts * sizeof(unsigned));
+            data.read(superWidth);
+            data.read(keyHasTlk);
+            if (keyHasTlk)
             {
-                partToNodeMap.allocateN(totalParts);
-                const void *map = data.readDirect(totalParts * sizeof(unsigned));
-                memcpy(partToNodeMap, map, totalParts * sizeof(unsigned));
-
-                data.read(superWidth);
-                data.read(keyHasTlk);
-                if (keyHasTlk)
+                MemoryBuffer tlkMb;
+                unsigned tlks;
+                data.read(tlks);
+                if (getOptBool("outOfCacheTlks"))
                 {
-                    MemoryBuffer tlkMb;
-                    unsigned tlks;
-                    data.read(tlks);
-                    if (getOptBool("outOfCacheTlks"))
+                    unsigned p = 0;
+                    while (tlks--)
                     {
-                        unsigned p = 0;
-                        while (tlks--)
-                        {
-                            size32_t tlkSz;
-                            data.read(tlkSz);
-                            const void *tlkData = data.readDirect(tlkSz);
-
-                            StringBuffer name("TLK");
-                            name.append('_').append(container.queryId()).append('_');
-                            Owned<IKeyIndex> tlkKeyIndex = createInMemoryKeyIndex(name.append(p++), 0, tlkSz, tlkData, true); // MORE - not the right crc
-                            tlkKeyIndexes.append(*tlkKeyIndex.getClear());
-                        }
-                    }
-                    else
-                    {
-                        UnsignedArray posArray, lenArray;
                         size32_t tlkSz;
-                        while (tlks--)
-                        {
-                            data.read(tlkSz);
-                            posArray.append(tlkMb.length());
-                            lenArray.append(tlkSz);
-                            tlkMb.append(tlkSz, data.readDirect(tlkSz));
-                        }
-                        ForEachItemIn(p, posArray)
-                        {
-                            Owned<IFileIO> iFileIO = createIFileI(lenArray.item(p), tlkMb.toByteArray()+posArray.item(p));
-                            StringBuffer name("TLK");
-                            name.append('_').append(container.queryId()).append('_');
-                            Owned<IKeyIndex> tlkKeyIndex = createKeyIndex(name.append(p).str(), 0, *iFileIO, true, false); // MORE - not the right crc
-                            tlkKeyIndexes.append(*tlkKeyIndex.getClear());
-                        }
+                        data.read(tlkSz);
+                        const void *tlkData = data.readDirect(tlkSz);
+
+                        StringBuffer name("TLK");
+                        name.append('_').append(container.queryId()).append('_');
+                        Owned<IKeyIndex> tlkKeyIndex = createInMemoryKeyIndex(name.append(p++), 0, tlkSz, tlkData, true); // MORE - not the right crc
+                        tlkKeyIndexes.append(*tlkKeyIndex.getClear());
                     }
                 }
-                deserializePartFileDescriptors(data, indexParts);
-                IFileDescriptor &indexFileDesc = indexParts.item(0).queryOwner();
-                localKey = indexFileDesc.queryProperties().getPropBool("@local", false);
-                if (needsDiskRead)
+                else
                 {
-                    data.read(remoteDataFiles); // if true, all fetch parts will be serialized
-                    unsigned numDataParts;
-                    data.read(numDataParts);
-                    if (numDataParts)
+                    UnsignedArray posArray, lenArray;
+                    size32_t tlkSz;
+                    while (tlks--)
                     {
-                        deserializePartFileDescriptors(data, dataParts);
-                        localFPosToNodeMap.allocateN(numDataParts);
-
-                        unsigned f;
-                        FPosTableEntry *e;
-                        for (f=0, e=&localFPosToNodeMap[0]; f<numDataParts; f++, e++)
-                        {
-                            IPartDescriptor &part = dataParts.item(f);
-                            e->base = part.queryProperties().getPropInt64("@offset");
-                            e->top = e->base + part.queryProperties().getPropInt64("@size");
-                            e->index = f; // NB: index == which local part in dataParts
-                        }
+                        data.read(tlkSz);
+                        posArray.append(tlkMb.length());
+                        lenArray.append(tlkSz);
+                        tlkMb.append(tlkSz, data.readDirect(tlkSz));
                     }
-                    if (remoteDataFiles) // global offset map not needed if remote and have all fetch parts inc. map (from above)
+                    ForEachItemIn(p, posArray)
                     {
-                        if (numDataParts)
-                            filePartTotal = numDataParts;
-                    }
-                    else
-                    {
-                        data.read(filePartTotal);
-                        if (filePartTotal)
-                        {
-                            size32_t offsetMapSz = 0;
-                            data.read(offsetMapSz);
-                            globalFPosToNodeMap.setown(new FPosTableEntry[filePartTotal]);
-                            const void *offsetMapBytes = (FPosTableEntry *)data.readDirect(offsetMapSz);
-                            memcpy(globalFPosToNodeMap, offsetMapBytes, offsetMapSz);
-                        }
-                    }
-                    unsigned encryptedKeyLen;
-                    void *encryptedKey;
-                    helper->getFileEncryptKey(encryptedKeyLen,encryptedKey);
-                    if (0 != encryptedKeyLen)
-                    {
-                        bool dfsEncrypted = numDataParts?dataParts.item(0).queryOwner().queryProperties().getPropBool("@encrypted"):false;
-                        if (dfsEncrypted) // otherwise ignore (warning issued by master)
-                            eexp.setown(createAESExpander256(encryptedKeyLen, encryptedKey));
-                        memset(encryptedKey, 0, encryptedKeyLen);
-                        free(encryptedKey);
-                    }
-
-                    fetchHandler.setown(new CKeyedFetchHandler(*this));
-
-                    FPosTableEntry *fPosToNodeMap = globalFPosToNodeMap ? globalFPosToNodeMap : localFPosToNodeMap;
-                    for (unsigned c=0; c<filePartTotal; c++)
-                    {
-                        FPosTableEntry &e = fPosToNodeMap[c];
-                        ActPrintLog("Table[%d] : base=%" I64F "d, top=%" I64F "d, slave=%d", c, e.base, e.top, e.index);
-                    }
-                    for (unsigned i=0; i<dataParts.ordinality(); i++)
-                    {
-                        Owned<IDelayedFile> dFile = queryThor().queryFileCache().lookup(*this, indexName, dataParts.item(i), eexp);
-                        fetchFiles.append(*dFile.getClear());
+                        Owned<IFileIO> iFileIO = createIFileI(lenArray.item(p), tlkMb.toByteArray()+posArray.item(p));
+                        StringBuffer name("TLK");
+                        name.append('_').append(container.queryId()).append('_');
+                        Owned<IKeyIndex> tlkKeyIndex = createKeyIndex(name.append(p).str(), 0, *iFileIO, true, false); // MORE - not the right crc
+                        tlkKeyIndexes.append(*tlkKeyIndex.getClear());
                     }
                 }
             }
-            else
-                needsDiskRead = false;
+            if (numIndexParts)
+            {
+                deserializePartFileDescriptors(data, indexParts);
+                IFileDescriptor &indexFileDesc = indexParts.item(0).queryOwner();
+                localKey = indexFileDesc.queryProperties().getPropBool("@local", false);
+            }
+            if (needsDiskRead)
+            {
+                data.read(remoteDataFiles); // if true, all fetch parts will be serialized
+                unsigned numDataParts;
+                data.read(numDataParts);
+                if (numDataParts)
+                {
+                    deserializePartFileDescriptors(data, dataParts);
+                    localFPosToNodeMap.allocateN(numDataParts);
+
+                    unsigned f;
+                    FPosTableEntry *e;
+                    for (f=0, e=&localFPosToNodeMap[0]; f<numDataParts; f++, e++)
+                    {
+                        IPartDescriptor &part = dataParts.item(f);
+                        e->base = part.queryProperties().getPropInt64("@offset");
+                        e->top = e->base + part.queryProperties().getPropInt64("@size");
+                        e->index = f; // NB: index == which local part in dataParts
+                    }
+                }
+                if (remoteDataFiles) // global offset map not needed if remote and have all fetch parts inc. map (from above)
+                {
+                    if (numDataParts)
+                        filePartTotal = numDataParts;
+                }
+                else
+                {
+                    data.read(filePartTotal);
+                    if (filePartTotal)
+                    {
+                        size32_t offsetMapSz = 0;
+                        data.read(offsetMapSz);
+                        globalFPosToNodeMap.setown(new FPosTableEntry[filePartTotal]);
+                        const void *offsetMapBytes = (FPosTableEntry *)data.readDirect(offsetMapSz);
+                        memcpy(globalFPosToNodeMap, offsetMapBytes, offsetMapSz);
+                    }
+                }
+                unsigned encryptedKeyLen;
+                void *encryptedKey;
+                helper->getFileEncryptKey(encryptedKeyLen,encryptedKey);
+                if (0 != encryptedKeyLen)
+                {
+                    bool dfsEncrypted = numDataParts?dataParts.item(0).queryOwner().queryProperties().getPropBool("@encrypted"):false;
+                    if (dfsEncrypted) // otherwise ignore (warning issued by master)
+                        eexp.setown(createAESExpander256(encryptedKeyLen, encryptedKey));
+                    memset(encryptedKey, 0, encryptedKeyLen);
+                    free(encryptedKey);
+                }
+
+                fetchHandler.setown(new CKeyedFetchHandler(*this));
+
+                FPosTableEntry *fPosToNodeMap = globalFPosToNodeMap ? globalFPosToNodeMap : localFPosToNodeMap;
+                for (unsigned c=0; c<filePartTotal; c++)
+                {
+                    FPosTableEntry &e = fPosToNodeMap[c];
+                    ActPrintLog("Table[%d] : base=%" I64F "d, top=%" I64F "d, slave=%d", c, e.base, e.top, e.index);
+                }
+                for (unsigned i=0; i<dataParts.ordinality(); i++)
+                {
+                    Owned<IDelayedFile> dFile = queryThor().queryFileCache().lookup(*this, indexName, dataParts.item(i), eexp);
+                    fetchFiles.append(*dFile.getClear());
+                }
+            }
 
             setupLookupHandlers();
         }
