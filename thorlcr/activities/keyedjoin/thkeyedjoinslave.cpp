@@ -1480,7 +1480,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
     public:
         CKeyedRemoteLookupReceiver(CKeyedJoinSlave &_activity, mptag_t _mpTag)
-            : threaded("CKeyedRemoteLookupProcessor", this), activity(_activity), comm(_activity.queryJobChannel().queryJobComm()), keyLookupMpTag(_mpTag)
+            : threaded("CKeyedRemoteLookupReceiver", this), activity(_activity), comm(_activity.queryJobChannel().queryJobComm()), keyLookupMpTag(_mpTag)
         {
             unsigned keyLookupMaxProcessThreads = activity.getOptInt(THOROPT_KEYLOOKUP_MAX_PROCESS_THREADS, DEFAULT_KEYLOOKUP_MAX_PROCESS_THREADS);
             if (keyLookupMaxProcessThreads > activity.queryJob().querySlaves())
