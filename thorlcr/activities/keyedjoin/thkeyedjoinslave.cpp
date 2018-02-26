@@ -226,7 +226,11 @@ public:
     }
     inline unsigned incCandidates()
     {
-        return candidates.fetch_add(1);
+        return candidates.fetch_add(1)+1;
+    }
+    inline unsigned addCandidates(unsigned n)
+    {
+        return candidates.fetch_add(n)+n;
     }
     inline bool hasAbortLimitBeenHit() const
     {
@@ -1167,8 +1171,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             if (batchArray.ordinality())
                 enqueue(batchArray);
         }
+        void end() { join(); }
         virtual void process(CThorExpandingRowArray &processing) = 0;
-        virtual void end() { join(); }
     // IThreaded
         virtual void threadmain() override
         {
@@ -1223,7 +1227,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 // NB: keepLimit is not on hard matches and can only be applied later, since other filtering (e.g. in transform) may keep below keepLimit
                 while (keyManager->lookup(true))
                 {
-                    unsigned candidates = joinGroup->incCandidates()+1;
+                    unsigned candidates = joinGroup->incCandidates();
                     if (candidates > activity.abortLimit)
                     {
                         joinGroup->setAbortLimitHit(); // also clears existing rows
@@ -1277,7 +1281,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         CriticalSection partKeyManagerCrit;
         Owned<IThorRowInterfaces> keyLookupRowWithJGRefRowIf;
         unsigned numFinished = 0;
-        Semaphore completeSem;
 
         class CKeyedRemoteLookupProcessor : public CSimpleInterfaceOf<IInterface>, implements IThreaded
         {
@@ -1459,7 +1462,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             CriticalBlock b(partKeyManagerCrit);
             if (partNo < partKeyManagers.size())
             {
-                std::vector<IKeyManager *> &availableForPart = partKeyManagers[partNo]; // JCSMORE - this looks dodgy, should be taking ref. ? copying by the looks of it at the moment
+                std::vector<IKeyManager *> &availableForPart = partKeyManagers[partNo];
                 IKeyManager *kM;
                 if (availableForPart.size())
                 {
@@ -1548,7 +1551,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             if (aborted)
                 return;
-            while (!completeSem.wait(60000))
+            while (!threaded.join(60000))
                 PROGLOG("Receiver waiting on remote handlers to signal completion");
             if (aborted)
                 return;
@@ -1590,16 +1593,16 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         break;
                     mptag_t replyTag;
                     msg.read((unsigned &)replyTag);
-                    unsigned partNo;
-                    msg.read(partNo);
                     if (TAG_NULL == replyTag) // signals end
                     {
                         ++numFinished;
-                        if (numFinished == activity.remoteLookupRequesters)
+                        if (numFinished == activity.queryJob().querySlaves())
                             break;
                     }
                     else
                     {
+                        unsigned partNo;
+                        msg.read(partNo);
                         unsigned count;
                         msg.read(count);
                         CThorExpandingRowArray received(activity, keyLookupRowWithJGRefRowIf);
@@ -1618,7 +1621,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 activity.fireException(e);
                 e->Release();
             }
-            completeSem.signal();
         }
     };
     class CKeyLookupRemoteHandler : public CKeyLookupHandler
@@ -1629,7 +1631,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     public:
         CKeyLookupRemoteHandler(CKeyedJoinSlave &_activity, unsigned _partNo) : CKeyLookupHandler(_activity, _partNo), replyRows(_activity, _activity.keyLookupReplyOutputMetaRowIf)
         {
-            lookupSlave = (rank_t)activity.partToNodeMap[partNo] + 1; // +1 because 0 == master, 1st slave == 1
+            lookupSlave = (rank_t)activity.partToSlaveMap[partNo] + 1; // +1 because 0 == master, 1st slave == 1
             replyTag = activity.queryMPServer().createReplyTag();
             local = false;
         }
@@ -1675,36 +1677,54 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         joinGroup->setAtMostLimitHit(); // also clears existing rows
                     else
                     {
-                        unsigned candidates;
-                        mb.read(candidates);
-                        if (candidates)
+                        unsigned matches;
+                        mb.read(matches);
+                        if (matches)
                         {
-                            if (!activity.needsDiskRead)
+                            unsigned candidates = joinGroup->addCandidates(matches);
+                            if (candidates > activity.abortLimit || candidates > activity.atMost)
                             {
-                                size32_t sz;
-                                mb.read(sz);
-                                replyRows.deserialize(sz, mb.readDirect(sz));
+                                if (!activity.needsDiskRead)
+                                {
+                                    size32_t sz;
+                                    mb.read(sz);
+                                    mb.skip(sz);
+                                }
+                                mb.skip(matches * sizeof(unsigned __int64));
+                                if (candidates > activity.abortLimit)
+                                    joinGroup->setAbortLimitHit(); // also clears existing rows
+                                else if (candidates > activity.atMost) // atMost - filter out group if > max hard matches
+                                    joinGroup->setAtMostLimitHit(); // also clears existing rows
                             }
-                            std::vector<unsigned __int64> fposs(candidates);
-                            mb.read(candidates * sizeof(unsigned __int64), &fposs[0]); // JCSMORE shame to serialize these if not needed, does codegen give me a tip?
-                            for (unsigned r=0; r<candidates; r++)
+                            else
                             {
-                                if (activity.needsDiskRead)
+                                if (!activity.needsDiskRead)
                                 {
-                                    joinGroup->incPending();
-                                    unsigned __int64 sequence = joinGroup->addRightMatchPending(partNo, fposs[r]);
-                                    if (NotFound == sequence) // means limit was hit and must have been caused by another handler
-                                        break;
-                                    sequence |= (((unsigned __int64)partNo) << 32);
-                                    activity.fetchHandler->addRow(fposs[r], sequence, joinGroup);
+                                    size32_t sz;
+                                    mb.read(sz);
+                                    replyRows.deserialize(sz, mb.readDirect(sz));
                                 }
-                                else
+                                std::vector<unsigned __int64> fposs(matches);
+                                mb.read(matches * sizeof(unsigned __int64), &fposs[0]); // JCSMORE shame to serialize these if not needed, does codegen give me a tip?
+                                for (unsigned r=0; r<matches; r++)
                                 {
-                                    OwnedConstThorRow row = replyRows.getClear(r);
-                                    joinGroup->addRightMatch(partNo, row.getClear(), fposs[r]);
+                                    if (activity.needsDiskRead)
+                                    {
+                                        joinGroup->incPending();
+                                        unsigned __int64 sequence = joinGroup->addRightMatchPending(partNo, fposs[r]);
+                                        if (NotFound == sequence) // means limit was hit and must have been caused by another handler
+                                            break;
+                                        sequence |= (((unsigned __int64)partNo) << 32);
+                                        activity.fetchHandler->addRow(fposs[r], sequence, joinGroup);
+                                    }
+                                    else
+                                    {
+                                        OwnedConstThorRow row = replyRows.getClear(r);
+                                        joinGroup->addRightMatch(partNo, row.getClear(), fposs[r]);
+                                    }
                                 }
+                                replyRows.clearRows();
                             }
-                            replyRows.clearRows();
                         }
                     }
                     joinGroup->decPending(); // Every queued lookup row triggered an inc., this is the corresponding dec.
@@ -1712,16 +1732,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 if (received == numRows)
                     break;
             }
-        }
-        virtual void end() override
-        {
-            join();
-            CMessageBuffer msg;
-            msg.append(TAG_NULL);
-            msg.append(partNo);
-            ICommunicator &comm = activity.queryJobChannel().queryJobComm();
-            if (!comm.send(msg, lookupSlave, activity.keyLookupMpTag, LONGTIMEOUT))
-                throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
         }
     };
     class CReadAheadThread : implements IThreaded
@@ -1750,7 +1760,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             owner.readAhead(); // can block
         }
-    } lookupThread;
+    } readAheadThread;
 
     Owned<CKeyedRemoteLookupReceiver> lookupReceiver;
     Owned<CKeyedFetchHandler> fetchHandler;
@@ -1773,7 +1783,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     bool remoteDataFiles = false;
     IPointerArrayOf<CKeyLookupHandler> lookupHandlers;
     std::vector<unsigned> lookupIndexPartMap;
-    unsigned remoteLookupRequesters = 0;
     CLimiter lookupThreadLimiter;
     CLimiter pendingKeyLookupLimiter;
     CLimiter doneListLimiter;
@@ -1794,7 +1803,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     IArrayOf<IDelayedFile> fetchFiles;
     OwnedMalloc<FPosTableEntry> localFPosToNodeMap; // maps fpos->local part #
     OwnedMalloc<FPosTableEntry> globalFPosToNodeMap; // maps fpos->node for all parts of file. If file is remote, localFPosToNodeMap will have all parts
-    OwnedMalloc<unsigned> partToNodeMap;
+    OwnedMalloc<unsigned> partToSlaveMap;
     Owned<IExpander> eexp;
 
     unsigned atMost = 0, keepLimit = 0;
@@ -1806,6 +1815,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     unsigned keyLookupMaxQueued = DEFAULT_KEYLOOKUP_MAX_QUEUED;
     unsigned keyLookupMaxDone = DEFAULT_KEYLOOKUP_MAX_DONE;
     bool remoteKeyedLookups = false;
+    bool forcedRemoteKeyedLookups = false;
 
     Owned<IThorRowInterfaces> keyLookupRowWithJGRowIf;
     Owned<IThorRowInterfaces> keyLookupReplyOutputMetaRowIf;
@@ -1970,7 +1980,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         else
         {
             keyedFieldsRowWithJGPrefix.setown(preparePendingLookupRow(keyFieldsRowBuilder.getUnfinalizedClear(), keyFieldsRowBuilder.getMaxLength(), lhsRow, keyedFieldsRowSize));
-            if (container.queryLocalData() || !remoteKeyedLookups)
+            if (!remoteKeyedLookups)
             {
                 ForEachItemIn(partNo, indexParts)
                     queueLookupForPart(indexParts.item(partNo).queryPartIndex(), keyedFieldsRowWithJGPrefix);
@@ -1998,6 +2008,17 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             CKeyLookupHandler *lookupHandler = lookupHandlers.item(h);
             if (lookupHandler)
                 lookupHandler->end();
+        }
+        if (remoteKeyedLookups)
+        {
+            CMessageBuffer msg;
+            msg.append(TAG_NULL);
+            ICommunicator &comm = queryJobChannel().queryJobComm();
+            for (unsigned s=0; s<queryJob().querySlaves(); s++)
+            {
+                if (!comm.send(msg, s+1, keyLookupMpTag, LONGTIMEOUT))
+                    throw MakeActivityException(this, 0, "comm send failed");
+            }
         }
 
         CriticalBlock b(onCompleteCrit); // protecting both pendingJoinGroupList and doneJoinGroupList
@@ -2132,8 +2153,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     {
         unsigned currentPart = 0;
         CKeyLookupHandler *lookupHandler;
-        unsigned localLookupHandlers = 0;
-        unsigned remoteLookupHandlers = 0;
         unsigned p =0;
         unsigned partIdx = 0;
         unsigned numIndexParts = indexParts.ordinality();
@@ -2158,10 +2177,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             {
                 dbgassertex(p == lookupHandlers.ordinality());
                 if (remoteKeyedLookups)
-                {
                     lookupHandler = new CKeyLookupRemoteHandler(*this, p);
-                    ++remoteLookupHandlers;
-                }
                 else // no handler if local KJ and part not local
                     lookupHandler = nullptr;
                 lookupHandlers.append(lookupHandler);
@@ -2170,31 +2186,20 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             }
             if (p==totalParts)
                 break;
-            if (getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS)) // NB: if this option is true, remoteKeyedLookups == true
-            {
+            if (remoteKeyedLookups && forcedRemoteKeyedLookups)
                 lookupHandler = new CKeyLookupRemoteHandler(*this, p);
-                lookupIndexPartMap.push_back(NotFound);
-            }
             else
-            {
                 lookupHandler = new CKeyLookupLocalHandler(*this, p);
-                lookupIndexPartMap.push_back(currentPart-1);
-                ++localLookupHandlers;
-            }
+            lookupIndexPartMap.push_back(currentPart-1);
             dbgassertex(p == lookupHandlers.ordinality());
             lookupHandlers.append(lookupHandler);
             ++p;
-        }
-        if (remoteKeyedLookups && !container.queryLocalData())
-        {
-            // # of remoteHandlers that will make requests to this slaves receiver (used to count end() notifications)
-            remoteLookupRequesters = localLookupHandlers * (queryJob().querySlaves()-1);
         }
     }
 public:
     IMPLEMENT_IINTERFACE_USING(PARENT);
 
-    CKeyedJoinSlave(CGraphElementBase *_container) : PARENT(_container), lookupThread(*this), statsArr(8)
+    CKeyedJoinSlave(CGraphElementBase *_container) : PARENT(_container), readAheadThread(*this), statsArr(8)
     {
         helper = static_cast <IHThorKeyedJoinArg *> (queryHelper());
         reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
@@ -2203,7 +2208,16 @@ public:
         keyLookupMaxRequestThreads = getOptInt(THOROPT_KEYLOOKUP_MAX_REQUEST_THREADS, DEFAULT_KEYLOOKUP_MAX_REQUEST_THREADS);
         keyLookupMaxQueued = getOptInt(THOROPT_KEYLOOKUP_MAX_QUEUED, DEFAULT_KEYLOOKUP_MAX_QUEUED);
         keyLookupMaxDone = getOptInt(THOROPT_KEYLOOKUP_MAX_DONE, DEFAULT_KEYLOOKUP_MAX_DONE);
-        remoteKeyedLookups = getOptBool(THOROPT_REMOTE_KEYED_LOOKUPS, getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS));
+        forcedRemoteKeyedLookups = getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS);
+        remoteKeyedLookups = getOptBool(THOROPT_REMOTE_KEYED_LOOKUPS, forcedRemoteKeyedLookups);
+        if (container.queryLocalData())
+            remoteKeyedLookups = forcedRemoteKeyedLookups = false;
+
+        /* For now KJ's in CQ's use local handlers, because there is the KJ receiver is not necessarily running on all slaves (e.g. won't be if CQ not executed on a slave)
+         * In future remote handlers will talk directly to KJ service (e.g. in dafilesrv)
+         */
+        if (container.queryOwner().queryOwner() && (!container.queryOwner().isGlobal())) // I am in a child query
+            remoteKeyedLookups = forcedRemoteKeyedLookups = false;
 
         lookupThreadLimiter.set(keyLookupMaxRequestThreads);
         pendingKeyLookupLimiter.set(keyLookupMaxQueued, 100);
@@ -2253,7 +2267,6 @@ public:
                 size32_t sz = helper->createDefaultRight(rr);
                 defaultRight.setown(rr.finalizeRowClear(sz));
             }
-            ActPrintLog("Remote Keyed Lookups = %s (forced = %s)", boolToStr(remoteKeyedLookups), boolToStr(getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUPS)));
         }
         else
         {
@@ -2291,9 +2304,9 @@ public:
             }
             unsigned numIndexParts;
             data.read(numIndexParts);
-            partToNodeMap.allocateN(totalParts);
+            partToSlaveMap.allocateN(totalParts);
             const void *map = data.readDirect(totalParts * sizeof(unsigned));
-            memcpy(partToNodeMap, map, totalParts * sizeof(unsigned));
+            memcpy(partToSlaveMap, map, totalParts * sizeof(unsigned));
             data.read(superWidth);
             data.read(keyHasTlk);
             if (keyHasTlk)
@@ -2409,10 +2422,13 @@ public:
 
             setupLookupHandlers();
         }
+        else
+            remoteKeyedLookups = forcedRemoteKeyedLookups = false;
 #ifdef _DEBUG
         for (unsigned i=0; i<lookupHandlers.ordinality(); i++)
             lookupCounts.push_back(0);
 #endif
+        ActPrintLog("Remote Keyed Lookups = %s (forced = %s)", boolToStr(remoteKeyedLookups), boolToStr(forcedRemoteKeyedLookups));
     }
     virtual void abort() override
     {
@@ -2427,7 +2443,7 @@ public:
         assertex(inputs.ordinality() == 1);
         PARENT::start();
 
-        if (remoteLookupRequesters)
+        if (remoteKeyedLookups)
         {
             if (!lookupReceiver)
                 lookupReceiver.setown(new CKeyedRemoteLookupReceiver(*this, keyLookupMpTag));
@@ -2467,7 +2483,7 @@ public:
             if (lookupHandler)
                 lookupHandler->init();
         }
-        lookupThread.start();
+        readAheadThread.start();
     }
     CATCH_NEXTROW()
     {
@@ -2622,7 +2638,7 @@ public:
         endOfInput = true; // signals to readAhead which is reading input, that is should stop asap.
         if (fetchHandler)
             fetchHandler->stop(true);
-        lookupThread.join();
+        readAheadThread.join();
         if (lookupReceiver)
             lookupReceiver->stop();
         ForEachItemIn(h, lookupHandlers)
