@@ -1643,7 +1643,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             processing.serializeCompress(msg);
             ICommunicator &comm = activity.queryJobChannel().queryJobComm();
 
-            // JCSMORE - hmm, is it okay that multiple threads could be sending to same slave on same tag in parallel?
+            // JCSMORE - is it okay that multiple threads could be sending to same slave on same tag in parallel?
             if (!comm.send(msg, lookupSlave, activity.keyLookupMpTag, LONGTIMEOUT))
                 throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
 
