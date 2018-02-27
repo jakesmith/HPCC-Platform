@@ -1628,6 +1628,20 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         rank_t lookupSlave = RANK_NULL;
         mptag_t replyTag = TAG_NULL;
         CThorExpandingRowArray replyRows;
+        bool first = true;
+
+        void init(CMessageBuffer &msg)
+        {
+            first = false;
+            // JCSMORE - not sure really need 'partNo' if rfn deemded remote, that's all CKeyLookupRemoteHandler needs I suspect.
+            RemoteFilename &rfn = activity.indexRfns[partNo];
+            StringBuffer fname;
+            rfn.getTail(fname);
+
+            msg.append(kjs_init);
+            msg.append(activity.queryId());
+            msg.append(fname);
+        }
     public:
         CKeyLookupRemoteHandler(CKeyedJoinSlave &_activity, unsigned _partNo) : CKeyLookupHandler(_activity, _partNo), replyRows(_activity, _activity.keyLookupReplyOutputMetaRowIf)
         {
@@ -1637,6 +1651,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         virtual void process(CThorExpandingRowArray &processing) override
         {
+            if (first)
+                init(msg);
             unsigned numRows = processing.ordinality();
             CMessageBuffer msg;
             msg.append(replyTag);
@@ -1782,6 +1798,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     bool remoteDataFiles = false;
     IPointerArrayOf<CKeyLookupHandler> lookupHandlers;
     std::vector<unsigned> lookupIndexPartMap;
+    std::vector<RemoteFilename> indexRfns;
     CLimiter lookupThreadLimiter;
     CLimiter pendingKeyLookupLimiter;
     CLimiter doneListLimiter;
@@ -2279,6 +2296,7 @@ public:
             fetchFiles.kill();
             lookupHandlers.kill();
             lookupIndexPartMap.clear();
+            indexRfns.clear();
         }
         for (auto &a : statsArr)
             a = 0;
@@ -2303,6 +2321,10 @@ public:
             }
             unsigned numIndexParts;
             data.read(numIndexParts);
+
+            indexRfns.resize(totalParts);
+            for (auto &rfn : indexRfns)
+                rfn.deserialize(data);
             partToSlaveMap.allocateN(totalParts);
             const void *map = data.readDirect(totalParts * sizeof(unsigned));
             memcpy(partToSlaveMap, map, totalParts * sizeof(unsigned));

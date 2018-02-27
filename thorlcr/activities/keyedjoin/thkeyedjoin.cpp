@@ -42,12 +42,14 @@ class CKeyedJoinMaster : public CMasterActivity
     unsigned totalIndexParts = 0;
     std::vector<std::vector<unsigned>> slavePartMap; // vector of slave parts (IPartDescriptor's slavePartMap[<slave] serialized to each slave
     std::vector<unsigned> partToSlave; // vector mapping part index to slave (sent to all slaves)
+    std::vector<RemoteFilename> indexRfns;
 
     // Fills slavePartMap and partToSlave
     void mapIndexParts(bool hasTlk, unsigned numSuperIndexSubs, unsigned superIndexWidth)
     {
         slavePartMap.clear();
         partToSlave.clear();
+        indexRfns.clear();
 
         IGroup &dfsGroup = queryDfsGroup();
         slavePartMap.resize(dfsGroup.ordinality());
@@ -115,6 +117,32 @@ class CKeyedJoinMaster : public CMasterActivity
                 partToSlave[partIdx] = mappedPos;
             }
         }
+        std::vector<unsigned> allParts;
+        if (0 == numSuperIndexSubs)
+        {
+            for (unsigned p=0; p<totalIndexParts; p++)
+                allParts.push_back(p);
+        }
+        else // non-interleaved superindex
+        {
+            unsigned p=0;
+            for (unsigned i=0; i<numSuperIndexSubs; i++)
+            {
+                for (unsigned kp=0; kp<superIndexWidth; kp++)
+                    allParts.push_back(p++);
+                if (hasTlk)
+                    p++; // TLK's serialized separately.
+            }
+        }
+        // ensure sorted by partIdx, so that consistent order for partHandlers/lookup
+        std::sort(allParts.begin(), allParts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
+        for (auto &partIdx : allParts)
+        {
+            IPartDescriptor &partDesc = indexFileDesc->queryPart(partIdx);
+            RemoteFilename rfn;
+            partDesc.getFilename(0, rfn);
+            indexRfns.push_back(rfn);
+        }
         if (remoteKeyedLookups || container.queryLocalData())
         {
             // ensure sorted by partIdx, so that consistent order for partHandlers/lookup
@@ -122,28 +150,7 @@ class CKeyedJoinMaster : public CMasterActivity
                 std::sort(slaveParts.begin(), slaveParts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
         }
         else
-        {
-            std::vector<unsigned> parts;
-            if (0 == numSuperIndexSubs)
-            {
-                for (unsigned p=0; p<totalIndexParts; p++)
-                    parts.push_back(p);
-            }
-            else // non-interleaved superindex
-            {
-                unsigned p=0;
-                for (unsigned i=0; i<numSuperIndexSubs; i++)
-                {
-                    for (unsigned kp=0; kp<superIndexWidth; kp++)
-                        parts.push_back(p++);
-                    if (hasTlk)
-                        p++; // TLK's serialized separately.
-                }
-            }
-            // ensure sorted by partIdx, so that consistent order for partHandlers/lookup
-            std::sort(parts.begin(), parts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
-            slavePartMap[0].swap(parts);
-        }
+            slavePartMap[0].swap(allParts);
     }
 public:
     CKeyedJoinMaster(CMasterGraphElement *info) : CMasterActivity(info)
@@ -329,6 +336,9 @@ public:
                         mapIndexParts(keyHasTlk, 0, superIndexWidth);
                     else
                         mapIndexParts(keyHasTlk, numSuperIndexSubs, superIndexWidth);
+                    initMb.append(partToSlave.size());
+                    for (auto &rfn : indexRfns)
+                        rfn.serialize(initMb);
                     initMb.append(totalIndexParts * sizeof(unsigned), &partToSlave[0]);
                     initMb.append(superIndexWidth); // 0 if not superIndex
                     initMb.append(keyHasTlk);
