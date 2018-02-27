@@ -58,6 +58,7 @@ class CKeyedJoinMaster : public CMasterActivity
         std::vector<unsigned> partsByPartIdx;
         Owned<IBitSet> partsOnSlaves = createBitSet();
         unsigned numParts = indexFileDesc->numParts();
+        unsigned nextGroupStartPos = 0;
         for (unsigned p=0; p<numParts; p++)
         {
             IPartDescriptor *part = indexFileDesc->queryPart(p);
@@ -65,26 +66,36 @@ class CKeyedJoinMaster : public CMasterActivity
             if (!kind || !strsame("topLevelKey", kind))
             {
                 unsigned copies = part->numCopies();
-                unsigned firstMapped = NotFound;
+                unsigned mappedPos = NotFound;
                 for (unsigned c=0; c<copies; c++)
                 {
                     INode *node = part->queryNode(c);
-                    for (unsigned gn=0; gn<groupSize; gn++)
+                    unsigned start=nextGroupStartPos;
+                    unsigned gn=start;
+                    do
                     {
                         INode &groupNode = dfsGroup.queryNode(gn);
                         if (node->equals(&groupNode))
                         {
                             std::vector<unsigned> &slaveParts = slavePartMap[gn];
-                            if (!partsOnSlaves->test(groupSize*gn+p))
+                            if (!partsOnSlaves->testSet(groupSize*gn+p))
                             {
                                 slaveParts.push_back(p);
-                                partsOnSlaves->set(p, true);
-                                if (NotFound == firstMapped)
-                                    firstMapped = gn;
+                                if (NotFound == mappedPos)
+                                {
+                                    mappedPos = gn;
+                                    nextGroupStartPos = gn+1;
+                                    if (nextGroupStartPos == groupSize)
+                                        nextGroupStartPos = 0;
+                                }
                             }
                         }
+                        gn++;
+                        if (gn == groupSize)
+                            gn = 0;
                     }
-                    if (NotFound == firstMapped)
+                    while (gn != start);
+                    if (NotFound == mappedPos)
                     {
                         // part not within the cluster, add it to all slave maps, meaning these part meta will be serialized to all slaves so they handle the lookups directly.
                         for (auto &slaveParts : slavePartMap)
@@ -101,7 +112,7 @@ class CKeyedJoinMaster : public CMasterActivity
                 }
                 partsByPartIdx.push_back(partIdx);
                 assertex(partIdx < totalIndexParts);
-                partToSlave[partIdx] = firstMapped;
+                partToSlave[partIdx] = mappedPos;
             }
         }
         if (remoteKeyedLookups || container.queryLocalData())
