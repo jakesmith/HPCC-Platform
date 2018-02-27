@@ -1630,10 +1630,20 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         CThorExpandingRowArray replyRows;
         bool first = true;
 
-        void init(CMessageBuffer &msg)
+        void initFirst(CMessageBuffer &msg)
         {
             first = false;
             // JCSMORE - not sure really need 'partNo' if rfn deemded remote, that's all CKeyLookupRemoteHandler needs I suspect.
+            RemoteFilename &rfn = activity.indexRfns[partNo];
+            StringBuffer fname;
+            rfn.getTail(fname);
+
+            msg.append(kjs_init);
+            msg.append(activity.queryId());
+            msg.append(fname);
+        }
+        void init(CMessageBuffer &msg)
+        {
             RemoteFilename &rfn = activity.indexRfns[partNo];
             StringBuffer fname;
             rfn.getTail(fname);
@@ -1653,7 +1663,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             CMessageBuffer msg;
             if (first)
-                init(msg);
+                initFirst(msg);
+            else
+                initNext(msg);
             unsigned numRows = processing.ordinality();
             msg.append(replyTag);
             msg.append(partNo);

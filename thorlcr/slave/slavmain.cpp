@@ -813,14 +813,14 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
             Owned<IKeyIndex> keyIndex = createKeyIndex(fname, crc, false, false);
             keyManager.setown(createLocalKeyManager(helper->queryIndexRecordSize()->queryRecordAccessor(true), keyIndex, nullptr));
         }
-        inline const char *queryFileName() const { return fname; } // for HT
+        const void *queryFindParam() const { return &id; } // for HT
 
+        inline const char *queryFileName() const { return fname; }
         IOutputMetaData *queryOutputMetaData() const { return lookupRowOutputMetaData; }
         IEngineRowAllocator *queryLookupAllocator() const { return lookupAllocator; }
         IOutputRowDeserializer *queryLookupDeserializer() const { return lookupDeserializer; }
         IEngineRowAllocator *queryFetchAllocator() const { return fetchAllocator; }
         IOutputRowSerializer *queryFetchSerializer() const { return fetchSerializer; }
-        const void *queryFindParam() const { return &id; }
         inline IKeyManager *queryKeyManager() const { return keyManager; }
         inline IHThorKeyedJoinArg *queryHelper() const { return helper; }
     };
@@ -1080,6 +1080,10 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
     IArrayOf<CKeyedRemoteLookupProcessor> processors;
     std::vector<CKeyedRemoteLookupProcessor *> availableProcessors;
 
+    CLookupContext *findContext(activity_id id, const char *fname)
+    {
+        lookupContext = lookupContexts.find(id);
+    }
 public:
     CKeyedRemoteLookupReceiver(CJobListener &_jobs, mptag_t _mpTag)
         : threaded("CKeyedRemoteLookupReceiver", this), jobs(_jobs), keyLookupMpTag(_mpTag)
@@ -1192,8 +1196,6 @@ public:
             else
             {
                 CLookupContext *lookupContext = nullptr;
-                activity_id actId;
-                msg.read(actId);
                 byte cmd;
                 msg.read(cmd);
                 switch (cmd)
@@ -1203,6 +1205,8 @@ public:
                         CJobSlave *job = jobs.findJob(nullptr);
                         if (!job)
                             throw MakeStringException(0, "No active job");
+                        activity_id actId;
+                        msg.read(actId);
                         StringAttr indexPartName;
                         msg.read(indexPartName);
 
@@ -1220,7 +1224,11 @@ public:
                     }
                     case kjs_continue:
                     {
-                        activity_id id;
+                        activity_id actId;
+                        msg.read(actId);
+                        StringAttr indexPartName;
+                        msg.read(indexPartName);
+                        lookupContext = findContext(actId, indexPartName);
                         lookupContext = lookupContexts.find(id);
                         if (!lookupContext)
                             throwUnexpected(); // JCSMORE - TODO
