@@ -158,7 +158,14 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
             return false;
 #endif
         }
-        msg.read((unsigned &)masterSlaveMpTag);
+        unsigned numTags;
+        msg.read(numTags);
+        for (unsigned t=0; t<numTags; t++)
+        {
+            mptag_t tag;
+            msg.read((unsigned &)tag);
+            globalTags.push_back(tag);
+        }
         msg.clear();
         msg.setReplyTag(MPTAG_THORREGISTRATION);
         if (!queryNodeComm().reply(msg))
@@ -168,6 +175,7 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
         if (!queryNodeComm().recv(msg, 0, MPTAG_THORREGISTRATION)) // when all registered
             return false;
 
+        masterSlaveMpTag = globalTags[0];
         ::masterNode = LINK(masterNode);
 
         PROGLOG("verifying mp connection to rest of cluster");

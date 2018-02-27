@@ -1651,10 +1651,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         virtual void process(CThorExpandingRowArray &processing) override
         {
+            CMessageBuffer msg;
             if (first)
                 init(msg);
             unsigned numRows = processing.ordinality();
-            CMessageBuffer msg;
             msg.append(replyTag);
             msg.append(partNo);
             msg.append(numRows);
@@ -1676,11 +1676,11 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 fastLZDecompressToBuffer(mb, msg);
                 unsigned count;
                 mb.read(count); // amount processed, could be all (i.e. numRows)
-                received += count;
                 while (count--)
                 {
+                    const void *requestRow = processing.query(received++);
                     KeyLookupHeader lookupKeyHeader;
-                    mb.read(sizeof(lookupKeyHeader), &lookupKeyHeader);
+                    getHeaderFromRow(requestRow, lookupKeyHeader);
                     CJoinGroup *joinGroup = lookupKeyHeader.jg;
 
                     GroupFlags flags;

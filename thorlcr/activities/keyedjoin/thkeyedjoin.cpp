@@ -138,9 +138,9 @@ class CKeyedJoinMaster : public CMasterActivity
         std::sort(allParts.begin(), allParts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
         for (auto &partIdx : allParts)
         {
-            IPartDescriptor &partDesc = indexFileDesc->queryPart(partIdx);
+            IPartDescriptor *partDesc = indexFileDesc->queryPart(partIdx);
             RemoteFilename rfn;
-            partDesc.getFilename(0, rfn);
+            partDesc->getFilename(0, rfn);
             indexRfns.push_back(rfn);
         }
         if (remoteKeyedLookups || container.queryLocalData())
@@ -336,7 +336,7 @@ public:
                         mapIndexParts(keyHasTlk, 0, superIndexWidth);
                     else
                         mapIndexParts(keyHasTlk, numSuperIndexSubs, superIndexWidth);
-                    initMb.append(partToSlave.size());
+                    initMb.append((unsigned)partToSlave.size());
                     for (auto &rfn : indexRfns)
                         rfn.serialize(initMb);
                     initMb.append(totalIndexParts * sizeof(unsigned), &partToSlave[0]);

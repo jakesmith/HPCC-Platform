@@ -72,6 +72,7 @@
 #define SLAVEREG_VERIFY_DELAY 5*1000
 #define SHUTDOWN_IN_PARALLEL 20
 
+static std::vector<mptag_t> thorTags;
 
 class CRegistryServer : public CSimpleInterface
 {
@@ -262,7 +263,9 @@ public:
         msg.append(THOR_VERSION_MAJOR).append(THOR_VERSION_MINOR);
         queryRawGroup().serialize(msg);
         globals->serialize(msg);
-        msg.append(masterSlaveMpTag);
+        msg.append((unsigned)thorTags.size());
+        for (auto &tag : thorTags)
+            msg.append(tag);
         if (!queryNodeComm().send(msg, RANK_ALL_OTHER, MPTAG_THORREGISTRATION, MP_ASYNC_SEND))
         {
             PROGLOG("Failed to initialize slaves");
@@ -779,7 +782,9 @@ int main( int argc, char *argv[]  )
         serverStatus.commitProperties();
 
         addAbortHandler(ControlHandler);
-        masterSlaveMpTag = allocateClusterMPTag();
+        thorTags.push_back(allocateClusterMPTag()); // masterSlaveMpTag
+        thorTags.push_back(allocateClusterMPTag()); // servicesTag (e.g. KJservice
+        masterSlaveMpTag = thorTags[0];
 
         if (registry->connect())
         {

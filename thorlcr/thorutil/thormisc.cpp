@@ -64,6 +64,7 @@ static IGroup *dfsGroup;
 static ICommunicator *nodeComm;
 
 
+std::vector<mptag_t> globalTags;
 mptag_t masterSlaveMpTag;
 IPropertyTree *globals;
 static IMPtagAllocator *ClusterMPAllocator = NULL;
