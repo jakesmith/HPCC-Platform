@@ -40,8 +40,100 @@ class CKeyedJoinMaster : public CMasterActivity
     Owned<CSlavePartMapping> mapping; // for local keys only
     bool remoteKeyedLookups = false;
     unsigned totalIndexParts = 0;
-    std::vector<std::vector<unsigned>> slavePartMap;
+    std::vector<std::vector<unsigned>> slavePartMap; // vector of slave parts (IPartDescriptor's slavePartMap[<slave] serialized to each slave
+    std::vector<unsigned> partToSlave; // vector mapping part index to slave (sent to all slaves)
 
+    // Fills slavePartMap and partToSlave
+    void mapIndexParts(bool hasTlk, unsigned numSuperIndexSubs, unsigned superIndexWidth)
+    {
+        slavePartMap.clear();
+        partToSlave.clear();
+
+        IGroup &dfsGroup = queryDfsGroup();
+        slavePartMap.resize(dfsGroup.ordinality());
+        partToSlave.resize(totalIndexParts);
+        ISuperFileDescriptor *superFileDesc = indexFileDesc->querySuperFileDescriptor();
+
+        unsigned groupSize = dfsGroup.ordinality();
+        std::vector<unsigned> partsByPartIdx;
+        Owned<IBitSet> partsOnSlaves = createBitSet();
+        unsigned numParts = indexFileDesc->numParts();
+        for (unsigned p=0; p<numParts; p++)
+        {
+            IPartDescriptor *part = indexFileDesc->queryPart(p);
+            const char *kind = part->queryProperties().queryProp("@kind");
+            if (!kind || !strsame("topLevelKey", kind))
+            {
+                unsigned copies = part->numCopies();
+                unsigned firstMapped = NotFound;
+                for (unsigned c=0; c<copies; c++)
+                {
+                    INode *node = part->queryNode(c);
+                    for (unsigned gn=0; gn<groupSize; gn++)
+                    {
+                        INode &groupNode = dfsGroup.queryNode(gn);
+                        if (node->equals(&groupNode))
+                        {
+                            std::vector<unsigned> &slaveParts = slavePartMap[gn];
+                            if (!partsOnSlaves->test(groupSize*gn+p))
+                            {
+                                slaveParts.push_back(p);
+                                partsOnSlaves->set(p, true);
+                                if (NotFound == firstMapped)
+                                    firstMapped = gn;
+                            }
+                        }
+                    }
+                    if (NotFound == firstMapped)
+                    {
+                        // part not within the cluster, add it to all slave maps, meaning these part meta will be serialized to all slaves so they handle the lookups directly.
+                        for (auto &slaveParts : slavePartMap)
+                            slaveParts.push_back(p);
+                    }
+                }
+                // NB: in case of queryLocalData(), doesn't really need whole map
+                unsigned partIdx = part->queryPartIndex();
+                if (superFileDesc)
+                {
+                    unsigned subfile, subpartnum;
+                    superFileDesc->mapSubPart(partIdx, subfile, subpartnum);
+                    partIdx = superIndexWidth*subfile+subpartnum;
+                }
+                partsByPartIdx.push_back(partIdx);
+                assertex(partIdx < totalIndexParts);
+                partToSlave[partIdx] = firstMapped;
+            }
+        }
+        if (remoteKeyedLookups || container.queryLocalData())
+        {
+            // ensure sorted by partIdx, so that consistent order for partHandlers/lookup
+            for (auto &slaveParts : slavePartMap)
+                std::sort(slaveParts.begin(), slaveParts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
+        }
+        else
+        {
+            std::vector<unsigned> parts;
+            if (0 == numSuperIndexSubs)
+            {
+                for (unsigned p=0; p<totalIndexParts; p++)
+                    parts.push_back(p);
+            }
+            else // non-interleaved superindex
+            {
+                unsigned p=0;
+                for (unsigned i=0; i<numSuperIndexSubs; i++)
+                {
+                    for (unsigned kp=0; kp<superIndexWidth; kp++)
+                        parts.push_back(p++);
+                    if (hasTlk)
+                        p++; // TLK's serialized separately.
+                }
+            }
+            // ensure sorted by partIdx, so that consistent order for partHandlers/lookup
+            std::sort(parts.begin(), parts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
+            slavePartMap[0].swap(parts);
+        }
+    }
 public:
     CKeyedJoinMaster(CMasterGraphElement *info) : CMasterActivity(info)
     {
@@ -222,62 +314,10 @@ public:
                     numPartsOffset = initMb.length();
                     initMb.append(totalIndexParts); // # placeholder, will be changed by serializeSlaveData unless all !remoteKeyedLookups || container.queryLocalData
 
-                    ISuperFileDescriptor *superFileDesc = indexFileDesc->querySuperFileDescriptor();
-
-                    std::vector<unsigned> partToSlave(totalIndexParts);
-                    IGroup &dfsGroup = queryDfsGroup();
-                    unsigned groupSize = dfsGroup.ordinality();
-                    slavePartMap.clear();
-                    slavePartMap.resize(dfsGroup.ordinality());
-                    std::vector<unsigned> partsByPartIdx;
-                    Owned<IBitSet> partsOnSlaves = createBitSet();
-                    unsigned numParts = indexFileDesc->numParts();
-                    for (unsigned p=0; p<numParts; p++)
-                    {
-                        IPartDescriptor *part = indexFileDesc->queryPart(p);
-                        const char *kind = part->queryProperties().queryProp("@kind");
-                        if (!kind || !strsame("topLevelKey", kind))
-                        {
-                            unsigned copies = part->numCopies();
-                            unsigned firstMapped = NotFound;
-                            for (unsigned c=0; c<copies; c++)
-                            {
-                                INode *node = part->queryNode(c);
-                                for (unsigned gn=0; gn<groupSize; gn++)
-                                {
-                                    INode &groupNode = dfsGroup.queryNode(gn);
-                                    if (node->equals(&groupNode))
-                                    {
-                                        std::vector<unsigned> &slaveParts = slavePartMap[gn];
-                                        if (!partsOnSlaves->test(groupSize*gn+p))
-                                        {
-                                            slaveParts.push_back(p);
-                                            partsOnSlaves->set(p, true);
-                                            if (NotFound == firstMapped)
-                                                firstMapped = gn;
-                                        }
-                                    }
-                                }
-                                if (NotFound == firstMapped)
-                                {
-                                    // part not within the cluster, add it to all slave maps, meaning these part meta will be serialized to all slaves so they handle the lookups directly.
-                                    for (auto &slaveParts : slavePartMap)
-                                        slaveParts.push_back(p);
-                                }
-                            }
-                            // NB: in case of queryLocalData(), doesn't really need whole map
-                            unsigned partIdx = part->queryPartIndex();
-                            if (superFileDesc)
-                            {
-                                unsigned subfile, subpartnum;
-                                superFileDesc->mapSubPart(partIdx, subfile, subpartnum);
-                                partIdx = superIndexWidth*subfile+subpartnum;
-                            }
-                            partsByPartIdx.push_back(partIdx);
-                            assertex(partIdx < totalIndexParts);
-                            partToSlave[partIdx] = firstMapped;
-                        }
-                    }
+                    if (!superIndex || superIndex->isInterleaved())
+                        mapIndexParts(keyHasTlk, 0, superIndexWidth);
+                    else
+                        mapIndexParts(keyHasTlk, numSuperIndexSubs, superIndexWidth);
                     initMb.append(totalIndexParts * sizeof(unsigned), &partToSlave[0]);
                     initMb.append(superIndexWidth); // 0 if not superIndex
                     initMb.append(keyHasTlk);
@@ -318,34 +358,9 @@ public:
                             f = &iter->query();
                         }
                     }
-                    if (remoteKeyedLookups || container.queryLocalData())
+                    if (!remoteKeyedLookups && !container.queryLocalData())
                     {
-                        // ensure sorted by partIdx, so that consistent order for partHandlers/lookup
-                        for (auto &slaveParts : slavePartMap)
-                            std::sort(slaveParts.begin(), slaveParts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
-                    }
-                    else
-                    {
-                        std::vector<unsigned> parts;
-                        if (!superIndex || superIndex->isInterleaved()) // serialize first numParts parts, TLK are at end and are serialized separately.
-                        {
-                            for (unsigned p=0; p<totalIndexParts; p++)
-                                parts.push_back(p);
-                        }
-                        else // non-interleaved superindex
-                        {
-                            unsigned p=0;
-                            for (unsigned i=0; i<numSuperIndexSubs; i++)
-                            {
-                                for (unsigned kp=0; kp<superIndexWidth; kp++)
-                                    parts.push_back(p++);
-                                if (keyHasTlk)
-                                    p++; // TLK's serialized separately.
-                            }
-                        }
-                        // ensure sorted by partIdx, so that consistent order for partHandlers/lookup
-                        std::sort(parts.begin(), parts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
-
+                        std::vector<unsigned> &parts = slavePartMap[0];
                         indexFileDesc->serializeParts(initMb, &parts[0], parts.size());
                     }
                 }

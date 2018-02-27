@@ -759,7 +759,7 @@
    <SwapNode AutoSwapNode="false"/>
    <ThorSlaveProcess computer="localhost" name="s1"/>
    <ThorMasterProcess computer="localhost" name="m1"/>
-   <Debug/>
+   <Debug remoteKeyedLookups="true"/>
    <SSH SSHidentityfile="$HOME/.ssh/id_rsa"
         SSHpassword=""
         SSHretries="3"
