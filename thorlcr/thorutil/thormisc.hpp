@@ -506,7 +506,7 @@ extern const graph_decl StatisticsMapping spillStatistics;
 extern graph_decl bool isOOMException(IException *e);
 extern graph_decl IThorException *checkAndCreateOOMContextException(CActivityBase *activity, IException *e, const char *msg, rowcount_t numRows, IOutputMetaData *meta, const void *row);
 
-enum KJServiceCmds:byte { kjs_nop, kjs_open, kjs_continue, kjs_close, kjs_clear };
+enum KJServiceCmds:byte { kjs_nop, kjs_open, kjs_read, kjs_close, kjs_clear };
 
 
 #endif

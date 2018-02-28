@@ -1171,7 +1171,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             if (batchArray.ordinality())
                 enqueue(batchArray);
         }
-        void end() { join(); }
+        virtual void end() { join(); }
         virtual void process(CThorExpandingRowArray &processing) = 0;
     // IThreaded
         virtual void threadmain() override
@@ -1196,7 +1196,16 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     }
                     queue.swap(processing);
                 }
-                process(processing);
+                try
+                {
+                    process(processing);
+                }
+                catch (IException *e)
+                {
+                    EXCLOG(e, nullptr);
+                    activity.fireException(e);
+                    e->Release();
+                }
                 processing.clearRows();
             }
             while (true);
@@ -1267,6 +1276,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             }
         }
     };
+#if 0
     class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
     {
         CThreadedPersistent threaded;
@@ -1623,34 +1633,40 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             }
         }
     };
+#endif
     class CKeyLookupRemoteHandler : public CKeyLookupHandler
     {
+        typedef CKeyLookupHandler PARENT;
+
         rank_t lookupSlave = RANK_NULL;
         mptag_t replyTag = TAG_NULL;
         CThorExpandingRowArray replyRows;
+        ICommunicator *comm = nullptr;
+        unsigned handle = 0;
         bool first = true;
 
-        void initFirst(CMessageBuffer &msg)
+        void initRead(CMessageBuffer &msg)
         {
-            first = false;
-            // JCSMORE - not sure really need 'partNo' if rfn deemded remote, that's all CKeyLookupRemoteHandler needs I suspect.
+            if (first)
+            {
+                msg.append(kjs_open);
+            }
+            else
+            {
+                msg.append(kjs_read);
+                msg.append(handle);
+            }
+            msg.append(activity.queryId());
             RemoteFilename &rfn = activity.indexRfns[partNo];
             StringBuffer fname;
             rfn.getTail(fname);
-
-            msg.append(kjs_init);
-            msg.append(activity.queryId());
             msg.append(fname);
+            msg.append(handle);
         }
-        void initNext(CMessageBuffer &msg)
+        void initClose(CMessageBuffer &msg)
         {
-            RemoteFilename &rfn = activity.indexRfns[partNo];
-            StringBuffer fname;
-            rfn.getTail(fname);
-
-            msg.append(kjs_continue);
-            msg.append(activity.queryId());
-            msg.append(fname);
+            msg.append(kjs_close);
+            msg.append(handle);
         }
     public:
         CKeyLookupRemoteHandler(CKeyedJoinSlave &_activity, unsigned _partNo) : CKeyLookupHandler(_activity, _partNo), replyRows(_activity, _activity.keyLookupReplyOutputMetaRowIf)
@@ -1658,22 +1674,19 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             lookupSlave = (rank_t)activity.partToSlaveMap[partNo] + 1; // +1 because 0 == master, 1st slave == 1
             replyTag = activity.queryMPServer().createReplyTag();
             local = false;
+            comm = &activity.queryJobChannel().queryJobComm();
         }
         virtual void process(CThorExpandingRowArray &processing) override
         {
             CMessageBuffer msg;
-            if (first)
-                initFirst(msg);
-            else
-                initNext(msg);
+            // JCSMORE - don't _need_ filename in general after 1st call, but avoids challenge/response handling if ohter side has closed, and relatively small vs msg size
+            initRead(msg);
             unsigned numRows = processing.ordinality();
             msg.append(replyTag);
-            msg.append(partNo);
             msg.append(numRows);
             processing.serializeCompress(msg);
-            ICommunicator &comm = activity.queryJobChannel().queryJobComm();
 
-            if (!comm.send(msg, lookupSlave, activity.keyLookupMpTag, LONGTIMEOUT))
+            if (!comm->send(msg, lookupSlave, activity.keyLookupMpTag, LONGTIMEOUT))
                 throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
 
             msg.clear();
@@ -1682,10 +1695,15 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             unsigned received = 0;
             while (true)
             {
-                if (!comm.recv(msg, lookupSlave, replyTag))
+                if (!comm->recv(msg, lookupSlave, replyTag))
                     break;
+                unsigned errorCode;
+                msg.read(errorCode);
+                if (errorCode)
+                    throw deserializeException(msg);
                 MemoryBuffer mb;
                 fastLZDecompressToBuffer(mb, msg);
+                msg.read(handle);
                 unsigned count;
                 mb.read(count); // amount processed, could be all (i.e. numRows)
                 while (count--)
@@ -1759,6 +1777,14 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 if (received == numRows)
                     break;
             }
+        }
+        virtual void end() override
+        {
+            PARENT::end();
+            CMessageBuffer msg;
+            initClose(msg);
+            if (!comm->send(msg, lookupSlave, activity.keyLookupMpTag, LONGTIMEOUT))
+                throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
         }
     };
     class CReadAheadThread : implements IThreaded
