@@ -1285,29 +1285,35 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         CThorExpandingRowArray replyRows;
         ICommunicator *comm = nullptr;
         unsigned handle = 0;
-        bool first = true;
+        bool opened = false;
 
         void initRead(CMessageBuffer &msg)
         {
-            if (first)
-            {
-                msg.append(kjs_open);
-            }
-            else
-            {
-                msg.append(kjs_read);
-                msg.append(handle);
-            }
+            byte cmd = opened ? kjs_read : kjs_open;
+            msg.append(cmd);
+            msg.append(replyTag);
             msg.append(activity.queryId());
             RemoteFilename &rfn = activity.indexRfns[partNo];
             StringBuffer fname;
-            rfn.getTail(fname);
+            rfn.getLocalPath(fname);
             msg.append(fname);
+            if (opened)
+                msg.append(handle);
+            else
+                opened = true;
         }
         void initClose(CMessageBuffer &msg)
         {
-            msg.append(kjs_close);
+            msg.append((byte)kjs_close);
+            msg.append(replyTag);
             msg.append(handle);
+        }
+        void readErrorCode(CMessageBuffer &msg)
+        {
+            byte errorCode;
+            msg.read(errorCode);
+            if (errorCode)
+                throw deserializeException(msg);
         }
     public:
         CKeyLookupRemoteHandler(CKeyedJoinSlave &_activity, unsigned _partNo) : CKeyLookupHandler(_activity, _partNo), replyRows(_activity, _activity.keyLookupReplyOutputMetaRowIf)
@@ -1322,10 +1328,14 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             CMessageBuffer msg;
             // JCSMORE - don't _need_ filename in general after 1st call, but avoids challenge/response handling if ohter side has closed, and relatively small vs msg size
             initRead(msg);
+            DelayedSizeMarker sizeMark(msg);
+            MemoryBuffer mb;
             unsigned numRows = processing.ordinality();
-            msg.append(replyTag);
-            msg.append(numRows);
-            processing.serializeCompress(msg);
+            mb.append(numRows);
+            processing.serialize(mb);
+            fastLZCompressToBuffer(msg, mb.length(), mb.toByteArray());
+            mb.clear();
+            sizeMark.write();
 
             if (!comm->send(msg, lookupSlave, globalTags[1], LONGTIMEOUT))
                 throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
@@ -1338,13 +1348,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             {
                 if (!comm->recv(msg, lookupSlave, replyTag))
                     break;
-                unsigned errorCode;
-                msg.read(errorCode);
-                if (errorCode)
-                    throw deserializeException(msg);
+                readErrorCode(msg);
                 MemoryBuffer mb;
                 fastLZDecompressToBuffer(mb, msg);
-                msg.read(handle);
+                mb.read(handle);
                 unsigned count;
                 mb.read(count); // amount processed, could be all (i.e. numRows)
                 while (count--)
@@ -1423,9 +1430,21 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             PARENT::end();
             CMessageBuffer msg;
-            initClose(msg);
-            if (!comm->send(msg, lookupSlave, globalTags[1], LONGTIMEOUT))
-                throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
+            if (opened)
+            {
+                initClose(msg);
+                if (!comm->send(msg, lookupSlave, globalTags[1], LONGTIMEOUT))
+                    throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
+                msg.clear();
+                if (comm->recv(msg, lookupSlave, replyTag))
+                {
+                    readErrorCode(msg);
+                    bool removed;
+                    msg.read(removed);
+                    if (!removed)
+                        WARNLOG("KJ service failed to remove in use key manager");
+                }
+            }
         }
     };
     class CReadAheadThread : implements IThreaded

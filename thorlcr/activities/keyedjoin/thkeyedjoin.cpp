@@ -334,7 +334,7 @@ public:
                         mapIndexParts(keyHasTlk, 0, superIndexWidth);
                     else
                         mapIndexParts(keyHasTlk, numSuperIndexSubs, superIndexWidth);
-                    initMb.append((unsigned)partToSlave.size());
+//                    initMb.append((unsigned)partToSlave.size());
                     for (auto &rfn : indexRfns)
                         rfn.serialize(initMb);
                     initMb.append(totalIndexParts * sizeof(unsigned), &partToSlave[0]);

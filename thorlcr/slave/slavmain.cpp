@@ -785,9 +785,6 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
     CriticalSection availableProcessorCrit;
     bool getAvailableBlocked = false;
     Semaphore getAvailableSem;
-    unsigned numFinished = 0;
-
-    unsigned numSlaves = 0;
 
     class CLookupKey
     {
@@ -870,10 +867,15 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         Linked<CLookupContext> ctx;
         Owned<IKeyManager> keyManager;
         unsigned handle = 0;
+        unsigned abortLimit = 0;
+        unsigned atMost = 0;
+        bool fetchRequired = false;
     public:
-        CKMContainer(CKeyedRemoteLookupReceiver &_owner, CLookupContext *_ctx, IKeyManager *_keyManager, unsigned _handle)
-            : owner(_owner), ctx(_ctx), keyManager(_keyManager), handle(_handle)
+        CKMContainer(CKeyedRemoteLookupReceiver &_owner, CLookupContext *_ctx)
+            : owner(_owner), ctx(_ctx)
         {
+            keyManager.setown(ctx->createKeyManager());
+            handle = owner.getUniqId();
         }
         ~CKMContainer()
         {
@@ -912,7 +914,7 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
     class CLookupRequest : public CSimpleInterface
     {
         Linked<CLookupContext> ctx;
-        Owned<CKMContainer> kmc;
+        Linked<CKMContainer> kmc;
         std::vector<const void *> rows;
         rank_t sender;
         mptag_t replyTag;
@@ -931,6 +933,13 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         {
             rows.push_back(row);
         }
+        inline const void *getRowClear(unsigned r)
+        {
+            const void *row = rows[r];
+            rows[r] = nullptr;
+            return row;
+        }
+        inline unsigned getRowCount() const { return rows.size(); }
         inline CLookupContext &queryCtx() const { return *ctx; }
         inline CKMContainer *getKeyManagerClear() { return kmc.getClear(); }
         void deserialize(size32_t sz, const void *_requestData)
@@ -941,7 +950,8 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
             IOutputRowDeserializer *deserializer = ctx->queryLookupDeserializer();
             unsigned count;
             requestData.read(count);
-            CThorStreamDeserializerSource d(requestData.remaining(), requestData.readDirect(requestData.remaining()));
+            size32_t rowDataSz = requestData.remaining();
+            CThorStreamDeserializerSource d(rowDataSz, requestData.readDirect(rowDataSz));
             for (unsigned r=0; r<count; r++)
             {
                 assertex(!d.eos());
@@ -952,9 +962,9 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         }
         void reply(MemoryBuffer &mb)
         {
-            unsigned errorCode = 0;
+            byte errorCode = 0;
             CMessageBuffer msg;
-            msg.append(errorCode); // exception will cause it to change
+            msg.append(errorCode);
             fastLZCompressToBuffer(msg, mb.length(), mb.toByteArray());
             replyAttempt = true;
             if (!queryNodeComm().send(msg, sender, replyTag, LONGTIMEOUT))
@@ -965,7 +975,7 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
             EXCLOG(e, "CLookupRequest");
             if (replyAttempt)
                 return;
-            unsigned errorCode = 1;
+            byte errorCode = 1;
             CMessageBuffer msg;
             msg.append(errorCode);
             serializeException(e, msg);
@@ -1015,10 +1025,12 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         void serialize(MemoryBuffer &mb) const
         {
             mb.append(groupFlag);
+            if (gf_null != groupFlag)
+                return;
             unsigned candidates = fposs.size();
+            mb.append(candidates);
             if (candidates)
             {
-                mb.append(candidates);
                 DelayedSizeMarker sizeMark(mb);
                 IOutputRowSerializer *fetchSerializer = ctx.queryFetchSerializer();
                 if (rows.size())
@@ -1044,28 +1056,24 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         {
             return PARENT::find(&fp);
         }
-        virtual void onAdd(void * et __attribute__((unused))) { }
-        virtual void onRemove(void *_et)
-        {
-            ET *et = static_cast<ET *>(_et);
-            et->Release();
-        }
+        virtual void onAdd(void * et __attribute__((unused))) override { }
+        virtual void onRemove(void * et __attribute__((unused))) override { }
         virtual unsigned getHashFromElement(const void *_et) const
         {
             const ET *et = static_cast<const ET *>(_et);
             return et->queryHash();
         }
-        virtual unsigned getHashFromFindParam(const void *_fp) const
+        virtual unsigned getHashFromFindParam(const void *_fp) const override
         {
             const CLookupKey *fp = static_cast<const CLookupKey *>(_fp);
             return fp->queryHash();
         }
-        virtual const void *getFindParam(const void *_et) const
+        virtual const void *getFindParam(const void *_et) const override
         {
             const ET *et = static_cast<const ET *>(_et);
             return &et->queryKey();
         }
-        virtual bool matchesFindParam(const void *_et, const void *_fp, unsigned fphash __attribute__((unused))) const
+        virtual bool matchesFindParam(const void *_et, const void *_fp, unsigned fphash __attribute__((unused))) const override
         {
             const ET *et = static_cast<const ET *>(_et);
             const CLookupKey *fp = static_cast<const CLookupKey *>(_fp);
@@ -1079,7 +1087,7 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
     public:
         CLookupHTOwned() : PARENT() { }
         ~CLookupHTOwned() { PARENT::_releaseAll(); }
-        virtual void onRemove(void *_et)
+        virtual void onRemove(void *_et) override
         {
             ET *et = static_cast<ET *>(_et);
             et->Release();
@@ -1095,16 +1103,13 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         Semaphore sem;
         Owned<CLookupRequest> lookupRequest;
         IHThorKeyedJoinArg *helper = nullptr;
-        std::vector<const void *> rows;
+        IEngineRowAllocator *joinFieldsAllocator = nullptr;
 
         rowcount_t abortLimit = 0;
         rowcount_t atMost = 0;
-        bool needsDiskRead = false;
+        bool fetchRequired = false;
 
         bool abortSoon = false;
-
-        Owned<IEngineRowAllocator> joinFieldsAllocator;
-
 
         const unsigned DEFAULT_KEYLOOKUP_MAXREPLYSZ = 0x100000;
 
@@ -1144,7 +1149,7 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
                 offset_t fpos = rtlReadBigUInt8(keyRow + fposOffset);
                 if (helper->indexReadMatch(keyedFieldsRow, keyRow,  &adapter))
                 {
-                    if (needsDiskRead)
+                    if (fetchRequired)
                         reply.addRow(nullptr, fpos);
                     else
                     {
@@ -1202,30 +1207,41 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
                 sem.wait();
                 if (!lookupRequest) // stop
                     break;
+                Owned<CLookupRequest> request = lookupRequest.getClear();
                 try
                 {
-                    Owned<CLookupRequest> request = lookupRequest.getClear();
                     Owned<CKMContainer> kmc = request->getKeyManagerClear();
                     CLookupContext &lookupCtx = request->queryCtx();
                     helper = lookupCtx.queryHelper();
+                    joinFieldsAllocator = lookupCtx.queryFetchAllocator();
+
+                    atMost = helper->getJoinLimit();
+                    if (atMost == 0)
+                        atMost = (unsigned)-1;
+                    abortLimit = helper->getMatchAbortLimit();
+                    if (abortLimit == 0)
+                        abortLimit = (unsigned)-1;
+                    if (abortLimit < atMost)
+                        atMost = abortLimit;
+                    fetchRequired = helper->diskAccessRequired();
 
                     CLookupResult lookupResult(lookupCtx); // reply for 1 request row
 
                     MemoryBuffer replyMb;
                     replyMb.append(kmc->queryHandle());
                     DelayedMarker<unsigned> countMarker(replyMb);
-                    unsigned count = 0;
-                    while (abortSoon)
+                    unsigned rowCount = request->getRowCount();
+                    unsigned rowNum = 0;
+                    while (!abortSoon)
                     {
-                        OwnedConstThorRow row = rows[count];
-                        rows[count++] = nullptr;
+                        OwnedConstThorRow row = request->getRowClear(rowNum++);
                         processRow(row, kmc->queryKeyManager(), lookupResult);
                         lookupResult.serialize(replyMb);
-                        bool last = count == rows.size();
+                        bool last = rowNum == rowCount;
                         if (last || (replyMb.length() >= DEFAULT_KEYLOOKUP_MAXREPLYSZ))
                         {
-                            countMarker.write(count);
-                            lookupRequest->reply(replyMb);
+                            countMarker.write(rowNum);
+                            request->reply(replyMb);
                             if (last)
                                 break;
                             replyMb.clear();
@@ -1241,42 +1257,36 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
                     exception.setown(e);
                 }
                 if (exception)
-                {
-                    lookupRequest->replyError(exception);
-
-                }
+                    request->replyError(exception);
             }
         }
     };
     CLookupContextHT lookupContextsHT; // non-owning HT of CLookupContexts
     CKMContextHT cachedKMs; // NB: HT by {actId, fname} links IKeyManager's within containers
     OwningSimpleHashTableOf<CKMContainer, unsigned> cachedKMsByHandle; // HT by { handle }, links IKeyManager's within containers.
+    CriticalSection kMCrit, lCCrit;
 
     IArrayOf<CKeyedRemoteLookupProcessor> processors;
     std::vector<CKeyedRemoteLookupProcessor *> availableProcessors;
 
     CLookupContext *ensureLookupContext(CJobBase &job, const CLookupKey &key)
     {
+        CriticalBlock b(lCCrit);
         CLookupContext *lookupContext = lookupContextsHT.find(key);
-        if (!lookupContext)
-        {
-            lookupContext = createLookupContext(job, key);
-            lookupContextsHT.replace(*lookupContext);
-        }
-        return LINK(lookupContext);
+        if (lookupContext)
+            return LINK(lookupContext);
+        lookupContext = createLookupContext(job, key);
+        lookupContextsHT.replace(*lookupContext); // NB: does not link/take ownership
+        return lookupContext;
     }
     void freeLookupContext(CLookupContext *_lookupContext)
     {
         Owned<CLookupContext> lookupContext = _lookupContext;
         if (!lookupContext->IsShared())
         {
+            CriticalBlock b(lCCrit);
             lookupContextsHT.removeExact(lookupContext);
         }
-    }
-    CLookupContext *getLookupContext(const CLookupKey &key)
-    {
-        CLookupContext *lookupContext = lookupContextsHT.find(key);
-        return LINK(lookupContext);
     }
     CLookupContext *createLookupContext(CJobBase &job, const CLookupKey &key)
     {
@@ -1284,20 +1294,23 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         EclHelperFactory helperFactory = (EclHelperFactory) job.queryDllEntry().getEntry(helperName.str());
         if (!helperFactory)
             throw makeOsExceptionV(GetLastError(), "Failed to load helper factory method: %s (dll handle = %p)", helperName.str(), job.queryDllEntry().getInstance());
-        Owned<IHThorKeyedJoinArg> helper = static_cast<IHThorKeyedJoinArg *>(helperFactory());
 
         ICodeContext &codeCtx = job.queryJobChannel(0).querySharedMemCodeContext();
-        return new CLookupContext(*this, key.id, key.fname, helper, &codeCtx);
+        Owned<IHThorKeyedJoinArg> helper = static_cast<IHThorKeyedJoinArg *>(helperFactory());
+        return new CLookupContext(*this, key.id, key.fname, helper.getClear(), &codeCtx);
     }
     CKMContainer *getKeyManager(unsigned handle)
     {
+        CriticalBlock b(kMCrit);
         Linked<CKMContainer> kmc = cachedKMsByHandle.find(handle);
         if (kmc)
         {
-            cachedKMsByHandle.removeExact(kmc);
+            verifyex(cachedKMsByHandle.removeExact(kmc));
             CKMKeyEntry *kme = cachedKMs.find(kmc->queryCtx().queryKey());
             assertex(kme);
-            kme->remove(kmc);
+            verifyex(kme->remove(kmc));
+            if (0 == kme->count())
+                verifyex(cachedKMs.removeExact(kme));
         }
         return kmc.getClear();
     }
@@ -1316,8 +1329,6 @@ public:
         : threaded("CKeyedRemoteLookupReceiver", this), jobs(_jobs), keyLookupMpTag(_mpTag)
     {
         unsigned keyLookupMaxProcessThreads = 10;
-        if (keyLookupMaxProcessThreads > numSlaves)
-            keyLookupMaxProcessThreads = numSlaves;
         for (unsigned i=0; i<keyLookupMaxProcessThreads; i++)
         {
             CKeyedRemoteLookupProcessor *processor = new CKeyedRemoteLookupProcessor(*this);
@@ -1331,28 +1342,29 @@ public:
     }
     CKMContainer *getCachedKeyManager(const CLookupKey &key)
     {
+        CriticalBlock b(kMCrit);
         CKMKeyEntry *kme = cachedKMs.find(key);
         if (!kme)
             return nullptr;
-        CKMContainer *kM = kme->pop();
+        CKMContainer *kmc = kme->pop();
         if (0 == kme->count())
-            cachedKMs.removeExact(kme);
-        return kM;
+            verifyex(cachedKMs.removeExact(kme));
+        return kmc;
     }
     CKMContainer *ensureKeyManager(CLookupContext *lookupContext)
     {
         CKMContainer *kmc = getCachedKeyManager(lookupContext->queryKey());
         if (!kmc)
         {
-            IKeyManager *kM = lookupContext->createKeyManager();
-            unsigned uniqueHandle = getUniqId();
             // NB: container links lookupContext, and will remove it from lookupContextsHT when last reference.
-            kmc = new CKMContainer(*this, lookupContext, kM, uniqueHandle);
+            // The container creates new IKeyManager and unique handle
+            kmc = new CKMContainer(*this, lookupContext);
         }
         return kmc;
     }
     void addToKeyManagerCache(CLookupContext *lookupCtx, CKMContainer *kmc)
     {
+        CriticalBlock b(kMCrit);
         CKMKeyEntry *kme = cachedKMs.find(lookupCtx->queryKey());
         if (kme)
             kme->push(kmc); // JCSMORE cap. to some max #
@@ -1398,7 +1410,6 @@ public:
     }
     void start()
     {
-        numFinished = 0;
         aborted = false;
         ForEachItemIn(p, processors)
             processors.item(p).start(); // NB: waits for requests to handle
@@ -1408,6 +1419,7 @@ public:
     {
         if (aborted)
             return;
+        queryNodeComm().cancel(RANK_ALL, keyLookupMpTag);
         while (!threaded.join(60000))
             PROGLOG("Receiver waiting on remote handlers to signal completion");
         if (aborted)
@@ -1415,7 +1427,6 @@ public:
         aborted = true;
         ForEachItemIn(p, processors)
             processors.item(p).stop();
-        threaded.join();
     }
     void abort()
     {
@@ -1459,7 +1470,7 @@ public:
             rank_t sender = RANK_NULL;
             CMessageBuffer msg;
             mptag_t replyTag = TAG_NULL;
-            bool errorCode = 0;
+            byte errorCode = 0;
             bool replyAttempt = false;
             try
             {
@@ -1467,70 +1478,61 @@ public:
                     break;
                 if (!msg.length())
                     break;
+                KJServiceCmds cmd;
+                msg.read((byte &)cmd);
                 msg.read((unsigned &)replyTag);
-                if (TAG_NULL == replyTag) // signals end
+                switch (cmd)
                 {
-                    ++numFinished;
-                    if (numFinished == numSlaves)
-                        break;
-                }
-                else
-                {
-                    byte cmd;
-                    msg.read(cmd);
-                    switch (cmd)
+                    case kjs_open:
                     {
-                        case kjs_open:
-                        {
-                            CJobSlave *job = jobs.findJob(nullptr);
-                            if (!job)
-                                throw MakeStringException(0, "No active job");
+                        CJobSlave *job = jobs.findJob(nullptr);
+                        if (!job)
+                            throw MakeStringException(0, "No active job");
 
-                            CLookupKey key(msg);
+                        CLookupKey key(msg);
 
-                            Owned<CLookupContext> lookupContext = ensureLookupContext(*job, key); // ensure entry in lookupContextsHT, will be removed by last CKMContainer
-                            Owned<CKMContainer> kmc = ensureKeyManager(lookupContext);
-                            processRequest(msg, kmc, sender, replyTag);
-                            break;
-                        }
-                        case kjs_read:
-                        {
-                            CJobSlave *job = jobs.findJob(nullptr);
-                            if (!job)
-                                throw MakeStringException(0, "No active job");
+                        Owned<CLookupContext> lookupContext = ensureLookupContext(*job, key); // ensure entry in lookupContextsHT, will be removed by last CKMContainer
+                        Owned<CKMContainer> kmc = ensureKeyManager(lookupContext);
+                        processRequest(msg, kmc, sender, replyTag);
+                        break;
+                    }
+                    case kjs_read:
+                    {
+                        CJobSlave *job = jobs.findJob(nullptr);
+                        if (!job)
+                            throw MakeStringException(0, "No active job");
 
-                            CLookupKey key(msg);
-                            unsigned handle;
-                            msg.read(handle);
-                            dbgassertex(handle);
+                        CLookupKey key(msg);
+                        unsigned handle;
+                        msg.read(handle);
+                        dbgassertex(handle);
 
-                            Owned<CKMContainer> kmc = getKeyManager(handle);
-                            if (!kmc)
-                            {
-                                Owned<CLookupContext> lookupContext = ensureLookupContext(*job, key);
-                                kmc.setown(ensureKeyManager(lookupContext));
-                            }
-                            processRequest(msg, kmc, sender, replyTag);
-                            break;
-                        }
-                        case kjs_close:
+                        Owned<CKMContainer> kmc = getKeyManager(handle);
+                        if (!kmc)
                         {
-                            unsigned handle;
-                            msg.read(handle);
-                            bool res = removeKeyManager(handle);
-                            msg.clear();
-                            msg.append(errorCode);
-                            msg.append(res);
-                            replyAttempt = true;
-                            if (!queryNodeComm().send(msg, sender, replyTag, LONGTIMEOUT))
-                                throw MakeStringException(0, "kjs_close: Failed to reply to lookup request");
-                            break;
+                            Owned<CLookupContext> lookupContext = ensureLookupContext(*job, key);
+                            kmc.setown(ensureKeyManager(lookupContext));
                         }
-                        case kjs_clear:
-                        {
-                            lookupContextsHT.kill();
-                            break;
-                        }
+                        processRequest(msg, kmc, sender, replyTag);
+                        break;
+                    }
+                    case kjs_close:
+                    {
+                        unsigned handle;
+                        msg.read(handle);
+                        bool res = removeKeyManager(handle);
+                        msg.clear();
+                        msg.append(errorCode);
+                        msg.append(res);
+                        replyAttempt = true;
+                        if (!queryNodeComm().send(msg, sender, replyTag, LONGTIMEOUT))
+                            throw MakeStringException(0, "kjs_close: Failed to reply to lookup request");
+                        break;
+                    }
+                    case kjs_clear:
+                    {
+                        lookupContextsHT.kill();
+                        break;
                     }
                 }
             }
@@ -1584,12 +1586,14 @@ public:
         fileCache.setown(createFileCache(globals->getPropInt("@fileCacheLimit", 1800)));
         fipHandler.setown(new CFileInProgressHandler());
         lookupReceiver.setown(new CKeyedRemoteLookupReceiver(jobs, globalTags[1]));
+        lookupReceiver->start();
     }
     ~CThorResourceSlave()
     {
         fileCache.clear();
         backupHandler.clear();
         fipHandler.clear();
+        lookupReceiver->stop();
     }
 
 // IThorResource
