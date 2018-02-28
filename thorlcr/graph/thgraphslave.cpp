@@ -1617,18 +1617,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
         inline unsigned count() { return kmcs.ordinality(); }
         bool remove(CKMContainer *kmc)
         {
-            bool r = kmcs.zap(*kmc);
-            if (!r)
-            {
-                unsigned handle = kmc->queryHandle();
-                PROGLOG("Looking for: %u", handle);
-                ForEachItemIn(i, kmcs)
-                {
-                    CKMContainer &k = kmcs.item(i);
-                    PROGLOG("Have: %u", k.queryHandle());
-                }
-            }
-            return r;
+            return kmcs.zap(*kmc);
         }
         unsigned queryHash() const { return key.queryHash(); }
         const CLookupKey &queryKey() const { return key; }
@@ -1753,15 +1742,16 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
             mb.append(candidates);
             if (candidates)
             {
-                DelayedSizeMarker sizeMark(mb);
-                IOutputRowSerializer *fetchSerializer = ctx.queryFetchSerializer();
-                if (rows.size())
+                if (rows.size()) // will be 0 if fetch needed
                 {
+                    DelayedSizeMarker sizeMark(mb);
+                    IOutputRowSerializer *fetchSerializer = ctx.queryFetchSerializer();
                     CMemoryRowSerializer s(mb);
                     for (auto &row : rows)
                         fetchSerializer->serialize(s, (const byte *)row);
                     sizeMark.write();
                 }
+                // JCSMORE - even in half-keyed join case, fpos' may be used by transform (would be good to have tip from codegen to say if used or not)
                 mb.append(candidates * sizeof(unsigned __int64), &fposs[0]);
             }
         }
@@ -2033,7 +2023,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
             verifyex(kme->remove(kmc));
             if (0 == kme->count())
                 verifyex(cachedKMs.removeExact(kme));
-            PROGLOG("getKeyManager(%u) - cachedKMsByHandle count=%u", handle, cachedKMsByHandle.ordinality());
         }
         return kmc.getClear();
     }
@@ -2096,10 +2085,7 @@ public:
             cachedKMs.replace(*kme);
         }
         kme->push(kmc); // JCSMORE cap. to some max #
-        unsigned handle = kmc->queryHandle();
-        assertex(nullptr == cachedKMsByHandle.find(handle));
         cachedKMsByHandle.replace(*LINK(kmc));
-        PROGLOG("addToKeyManagerCache(%u), cachedKMsByHandle count=%u, kme count=%u", handle, cachedKMsByHandle.ordinality(), kme->count());
     }
     void addAvailableProcessor(CKeyedRemoteLookupProcessor &processor)
     {
