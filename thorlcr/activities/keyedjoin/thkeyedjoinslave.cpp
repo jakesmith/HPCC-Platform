@@ -1255,10 +1255,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     {
                         if (activity.needsDiskRead)
                         {
-                            joinGroup->incPending();
                             unsigned __int64 sequence = joinGroup->addRightMatchPending(partNo, fpos);
                             if (NotFound == sequence) // means limit was hit and must have been caused by another handler
                                 break;
+                            joinGroup->incPending();
                             sequence |= (((unsigned __int64)partNo) << 32);
                             activity.fetchHandler->addRow(fpos, sequence, joinGroup);
                         }
