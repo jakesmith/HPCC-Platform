@@ -399,6 +399,8 @@ public:
     }
 };
 
+
+enum KJServiceCmds:byte { kjs_nop, kjs_open, kjs_read, kjs_close, kjs_clear };
 interface IKJService : extends IInterface
 {
     virtual void start() = 0;

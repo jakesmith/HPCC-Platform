@@ -27,7 +27,6 @@
 #include "jprop.hpp"
 #include "jutil.hpp"
 #include "jlog.hpp"
-#include "mptag.hpp"
 #include "mpcomm.hpp"
 
 #include "workunit.hpp"
@@ -35,7 +34,6 @@
 #include "thexception.hpp"
 #include "thorcommon.hpp"
 #include "thor.hpp"
-
 
 #ifdef GRAPH_EXPORTS
     #define graph_decl DECL_EXPORT
@@ -448,7 +446,6 @@ extern graph_decl void reportExceptionToWorkunit(IConstWorkUnit &workunit,IExcep
 
 extern graph_decl IPropertyTree *globals;
 extern graph_decl mptag_t masterSlaveMpTag;
-extern graph_decl std::vector<mptag_t> globalTags;
 enum SlaveMsgTypes { smt_errorMsg=1, smt_initGraphReq, smt_initActDataReq, smt_dataReq, smt_getPhysicalName, smt_getFileOffset, smt_actMsg, smt_getresult };
 // Logging
 extern graph_decl const LogMsgJobInfo thorJob;
@@ -505,8 +502,6 @@ extern const graph_decl StatisticsMapping spillStatistics;
 
 extern graph_decl bool isOOMException(IException *e);
 extern graph_decl IThorException *checkAndCreateOOMContextException(CActivityBase *activity, IException *e, const char *msg, rowcount_t numRows, IOutputMetaData *meta, const void *row);
-
-enum KJServiceCmds:byte { kjs_nop, kjs_open, kjs_read, kjs_close, kjs_clear };
 
 
 #endif

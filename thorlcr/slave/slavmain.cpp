@@ -181,12 +181,6 @@ public:
         mpServers.kill();
         stop();
     }
-    CJobSlave *findJob(const char *key)
-    {
-        if (nullptr == key)
-            return jobs.next(nullptr);
-        return jobs.find(key);
-    }
     void stop()
     {
         queryNodeComm().cancel(0, masterSlaveMpTag);
@@ -772,7 +766,7 @@ class CThorResourceSlave : public CThorResourceBase
     Owned<IFileInProgressHandler> fipHandler;
 
 public:
-    CThorResourceSlave(CJobListener &jobs)
+    CThorResourceSlave()
     {
         backupHandler.setown(createBackupHandler());
         fileCache.setown(createFileCache(globals->getPropInt("@fileCacheLimit", 1800)));
@@ -810,7 +804,7 @@ void slaveMain(bool &jobListenerStopped)
     roxiemem::setTotalMemoryLimit(gmemAllowHugePages, gmemAllowTransparentHugePages, gmemRetainMemory, ((memsize_t)gmemSize) * 0x100000, 0, thorAllocSizes, NULL);
 
     CJobListener jobListener(jobListenerStopped);
-    CThorResourceSlave slaveResource(jobListener);
+    CThorResourceSlave slaveResource;
     setIThorResource(slaveResource);
 
 #ifdef __linux__

@@ -1582,9 +1582,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
         Linked<CLookupContext> ctx;
         Owned<IKeyManager> keyManager;
         unsigned handle = 0;
-        unsigned abortLimit = 0;
-        unsigned atMost = 0;
-        bool fetchRequired = false;
     public:
         CKMContainer(CKJService &_owner, CLookupContext *_ctx)
             : owner(_owner), ctx(_ctx)
@@ -1606,9 +1603,8 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
         CLookupKey key;
         CIArrayOf<CKMContainer> kmcs;
     public:
-        CKMKeyEntry(const CLookupKey &_key, CKMContainer *_kmc) : key(_key)
+        CKMKeyEntry(const CLookupKey &_key) : key(_key)
         {
-            push(_kmc);
         }
         inline CKMContainer *pop()
         {
@@ -1621,7 +1617,18 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
         inline unsigned count() { return kmcs.ordinality(); }
         bool remove(CKMContainer *kmc)
         {
-            return kmcs.zap(*kmc);
+            bool r = kmcs.zap(*kmc);
+            if (!r)
+            {
+                unsigned handle = kmc->queryHandle();
+                PROGLOG("Looking for: %u", handle);
+                ForEachItemIn(i, kmcs)
+                {
+                    CKMContainer &k = kmcs.item(i);
+                    PROGLOG("Have: %u", k.queryHandle());
+                }
+            }
+            return r;
         }
         unsigned queryHash() const { return key.queryHash(); }
         const CLookupKey &queryKey() const { return key; }
@@ -2026,6 +2033,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
             verifyex(kme->remove(kmc));
             if (0 == kme->count())
                 verifyex(cachedKMs.removeExact(kme));
+            PROGLOG("getKeyManager(%u) - cachedKMsByHandle count=%u", handle, cachedKMsByHandle.ordinality());
         }
         return kmc.getClear();
     }
@@ -2064,6 +2072,7 @@ public:
         CKMContainer *kmc = kme->pop();
         if (0 == kme->count())
             verifyex(cachedKMs.removeExact(kme));
+        verifyex(cachedKMsByHandle.removeExact(kmc));
         return kmc;
     }
     CKMContainer *ensureKeyManager(CLookupContext *lookupContext)
@@ -2081,14 +2090,16 @@ public:
     {
         CriticalBlock b(kMCrit);
         CKMKeyEntry *kme = cachedKMs.find(lookupCtx->queryKey());
-        if (kme)
-            kme->push(kmc); // JCSMORE cap. to some max #
-        else
+        if (!kme)
         {
-            kme = new CKMKeyEntry(lookupCtx->queryKey(), kmc);
+            kme = new CKMKeyEntry(lookupCtx->queryKey());
             cachedKMs.replace(*kme);
         }
+        kme->push(kmc); // JCSMORE cap. to some max #
+        unsigned handle = kmc->queryHandle();
+        assertex(nullptr == cachedKMsByHandle.find(handle));
         cachedKMsByHandle.replace(*LINK(kmc));
+        PROGLOG("addToKeyManagerCache(%u), cachedKMsByHandle count=%u, kme count=%u", handle, cachedKMsByHandle.ordinality(), kme->count());
     }
     void addAvailableProcessor(CKeyedRemoteLookupProcessor &processor)
     {
@@ -2134,6 +2145,7 @@ public:
     {
         if (aborted)
             return;
+        PROGLOG("KJService stop()");
         queryNodeComm().cancel(RANK_ALL, keyLookupMpTag);
         while (!threaded.join(60000))
             PROGLOG("Receiver waiting on remote handlers to signal completion");

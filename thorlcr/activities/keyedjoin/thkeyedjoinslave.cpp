@@ -1721,18 +1721,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             if (lookupHandler)
                 lookupHandler->end();
         }
-        if (remoteKeyedLookups)
-        {
-            CMessageBuffer msg;
-            msg.append(TAG_NULL);
-            ICommunicator &comm = queryJob().queryNodeComm();
-            for (unsigned s=0; s<queryJob().querySlaves(); s++)
-            {
-                if (!comm.send(msg, s+1, queryJob().queryKJServiceTag(), LONGTIMEOUT))
-                    throw MakeActivityException(this, 0, "comm send failed");
-            }
-        }
-
         CriticalBlock b(onCompleteCrit); // protecting both pendingJoinGroupList and doneJoinGroupList
         endOfInput = true;
         bool expectedState = true;
