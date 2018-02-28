@@ -865,12 +865,18 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
     };
     class CKMContainer : public CInterface
     {
+        CKeyedRemoteLookupReceiver &owner;
         Linked<CLookupContext> ctx;
         Owned<IKeyManager> keyManager;
         unsigned handle = 0;
     public:
-        CKMContainer(CLookupContext *_ctx, IKeyManager *_keyManager, unsigned _handle) : ctx(_ctx), keyManager(_keyManager), handle(_handle)
+        CKMContainer(CKeyedRemoteLookupReceiver &_owner, CLookupContext *_ctx, IKeyManager *_keyManager, unsigned _handle)
+            : owner(_owner), ctx(_ctx), keyManager(_keyManager), handle(_handle)
         {
+        }
+        ~CKMContainer()
+        {
+            owner.freeLookupContext(ctx.getClear());
         }
         CLookupContext &queryCtx() const { return ctx; }
         IKeyManager *queryKeyManager() const { return keyManager; }
@@ -1028,9 +1034,8 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
     {
         typedef SuperHashTableOf<ET, CLookupKey> PARENT;
     public:
-        CLookupContextHT(void) : PARENT() { }
-        CLookupContextHT(unsigned initsize) : PARENT(initsize) { }
-        ~CLookupContextHT() { PARENT::_releaseAll(); }
+        CLookupHT() : PARENT() { }
+        ~CLookupHT() { PARENT::_releaseAll(); }
 
         inline ET *find(const CLookupKey &fp) const                                   \
         {
@@ -1064,8 +1069,21 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
             return et->queryKey() == *fp;
         }
     };
+    template <class ET>
+    class CLookupHTOwned : public CLookupHT<ET>
+    {
+        typedef CLookupHT<ET> PARENT;
+    public:
+        CLookupHTOwned() : PARENT() { }
+        ~CLookupHTOwned() { PARENT::_releaseAll(); }
+        virtual void onRemove(void *_et)
+        {
+            ET *et = static_cast<ET *>(_et);
+            et->Release();
+        }
+    };
     typedef CLookupHT<CLookupContext> CLookupContextHT;
-    typedef CLookupHT<CKMKeyEntry> CKMContextHT;
+    typedef CLookupHTOwned<CKMKeyEntry> CKMContextHT;
 
     class CKeyedRemoteLookupProcessor : public CSimpleInterfaceOf<IInterface>, implements IThreaded
     {
@@ -1227,43 +1245,35 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
             }
         }
     };
-    CLookupContextHT cachedLookupContexts;
-    CKMContextHT cachedKMs;
-    OwningSimpleHashTableOf<CKMContainer, unsigned> cachedKMsByHandle;
+    CLookupContextHT lookupContextsHT; // non-owning HT of CLookupContexts
+    CKMContextHT cachedKMs; // NB: HT by {actId, fname} links IKeyManager's within containers
+    OwningSimpleHashTableOf<CKMContainer, unsigned> cachedKMsByHandle; // HT by { handle }, links IKeyManager's within containers.
 
     IArrayOf<CKeyedRemoteLookupProcessor> processors;
     std::vector<CKeyedRemoteLookupProcessor *> availableProcessors;
 
     CLookupContext *ensureLookupContext(CJobBase &job, const CLookupKey &key)
     {
-        CLookupContext *lookupContext = cachedLookupContexts.find(key);
+        CLookupContext *lookupContext = lookupContextsHT.find(key);
         if (!lookupContext)
         {
             lookupContext = createLookupContext(job, key);
-            /* Need to think about:
-             * 1) Capping
-             * 2) Flushing out keys in use?
-             * 3) Clearing all at end
-             * 4) CKMKeyEntry's in use or in CKMCache that link to this context.
-             */
-            cachedLookupContexts.replace(*lookupContext);
-            lookupContextsByHandle.replace(*LINK(lookupContext));
+            lookupContextsHT.replace(*lookupContext);
         }
         return LINK(lookupContext);
     }
+    void freeLookupContext(CLookupContext *_lookupContext)
+    {
+        Owned<CLookupContext> lookupContext = _lookupContext;
+        if (!lookupContext->IsShared())
+        {
+            lookupContextsHT.removeExact(lookupContext);
+        }
+    }
     CLookupContext *getLookupContext(const CLookupKey &key)
     {
-        CLookupContext *lookupContext = cachedLookupContexts.find(key);
+        CLookupContext *lookupContext = lookupContextsHT.find(key);
         return LINK(lookupContext);
-    }
-    CLookupContext *getLookupContext(unsigned handle)
-    {
-        CLookupContext *lookupContext = lookupContextsByHandle.find(handle);
-        return LINK(lookupContext);
-    }
-    bool removeLookupContext(unsigned handle)
-    {
-        return lookupContextsByHandle.remove(&handle);
     }
     CLookupContext *createLookupContext(CJobBase &job, const CLookupKey &key)
     {
@@ -1287,6 +1297,11 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
             kme->remove(kmc);
         }
         return kmc.getClear();
+    }
+    bool removeKeyManager(unsigned handle)
+    {
+        Owned<CKMContainer> kmc = getKeyManager(handle);
+        return nullptr != kmc;
     }
     unsigned getUniqId()
     {
@@ -1328,6 +1343,7 @@ public:
         {
             IKeyManager *kM = lookupContext->createKeyManager();
             unsigned uniqueHandle = getUniqId();
+            // NB: container links lookupContext, and will remove it from lookupContextsHT when last reference.
             kmc = new CKMContainer(lookupContext, kM, uniqueHandle);
         }
         return kmc;
@@ -1417,6 +1433,22 @@ public:
         }
         threaded.join();
     }
+    void processRequest(CMessageBuffer &msg, CKMContainer *kmc, rank_t sender, mptag_t replyTag)
+    {
+        CLookupContext *lookupContext = kmc->queryCtx();
+        Owned<CLookupRequest> lookupRequest = new CLookupRequest(lookupContext, kmc, sender, replyTag);
+
+        size32_t requestSz;
+        msg.read(requestSz);
+        lookupRequest->deserialize(requestSz, msg.readDirect(requestSz));
+
+        CKeyedRemoteLookupProcessor *processor = getAvailableProcessor(); // will block if all busy
+        if (!processor) // only if aborted
+            break;
+        msg.clear();
+        // NB: kmc is added to cache at end of request handling
+        processor->handleRequest(lookupRequest); // links lookupRequest
+    }
     virtual void threadmain() override
     {
         while (!aborted)
@@ -1453,24 +1485,9 @@ public:
 
                             CLookupKey key(msg);
 
-                            Owned<CLookupContext> lookupContext = ensureLookupContext(*job, key);
-
-                            /* NB: CLookupContext's and IKeyManager's are cached for reuse
-                             * JCSMORE - cache's need pruning and limiting
-                             * CLookupRequest links context, processor will free request when done
-                             */
+                            Owned<CLookupContext> lookupContext = ensureLookupContext(*job, key); // ensure entry in lookupContextsHT, will be removed by last CKMContainer
                             Owned<CKMContainer> kmc = ensureKeyManager(lookupContext);
-                            Owned<CLookupRequest> lookupRequest = new CLookupRequest(lookupContext.getClear(), kmc.getClear(), sender, replyTag);
-                            size32_t requestSz;
-                            msg.read(requestSz);
-                            lookupRequest->deserialize(requestSz, msg.readDirect(requestSz));
-
-                            CKeyedRemoteLookupProcessor *processor = getAvailableProcessor(); // will block if all busy
-                            if (!processor) // only if aborted
-                                break;
-                            msg.clear();
-                            // NB: kmc is added to cache at end of request handling
-                            processor->handleRequest(lookupRequest); // links lookupRequest
+                            processRequest(msg, kmc, sender, replyTag);
                             break;
                         }
                         case kjs_read:
@@ -1490,40 +1507,25 @@ public:
                                 Owned<CLookupContext> lookupContext = ensureLookupContext(*job, key);
                                 kmc = ensureKeyManager(lookupContext);
                             }
-
-                            size32_t requestSz;
-                            msg.read(requestSz);
-
-                            /* NB: CLookupContext's and IKeyManager's are cached for reuse
-                             * JCSMORE - cache's need pruning and limiting
-                             * CLookupRequest links context, processor will free request when done
-                             */
-                            Owned<IKeyManager> kM = lookupContext->getKeyManager();
-                            Owned<CLookupRequest> lookupRequest = new CLookupRequest(lookupContext.getClear(), kM.getClear(), sender, replyTag);
-                            lookupRequest->deserialize(requestSz, msg.readDirect(requestSz));
-
-                            CKeyedRemoteLookupProcessor *processor = getAvailableProcessor(); // will block if all busy
-                            if (!processor) // only if aborted
-                                break;
-                            msg.clear();
-                            processor->handleRequest(lookupRequest); // links lookupRequest
+                            processRequest(msg, kmc, sender, replyTag);
                             break;
                         }
                         case kjs_close:
                         {
                             unsigned handle;
                             msg.read(handle);
-                            bool res = removeLookupContext(handle);
+                            bool res = removeKeyManager(handle);
                             msg.clear();
                             msg.append(errorCode);
                             msg.append(res);
                             replyAttempt = true;
                             if (!queryNodeComm().send(msg, sender, replyTag, LONGTIMEOUT))
                                 throw MakeStringException(0, "kjs_close: Failed to reply to lookup request");
+                            break;
                         }
                         case kjs_clear:
                         {
-                            cachedLookupContexts.kill();
+                            lookupContextsHT.kill();
                             break;
                         }
                     }
