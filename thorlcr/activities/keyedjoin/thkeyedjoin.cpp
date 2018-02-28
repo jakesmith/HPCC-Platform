@@ -181,8 +181,6 @@ public:
         if (container.queryOwner().queryOwner() && (!container.queryOwner().isGlobal())) // I am in a child query
             remoteKeyedLookups = false;
 
-        if (remoteKeyedLookups)
-            ++numTags;
         if (helper->diskAccessRequired())
             numTags += 2;
         for (unsigned t=0; t<numTags; t++)

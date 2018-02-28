@@ -792,8 +792,6 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
     class CLookupKey
     {
     protected:
-        activity_id id;
-        StringAttr fname;
         unsigned hashv;
 
         void calcHash()
@@ -802,6 +800,9 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
             hashv = hashc((const unsigned char *)&id, sizeof(unsigned), h);
         }
     public:
+        activity_id id;
+        StringAttr fname;
+
         CLookupKey(activity_id _id, const char *_fname) : id(_id), fname(_fname)
         {
             calcHash();
@@ -849,7 +850,7 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
             keyIndex.setown(createKeyIndex(key.fname, crc, false, false));
         }
         unsigned queryHash() const { return key.queryHash(); }
-        CLookupKey &queryKey() const { return key; }
+        const CLookupKey &queryKey() const { return key; }
 
         inline const char *queryFileName() const { return key.fname; }
         IOutputMetaData *queryOutputMetaData() const { return lookupRowOutputMetaData; }
@@ -878,7 +879,7 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         {
             owner.freeLookupContext(ctx.getClear());
         }
-        CLookupContext &queryCtx() const { return ctx; }
+        CLookupContext &queryCtx() const { return *ctx; }
         IKeyManager *queryKeyManager() const { return keyManager; }
         unsigned queryHandle() const { return handle; }
         const void *queryFindParam() const { return &handle; } // for SimpleHashTableOf
@@ -888,13 +889,13 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         CLookupKey key;
         CIArrayOf<CKMContainer> kmcs;
     public:
-        CKMKeyEntry(CLookupContext *_ctx, CKMContainer *_kmc) : key(_ctx->queryKey())
+        CKMKeyEntry(const CLookupKey &_key, CKMContainer *_kmc) : key(_key)
         {
             push(_kmc);
         }
         inline CKMContainer *pop()
         {
-            return kmcs.popGet();
+            return &kmcs.popGet();
         }
         inline void push(CKMContainer *kmc)
         {
@@ -905,6 +906,8 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         {
             return kmcs.zap(*kmc);
         }
+        unsigned queryHash() const { return key.queryHash(); }
+        const CLookupKey &queryKey() const { return key; }
     };
     class CLookupRequest : public CSimpleInterface
     {
@@ -1049,23 +1052,23 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         }
         virtual unsigned getHashFromElement(const void *_et) const
         {
-            ET *et = static_cast<ET *>(_et);
+            const ET *et = static_cast<const ET *>(_et);
             return et->queryHash();
         }
         virtual unsigned getHashFromFindParam(const void *_fp) const
         {
-            CLookupKey *fp = static_cast<CLookupKey *>(_fp);
+            const CLookupKey *fp = static_cast<const CLookupKey *>(_fp);
             return fp->queryHash();
         }
         virtual const void *getFindParam(const void *_et) const
         {
-            ET *et = static_cast<ET *>(_et);
+            const ET *et = static_cast<const ET *>(_et);
             return &et->queryKey();
         }
         virtual bool matchesFindParam(const void *_et, const void *_fp, unsigned fphash __attribute__((unused))) const
         {
-            ET *et = static_cast<ET *>(_et);
-            CLookupKey *fp = static_cast<CLookupKey *>(_fp);
+            const ET *et = static_cast<const ET *>(_et);
+            const CLookupKey *fp = static_cast<const CLookupKey *>(_fp);
             return et->queryKey() == *fp;
         }
     };
@@ -1280,7 +1283,7 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         VStringBuffer helperName("fAc%u", (unsigned)key.id);
         EclHelperFactory helperFactory = (EclHelperFactory) job.queryDllEntry().getEntry(helperName.str());
         if (!helperFactory)
-            throw makeOsExceptionV(GetLastError(), "Failed to load helper factory method: %s (dll handle = %p)", helperName.str(), job->queryDllEntry().getInstance());
+            throw makeOsExceptionV(GetLastError(), "Failed to load helper factory method: %s (dll handle = %p)", helperName.str(), job.queryDllEntry().getInstance());
         Owned<IHThorKeyedJoinArg> helper = static_cast<IHThorKeyedJoinArg *>(helperFactory());
 
         ICodeContext &codeCtx = job.queryJobChannel(0).querySharedMemCodeContext();
@@ -1344,18 +1347,18 @@ public:
             IKeyManager *kM = lookupContext->createKeyManager();
             unsigned uniqueHandle = getUniqId();
             // NB: container links lookupContext, and will remove it from lookupContextsHT when last reference.
-            kmc = new CKMContainer(lookupContext, kM, uniqueHandle);
+            kmc = new CKMContainer(*this, lookupContext, kM, uniqueHandle);
         }
         return kmc;
     }
-    void addToKeyManagerCache(const CLookupContext *lookupCtx, CKMContainer *kmc)
+    void addToKeyManagerCache(CLookupContext *lookupCtx, CKMContainer *kmc)
     {
         CKMKeyEntry *kme = cachedKMs.find(lookupCtx->queryKey());
         if (kme)
             kme->push(kmc); // JCSMORE cap. to some max #
         else
         {
-            kme = new CKMKeyEntry(lookupCtx, kmc);
+            kme = new CKMKeyEntry(lookupCtx->queryKey(), kmc);
             cachedKMs.replace(*kme);
         }
         cachedKMsByHandle.replace(*LINK(kmc));
@@ -1435,7 +1438,7 @@ public:
     }
     void processRequest(CMessageBuffer &msg, CKMContainer *kmc, rank_t sender, mptag_t replyTag)
     {
-        CLookupContext *lookupContext = kmc->queryCtx();
+        CLookupContext *lookupContext = &kmc->queryCtx();
         Owned<CLookupRequest> lookupRequest = new CLookupRequest(lookupContext, kmc, sender, replyTag);
 
         size32_t requestSz;
@@ -1443,8 +1446,8 @@ public:
         lookupRequest->deserialize(requestSz, msg.readDirect(requestSz));
 
         CKeyedRemoteLookupProcessor *processor = getAvailableProcessor(); // will block if all busy
-        if (!processor) // only if aborted
-            break;
+        if (!processor) // only if aborting
+            return;
         msg.clear();
         // NB: kmc is added to cache at end of request handling
         processor->handleRequest(lookupRequest); // links lookupRequest
@@ -1505,7 +1508,7 @@ public:
                             if (!kmc)
                             {
                                 Owned<CLookupContext> lookupContext = ensureLookupContext(*job, key);
-                                kmc = ensureKeyManager(lookupContext);
+                                kmc.setown(ensureKeyManager(lookupContext));
                             }
                             processRequest(msg, kmc, sender, replyTag);
                             break;

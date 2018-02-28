@@ -1276,364 +1276,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             }
         }
     };
-#if 0
-    class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
-    {
-        CThreadedPersistent threaded;
-        CKeyedJoinSlave &activity;
-        ICommunicator &comm;
-        mptag_t keyLookupMpTag = TAG_NULL;
-        bool aborted = false;
-        CriticalSection availableProcessorCrit;
-        bool getAvailableBlocked = false;
-        Semaphore getAvailableSem;
-        std::vector<std::vector<IKeyManager *>> partKeyManagers;
-        CriticalSection partKeyManagerCrit;
-        Owned<IThorRowInterfaces> keyLookupRowWithJGRefRowIf;
-        unsigned numFinished = 0;
-
-        class CKeyedRemoteLookupProcessor : public CSimpleInterfaceOf<IInterface>, implements IThreaded
-        {
-            CKeyedRemoteLookupReceiver &owner;
-            CKeyedJoinSlave &activity;
-            ICommunicator &comm;
-            CThreaded threaded;
-            Owned<IKeyManager> keyManager;
-            IHThorKeyedJoinArg *helper = nullptr;
-            Semaphore sem;
-            unsigned partNo = NotFound;
-            CThorExpandingRowArray rows;
-            rank_t sender = RANK_NULL;
-            mptag_t replyTag = TAG_NULL;
-
-            GroupFlags processRow(const void *row, IKeyManager *keyManager, CThorExpandingRowArray &replyRows, std::vector<unsigned __int64> &fposs)
-            {
-                KeyLookupHeader lookupKeyHeader;
-                getHeaderFromRow(row, lookupKeyHeader);
-                const void *keyedFieldsRow = (byte *)row + sizeof(KeyLookupHeader);
-
-                helper->createSegmentMonitors(keyManager, keyedFieldsRow);
-                keyManager->finishSegmentMonitors();
-                keyManager->reset();
-
-                GroupFlags flags = gf_null;
-                unsigned candidates = 0;
-                // NB: keepLimit is not on hard matches and can only be applied later, since other filtering (e.g. in transform) may keep below keepLimit
-                while (keyManager->lookup(true))
-                {
-                    ++candidates;
-                    if (candidates > activity.abortLimit)
-                    {
-                        replyRows.clearRows();
-                        fposs.clear();
-                        flags = gf_limitabort;
-                        break;
-                    }
-                    else if (candidates > activity.atMost) // atMost - filter out group if > max hard matches
-                    {
-                        replyRows.clearRows();
-                        fposs.clear();
-                        flags = gf_limitatmost;
-                        break;
-                    }
-                    KLBlobProviderAdapter adapter(keyManager);
-                    byte const * keyRow = keyManager->queryKeyBuffer();
-                    size_t fposOffset = keyManager->queryRowSize() - sizeof(offset_t);
-                    offset_t fpos = rtlReadBigUInt8(keyRow + fposOffset);
-                    if (helper->indexReadMatch(keyedFieldsRow, keyRow,  &adapter))
-                    {
-                        if (!activity.needsDiskRead)
-                        {
-                            RtlDynamicRowBuilder joinFieldsRowBuilder(activity.joinFieldsAllocator);
-                            size32_t sz = helper->extractJoinFields(joinFieldsRowBuilder, keyRow, &adapter);
-                            /* NB: Each row lookup could in theory == lots of keyed results. If needed to break into smaller replies
-                             * Would have to create/keep a keyManager per sender, in those circumstances.
-                             * As it stands, each lookup will be processed and all rows (below limits) will be returned, but I think that's okay.
-                             * There are other reasons why might want a keyManager per sender, e.g. for concurrency.
-                             */
-                            replyRows.append(joinFieldsRowBuilder.finalizeRowClear(sz));
-                        }
-                        fposs.push_back(fpos); // JCSMORE may not be needed in non fetch case, but can I tell?
-                    }
-                }
-                keyManager->releaseSegmentMonitors();
-                return flags;
-            }
-            void send(CMessageBuffer &msg, bool last)
-            {
-                msg.setReplyTag(replyTag);
-                msg.append(last);
-                if (!comm.reply(msg))
-                    throw MakeActivityException(&activity, 0, "Failed to reply to lookup request");
-            }
-        public:
-            CKeyedRemoteLookupProcessor(CKeyedRemoteLookupReceiver &_owner) : threaded("CKeyedRemoteLookupProcessor", this),
-                owner(_owner), activity(_owner.activity), rows(_owner.activity, _owner.keyLookupRowWithJGRefRowIf), comm(_owner.activity.queryJobChannel().queryJobComm())
-            {
-                helper = activity.helper;
-            }
-            ~CKeyedRemoteLookupProcessor()
-            {
-                stop();
-            }
-            void start()
-            {
-                threaded.start();
-            }
-            void join()
-            {
-                threaded.join();
-            }
-            void stop()
-            {
-                // NB: if handler is middle of handling request will stop next time around
-                sem.signal();
-                join();
-            }
-            void handleRequest(unsigned _partNo, CThorExpandingRowArray &rowsToProcess, rank_t _sender, mptag_t _replyTag)
-            {
-                // NB: only here, because this processor is idle
-                rows.swap(rowsToProcess);
-                sender = _sender;
-                replyTag = _replyTag;
-                if (partNo != _partNo)
-                {
-                    if (partNo != NotFound)
-                        owner.takePartKeyManager(partNo, keyManager.getClear());
-                    partNo = _partNo;
-                    keyManager.setown(owner.getPartKeyManager(partNo));
-                }
-                sem.signal();
-            }
-        // IThreaded
-            virtual void threadmain() override
-            {
-                while (true)
-                {
-                    sem.wait();
-                    if (NotFound == partNo) // stop
-                        break;
-                    MemoryBuffer replyMb;
-                    DelayedMarker<unsigned> countMarker(replyMb);
-                    unsigned r = 0;
-                    CThorExpandingRowArray replyRows(activity, activity.keyLookupReplyOutputMetaRowIf);
-                    std::vector<unsigned __int64> fposs;
-                    unsigned count = 0;
-                    while (!activity.queryAbortSoon())
-                    {
-                        OwnedConstThorRow row = rows.getClear(r++);
-                        KeyLookupHeader lookupKeyHeader;
-                        getHeaderFromRow(row, lookupKeyHeader);
-                        replyMb.append(sizeof(lookupKeyHeader), &lookupKeyHeader);
-
-                        ++count;
-                        GroupFlags flags = processRow(row, keyManager, replyRows, fposs);
-                        replyMb.append(flags);
-                        if (gf_null == flags)
-                        {
-                            unsigned candidates = fposs.size();
-                            replyMb.append(candidates);
-                            if (candidates)
-                            {
-                                if (!activity.needsDiskRead)
-                                {
-                                    DelayedSizeMarker sizeMark(replyMb);
-                                    replyRows.serialize(replyMb);
-                                    replyRows.clearRows();
-                                    sizeMark.write();
-                                }
-                                replyMb.append(candidates * sizeof(unsigned __int64), &fposs[0]);
-                                fposs.clear();
-                            }
-                        }
-                        bool last = r == rows.ordinality();
-                        if (last || (replyMb.length() >= DEFAULT_KEYLOOKUP_MAXREPLYSZ))
-                        {
-                            countMarker.write(count);
-                            CMessageBuffer compressedReplyMsg;
-                            fastLZCompressToBuffer(compressedReplyMsg, replyMb.length(), replyMb.toByteArray());
-                            if (!comm.send(compressedReplyMsg, sender, replyTag, LONGTIMEOUT))
-                                throw MakeActivityException(&activity, 0, "Failed to reply to lookup request");
-                            if (last)
-                                break;
-                            replyMb.clear();
-                        }
-                    }
-                    partNo = NotFound; // mark that this processor is no longer processing anything (see stop condition at start of this method)
-                    owner.addAvailableProcessor(*this);
-                }
-            }
-        };
-        IArrayOf<CKeyedRemoteLookupProcessor> processors;
-        std::vector<CKeyedRemoteLookupProcessor *> availableProcessors;
-
-        IKeyManager *getPartKeyManager(unsigned partNo)
-        {
-            CriticalBlock b(partKeyManagerCrit);
-            if (partNo < partKeyManagers.size())
-            {
-                std::vector<IKeyManager *> &availableForPart = partKeyManagers[partNo];
-                IKeyManager *kM;
-                if (availableForPart.size())
-                {
-                    IKeyManager *kM = availableForPart.back();
-                    availableForPart.pop_back();
-                    return kM;
-                }
-            }
-            else
-                partKeyManagers.resize(partNo+1);
-            return activity.createPartKeyManager(partNo);
-        }
-        void takePartKeyManager(unsigned partNo, IKeyManager *keyManager)
-        {
-            CriticalBlock b(partKeyManagerCrit);
-            std::vector<IKeyManager *> &availableForPart = partKeyManagers[partNo];
-            availableForPart.push_back(keyManager);
-        }
-    public:
-        CKeyedRemoteLookupReceiver(CKeyedJoinSlave &_activity, mptag_t _mpTag)
-            : threaded("CKeyedRemoteLookupReceiver", this), activity(_activity), comm(_activity.queryJobChannel().queryJobComm()), keyLookupMpTag(_mpTag)
-        {
-            unsigned keyLookupMaxProcessThreads = activity.getOptInt(THOROPT_KEYLOOKUP_MAX_PROCESS_THREADS, DEFAULT_KEYLOOKUP_MAX_PROCESS_THREADS);
-            if (keyLookupMaxProcessThreads > activity.queryJob().querySlaves())
-                keyLookupMaxProcessThreads = activity.queryJob().querySlaves();
-            Owned<IOutputMetaData> remoteKeyLookupRowOutputMetaData = new CPrefixedOutputMeta(sizeof(KeyLookupHeader), activity.helper->queryIndexReadInputRecordSize());
-            keyLookupRowWithJGRefRowIf.setown(activity.createRowInterfaces(remoteKeyLookupRowOutputMetaData, (roxiemem::RoxieHeapFlags)(activity.queryHeapFlags()|roxiemem::RHFpacked|roxiemem::RHFunique), AT_LookupWithJGRef));
-            for (unsigned i=0; i<keyLookupMaxProcessThreads; i++)
-            {
-                CKeyedRemoteLookupProcessor *processor = new CKeyedRemoteLookupProcessor(*this);
-                processors.append(*processor);
-                availableProcessors.push_back(processor);
-            }
-        }
-        ~CKeyedRemoteLookupReceiver()
-        {
-            stop();
-            for (auto &v : partKeyManagers)
-            {
-                for (auto &kM : v)
-                    kM->Release();
-            }
-        }
-        void addAvailableProcessor(CKeyedRemoteLookupProcessor &processor)
-        {
-            CriticalBlock b(availableProcessorCrit);
-            availableProcessors.push_back(&processor);
-            if (getAvailableBlocked)
-            {
-                getAvailableBlocked = false;
-                getAvailableSem.signal();
-            }
-        }
-        CKeyedRemoteLookupProcessor *getAvailableProcessor()
-        {
-            while (!aborted)
-            {
-                {
-                    CriticalBlock b(availableProcessorCrit);
-                    if (0 == availableProcessors.size())
-                    {
-                        if (aborted)
-                            return nullptr;
-                        getAvailableBlocked = true;
-                    }
-                    else
-                    {
-                        CKeyedRemoteLookupProcessor *processor = availableProcessors.back();
-                        availableProcessors.pop_back();
-                        return processor;
-                    }
-                }
-                getAvailableSem.wait();
-            }
-            return nullptr;
-        }
-        void start()
-        {
-            numFinished = 0;
-            aborted = false;
-            ForEachItemIn(p, processors)
-                processors.item(p).start(); // NB: waits for requests to handle
-            threaded.start();
-        }
-        void stop()
-        {
-            if (aborted)
-                return;
-            while (!threaded.join(60000))
-                PROGLOG("Receiver waiting on remote handlers to signal completion");
-            if (aborted)
-                return;
-            aborted = true;
-            ForEachItemIn(p, processors)
-                processors.item(p).stop();
-            threaded.join();
-        }
-        void abort()
-        {
-            if (aborted)
-                return;
-            aborted = true;
-            comm.cancel(RANK_ALL, keyLookupMpTag);
-            ForEachItemIn(p, processors)
-                processors.item(p).stop();
-
-            {
-                CriticalBlock b(availableProcessorCrit);
-                if (getAvailableBlocked)
-                {
-                    getAvailableBlocked = false;
-                    getAvailableSem.signal();
-                }
-            }
-            threaded.join();
-        }
-        virtual void threadmain() override
-        {
-            try
-            {
-                while (!aborted)
-                {
-                    rank_t sender;
-                    CMessageBuffer msg;
-                    if (!comm.recv(msg, RANK_ALL, keyLookupMpTag, &sender))
-                        break;
-                    if (!msg.length())
-                        break;
-                    mptag_t replyTag;
-                    msg.read((unsigned &)replyTag);
-                    if (TAG_NULL == replyTag) // signals end
-                    {
-                        ++numFinished;
-                        if (numFinished == activity.queryJob().querySlaves())
-                            break;
-                    }
-                    else
-                    {
-                        unsigned partNo;
-                        msg.read(partNo);
-                        unsigned count;
-                        msg.read(count);
-                        CThorExpandingRowArray received(activity, keyLookupRowWithJGRefRowIf);
-                        size32_t recvSz = msg.remaining();
-                        received.deserializeExpand(recvSz, msg.readDirect(recvSz));
-
-                        CKeyedRemoteLookupProcessor *processor = getAvailableProcessor(); // will block if all busy
-                        if (!processor) // only if aborted
-                            break;
-                        processor->handleRequest(partNo, received, sender, replyTag);
-                    }
-                }
-            }
-            catch (IException *e)
-            {
-                activity.fireException(e);
-                e->Release();
-            }
-        }
-    };
-#endif
     class CKeyLookupRemoteHandler : public CKeyLookupHandler
     {
         typedef CKeyLookupHandler PARENT;
@@ -1661,7 +1303,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             StringBuffer fname;
             rfn.getTail(fname);
             msg.append(fname);
-            msg.append(handle);
         }
         void initClose(CMessageBuffer &msg)
         {
@@ -1674,7 +1315,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             lookupSlave = (rank_t)activity.partToSlaveMap[partNo] + 1; // +1 because 0 == master, 1st slave == 1
             replyTag = activity.queryMPServer().createReplyTag();
             local = false;
-            comm = &activity.queryJobChannel().queryJobComm();
+            comm = &activity.queryJob().queryNodeComm();
         }
         virtual void process(CThorExpandingRowArray &processing) override
         {
@@ -1686,7 +1327,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             msg.append(numRows);
             processing.serializeCompress(msg);
 
-            if (!comm->send(msg, lookupSlave, activity.keyLookupMpTag, LONGTIMEOUT))
+            if (!comm->send(msg, lookupSlave, globalTags[1], LONGTIMEOUT))
                 throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
 
             msg.clear();
@@ -1783,7 +1424,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             PARENT::end();
             CMessageBuffer msg;
             initClose(msg);
-            if (!comm->send(msg, lookupSlave, activity.keyLookupMpTag, LONGTIMEOUT))
+            if (!comm->send(msg, lookupSlave, globalTags[1], LONGTIMEOUT))
                 throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
         }
     };
@@ -1815,7 +1456,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
     } readAheadThread;
 
-    Owned<CKeyedRemoteLookupReceiver> lookupReceiver;
     Owned<CKeyedFetchHandler> fetchHandler;
     IHThorKeyedJoinArg *helper = nullptr;
     StringAttr indexName;
@@ -1826,7 +1466,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     bool needsDiskRead = false;
     bool onFailTransform = false;
     bool keyHasTlk = false;
-    mptag_t keyLookupMpTag = TAG_NULL;
     std::vector<mptag_t> tags;
     std::vector<std::atomic<unsigned __int64>> statsArr; // (seeks, scans, accepted, prefiltered, postfiltered, diskSeeks, diskAccepted, diskRejected)
 #ifdef _DEBUG
@@ -2067,10 +1706,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             CMessageBuffer msg;
             msg.append(TAG_NULL);
-            ICommunicator &comm = queryJobChannel().queryJobComm();
+            ICommunicator &comm = queryJob().queryNodeComm();
             for (unsigned s=0; s<queryJob().querySlaves(); s++)
             {
-                if (!comm.send(msg, s+1, keyLookupMpTag, LONGTIMEOUT))
+                if (!comm.send(msg, s+1, globalTags[1], LONGTIMEOUT))
                     throw MakeActivityException(this, 0, "comm send failed");
             }
         }
@@ -2352,11 +1991,6 @@ public:
                 tags.push_back(tag);
                 queryJobChannel().queryJobComm().flush(tag);
             }
-            if (remoteKeyedLookups)
-            {
-                keyLookupMpTag = tags.back();
-                tags.pop_back();
-            }
             unsigned numIndexParts;
             data.read(numIndexParts);
 
@@ -2489,25 +2123,12 @@ public:
 #endif
         ActPrintLog("Remote Keyed Lookups = %s (forced = %s)", boolToStr(remoteKeyedLookups), boolToStr(forcedRemoteKeyedLookups));
     }
-    virtual void abort() override
-    {
-        if (lookupReceiver)
-            lookupReceiver->abort();
-        PARENT::abort();
-    }
 // IThorDataLink
     virtual void start() override
     {
         ActivityTimer s(totalCycles, timeActivities);
         assertex(inputs.ordinality() == 1);
         PARENT::start();
-
-        if (remoteKeyedLookups)
-        {
-            if (!lookupReceiver)
-                lookupReceiver.setown(new CKeyedRemoteLookupReceiver(*this, keyLookupMpTag));
-            lookupReceiver->start();
-        }
 
         keepLimit = helper->getKeepLimit();
         atMost = helper->getJoinLimit();
@@ -2698,8 +2319,6 @@ public:
         if (fetchHandler)
             fetchHandler->stop(true);
         readAheadThread.join();
-        if (lookupReceiver)
-            lookupReceiver->stop();
         ForEachItemIn(h, lookupHandlers)
         {
             CKeyLookupHandler *lookupHandler = lookupHandlers.item(h);
