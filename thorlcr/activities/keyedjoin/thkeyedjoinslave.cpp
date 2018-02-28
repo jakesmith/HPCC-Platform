@@ -1642,13 +1642,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             msg.append(activity.queryId());
             msg.append(fname);
         }
-        void init(CMessageBuffer &msg)
+        void initNext(CMessageBuffer &msg)
         {
             RemoteFilename &rfn = activity.indexRfns[partNo];
             StringBuffer fname;
             rfn.getTail(fname);
 
-            msg.append(kjs_init);
+            msg.append(kjs_continue);
             msg.append(activity.queryId());
             msg.append(fname);
         }

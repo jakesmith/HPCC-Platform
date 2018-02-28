@@ -788,50 +788,111 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
 
     unsigned numSlaves = 0;
 
-    class CLookupContext : public CInterface
+    class CLookupKey
     {
+    protected:
         activity_id id;
         StringAttr fname;
+        unsigned hashv;
+
+        void calcHash()
+        {
+            unsigned h = hashvalue(id, 0);
+            hashv = hashc((const unsigned char *)&id, sizeof(unsigned), h);
+        }
+    public:
+        CLookupKey(activity_id _id, const char *_fname) : id(_id), fname(_fname)
+        {
+            calcHash();
+        }
+        CLookupKey(MemoryBuffer &mb)
+        {
+            mb.read(id);
+            mb.read(fname);
+            calcHash();
+        }
+        CLookupKey(const CLookupKey &other)
+        {
+            id = other.id;
+            fname.set(other.fname);
+            hashv = other.hashv;
+        }
+        unsigned queryHash() const { return hashv; }
+        bool operator==(CLookupKey const &other) const
+        {
+            return (id == other.id) && strsame(fname, other.fname);
+        }
+    };
+    class CLookupContext : public CInterface
+    {
+        CKeyedRemoteLookupReceiver &owner;
+        CLookupKey key;
         Owned<IHThorKeyedJoinArg> helper;
-        Owned<IKeyManager> keyManager;
         Owned<IOutputMetaData> lookupRowOutputMetaData;
         Owned<IOutputRowDeserializer> lookupDeserializer;
         Owned<IOutputRowSerializer> fetchSerializer;
         Owned<IEngineRowAllocator> lookupAllocator, fetchAllocator;
+        Owned<IKeyIndex> keyIndex;
         ICodeContext *codeCtx;
-
     public:
-        CLookupContext(activity_id _id,  const char *_fname, IHThorKeyedJoinArg *_helper, ICodeContext *_codeCtx) : id(_id), fname(_fname), helper(_helper), codeCtx(_codeCtx)
+        CLookupContext(CKeyedRemoteLookupReceiver &_owner, activity_id _id,  const char *_fname, IHThorKeyedJoinArg *_helper, ICodeContext *_codeCtx)
+            : owner(_owner), key(_id, _fname), helper(_helper), codeCtx(_codeCtx)
         {
             lookupRowOutputMetaData.setown(new CPrefixedOutputMeta(sizeof(KeyLookupHeader), helper->queryIndexReadInputRecordSize()));
-            lookupDeserializer.setown(lookupRowOutputMetaData->createDiskDeserializer(codeCtx, id));
-            lookupAllocator.setown(codeCtx->getRowAllocatorEx(lookupRowOutputMetaData, id, (roxiemem::RoxieHeapFlags)roxiemem::RHFpacked|roxiemem::RHFunique));
-            fetchAllocator.setown(codeCtx->getRowAllocatorEx(helper->queryJoinFieldsRecordSize(), id, roxiemem::RHFnone));
-            fetchSerializer.setown(helper->queryJoinFieldsRecordSize()->createDiskSerializer(codeCtx, id));
+            lookupDeserializer.setown(lookupRowOutputMetaData->createDiskDeserializer(codeCtx, key.id));
+            lookupAllocator.setown(codeCtx->getRowAllocatorEx(lookupRowOutputMetaData, key.id, (roxiemem::RoxieHeapFlags)roxiemem::RHFpacked|roxiemem::RHFunique));
+            fetchAllocator.setown(codeCtx->getRowAllocatorEx(helper->queryJoinFieldsRecordSize(), key.id, roxiemem::RHFnone));
+            fetchSerializer.setown(helper->queryJoinFieldsRecordSize()->createDiskSerializer(codeCtx, key.id));
 
             unsigned crc = 0; // JCSMORE
-            Owned<IKeyIndex> keyIndex = createKeyIndex(fname, crc, false, false);
-            keyManager.setown(createLocalKeyManager(helper->queryIndexRecordSize()->queryRecordAccessor(true), keyIndex, nullptr));
+            keyIndex.setown(createKeyIndex(key.fname, crc, false, false));
         }
-        const void *queryFindParam() const { return &id; } // for HT
+        unsigned queryHash() const { return key.queryHash(); }
+        CLookupKey &queryKey() const { return key; }
 
-        inline const char *queryFileName() const { return fname; }
+        inline const char *queryFileName() const { return key.fname; }
         IOutputMetaData *queryOutputMetaData() const { return lookupRowOutputMetaData; }
         IEngineRowAllocator *queryLookupAllocator() const { return lookupAllocator; }
         IOutputRowDeserializer *queryLookupDeserializer() const { return lookupDeserializer; }
         IEngineRowAllocator *queryFetchAllocator() const { return fetchAllocator; }
         IOutputRowSerializer *queryFetchSerializer() const { return fetchSerializer; }
-        inline IKeyManager *queryKeyManager() const { return keyManager; }
+        IKeyManager *getKeyManager()
+        {
+            IKeyManager *kM = owner.getCachedKeyManager(key);
+            if (!kM)
+                kM = createLocalKeyManager(helper->queryIndexRecordSize()->queryRecordAccessor(true), keyIndex, nullptr);
+            return kM;
+        }
         inline IHThorKeyedJoinArg *queryHelper() const { return helper; }
+    };
+    class CKMContainer : public CInterface
+    {
+        CLookupKey key;
+        Linked<CLookupContext> ctx;
+        IArrayOf<IKeyManager> keyManagers;
+    public:
+        CKMContainer(CLookupContext *_ctx, IKeyManager *_keyManager) : ctx(_ctx), key(ctx->queryKey())
+        {
+            push(_keyManager);
+        }
+        inline IKeyManager *pop()
+        {
+            return keyManagers.popGet();
+        }
+        inline void push(IKeyManager *kM)
+        {
+            keyManagers.append(*kM);
+        }
+        inline unsigned count() { return keyManagers.ordinality(); }
     };
     class CLookupRequest : public CSimpleInterface
     {
-        CLookupContext &ctx;
+        Linked<CLookupContext> ctx;
         std::vector<const void *> rows;
         rank_t sender;
         mptag_t replyTag;
     public:
-        CLookupRequest(CLookupContext &_ctx, rank_t _sender, mptag_t _replyTag) : ctx(_ctx), sender(_sender), replyTag(_replyTag)
+        CLookupRequest(CLookupContext *_ctx, rank_t _sender, mptag_t _replyTag) : ctx(_ctx), sender(_sender), replyTag(_replyTag)
         {
         }
         ~CLookupRequest()
@@ -843,13 +904,13 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         {
             rows.push_back(row);
         }
-        inline CLookupContext &queryCtx() const { return ctx; }
+        inline CLookupContext &queryCtx() const { return *ctx; }
         void deserialize(size32_t sz, const void *_requestData)
         {
             MemoryBuffer requestData;
             fastLZDecompressToBuffer(requestData, _requestData);
-            IEngineRowAllocator *allocator = ctx.queryLookupAllocator();
-            IOutputRowDeserializer *deserializer = ctx.queryLookupDeserializer();
+            IEngineRowAllocator *allocator = ctx->queryLookupAllocator();
+            IOutputRowDeserializer *deserializer = ctx->queryLookupDeserializer();
             unsigned count;
             requestData.read(count);
             CThorStreamDeserializerSource d(requestData.remaining(), requestData.readDirect(requestData.remaining()));
@@ -928,8 +989,49 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
             }
         }
     };
+    template <class ET>
+    class CLookupHT : public SuperHashTableOf<ET, CLookupKey>
+    {
+        typedef SuperHashTableOf<ET, CLookupKey> PARENT;
+    public:
+        CLookupContextHT(void) : PARENT() { }
+        CLookupContextHT(unsigned initsize) : PARENT(initsize) { }
+        ~CLookupContextHT() { PARENT::_releaseAll(); }
 
-    OwningSimpleHashTableOf<CLookupContext, activity_id> lookupContexts;
+        inline ET *find(const CLookupKey &fp) const                                   \
+        {
+            return PARENT::find(&fp);
+        }
+        virtual void onAdd(void * et __attribute__((unused))) { }
+        virtual void onRemove(void *_et)
+        {
+            ET *et = static_cast<ET *>(_et);
+            et->Release();
+        }
+        virtual unsigned getHashFromElement(const void *_et) const
+        {
+            ET *et = static_cast<ET *>(_et);
+            return et->queryHash();
+        }
+        virtual unsigned getHashFromFindParam(const void *_fp) const
+        {
+            CLookupKey *fp = static_cast<CLookupKey *>(_fp);
+            return fp->queryHash();
+        }
+        virtual const void *getFindParam(const void *_et) const
+        {
+            ET *et = static_cast<ET *>(_et);
+            return &et->queryKey();
+        }
+        virtual bool matchesFindParam(const void *_et, const void *_fp, unsigned fphash __attribute__((unused))) const
+        {
+            ET *et = static_cast<ET *>(_et);
+            CLookupKey *fp = static_cast<CLookupKey *>(_fp);
+            return et->queryKey() == *fp;
+        }
+    };
+    typedef CLookupHT<CLookupContext> CLookupContextHT;
+    typedef CLookupHT<CKMContainer> CKMContextHT;
 
     class CKeyedRemoteLookupProcessor : public CSimpleInterfaceOf<IInterface>, implements IThreaded
     {
@@ -937,7 +1039,6 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         CThreaded threaded;
         Semaphore sem;
         Owned<CLookupRequest> lookupRequest;
-        IKeyManager *keyManager = nullptr;
         IHThorKeyedJoinArg *helper = nullptr;
         std::vector<const void *> rows;
 
@@ -957,7 +1058,7 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
         {
             memcpy(&header, row, sizeof(HeaderStruct));
         }
-        void processRow(const void *row, CLookupResult &reply)
+        void processRow(const void *row, IKeyManager *keyManager, CLookupResult &reply)
         {
             KeyLookupHeader lookupKeyHeader;
             getHeaderFromRow(row, lookupKeyHeader);
@@ -1046,10 +1147,11 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
                 if (!lookupRequest) // stop
                     break;
                 Owned<CLookupRequest> request = lookupRequest.getClear();
-                keyManager = request->queryCtx().queryKeyManager();
-                helper = request->queryCtx().queryHelper();
+                Owned<IKeyManager> keyManager = request->queryCtx().getKeyManager();
+                CLookupContext &lookupCtx = request->queryCtx();
+                helper = lookupCtx.queryHelper();
 
-                CLookupResult lookupResult(request->queryCtx()); // reply for 1 request row
+                CLookupResult lookupResult(lookupCtx); // reply for 1 request row
 
                 MemoryBuffer replyMb;
                 DelayedMarker<unsigned> countMarker(replyMb);
@@ -1058,7 +1160,7 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
                 {
                     OwnedConstThorRow row = rows[count];
                     rows[count++] = nullptr;
-                    processRow(row, lookupResult);
+                    processRow(row, keyManager, lookupResult);
                     lookupResult.serialize(replyMb);
                     bool last = count == rows.size();
                     if (last || (replyMb.length() >= DEFAULT_KEYLOOKUP_MAXREPLYSZ))
@@ -1071,18 +1173,48 @@ class CKeyedRemoteLookupReceiver : public CSimpleInterface, implements IThreaded
                     }
                     lookupResult.clear();
                 }
-                keyManager = nullptr;
                 helper = nullptr;
+                owner.addToKeyManagerCache(&lookupCtx, keyManager.getClear());
                 owner.addAvailableProcessor(*this);
             }
         }
     };
+    CLookupContextHT cachedLookupContexts;
+    CKMContextHT cachedKMs;
     IArrayOf<CKeyedRemoteLookupProcessor> processors;
     std::vector<CKeyedRemoteLookupProcessor *> availableProcessors;
 
-    CLookupContext *findContext(activity_id id, const char *fname)
+    CLookupContext *ensureLookupContext(CJobBase &job, const CLookupKey &key)
     {
-        lookupContext = lookupContexts.find(id);
+        CLookupContext *lookupContext = cachedLookupContexts.find(key);
+        if (!lookupContext)
+        {
+            lookupContext = createLookupContext(job, key);
+            /* Need to think about:
+             * 1) Capping
+             * 2) Flushing out keys in use?
+             * 3) Clearing all at end
+             * 4) CKMContainer's in use or in CKMCache that link to this context.
+             */
+            cachedLookupContexts.replace(*lookupContext);
+        }
+        return LINK(lookupContext);
+    }
+    CLookupContext *getLookupContext(const CLookupKey &key)
+    {
+        CLookupContext *lookupContext = cachedLookupContexts.find(key);
+        return LINK(lookupContext);
+    }
+    CLookupContext *createLookupContext(CJobBase &job, const CLookupKey &key)
+    {
+        VStringBuffer helperName("fAc%u", (unsigned)key.id);
+        EclHelperFactory helperFactory = (EclHelperFactory) job.queryDllEntry().getEntry(helperName.str());
+        if (!helperFactory)
+            throw makeOsExceptionV(GetLastError(), "Failed to load helper factory method: %s (dll handle = %p)", helperName.str(), job->queryDllEntry().getInstance());
+        Owned<IHThorKeyedJoinArg> helper = static_cast<IHThorKeyedJoinArg *>(helperFactory());
+
+        ICodeContext &codeCtx = job.queryJobChannel(0).querySharedMemCodeContext();
+        return new CLookupContext(*this, key.id, key.fname, helper, &codeCtx);
     }
 public:
     CKeyedRemoteLookupReceiver(CJobListener &_jobs, mptag_t _mpTag)
@@ -1101,6 +1233,27 @@ public:
     ~CKeyedRemoteLookupReceiver()
     {
         stop();
+    }
+    IKeyManager *getCachedKeyManager(const CLookupKey &key)
+    {
+        CKMContainer *kmc = cachedKMs.find(key);
+        if (!kmc)
+            return nullptr;
+        IKeyManager *kM = kmc->pop();
+        if (0 == kmc->count())
+            cachedKMs.removeExact(kmc);
+        return kM;
+    }
+    void addToKeyManagerCache(const CLookupContext *lookupCtx, IKeyManager *kM)
+    {
+        CKMContainer *kmc = cachedKMs.find(lookupCtx->queryKey());
+        if (kmc)
+            kmc->push(kM); // JCSMORE cap. to some max #
+        else
+        {
+            kmc = new CKMContainer(lookupCtx, kM);
+            cachedKMs.replace(*kmc);
+        }
     }
     void addAvailableProcessor(CKeyedRemoteLookupProcessor &processor)
     {
@@ -1195,50 +1348,48 @@ public:
             }
             else
             {
-                CLookupContext *lookupContext = nullptr;
+                Owned<CLookupContext> lookupContext;
                 byte cmd;
                 msg.read(cmd);
                 switch (cmd)
                 {
-                    case kjs_init:
+                    case kjs_open:
                     {
                         CJobSlave *job = jobs.findJob(nullptr);
                         if (!job)
                             throw MakeStringException(0, "No active job");
-                        activity_id actId;
-                        msg.read(actId);
-                        StringAttr indexPartName;
-                        msg.read(indexPartName);
 
-                        VStringBuffer helperName("fAc%u", (unsigned)actId);
-                        EclHelperFactory helperFactory = (EclHelperFactory) job->queryDllEntry().getEntry(helperName.str());
-                        if (!helperFactory)
-                            throw makeOsExceptionV(GetLastError(), "Failed to load helper factory method: %s (dll handle = %p)", helperName.str(), job->queryDllEntry().getInstance());
-                        Owned<IHThorKeyedJoinArg> helper = static_cast<IHThorKeyedJoinArg *>(helperFactory());
+                        CLookupKey key(msg);
 
-                        ICodeContext &codeCtx = job->queryJobChannel(0).querySharedMemCodeContext();
-                        lookupContext = new CLookupContext(actId, indexPartName, helper, &codeCtx);
-
-                        lookupContexts.replace(*lookupContext);
+                        lookupContext.setown(ensureLookupContext(*job, key));
                         break;
                     }
                     case kjs_continue:
                     {
-                        activity_id actId;
-                        msg.read(actId);
-                        StringAttr indexPartName;
-                        msg.read(indexPartName);
-                        lookupContext = findContext(actId, indexPartName);
-                        lookupContext = lookupContexts.find(id);
+                        CLookupKey key(msg);
+                        lookupContext.setown(getLookupContext(key));
                         if (!lookupContext)
                             throwUnexpected(); // JCSMORE - TODO
+                        break;
+                    }
+                    case kjs_close:
+                    {
+                        CLookupKey key(msg);
+                        lookupContext.setown(getLookupContext(key));
+                    }
+                    case kjs_clear:
+                    {
+                        cachedLookupContexts.kill();
                         break;
                     }
                 }
                 size32_t requestSz;
                 msg.read(requestSz);
 
-                Owned<CLookupRequest> lookupRequest = new CLookupRequest(*lookupContext, sender, replyTag);
+                /* NB: request links context (signifying it's in use)
+                 * processor will clear it when done.
+                 */
+                Owned<CLookupRequest> lookupRequest = new CLookupRequest(lookupContext.getClear(), sender, replyTag);
                 lookupRequest->deserialize(requestSz, msg.readDirect(requestSz));
 
                 CKeyedRemoteLookupProcessor *processor = getAvailableProcessor(); // will block if all busy
