@@ -399,21 +399,29 @@ public:
     }
 };
 
+interface IKJService : extends IInterface
+{
+    virtual void start() = 0;
+    virtual void stop() = 0;
+};
 interface ISlaveWatchdog;
 class graphslave_decl CJobSlave : public CJobBase
 {
+    typedef CJobBase PARENT;
     ISlaveWatchdog *watchdog;
     Owned<IPropertyTree> workUnitInfo;
     size32_t oldNodeCacheMem;
     unsigned channelMemoryMB;
+    Owned<IKJService> kjService;
 
 public:
     IMPLEMENT_IINTERFACE;
 
-    CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *workUnitInfo, const char *graphName, ILoadedDllEntry *querySo, mptag_t _mptag, mptag_t _slavemptag);
+    CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *workUnitInfo, const char *graphName, ILoadedDllEntry *querySo, mptag_t _slavemptag, mptag_t _kJServiceTag);
 
     virtual void addChannel(IMPServer *mpServer);
-    virtual void startJob();
+    virtual void startJob() override;
+    virtual void endJob() override;
     const char *queryFindString() const { return key.get(); } // for string HT
 
     virtual IGraphTempHandler *createTempHandler(bool errorOnMissing);

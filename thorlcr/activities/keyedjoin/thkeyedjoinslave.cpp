@@ -1337,7 +1337,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             mb.clear();
             sizeMark.write();
 
-            if (!comm->send(msg, lookupSlave, globalTags[1], LONGTIMEOUT))
+            if (!comm->send(msg, lookupSlave, activity.queryJob().queryKJServiceTag(), LONGTIMEOUT))
                 throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
 
             msg.clear();
@@ -1433,7 +1433,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             if (opened)
             {
                 initClose(msg);
-                if (!comm->send(msg, lookupSlave, globalTags[1], LONGTIMEOUT))
+                if (!comm->send(msg, lookupSlave, activity.queryJob().queryKJServiceTag(), LONGTIMEOUT))
                     throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
                 msg.clear();
                 if (comm->recv(msg, lookupSlave, replyTag))
@@ -1728,7 +1728,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             ICommunicator &comm = queryJob().queryNodeComm();
             for (unsigned s=0; s<queryJob().querySlaves(); s++)
             {
-                if (!comm.send(msg, s+1, globalTags[1], LONGTIMEOUT))
+                if (!comm.send(msg, s+1, queryJob().queryKJServiceTag(), LONGTIMEOUT))
                     throw MakeActivityException(this, 0, "comm send failed");
             }
         }

@@ -1337,8 +1337,8 @@ CJobMaster::CJobMaster(IConstWorkUnit &_workunit, const char *graphName, ILoaded
     sharedAllocator.setown(::createThorAllocator(globalMemoryMB, 0, 1, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
     Owned<IMPServer> mpServer = getMPServer();
     addChannel(mpServer);
-    mpJobTag = allocateMPTag();
     slavemptag = allocateMPTag();
+    kJServiceTag = allocateMPTag();
     slaveMsgHandler = new CSlaveMessageHandler(*this, slavemptag);
     tmpHandler.setown(createTempHandler(true));
     xgmml.set(graphXGMML);
@@ -1348,8 +1348,8 @@ CJobMaster::~CJobMaster()
 {
     if (slaveMsgHandler)
         delete slaveMsgHandler;
-    freeMPTag(mpJobTag);
     freeMPTag(slavemptag);
+    freeMPTag(kJServiceTag);
     tmpHandler.clear();
 }
 
@@ -1549,8 +1549,8 @@ void CJobMaster::sendQuery()
     CriticalBlock b(sendQueryCrit);
     if (querySent) return;
     CMessageBuffer tmp;
-    tmp.append(mpJobTag);
     tmp.append(slavemptag);
+    tmp.append(kJServiceTag);
     tmp.append(queryWuid());
     tmp.append(graphName);
     const char *soName = queryDllEntry().queryName();
