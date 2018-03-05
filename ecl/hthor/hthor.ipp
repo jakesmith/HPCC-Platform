@@ -2253,7 +2253,8 @@ protected:
     MemoryAttr encryptionkey;
     bool persistent;
     bool grouped;
-    unsigned lastFormatCrc = 0;
+    enum ReadType:byte { rt_unknown, rt_binary, rt_csv, rt_xml } readType = rt_unknown;
+
     unsigned __int64 localOffset;
     unsigned __int64 offsetOfPart;
     StringBuffer mangledHelperFileName;
@@ -2263,6 +2264,8 @@ protected:
     Owned<const IDynamicTransform> translator;
     Owned<const IKeyTranslator> keyedTranslator;
     IPointerArrayOf<IOutputMetaData> actualLayouts;  // Do we need to keep more than one?
+    IConstArrayOf<IFieldFilter> fieldFilters;  // These refer to the expected layout
+    RowFilter actualFilter;               // This refers to the actual disk layout
     void close();
     virtual void open();
     void resolve();
@@ -2279,6 +2282,7 @@ protected:
     {
         agent.reportProgress(NULL);
     }
+    bool readRemote() const;
 
 public:
     CHThorDiskReadBaseActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorDiskReadBaseArg &_arg, ThorActivityKind _kind);
@@ -2303,8 +2307,6 @@ public:
 class CHThorBinaryDiskReadBase : public CHThorDiskReadBaseActivity, implements IIndexReadContext
 {
 protected:
-    IConstArrayOf<IFieldFilter> fieldFilters;  // These refer to the expected layout
-    RowFilter actualFilter;               // This refers to the actual disk layout
     IHThorCompoundBaseArg & segHelper;
     Owned<ISourceRowPrefetcher> prefetcher;
     Owned<IOutputRowDeserializer> deserializer;
@@ -2319,7 +2321,7 @@ public:
     virtual void append(IKeySegmentMonitor *segment) override { throwUnexpected(); }
     virtual unsigned ordinality() const override { throwUnexpected(); }
     virtual IKeySegmentMonitor *item(unsigned idx) const override { throwUnexpected();  }
-    virtual void append(FFoption option, IFieldFilter * filter) override;
+    virtual void append(FFoption option, const IFieldFilter * filter) override;
 
 protected:
     virtual void verifyRecordFormatCrc() { ::verifyFormatCrcSuper(helper.getFormatCrc(), ldFile?ldFile->queryDistributedFile():NULL, false, true); }

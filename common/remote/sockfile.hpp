@@ -27,7 +27,7 @@
 #define REMOTE_API DECL_IMPORT
 #endif
 
-#define RFEnoerror      0
+static const unsigned RFEnoerror = 0;
 
 enum ThrottleClass
 {
@@ -60,7 +60,7 @@ interface IRemoteFileServer : extends IInterface
     virtual StringBuffer &getStats(StringBuffer &stats, bool reset) = 0;
 };
 
-#define FILESRV_VERSION 21 // don't forget VERSTRING in sockfile.cpp
+#define FILESRV_VERSION 22 // don't forget VERSTRING in sockfile.cpp
 
 interface IKeyManager;
 interface IDelayedFile;
@@ -99,5 +99,10 @@ extern bool clientAsyncCopyFileSection(const char *uuid,    // from genUUID - mu
 
 extern void clientSetRemoteFileTimeouts(unsigned maxconnecttime,unsigned maxreadtime);
 extern void clientAddSocketToCache(SocketEndpoint &ep,ISocket *socket);
+
+class IOutputMetaData;
+class RowFilter;
+extern IFileIO *createRemoteFilteredFile(SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed);
+
 
 #endif

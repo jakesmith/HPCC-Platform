@@ -76,6 +76,11 @@ static void readUntilTerminator(StringBuffer & out, const char * & in, const cha
 }
 
 
+void readFieldFromFieldFilter(StringBuffer & fieldText, const char * & src)
+{
+    readUntilTerminator(fieldText, src, "=*:");
+}
+
 void deserializeSet(ISetCreator & creator, const char * filter)
 {
     while (*filter)
@@ -1225,12 +1230,12 @@ unsigned SetFieldFilter::queryScore() const
 
 StringBuffer & SetFieldFilter::serialize(StringBuffer & out) const
 {
-    out.append('=');
+    out.append(field).append('=');
     return values->serialize(out);
 }
 MemoryBuffer & SetFieldFilter::serialize(MemoryBuffer & out) const
 {
-    out.append('=');
+    out.appendPacked(field).append('=');
     return values->serialize(out);
 }
 
@@ -1287,13 +1292,13 @@ protected:
 
 StringBuffer & SubStringFieldFilter::serialize(StringBuffer & out) const
 {
-    out.append(':').append(subLength).append("=");
+    out.append(field).append(':').append(subLength).append("=");
     return values->serialize(out);
 }
 
 MemoryBuffer & SubStringFieldFilter::serialize(MemoryBuffer & out) const
 {
-    out.append(':').append(subLength);
+    out.appendPacked(field).append(':').append(subLength);
     return values->serialize(out);
 }
 
@@ -1510,12 +1515,12 @@ public:
 
     virtual StringBuffer & serialize(StringBuffer & out) const override
     {
-        return out.append('*');
+        return out.append(field).append('*');
     }
 
     virtual MemoryBuffer & serialize(MemoryBuffer & out) const override
     {
-        return out.append('*');
+        return out.appendPacked(field).append('*');
     }
 };
 
@@ -1567,6 +1572,18 @@ IFieldFilter * deserializeFieldFilter(unsigned fieldId, const RtlTypeInfo & type
     }
 
     UNIMPLEMENTED_X("Unknown Field Filter");
+}
+
+IFieldFilter * deserializeFieldFilter(const RtlRecord & record, const char * src)
+{
+    StringBuffer fieldText;
+    readFieldFromFieldFilter(fieldText, src);
+    unsigned fieldNum;
+    if (isdigit(fieldText.str()[0]))
+        fieldNum = atoi(fieldText.str());
+    else
+        fieldNum = record.getFieldNum(fieldText);
+    return deserializeFieldFilter(fieldNum, *record.queryType(fieldNum), src);
 }
 
 IFieldFilter * deserializeFieldFilter(unsigned fieldId, const RtlTypeInfo & type, MemoryBuffer & in)
@@ -1632,6 +1649,16 @@ void RowFilter::addFilter(const IFieldFilter & filter)
         numFieldsRequired = fieldNum+1;
 }
 
+void RowFilter::addFilter(const RtlRecord & record, const char * filterText)
+{
+    //assertex(filter.queryField() == filters.ordinality()); //MORE - fill with wild filters and replace existing wild
+    IFieldFilter & filter = *deserializeFieldFilter(record, filterText);
+    filters.append(filter);
+    unsigned fieldNum = filter.queryFieldIndex();
+    if (fieldNum >= numFieldsRequired)
+        numFieldsRequired = fieldNum+1;
+}
+
 bool RowFilter::matches(const RtlRow & row) const
 {
     row.lazyCalcOffsets(numFieldsRequired);
@@ -1649,6 +1676,12 @@ void RowFilter::appendFilters(IConstArrayOf<IFieldFilter> & _filters)
     {
         addFilter(OLINK(_filters.item(i)));
     }
+}
+
+void RowFilter::createSegmentMonitors(IIndexReadContext *irc)
+{
+    ForEachItemIn(i, filters)
+        irc->append(FFkeyed, LINK(&filters.item(i)));
 }
 
 void RowFilter::extractKeyFilter(const RtlRecord & record, IConstArrayOf<IFieldFilter> & keyFilters) const
@@ -1753,7 +1786,6 @@ void RowFilter::remapField(unsigned filterIdx, unsigned newFieldNum)
 {
     filters.replace(*filters.item(filterIdx).remap(newFieldNum), filterIdx);
 }
-
 
 //---------------------------------------------------------------------------------------------------------------------
 
