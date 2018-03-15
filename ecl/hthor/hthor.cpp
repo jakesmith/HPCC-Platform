@@ -8247,19 +8247,13 @@ bool CHThorDiskReadBaseActivity::openNext()
             }
             if (!actualDiskMeta)
                 actualDiskMeta.set(expectedDiskMeta->querySerializedDiskMeta());
-            bool canSerialize = actualDiskMeta->queryTypeInfo()->canSerialize() && projectedDiskMeta->queryTypeInfo()->canSerialize();
-            if (grouped)
-            {
-                actualDiskMeta.setown(new CSuffixedOutputMeta(+1, actualDiskMeta));
-                canSerialize = true;
-            }
-
             keyedTranslator.setown(createKeyTranslator(actualDiskMeta->queryRecordAccessor(true), expectedDiskMeta->queryRecordAccessor(true)));
             if (keyedTranslator && keyedTranslator->needsTranslate())
                 keyedTranslator->translate(actualFilter, fieldFilters);
             else
                 actualFilter.appendFilters(fieldFilters);
 
+            bool canSerialize = actualDiskMeta->queryTypeInfo()->canSerialize() && projectedDiskMeta->queryTypeInfo()->canSerialize();
             for (unsigned copy=0; copy < numCopies; copy++)
             {
                 RemoteFilename rfilename;
@@ -8472,6 +8466,8 @@ CHThorBinaryDiskReadBase::CHThorBinaryDiskReadBase(IAgentContext &_agent, unsign
 void CHThorBinaryDiskReadBase::calcFixedDiskRecordSize()
 {
     fixedDiskRecordSize = actualDiskMeta->getFixedSize();
+    if (grouped)
+        fixedDiskRecordSize += 1;
 }
 
 void CHThorBinaryDiskReadBase::append(FFoption option, const IFieldFilter * filter)
@@ -8588,7 +8584,9 @@ const void *CHThorDiskReadActivity::nextRow()
                     prefetcher->readAhead(prefetchBuffer);
                     const byte * next = prefetchBuffer.queryRow();
                     size32_t sizeRead = prefetchBuffer.queryRowSize();
-                    bool eog = grouped && next[sizeRead-1];
+                    bool eog;
+                    if (grouped)
+                        prefetchBuffer.read(sizeof(eog), &eog);
                     size32_t thisSize;
                     if (segMonitorsMatch(next)) // NOTE - keyed fields are checked pre-translation
                     {

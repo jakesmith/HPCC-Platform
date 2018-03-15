@@ -3698,6 +3698,8 @@ interface IRemoteActivity : extends IInterface
     virtual StringBuffer &getInfoStr(StringBuffer &out) const = 0;
     virtual void serializeCursor(MemoryBuffer &tgt) const = 0;
     virtual void restoreCursor(MemoryBuffer &src) = 0;
+    virtual void setOutputBuffer(MemoryBuffer &tgt) = 0;
+    virtual bool isGrouped() const = 0;
 };
 
 enum OpenFileFlag { of_null=0x0, of_key=0x01 };
@@ -3739,7 +3741,7 @@ class CRemoteDiskReadActivity : public CSimpleInterfaceOf<IRemoteActivity>
     StringAttr fileName;
     Linked<IHThorDiskReadArg> helper;
     MemoryBuffer resultBuffer;
-    MemoryBufferBuilder *outBuilder = nullptr;
+    MemoryBufferBuilder outBuilder;
     CThorContiguousRowBuffer prefetchBuffer;
     IArrayOf<IKeySegmentMonitor> segMonitors;
     Owned<ISourceRowPrefetcher> prefetcher;
@@ -3801,7 +3803,6 @@ class CRemoteDiskReadActivity : public CSimpleInterfaceOf<IRemoteActivity>
             prefetchBuffer.setStream(inputStream);
             prefetcher.setown(helper->queryDiskRecordSize()->createDiskPrefetcher());
 
-            outBuilder = new MemoryBufferBuilder(resultBuffer, helper->queryOutputMeta()->getMinRecordSize());
             chooseN = helper->getChooseNLimit();
             limit = helper->getRowLimit();
         }
@@ -3825,7 +3826,7 @@ class CRemoteDiskReadActivity : public CSimpleInterfaceOf<IRemoteActivity>
     }
 public:
     CRemoteDiskReadActivity(IHThorDiskReadArg &_helper, bool _compressed, bool _grouped)
-        : compressed(_compressed), grouped(_grouped), helper(&_helper), prefetchBuffer(nullptr)
+        : compressed(_compressed), grouped(_grouped), helper(&_helper), prefetchBuffer(nullptr), outBuilder(resultBuffer, _helper.queryOutputMeta()->getMinRecordSize() + _grouped?1:0)
     {
         outMeta.set(helper->queryOutputMeta());
         canMatchAny = helper->canMatchAny();
@@ -3833,8 +3834,6 @@ public:
     }
     ~CRemoteDiskReadActivity()
     {
-        if (outBuilder)
-            delete outBuilder;
     }
     void addFilter(const char *filter)
     {
@@ -3855,25 +3854,27 @@ public:
                     const byte * next = prefetchBuffer.queryRow();
                     size32_t rowSz; // use local var instead of reference param for efficiency
                     if (fieldFilterMatch(next))
-                        rowSz = helper->transform(*outBuilder, next);
+                        rowSz = helper->transform(outBuilder, next);
                     else
                         rowSz = 0;
-                    bool eogPending;
                     if (grouped)
-                        prefetchBuffer.read(sizeof(eogPending), &eogPending);
+                    {
+                        byte *eog = outBuilder.ensureCapacity(rowSz+1, "__eog__") + rowSz; // NB: fieldname unused
+                        prefetchBuffer.read(sizeof(*eog), eog);
+                        ++rowSz;
+                    }
                     prefetchBuffer.finishedRow();
 
                     if (rowSz)
                     {
                         if (processed >=limit)
                         {
-                            resultBuffer.clear();
                             helper->onLimitExceeded();
                             return nullptr;
                         }
-                        retSz = rowSz;
                         processed++;
-                        return resultBuffer.toByteArray();
+                        retSz = rowSz;
+                        return outBuilder.getClear();
                     }
                 }
                 eofSeen = true;
@@ -3906,6 +3907,14 @@ public:
     virtual StringBuffer &getInfoStr(StringBuffer &out) const override
     {
         return out.appendf("diskread[%s]", helper->getFileName());
+    }
+    virtual void setOutputBuffer(MemoryBuffer &tgt) override
+    {
+        outBuilder.setBuffer(tgt);
+    }
+    virtual bool isGrouped() const override
+    {
+        return grouped;
     }
 };
 
@@ -5724,20 +5733,21 @@ public:
         {
             IOutputMetaData *out = outputActivity->queryOutputMeta();
             unsigned __int64 initProcessed = outputActivity->queryProcessed();
+            bool grouped = outputActivity->isGrouped();
             bool eoi=false;
             if (outFmt_Binary == outputFormat)
             {
                 DelayedSizeMarker dataLenMarker(reply); // data length
+                outputActivity->setOutputBuffer(reply);
                 for (unsigned __int64 i=0; i<defaultDaFSNumRecs; i++)
                 {
                     size32_t rowSz;
-                    const void *row = outputActivity->nextRow(rowSz);
+                    const void *row = outputActivity->nextRow(rowSz); // NB: row builder writes directly to reply buffer for effiency
                     if (!row)
                     {
                         eoi = true;
                         break;
                     }
-                    reply.append(rowSz, row);
                 }
                 dataLenMarker.write();
                 DelayedSizeMarker cursorLenMarker(reply); // cursor length
@@ -5756,7 +5766,10 @@ public:
                         eoi = true;
                         break;
                     }
+                    bool eog = grouped ? ((const byte *)row)[rowSz-1] : false;
                     responseWriter->outputBeginNested("Row", true);
+                    if (eog)
+                        responseWriter->outputBool(true, "@eof");
                     out->toXML((const byte *)row, *responseWriter);
                     responseWriter->outputEndNested("Row");
                 }

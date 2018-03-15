@@ -1851,20 +1851,31 @@ bool RtlSimpleIterator::next()
 
 byte * MemoryBufferBuilder::ensureCapacity(size32_t required, const char * fieldName)
 {
+    dbgassertex(buffer);
     if (required > reserved)
     {
-        void * next = buffer.reserve(required-reserved);
+        void * next = buffer->reserve(required-reserved);
         self = (byte *)next - reserved;
         reserved = required;
     }
     return self;
 }
 
+byte *MemoryBufferBuilder::getClear()
+{
+    dbgassertex(buffer);
+    byte *ret = self;
+    self = nullptr;
+    reserved = 0;
+    return ret;
+}
+
 void MemoryBufferBuilder::finishRow(size32_t length)
 {
+    dbgassertex(buffer);
     assertex(length <= reserved);
-    size32_t newLength = (buffer.length() - reserved) + length;
-    buffer.setLength(newLength);
+    size32_t newLength = (buffer->length() - reserved) + length;
+    buffer->setLength(newLength);
     self = NULL;
     reserved = 0;
 }
