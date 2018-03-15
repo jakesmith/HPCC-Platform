@@ -1763,7 +1763,7 @@ public:
             " \"kind\" : \"diskread\",\n"
             " \"fileName\" : \"%s\",\n"
             " \"compressed\" : \"%s\",\n"
-            " \"input_grouped\" : \"%s\""
+            " \"input_grouped\" : \"%s\",\n"
             " \"output_grouped\" : \"%s\"", filename, boolToStr(compressed), boolToStr(grouped), boolToStr(grouped));
         if (fieldFilters.numFilterFields())
         {

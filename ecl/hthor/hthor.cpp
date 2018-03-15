@@ -8268,7 +8268,7 @@ bool CHThorDiskReadBaseActivity::openNext()
                     inputfile.setown(createIFile(rfilename));
                     if (rfilename.isLocal() && (!canSerialize || !readRemote(rfilename)))
                     {
-                        if(compressed)
+                        if (compressed)
                         {
                             Owned<IExpander> eexp;
                             if (encryptionkey.length()!=0)
