@@ -2239,7 +2239,6 @@ protected:
     Owned<IDistributedFilePartIterator> dfsParts;
     Owned<ILocalOrDistributedFile> ldFile;
     Owned<IException> saveOpenExc;
-    size32_t recordsize;
     size32_t fixedDiskRecordSize;
     Owned<IOutputMetaData> actualDiskMeta;
     IOutputMetaData *expectedDiskMeta;

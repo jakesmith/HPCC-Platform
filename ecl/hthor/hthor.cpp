@@ -518,7 +518,7 @@ void CHThorDiskWriteActivity::open()
     serializedOutputMeta.set(input->queryOutputMeta()->querySerializedDiskMeta());//returns outputMeta if serialization not needed
 
     Linked<IRecordSize> groupedMeta = input->queryOutputMeta()->querySerializedDiskMeta();
-    if(grouped)
+    if (grouped)
         groupedMeta.setown(createDeltaRecordSize(groupedMeta, +1));
     blockcompressed = checkIsCompressed(helper.getFlags(), serializedOutputMeta.getFixedSize(), grouped);//TDWnewcompress for new compression, else check for row compression
     void *ekey;
@@ -526,7 +526,8 @@ void CHThorDiskWriteActivity::open()
     helper.getEncryptKey(ekeylen,ekey);
     encrypted = false;
     Owned<ICompressor> ecomp;
-    if (ekeylen!=0) {
+    if (ekeylen!=0)
+    {
         ecomp.setown(createAESCompressor256(ekeylen,ekey));
         memset(ekey,0,ekeylen);
         rtlFree(ekey);
@@ -547,9 +548,9 @@ void CHThorDiskWriteActivity::open()
         diskout->seek(0, IFSend);
 
     unsigned rwFlags = rw_autoflush;
-    if(grouped)
+    if (grouped)
         rwFlags |= rw_grouped;
-    if(!(helper.getFlags() & TDRnocrccheck))
+    if (!(helper.getFlags() & TDRnocrccheck))
         rwFlags |= rw_crc;
     IExtRowWriter * writer = createRowWriter(diskout, rowIf, rwFlags);
     outSeq.setown(writer);
@@ -8009,7 +8010,6 @@ void CHThorDiskReadBaseActivity::ready()
     CHThorActivityBase::ready(); 
 
     grouped = false;
-    recordsize = 0;
     fixedDiskRecordSize = 0;
     eofseen = false;
     opened = false;
@@ -8097,12 +8097,12 @@ void CHThorDiskReadBaseActivity::resolve()
 
 void CHThorDiskReadBaseActivity::gatherInfo(IFileDescriptor * fileDesc)
 {
-    if(fileDesc)
+    if (fileDesc)
     {
         if (!agent.queryResolveFilesLocally())
         {
             grouped = fileDesc->isGrouped();
-            if(grouped != ((helper.getFlags() & TDXgrouped) != 0))
+            if (grouped != ((helper.getFlags() & TDXgrouped) != 0))
             {
                 StringBuffer msg;
                 msg.append("DFS and code generated group info. differs: DFS(").append(grouped ? "grouped" : "ungrouped").append("), CodeGen(").append(grouped ? "ungrouped" : "grouped").append("), using DFS info");
@@ -8119,25 +8119,17 @@ void CHThorDiskReadBaseActivity::gatherInfo(IFileDescriptor * fileDesc)
     }
 
     actualDiskMeta.set(helper.queryDiskRecordSize()->querySerializedDiskMeta());
-    if (grouped)
-        actualDiskMeta.setown(new CSuffixedOutputMeta(+1, actualDiskMeta));
-    if (outputMeta.isFixedSize())
-    {
-        recordsize = outputMeta.getFixedSize();
-        if (grouped)
-            recordsize++;
-    }
-    else
-        recordsize = 0;
+//    if (grouped)
+//        actualDiskMeta.setown(new CSuffixedOutputMeta(+1, actualDiskMeta));
     calcFixedDiskRecordSize();
 
-    if(fileDesc)
+    if (fileDesc)
     {
         compressed = fileDesc->isCompressed(&blockcompressed); //try new decompression, fall back to old unless marked as block
-        if(fixedDiskRecordSize)
+        if (fixedDiskRecordSize)
         {
             size32_t dfsSize = fileDesc->queryProperties().getPropInt("@recordSize");
-            if(!((dfsSize == 0) || (dfsSize == fixedDiskRecordSize) || (grouped && (dfsSize+1 == fixedDiskRecordSize)))) //third option for backwards compatibility, as hthor used to publish @recordSize not including the grouping byte
+            if (!((dfsSize == 0) || (dfsSize == fixedDiskRecordSize) || (grouped && (dfsSize+1 == fixedDiskRecordSize)))) //third option for backwards compatibility, as hthor used to publish @recordSize not including the grouping byte
                 throw MakeStringException(0, "Published record size %d for file %s does not match coded record size %d", dfsSize, mangledHelperFileName.str(), fixedDiskRecordSize);
             if (!compressed && (((helper.getFlags() & TDXcompress) != 0) && (fixedDiskRecordSize >= MIN_ROWCOMPRESS_RECSIZE)))
             {
@@ -8334,7 +8326,6 @@ bool CHThorDiskReadBaseActivity::openNext()
                 translator.clear();
                 keyedTranslator.clear();
             }
-
             calcFixedDiskRecordSize();
             if (dfsParts)
                 dfsParts->next();
@@ -8466,7 +8457,7 @@ CHThorBinaryDiskReadBase::CHThorBinaryDiskReadBase(IAgentContext &_agent, unsign
 void CHThorBinaryDiskReadBase::calcFixedDiskRecordSize()
 {
     fixedDiskRecordSize = actualDiskMeta->getFixedSize();
-    if (grouped)
+    if (fixedDiskRecordSize && grouped)
         fixedDiskRecordSize += 1;
 }
 
@@ -8584,7 +8575,7 @@ const void *CHThorDiskReadActivity::nextRow()
                     prefetcher->readAhead(prefetchBuffer);
                     const byte * next = prefetchBuffer.queryRow();
                     size32_t sizeRead = prefetchBuffer.queryRowSize();
-                    bool eog;
+                    bool eog = false;
                     if (grouped)
                         prefetchBuffer.read(sizeof(eog), &eog);
                     size32_t thisSize;
