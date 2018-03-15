@@ -904,3 +904,9 @@ void enableForceRemoteReads()
     if (!isEmptyString(forceRemotePattern))
         queryDaFileSrvHook()->forceRemote(forceRemotePattern);
 }
+
+bool testForceRemote(const char *path)
+{
+    const char *forceRemotePattern = queryEnvironmentConf().queryProp("forceRemotePattern");
+    return !isEmptyString(forceRemotePattern) && WildMatch(path, forceRemotePattern, false);
+}

@@ -8197,11 +8197,13 @@ void CHThorDiskReadBaseActivity::closepart()
 }
 
 
-bool CHThorDiskReadBaseActivity::readRemote() const
+bool CHThorDiskReadBaseActivity::readRemote(const RemoteFilename &rfn) const
 {
     if (rt_binary != readType) // only binary supported for remote read at the moment.
         return false;
-    return queryEnvironmentConf().getPropBool("forceRemoteFiles");
+    StringBuffer localPath;
+    rfn.getLocalPath(localPath);
+    return testForceRemote(localPath);
 }
 
 bool CHThorDiskReadBaseActivity::openNext()
@@ -8247,7 +8249,10 @@ bool CHThorDiskReadBaseActivity::openNext()
                 actualDiskMeta.set(expectedDiskMeta->querySerializedDiskMeta());
             bool canSerialize = actualDiskMeta->queryTypeInfo()->canSerialize() && projectedDiskMeta->queryTypeInfo()->canSerialize();
             if (grouped)
+            {
                 actualDiskMeta.setown(new CSuffixedOutputMeta(+1, actualDiskMeta));
+                canSerialize = true;
+            }
 
             keyedTranslator.setown(createKeyTranslator(actualDiskMeta->queryRecordAccessor(true), expectedDiskMeta->queryRecordAccessor(true)));
             if (keyedTranslator && keyedTranslator->needsTranslate())
@@ -8267,7 +8272,7 @@ bool CHThorDiskReadBaseActivity::openNext()
                 try
                 {
                     inputfile.setown(createIFile(rfilename));
-                    if (rfilename.isLocal() && (!readRemote() || !canSerialize))
+                    if (rfilename.isLocal() && (!canSerialize || !readRemote(rfilename)))
                     {
                         if(compressed)
                         {
@@ -8292,7 +8297,7 @@ bool CHThorDiskReadBaseActivity::openNext()
                         setDafsEndpointPort(ep);
                         StringBuffer path;
                         rfilename.getLocalPath(path);
-                        inputfileio.setown(createRemoteFilteredFile(ep, path, actualDiskMeta, projectedDiskMeta, actualFilter, compressed));
+                        inputfileio.setown(createRemoteFilteredFile(ep, path, actualDiskMeta, projectedDiskMeta, actualFilter, compressed, grouped));
                         if (inputfileio)
                         {
                             actualDiskMeta.set(projectedDiskMeta);

@@ -41,8 +41,8 @@ class CDeserializedOutputMetaData : public COutputMetaData
 {
 public:
     CDeserializedOutputMetaData(MemoryBuffer &binInfo, bool isGrouped, IThorIndexCallback *callback);
-    CDeserializedOutputMetaData(IPropertyTree &jsonInfo, IThorIndexCallback *callback);
-    CDeserializedOutputMetaData(const char *json, IThorIndexCallback *callback);
+    CDeserializedOutputMetaData(IPropertyTree &jsonInfo, bool isGrouped, IThorIndexCallback *callback);
+    CDeserializedOutputMetaData(const char *json, bool isGrouped, IThorIndexCallback *callback);
 
     virtual const RtlTypeInfo * queryTypeInfo() const override { return typeInfo; }
     virtual unsigned getMetaFlags() override { return flags; }
@@ -61,16 +61,20 @@ CDeserializedOutputMetaData::CDeserializedOutputMetaData(MemoryBuffer &binInfo, 
         flags |= MDFgrouped;
 }
 
-CDeserializedOutputMetaData::CDeserializedOutputMetaData(IPropertyTree &jsonInfo, IThorIndexCallback *callback)
+CDeserializedOutputMetaData::CDeserializedOutputMetaData(IPropertyTree &jsonInfo, bool isGrouped, IThorIndexCallback *callback)
 {
     deserializer.setown(createRtlFieldTypeDeserializer(callback));
     typeInfo = deserializer->deserialize(jsonInfo);
+    if (isGrouped)
+        flags |= MDFgrouped;
 }
 
-CDeserializedOutputMetaData::CDeserializedOutputMetaData(const char *json, IThorIndexCallback *callback)
+CDeserializedOutputMetaData::CDeserializedOutputMetaData(const char *json, bool isGrouped, IThorIndexCallback *callback)
 {
     deserializer.setown(createRtlFieldTypeDeserializer(callback));
     typeInfo = deserializer->deserialize(json);
+    if (isGrouped)
+        flags |= MDFgrouped;
 }
 
 extern ECLRTL_API IOutputMetaData *createTypeInfoOutputMetaData(MemoryBuffer &binInfo, bool isGrouped, IThorIndexCallback *callback)
@@ -78,14 +82,14 @@ extern ECLRTL_API IOutputMetaData *createTypeInfoOutputMetaData(MemoryBuffer &bi
     return new CDeserializedOutputMetaData(binInfo, isGrouped, callback);
 }
 
-extern ECLRTL_API IOutputMetaData *createTypeInfoOutputMetaData(IPropertyTree &jsonInfo, IThorIndexCallback *callback)
+extern ECLRTL_API IOutputMetaData *createTypeInfoOutputMetaData(IPropertyTree &jsonInfo, bool isGrouped, IThorIndexCallback *callback)
 {
-    return new CDeserializedOutputMetaData(jsonInfo, callback);
+    return new CDeserializedOutputMetaData(jsonInfo, isGrouped, callback);
 }
 
-extern ECLRTL_API IOutputMetaData *createTypeInfoOutputMetaData(const char *json, IThorIndexCallback *callback)
+extern ECLRTL_API IOutputMetaData *createTypeInfoOutputMetaData(const char *json, bool isGrouped, IThorIndexCallback *callback)
 {
-    return new CDeserializedOutputMetaData(json, callback);
+    return new CDeserializedOutputMetaData(json, isGrouped, callback);
 }
 //---------------------------------------------------------------------------------------------------------------------
 

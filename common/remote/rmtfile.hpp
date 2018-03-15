@@ -60,6 +60,7 @@ extern REMOTE_API unsigned getDaliServixVersion(const IpAddress &ip,StringBuffer
 extern REMOTE_API unsigned getDaliServixVersion(const SocketEndpoint &ep,StringBuffer &ver);
 extern REMOTE_API DAFS_OS getDaliServixOs(const SocketEndpoint &ep);
 extern REMOTE_API void enableForceRemoteReads(); // forces file reads to be remote reads if they match environment setting 'forceRemotePattern' pattern.
+extern REMOTE_API bool testForceRemote(const char *path); // return true if forceRemote setup/pattern will make this path a remote read.
 
 
 extern REMOTE_API void setLocalMountRedirect(const IpAddress &ip,const char *dir,const char *mountdir);

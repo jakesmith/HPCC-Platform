@@ -2282,7 +2282,7 @@ protected:
     {
         agent.reportProgress(NULL);
     }
-    bool readRemote() const;
+    bool readRemote(const RemoteFilename &rfn) const;
 
 public:
     CHThorDiskReadBaseActivity(IAgentContext &agent, unsigned _activityId, unsigned _subgraphId, IHThorDiskReadBaseArg &_arg, ThorActivityKind _kind);

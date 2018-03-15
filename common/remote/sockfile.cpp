@@ -345,10 +345,10 @@ enum
     RFCreadfilteredindex,    // No longer used
     RFCreadfilteredindexcount,
     RFCreadfilteredindexblob,
-    RFCmaxnormal,
 // 2.2
+    RFCStreamRead,
     RFCStreamReadTestSocket = '{',
-    RFCStreamRead = 200, // Make fixed/known constant for use by external clients (e.g. java)
+    RFCmaxnormal,
     RFCmax,
     RFCunknown = 255 // 0 would have been more sensible, but can't break backward compatibility
 };
@@ -400,6 +400,7 @@ const char *RFCStrings[] =
     RFCText(RFCreadfilteredindex),
     RFCText(RFCreadfilteredcount),
     RFCText(RFCreadfilteredblob),
+    RFCText(RFCStreamRead),
     RFCText(RFCunknown),
 };
 static const char *getRFCText(RemoteFileCommandType cmd)
@@ -408,8 +409,9 @@ static const char *getRFCText(RemoteFileCommandType cmd)
         return "RFCStreamReadTestSocket";
     else
     {
-        if (cmd > RFCmaxnormal)
-            cmd = RFCmaxnormal;
+        unsigned elems = sizeof(RFCStrings) / sizeof(RFCStrings[0]);
+        if (cmd >= (sizeof(RFCStrings) / sizeof(RFCStrings[0])))
+            cmd = RFCunknown;
         return RFCStrings[cmd];
     }
 }
@@ -1751,7 +1753,7 @@ public:
     IMPLEMENT_IINTERFACE;
     // Really a stream, but life (maybe) easier elsewhere if looks like a file
     // Sometime should refactor to be based on ISerialStream instead - or maybe IRowStream.
-    CRemoteFilteredFileIO(SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed)
+    CRemoteFilteredFileIO(SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped)
     : CRemoteBase(ep, filename)
     {
         request.appendf("{\n"
@@ -1759,7 +1761,8 @@ public:
             "\"node\" : {\n"
             " \"kind\" : \"diskread\",\n"
             " \"fileName\" : \"%s\",\n"
-            " \"compressed\" : \"%s\"", filename, compressed ? "true" : "false");
+            " \"compressed\" : \"%s\",\n"
+            " \"input_grouped\" : \"%s\"", filename, boolToStr(compressed), boolToStr(grouped));
         if (fieldFilters.numFilterFields())
         {
             request.append(",\n \"keyfilter\" : [\n  ");
@@ -1904,8 +1907,8 @@ protected:
 class CRemoteFilteredRowStream : public CRemoteFilteredFileIO, implements IRowStream
 {
 public:
-    CRemoteFilteredRowStream(const RtlRecord &_recInfo, SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed)
-    : CRemoteFilteredFileIO(ep, filename, actual, projected, fieldFilters, compressed), recInfo(_recInfo)
+    CRemoteFilteredRowStream(const RtlRecord &_recInfo, SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped)
+    : CRemoteFilteredFileIO(ep, filename, actual, projected, fieldFilters, compressed, grouped), recInfo(_recInfo)
     {}
     virtual const byte *queryNextRow()  // NOTE - rows returned must NOT be freed
     {
@@ -1927,11 +1930,11 @@ protected:
     const RtlRecord &recInfo;
 };
 
-extern IFileIO *createRemoteFilteredFile(SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed)
+extern IFileIO *createRemoteFilteredFile(SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped)
 {
     try
     {
-        return new CRemoteFilteredFileIO(ep, filename, actual, projected, fieldFilters, compressed);
+        return new CRemoteFilteredFileIO(ep, filename, actual, projected, fieldFilters, compressed, grouped);
     }
     catch (IException *e)
     {
@@ -3718,7 +3721,7 @@ static IOutputMetaData *getTypeInfoOutputMetaData(IPropertyTree &actNode, const 
 {
     IPropertyTree *json = actNode.queryPropTree(typePropName);
     if (json)
-        return createTypeInfoOutputMetaData(*json, nullptr);
+        return createTypeInfoOutputMetaData(*json, grouped, nullptr);
     else
     {
         StringBuffer binTypePropName(typePropName);
@@ -3748,6 +3751,7 @@ class CRemoteDiskReadActivity : public CSimpleInterfaceOf<IRemoteActivity>
     unsigned __int64 processed = 0;
     unsigned __int64 startPos = 0;
     bool compressed = false;
+    bool grouped = false;
     bool opened = false;
     bool eofSeen = false;
     bool cursorDirty = false;
@@ -3820,8 +3824,8 @@ class CRemoteDiskReadActivity : public CSimpleInterfaceOf<IRemoteActivity>
             return true;
     }
 public:
-    CRemoteDiskReadActivity(IHThorDiskReadArg &_helper, bool _compressed)
-        : compressed(_compressed), helper(&_helper), prefetchBuffer(nullptr)
+    CRemoteDiskReadActivity(IHThorDiskReadArg &_helper, bool _compressed, bool _grouped)
+        : compressed(_compressed), grouped(_grouped), helper(&_helper), prefetchBuffer(nullptr)
     {
         outMeta.set(helper->queryOutputMeta());
         canMatchAny = helper->canMatchAny();
@@ -3855,6 +3859,9 @@ public:
                     else
                         rowSz = 0;
                     prefetchBuffer.finishedRow();
+                    bool eogPending;
+                    if (grouped)
+                        prefetchBuffer.read(sizeof(eogPending), &eogPending);
 
                     if (rowSz)
                     {
@@ -3917,7 +3924,7 @@ IRemoteActivity *createRemoteDiskRead(IPropertyTree &actNode)
     if (!outMeta)
         outMeta.set(inMeta);
     Owned<IHThorDiskReadArg> helper = createDiskReadArg(fileName, inMeta.getClear(), outMeta.getClear(), chooseN, skipN, rowLimit);
-    Owned<CRemoteDiskReadActivity> ret = new CRemoteDiskReadActivity(*helper, compressed);
+    Owned<CRemoteDiskReadActivity> ret = new CRemoteDiskReadActivity(*helper, compressed, inputGrouped);
     Owned<IPropertyTreeIterator> filterIter = actNode.getElements("keyfilter");
     ForEach(*filterIter)
         ret->addFilter(filterIter->query().queryProp(nullptr));

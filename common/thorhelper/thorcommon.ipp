@@ -354,6 +354,7 @@ public:
     virtual unsigned getVersion() const { return original->getVersion(); }
 
     virtual unsigned getMetaFlags() { return original->getMetaFlags(); }
+    virtual const RtlTypeInfo * queryTypeInfo() const { return original->queryTypeInfo(); }
     virtual void destruct(byte * self) { original->destruct(self+offset); }
     virtual IOutputRowSerializer * createDiskSerializer(ICodeContext * ctx, unsigned activityId)
     {
@@ -492,6 +493,7 @@ public:
     virtual unsigned getVersion() const { return original->getVersion(); }
 
     virtual unsigned getMetaFlags() { return original->getMetaFlags(); }
+    virtual const RtlTypeInfo * queryTypeInfo() const { return original->queryTypeInfo(); }
     virtual void destruct(byte * self) { original->destruct(self); }
     virtual IOutputRowSerializer * createDiskSerializer(ICodeContext * ctx, unsigned activityId)
     {

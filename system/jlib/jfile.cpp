@@ -4103,11 +4103,6 @@ IFile * createIFile(const char * filename)
     if (ret)
         return ret;
 
-    // NB: This is forcing OS path access if url begins "\\"
-    bool linremote=(memcmp(filename,"//",2)==0);
-    if (!linremote&&(memcmp(filename,"\\\\",2)!=0)) // see if remote looking
-        return new CFile(filename);
-
     RemoteFilename rfn;
     rfn.setRemotePath(filename);
 
@@ -4117,6 +4112,12 @@ IFile * createIFile(const char * filename)
     ret = createIFileByHook(rfn);           // use daliservix in preference
     if (ret)
         return ret;
+
+    // NB: This is forcing OS path access if not a url beginning '//' or '\\'
+    bool linremote=(memcmp(filename,"//",2)==0);
+    if (!linremote&&(memcmp(filename,"\\\\",2)!=0)) // see if remote looking
+        return new CFile(filename);
+
 #ifdef _WIN32
     StringBuffer tmplocal;
     if (linremote||(rfn.queryEndpoint().port!=0)) {
