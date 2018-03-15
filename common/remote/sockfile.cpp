@@ -3858,10 +3858,10 @@ public:
                         rowSz = helper->transform(*outBuilder, next);
                     else
                         rowSz = 0;
-                    prefetchBuffer.finishedRow();
                     bool eogPending;
                     if (grouped)
                         prefetchBuffer.read(sizeof(eogPending), &eogPending);
+                    prefetchBuffer.finishedRow();
 
                     if (rowSz)
                     {
