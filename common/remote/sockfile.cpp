@@ -1756,13 +1756,15 @@ public:
     CRemoteFilteredFileIO(SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped)
     : CRemoteBase(ep, filename)
     {
+        // NB: input_grouped == output_grouped for now, but may want output to be ungrouped
         request.appendf("{\n"
             "\"format\" : \"binary\",\n"
             "\"node\" : {\n"
             " \"kind\" : \"diskread\",\n"
             " \"fileName\" : \"%s\",\n"
             " \"compressed\" : \"%s\",\n"
-            " \"input_grouped\" : \"%s\"", filename, boolToStr(compressed), boolToStr(grouped));
+            " \"input_grouped\" : \"%s\""
+            " \"output_grouped\" : \"%s\"", filename, boolToStr(compressed), boolToStr(grouped), boolToStr(grouped));
         if (fieldFilters.numFilterFields())
         {
             request.append(",\n \"keyfilter\" : [\n  ");
@@ -3753,7 +3755,8 @@ class CRemoteDiskReadActivity : public CSimpleInterfaceOf<IRemoteActivity>
     unsigned __int64 processed = 0;
     unsigned __int64 startPos = 0;
     bool compressed = false;
-    bool grouped = false;
+    bool inputGrouped = false;
+    bool outputGrouped = false;
     bool opened = false;
     bool eofSeen = false;
     bool cursorDirty = false;
@@ -3825,8 +3828,8 @@ class CRemoteDiskReadActivity : public CSimpleInterfaceOf<IRemoteActivity>
             return true;
     }
 public:
-    CRemoteDiskReadActivity(IHThorDiskReadArg &_helper, bool _compressed, bool _grouped)
-        : compressed(_compressed), grouped(_grouped), helper(&_helper), prefetchBuffer(nullptr), outBuilder(resultBuffer, _helper.queryOutputMeta()->getMinRecordSize() + _grouped?1:0)
+    CRemoteDiskReadActivity(IHThorDiskReadArg &_helper, bool _compressed, bool _inputGrouped, bool _outputGrouped)
+        : compressed(_compressed), inputGrouped(_inputGrouped), outputGrouped(_outputGrouped), helper(&_helper), prefetchBuffer(nullptr), outBuilder(resultBuffer, _helper.queryOutputMeta()->getMinRecordSize() + _outputGrouped?1:0)
     {
         outMeta.set(helper->queryOutputMeta());
         canMatchAny = helper->canMatchAny();
@@ -3857,11 +3860,19 @@ public:
                         rowSz = helper->transform(outBuilder, next);
                     else
                         rowSz = 0;
-                    if (grouped)
+                    if (inputGrouped)
                     {
-                        byte *eog = outBuilder.ensureCapacity(rowSz+1, "__eog__") + rowSz; // NB: fieldname unused
-                        prefetchBuffer.read(sizeof(*eog), eog);
-                        ++rowSz;
+                        if (outputGrouped)
+                        {
+                            byte *eog = outBuilder.ensureCapacity(rowSz+1, "__eog__") + rowSz; // NB: fieldname unused
+                            prefetchBuffer.read(sizeof(*eog), eog);
+                            ++rowSz;
+                        }
+                        else
+                        {
+                            bool eog;
+                            prefetchBuffer.read(sizeof(eog), &eog);
+                        }
                     }
                     prefetchBuffer.finishedRow();
 
@@ -3914,7 +3925,7 @@ public:
     }
     virtual bool isGrouped() const override
     {
-        return grouped;
+        return outputGrouped;
     }
 };
 
@@ -3928,12 +3939,14 @@ IRemoteActivity *createRemoteDiskRead(IPropertyTree &actNode)
 
     bool inputGrouped = actNode.getPropBool("input_grouped", false);
     bool outputGrouped = actNode.getPropBool("output_grouped", false);
+    if (!inputGrouped && outputGrouped)
+        outputGrouped = false; // perhaps should fire error
     Owned<IOutputMetaData> inMeta = getTypeInfoOutputMetaData(actNode, "input", inputGrouped);
     Owned<IOutputMetaData> outMeta = getTypeInfoOutputMetaData(actNode, "output", outputGrouped);
     if (!outMeta)
         outMeta.set(inMeta);
     Owned<IHThorDiskReadArg> helper = createDiskReadArg(fileName, inMeta.getClear(), outMeta.getClear(), chooseN, skipN, rowLimit);
-    Owned<CRemoteDiskReadActivity> ret = new CRemoteDiskReadActivity(*helper, compressed, inputGrouped);
+    Owned<CRemoteDiskReadActivity> ret = new CRemoteDiskReadActivity(*helper, compressed, inputGrouped, outputGrouped);
     Owned<IPropertyTreeIterator> filterIter = actNode.getElements("keyfilter");
     ForEach(*filterIter)
         ret->addFilter(filterIter->query().queryProp(nullptr));
