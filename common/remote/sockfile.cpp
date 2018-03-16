@@ -3761,7 +3761,7 @@ class CRemoteDiskReadActivity : public CSimpleInterfaceOf<IRemoteActivity>
     bool eofSeen = false;
     bool cursorDirty = false;
     bool canMatchAny = false;
-    bool needTransform = true;
+    bool eogPending = false;
     const RtlRecord *record = nullptr;
     RtlDynRow *filterRow = nullptr;
     RowFilter actualFilter;
@@ -3829,7 +3829,7 @@ class CRemoteDiskReadActivity : public CSimpleInterfaceOf<IRemoteActivity>
     }
 public:
     CRemoteDiskReadActivity(IHThorDiskReadArg &_helper, bool _compressed, bool _inputGrouped, bool _outputGrouped)
-        : compressed(_compressed), inputGrouped(_inputGrouped), outputGrouped(_outputGrouped), helper(&_helper), prefetchBuffer(nullptr), outBuilder(resultBuffer, _helper.queryOutputMeta()->getMinRecordSize() + _outputGrouped?1:0)
+        : compressed(_compressed), inputGrouped(_inputGrouped), outputGrouped(_outputGrouped), helper(&_helper), prefetchBuffer(nullptr), outBuilder(resultBuffer, _helper.queryOutputMeta()->getMinRecordSize())
     {
         outMeta.set(helper->queryOutputMeta());
         canMatchAny = helper->canMatchAny();
@@ -3847,49 +3847,83 @@ public:
     virtual const void *nextRow(size32_t &retSz) override
     {
         checkOpen();
-        if (needTransform)
+        while (!eofSeen && ((chooseN == 0) || (processed < chooseN)))
         {
-            while (!eofSeen && ((chooseN == 0) || (processed < chooseN)))
+            while (!prefetchBuffer.eos())
             {
-                while (!prefetchBuffer.eos())
+                prefetcher->readAhead(prefetchBuffer);
+                const byte *next = prefetchBuffer.queryRow();
+                bool eog;
+                if (inputGrouped)
+                    prefetchBuffer.read(sizeof(eog), &eog);
+                prefetchBuffer.finishedRow();
+                size32_t rowSz; // use local var instead of reference param for efficiency
+                if (fieldFilterMatch(next))
+                    rowSz = helper->transform(outBuilder, next);
+                else
+                    rowSz = 0;
+                outBuilder.finishRow(rowSz);
+                if (rowSz)
                 {
-                    prefetcher->readAhead(prefetchBuffer);
-                    const byte * next = prefetchBuffer.queryRow();
-                    size32_t rowSz; // use local var instead of reference param for efficiency
-                    if (fieldFilterMatch(next))
-                        rowSz = helper->transform(outBuilder, next);
-                    else
-                        rowSz = 0;
-                    if (inputGrouped)
+                    if (processed >=limit)
                     {
-                        if (outputGrouped)
-                        {
-                            byte *eog = outBuilder.ensureCapacity(rowSz+1, "__eog__") + rowSz; // NB: fieldname unused
-                            prefetchBuffer.read(sizeof(*eog), eog);
-                            ++rowSz;
-                        }
-                        else
-                        {
-                            bool eog;
-                            prefetchBuffer.read(sizeof(eog), &eog);
-                        }
+                        helper->onLimitExceeded();
+                        return nullptr;
                     }
-                    prefetchBuffer.finishedRow();
-
-                    if (rowSz)
-                    {
-                        if (processed >=limit)
-                        {
-                            helper->onLimitExceeded();
-                            return nullptr;
-                        }
-                        processed++;
-                        retSz = rowSz;
-                        return outBuilder.getClear();
-                    }
+                    processed++;
+                    retSz = rowSz;
+                    return outBuilder.getClear();
                 }
-                eofSeen = true;
             }
+            eofSeen = true;
+        }
+        close();
+        retSz = 0;
+        return nullptr;
+    }
+    const void *nextGroupedRow(size32_t &retSz)
+    {
+        checkOpen();
+        while (!eofSeen && ((chooseN == 0) || (processed < chooseN)))
+        {
+            while (!prefetchBuffer.eos())
+            {
+                prefetcher->readAhead(prefetchBuffer);
+                const byte *next = prefetchBuffer.queryRow();
+                bool eog;
+                prefetchBuffer.read(sizeof(eog), &eog);
+                prefetchBuffer.finishedRow();
+                size32_t rowSz; // use local var instead of reference param for efficiency
+                if (fieldFilterMatch(next))
+                {
+                    if (outputGrouped && 0 != processed)
+                    {
+                        prefetchBuffer.append(pendingEog);
+                        pendingEog = false;
+                    }
+                    rowSz = helper->transform(outBuilder, next);
+                }
+                else
+                    rowSz = 0;
+                outBuilder.finishRow(rowSz);
+
+                if (rowSz)
+                {
+                    if (processed >=limit)
+                    {
+                        helper->onLimitExceeded();
+                        return nullptr;
+                    }
+                    processed++;
+                    if (outputGrouped && filterRow) // eog's could be pending
+                    {
+
+                    }
+                    retSz = rowSz;
+                    return outBuilder.getClear();
+                }
+            }
+            eofSeen = true;
         }
         close();
         retSz = 0;
