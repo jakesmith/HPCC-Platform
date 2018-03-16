@@ -8119,10 +8119,7 @@ void CHThorDiskReadBaseActivity::gatherInfo(IFileDescriptor * fileDesc)
     }
 
     actualDiskMeta.set(helper.queryDiskRecordSize()->querySerializedDiskMeta());
-//    if (grouped)
-//        actualDiskMeta.setown(new CSuffixedOutputMeta(+1, actualDiskMeta));
     calcFixedDiskRecordSize();
-
     if (fileDesc)
     {
         compressed = fileDesc->isCompressed(&blockcompressed); //try new decompression, fall back to old unless marked as block
