@@ -2676,6 +2676,8 @@ public:
 
 CActivityBase *createKeyedJoinSlave(CGraphElementBase *container) 
 { 
+    if (container->getOptBool("legacykj"))
+        return LegacyKJ::createKeyedJoinSlave(container);
     return new CKeyedJoinSlave(container);
 }
 
