@@ -421,7 +421,7 @@ void getHeaderFromRow(const void *row, HeaderStruct &header)
     memcpy(&header, row, sizeof(HeaderStruct));
 }
 enum GroupFlags:unsigned { gf_null=0x0, gf_limitatmost=0x01, gf_limitabort=0x02, gf_eog=0x04, gf_head=0x08 };
-enum KJServiceCmds:byte { kjs_nop, kjs_open, kjs_read, kjs_close, kjs_fetch, kjs_fetchclose };
+enum KJServiceCmds:byte { kjs_nop, kjs_open, kjs_read, kjs_close, kjs_fetchopen, kjs_fetchread, kjs_fetchclose };
 enum KJFetchFlags:byte { kjf_nop=0x0, kjf_compressed=0x1, kjf_encrypted=0x2 };
 interface ISlaveWatchdog;
 class graphslave_decl CJobSlave : public CJobBase

@@ -17,6 +17,9 @@
 
 #include <platform.h>
 
+#include <type_traits>
+#include <unordered_map>
+
 #include "jlib.hpp"
 #include "jexcept.hpp"
 #include "jthread.hpp"
@@ -47,8 +50,7 @@
 #include "thcompressutil.hpp"
 #include "dalienv.hpp"
 #include "eclhelper_dyn.hpp"
-#include <type_traits>
-
+#include "rtlcommon.hpp"
 
 //---------------------------------------------------------------------------
 
@@ -146,6 +148,27 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         {
             return (id == other.id) && (crc == other.crc) && strsame(fname, other.fname);
         }
+        const char *getTracing(StringBuffer &tracing) const
+        {
+            return tracing.append(fname);
+        }
+    };
+    struct FetchKey
+    {
+        activity_id id;
+        unsigned partNo;
+        unsigned slave;
+        FetchKey(MemoryBuffer &mb, unsigned _slave) : slave(_slave)
+        {
+            mb.read(id);
+            mb.read(partNo);
+        }
+
+        bool operator==(FetchKey const &other) const { return id==other.id && partNo==other.partNo && slave==other.slave; }
+        const char *getTracing(StringBuffer &tracing) const
+        {
+            return tracing.appendf("actId=%u, partNo=%u, slave=%u", id, partNo, slave);
+        }
     };
     class CActivityContext : public CInterface
     {
@@ -171,6 +194,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         IPointerArrayOf<IFileIO> openFetchFiles;
         bool encrypted = false;
         bool compressed = false;
+        size32_t fetchInMinSz = 0;
     public:
         CActivityContext(CKJService &_service, activity_id _id, IHThorKeyedJoinArg *_helper, ICodeContext *_codeCtx)
             : service(_service), id(_id), helper(_helper), codeCtx(_codeCtx)
@@ -193,6 +217,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
 
                 fetchDiskAllocator.setown(codeCtx->getRowAllocatorEx(helper->queryDiskRecordSize(), id, (roxiemem::RoxieHeapFlags)roxiemem::RHFpacked|roxiemem::RHFunique));
                 fetchDiskDeserializer.setown(helper->queryDiskRecordSize()->createDiskDeserializer(codeCtx, id));
+                fetchInMinSz = helper->queryFetchInputRecordSize()->getMinRecordSize();
             }
         }
         ~CActivityContext()
@@ -229,7 +254,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             compressed = _flags & kjf_compressed;
             encrypted = _flags & kjf_encrypted;
         }
-        unsigned getNumFetchFiles() const { return fetchFilenames.ordinality(); }
         IFileIO *getFetchFileIO(unsigned part)
         {
             CriticalBlock b(crit);
@@ -273,12 +297,18 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             openFetchFiles.replace(fileIO, part);
             return LINK(fileIO);
         }
+        size32_t queryFetchInMinSize() const { return fetchInMinSz; }
     };
     class CContext : public CInterface
     {
     protected:
         CKJService &service;
         Linked<CActivityContext> activityCtx;
+        RecordTranslationMode translationMode = RecordTranslationMode::None;
+        Owned<IOutputMetaData> publishedFormat, projectedFormat, expectedFormat;
+        unsigned publishedFormatCrc = 0, expectedFormatCrc = 0;
+        Owned<const IDynamicTransform> translator;
+        Owned<ISourceRowPrefetcher> prefetcher;
     public:
         CContext(CKJService &_service, CActivityContext *_activityCtx) : service(_service), activityCtx(_activityCtx)
         {
@@ -288,33 +318,71 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             service.freeActivityContext(activityCtx.getClear());
         }
         CActivityContext *queryActivityCtx() const { return activityCtx; }
+        void setTranslation(RecordTranslationMode _translationMode, IOutputMetaData *_publishedFormat, unsigned _publishedFormatCrc, IOutputMetaData *_projectedFormat)
+        {
+            dbgassertex(expectedFormatCrc); // translation mode wouldn't have been set unless available
+            translationMode = _translationMode;
+            publishedFormat.set(_publishedFormat);
+            publishedFormatCrc = _publishedFormatCrc;
+            projectedFormat.set(_projectedFormat);
+        }
+        const IDynamicTransform *queryTranslator(const char *tracing)
+        {
+            if (RecordTranslationMode::None == translationMode)
+                return nullptr;
+            else if (!translator)
+            {
+                if (RecordTranslationMode::AlwaysDisk == translationMode)
+                    translator.setown(createRecordTranslator(projectedFormat->queryRecordAccessor(true), publishedFormat->queryRecordAccessor(true)));
+                else if (RecordTranslationMode::AlwaysECL == translationMode)
+                    translator.setown(createRecordTranslator(projectedFormat->queryRecordAccessor(true), expectedFormat->queryRecordAccessor(true)));
+                else if (publishedFormatCrc && publishedFormatCrc != expectedFormatCrc)
+                {
+                    if (!projectedFormat)
+                        throw MakeStringException(0, "Record layout mismatch for: %s", tracing);
+                    translator.setown(createRecordTranslator(projectedFormat->queryRecordAccessor(true), publishedFormat->queryRecordAccessor(true)));
+                    if (!translator->canTranslate())
+                        throw MakeStringException(0, "Untranslatable record layout mismatch detected for: %s", tracing);
+                    if (translator->needsTranslate())
+                    {
+                        if (RecordTranslationMode::None == translationMode)
+                            throw MakeStringException(0, "Translatable record layout mismatch detected for file: %s, but translation disabled", tracing);
+                    }
+                }
+                dbgassertex(translator->canTranslate());
+            }
+            return translator;
+        }
+        ISourceRowPrefetcher *queryPrefetcher()
+        {
+            if (!prefetcher)
+            {
+                if (translator)
+                    prefetcher.setown(publishedFormat->createDiskPrefetcher());
+                else
+                    prefetcher.setown(expectedFormat->createDiskPrefetcher());
+            }
+            return prefetcher;
+        }
+        RecordTranslationMode queryTranslationMode() const { return translationMode; }
+        IOutputMetaData *queryPublishedMeta() const { return publishedFormat; }
+        unsigned queryPublishedMetaCrc() const { return publishedFormatCrc; }
+        IOutputMetaData *queryProjectedMeta() const { return projectedFormat; }
     };
     class CKeyLookupContext : public CContext
     {
         CLookupKey key;
         Owned<IKeyIndex> keyIndex;
-        RecordTranslationMode translationMode = RecordTranslationMode::None;
-        Owned<IOutputMetaData> publishedMeta, projectedMeta;
-        unsigned publishedMetaCrc = 0;
     public:
         CKeyLookupContext(CKJService &_service, CActivityContext *_activityCtx, const CLookupKey &_key)
             : CContext(_service, _activityCtx), key(_key)
         {
             keyIndex.setown(createKeyIndex(key.fname, key.crc, false, false));
+            expectedFormat.set(activityCtx->queryHelper()->queryIndexRecordSize());
+            expectedFormatCrc = activityCtx->queryHelper()->getIndexFormatCrc();
         }
         unsigned queryHash() const { return key.queryHash(); }
         const CLookupKey &queryKey() const { return key; }
-        void setTranslation(RecordTranslationMode _translationMode, IOutputMetaData *_publishedMeta, unsigned _publishedMetaCrc, IOutputMetaData *_projectedMeta)
-        {
-            translationMode = _translationMode;
-            publishedMeta.set(_publishedMeta);
-            publishedMetaCrc = _publishedMetaCrc;
-            projectedMeta.set(_projectedMeta);
-        }
-        RecordTranslationMode queryTranslationMode() const { return translationMode; }
-        IOutputMetaData *queryPublishedMeta() const { return publishedMeta; }
-        unsigned queryPublishedMetaCrc() const { return publishedMetaCrc; }
-        IOutputMetaData *queryProjectedMeta() const { return projectedMeta; }
 
         inline const char *queryFileName() const { return key.fname; }
         IEngineRowAllocator *queryLookupInputAllocator() const { return activityCtx->queryLookupInputAllocator(); }
@@ -336,51 +404,57 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         }
         inline IHThorKeyedJoinArg *queryHelper() const { return activityCtx->queryHelper(); }
     };
+    class CFetchContext : public CContext
+    {
+        FetchKey key;
+        unsigned handle = 0;
+        Owned<const IDynamicTransform> translator;
+        Owned<ISourceRowPrefetcher> prefetcher;
+        Owned<ISerialStream> ioStream;
+        CThorContiguousRowBuffer prefetchSource;
+        bool initialized = false;
+
+    public:
+        CFetchContext(CKJService &_service, CActivityContext *_activityCtx, const FetchKey &_key) : CContext(_service, _activityCtx), key(_key)
+        {
+            handle = service.getUniqId();
+            expectedFormat.set(activityCtx->queryHelper()->queryDiskRecordSize());
+            expectedFormatCrc = activityCtx->queryHelper()->getDiskFormatCrc();
+        }
+        ~CFetchContext()
+        {
+
+        }
+        const void *queryFindParam() const { return &key; } // for SimpleHashTableOf
+        unsigned queryHandle() const { return handle; }
+        const FetchKey &queryKey() const { return key; }
+        CThorContiguousRowBuffer &queryPrefetchSource()
+        {
+            if (!initialized)
+            {
+                initialized = true;
+                Owned<IFileIO> iFileIO = activityCtx->getFetchFileIO(key.partNo);
+                ioStream.setown(createFileSerialStream(iFileIO, 0, (offset_t)-1, 0));
+                prefetchSource.setStream(ioStream);
+            }
+            return prefetchSource;
+        }
+    };
     class CKMContainer : public CInterface
     {
         CKJService &service;
         Linked<CKeyLookupContext> ctx;
         Owned<IKeyManager> keyManager;
-        Owned<const IDynamicTransform> translator;
         unsigned handle = 0;
     public:
         CKMContainer(CKJService &_service, CKeyLookupContext *_ctx)
             : service(_service), ctx(_ctx)
         {
             keyManager.setown(ctx->createKeyManager());
-            IHThorKeyedJoinArg *helper = ctx->queryHelper();
-
-            RecordTranslationMode translationMode = ctx->queryTranslationMode();
-            unsigned publishedFormatCrc = ctx->queryPublishedMetaCrc();
-            IOutputMetaData *publishedFormat = ctx->queryPublishedMeta();
-            IOutputMetaData *projectedFormat = ctx->queryProjectedMeta();
-            IOutputMetaData *expectedFormat = helper->queryIndexRecordSize();
-
-            unsigned expectedFormatCrc = helper->getIndexFormatCrc();
-
-            if (expectedFormatCrc && (RecordTranslationMode::None != translationMode))
-            {
-                if (RecordTranslationMode::AlwaysDisk == translationMode)
-                    translator.setown(createRecordTranslator(projectedFormat->queryRecordAccessor(true), publishedFormat->queryRecordAccessor(true)));
-                else if (RecordTranslationMode::AlwaysECL == translationMode)
-                    translator.setown(createRecordTranslator(projectedFormat->queryRecordAccessor(true), expectedFormat->queryRecordAccessor(true)));
-                else if (publishedFormatCrc && publishedFormatCrc != expectedFormatCrc)
-                {
-                    if (!projectedFormat)
-                        throw MakeStringException(0, "Record layout mismatch for file %s", ctx->queryKey().queryFilename());
-                    translator.setown(createRecordTranslator(projectedFormat->queryRecordAccessor(true), publishedFormat->queryRecordAccessor(true)));
-                    if (!translator->canTranslate())
-                        throw MakeStringException(0, "Untranslatable record layout mismatch detected for file %s", ctx->queryKey().queryFilename());
-                    if (translator->needsTranslate())
-                    {
-                        if (RecordTranslationMode::None == translationMode)
-                            throw MakeStringException(0, "Translatable record layout mismatch detected for file %s, but translation disabled", ctx->queryKey().queryFilename());
-                    }
-                }
-                dbgassertex(translator->canTranslate());
+            StringBuffer tracing;
+            const IDynamicTransform *translator = ctx->queryTranslator(ctx->queryKey().getTracing(tracing));
+            if (translator)
                 keyManager->setLayoutTranslator(translator);
-            }
-
             handle = service.getUniqId();
         }
         ~CKMContainer()
@@ -650,8 +724,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 atMost = abortLimit;
             fetchRequired = helper->diskAccessRequired();
         }
-        inline CKMContainer *getKeyManagerClear() { return kmc.getClear(); }
-
         virtual void process(bool &abortSoon) override
         {
             Owned<IException> exception;
@@ -723,37 +795,43 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     };
     class CFetchLookupRequest : public CLookupRequest
     {
-        unsigned partNo = NotFound;
+        CFetchContext *fetchContext = nullptr;
         const unsigned defaultMaxFetchLookupReplySz = 0x100000;
+        const IDynamicTransform *translator = nullptr;
+        ISourceRowPrefetcher *prefetcher = nullptr;
+        CThorContiguousRowBuffer &prefetchSource;
 
         void processRow(const void *row, CFetchLookupResult &reply)
         {
             FetchRequestHeader &requestHeader = *(FetchRequestHeader *)row;
 
             const void *fetchKey = nullptr;
-            if (0 != helper->queryFetchInputRecordSize()->getMinRecordSize())
+            if (0 != activityCtx->queryFetchInMinSize())
                 fetchKey = (const byte *)row + sizeof(FetchRequestHeader);
+
+            prefetchSource.reset(requestHeader.fpos);
+            prefetcher->readAhead(prefetchSource);
+            const byte *diskFetchRow = prefetchSource.queryRow();
 
             RtlDynamicRowBuilder fetchReplyBuilder(activityCtx->queryFetchOutputAllocator());
             FetchReplyHeader &replyHeader = *(FetchReplyHeader *)fetchReplyBuilder.getUnfinalized();
             replyHeader.sequence = requestHeader.sequence;
             const void * &childRow = *(const void **)((byte *)fetchReplyBuilder.getUnfinalized() + sizeof(FetchReplyHeader));
 
-            Owned<IFileIO> iFileIO = activityCtx->getFetchFileIO(partNo);
-            Owned<ISerialStream> stream = createFileSerialStream(iFileIO, requestHeader.fpos);
-            CThorStreamDeserializerSource ds(stream);
-
-            RtlDynamicRowBuilder fetchDiskRowBuilder(activityCtx->queryFetchDiskAllocator());
-            size32_t fetchedLen = activityCtx->queryFetchDiskDeserializer()->deserialize(fetchDiskRowBuilder, ds);
-            OwnedConstThorRow diskFetchRow = fetchDiskRowBuilder.finalizeRowClear(fetchedLen);
-
+            MemoryBuffer diskFetchRowMb;
+            if (translator)
+            {
+                MemoryBufferBuilder aBuilder(diskFetchRowMb, 0);
+                translator->translate(aBuilder, diskFetchRow);
+                diskFetchRow = reinterpret_cast<const byte *>(diskFetchRowMb.toByteArray());
+            }
             size32_t fetchReplySz = sizeof(FetchReplyHeader);
             if (helper->fetchMatch(fetchKey, diskFetchRow))
             {
                 replyHeader.sequence |= FetchReplyHeader::fetchMatchedMask;
 
                 RtlDynamicRowBuilder joinFieldsRow(activityCtx->queryJoinFieldsAllocator());
-                size32_t joinFieldsSz = helper->extractJoinFields(joinFieldsRow, diskFetchRow.get(), (IBlobProvider*)nullptr); // JCSMORE is it right that passing NULL IBlobProvider here??
+                size32_t joinFieldsSz = helper->extractJoinFields(joinFieldsRow, diskFetchRow, (IBlobProvider*)nullptr); // JCSMORE is it right that passing NULL IBlobProvider here??
                 fetchReplySz += joinFieldsSz;
                 childRow = joinFieldsRow.finalizeRowClear(joinFieldsSz);
                 reply.incAccepted();
@@ -766,11 +844,15 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             reply.addRow(fetchReplyBuilder.finalizeRowClear(fetchReplySz));
         }
     public:
-        CFetchLookupRequest(CActivityContext *_activityCtx, unsigned _partNo, rank_t _sender, mptag_t _replyTag)
-            : CLookupRequest(_activityCtx, _sender, _replyTag), partNo(_partNo)
+        CFetchLookupRequest(CFetchContext *_fetchContext, rank_t _sender, mptag_t _replyTag)
+            : CLookupRequest(_fetchContext->queryActivityCtx(), _sender, _replyTag),
+              fetchContext(_fetchContext), prefetchSource(fetchContext->queryPrefetchSource())
         {
             allocator = activityCtx->queryFetchInputAllocator();
             deserializer = activityCtx->queryFetchInputDeserializer();
+            StringBuffer tracing;
+            translator = fetchContext->queryTranslator(fetchContext->queryKey().getTracing(tracing));
+            prefetcher = fetchContext->queryPrefetcher();
         }
         virtual void process(bool &abortSoon) override
         {
@@ -779,6 +861,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             {
                 CFetchLookupResult fetchLookupResult(*activityCtx);
                 MemoryBuffer replyMb;
+                replyMb.append(fetchContext->queryHandle());
                 unsigned rowCount = getRowCount();
                 unsigned rowNum = 0;
                 while (!abortSoon)
@@ -884,25 +967,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             request->process(abortSoon);
         }
     };
-    struct FetchKey
-    {
-        FetchKey(activity_id _id, unsigned _partNo) : id(_id), partNo(_partNo)
-        {
-        }
-        activity_id id;
-        unsigned partNo;
-
-        bool operator==(FetchKey const &other) const { return id==other.id && partNo==other.partNo; }
-    };
-    class CFetchContext : public CContext
-    {
-        FetchKey key;
-    public:
-        CFetchContext(CKJService &_service, CActivityContext *_activityCtx, const FetchKey &_key) : CContext(_service, _activityCtx), key(_key)
-        {
-        }
-        const void *queryFindParam() const { return &key; } // for SimpleHashTableOf
-    };
     class CProcessorFactory : public CSimpleInterfaceOf<IThreadFactory>
     {
         CKJService &service;
@@ -921,6 +985,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     CKMContextHT cachedKMs; // NB: HT by {actId, fname, crc} links IKeyManager's within containers
     OwningSimpleHashTableOf<CKMContainer, unsigned> cachedKMsByHandle; // HT by { handle }, links IKeyManager's within containers.
     OwningSimpleHashTableOf<CFetchContext, FetchKey> fetchContextsHT;
+    std::unordered_map<unsigned, CFetchContext *> fetchContextsByHandleHT;
     CICopyArrayOf<CKMContainer> cachedKMsMRU;
     CriticalSection kMCrit, lCCrit;
     Owned<IThreadPool> processorPool;
@@ -1005,12 +1070,27 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         }
         fetchContext = new CFetchContext(*this, activityCtx, key);
         fetchContextsHT.replace(*fetchContext);
+        fetchContextsByHandleHT.insert({fetchContext->queryHandle(), fetchContext});
         return LINK(fetchContext);
     }
-    bool removeFetchContext(const FetchKey &key)
+    CFetchContext *getFetchContext(unsigned handle)
     {
         CriticalBlock b(lCCrit);
-        return fetchContextsHT.remove(&key);
+        auto it = fetchContextsByHandleHT.find(handle);
+        if (it == fetchContextsByHandleHT.end())
+            return nullptr;
+        return LINK(it->second);
+    }
+    bool removeFetchContext(unsigned handle)
+    {
+        CriticalBlock b(lCCrit);
+        auto it = fetchContextsByHandleHT.find(handle);
+        if (it == fetchContextsByHandleHT.end())
+            return false;
+        CFetchContext *fetchContext = it->second;
+        it = fetchContextsByHandleHT.erase(it);
+        verifyex(fetchContextsHT.removeExact(fetchContext));
+        return true;
     }
     CKMContainer *getKeyManager(unsigned handle)
     {
@@ -1067,7 +1147,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     void clearAll()
     {
         if (cachedKMsMRU.ordinality())
-            WARNLOG("KJService: clearing %u key manager context, that were not closed cleanly", cachedKMsMRU.ordinality());
+            WARNLOG("KJService: clearing %u key manager context(s), that were not closed cleanly", cachedKMsMRU.ordinality());
         cachedKMsMRU.kill();
         cachedKMsByHandle.kill();
         cachedKMs.kill();
@@ -1167,17 +1247,17 @@ public:
                         msg.read(reinterpret_cast<std::underlying_type<RecordTranslationMode>::type &> (translationMode));
                         if (RecordTranslationMode::None != translationMode)
                         {
-                            unsigned publishedMetaCrc;
-                            msg.read(publishedMetaCrc);
-                            Owned<IOutputMetaData> publishedMeta = createTypeInfoOutputMetaData(msg, false, nullptr);
-                            Owned<IOutputMetaData> projectedMeta;
+                            unsigned publishedFormatCrc;
+                            msg.read(publishedFormatCrc);
+                            Owned<IOutputMetaData> publishedFormat = createTypeInfoOutputMetaData(msg, false, nullptr);
+                            Owned<IOutputMetaData> projectedFormat;
                             bool projected;
                             msg.read(projected);
                             if (projected)
-                                projectedMeta.setown(createTypeInfoOutputMetaData(msg, false, nullptr));
+                                projectedFormat.setown(createTypeInfoOutputMetaData(msg, false, nullptr));
                             else
-                                projectedMeta.set(publishedMeta);
-                            keyLookupContext->setTranslation(translationMode, publishedMeta, publishedMetaCrc, projectedMeta);
+                                projectedFormat.set(publishedFormat);
+                            keyLookupContext->setTranslation(translationMode, publishedFormat, publishedFormatCrc, projectedFormat);
                         }
                         Owned<CKMContainer> kmc = ensureKeyManager(keyLookupContext); // owns keyLookupContext
                         processKeyLookupRequest(msg, kmc, sender, replyTag);
@@ -1213,16 +1293,12 @@ public:
                         msg.clear();
                         break;
                     }
-                    case kjs_fetch:
+                    case kjs_fetchopen:
                     {
-                        activity_id id;
-                        msg.read(id);
-                        unsigned partNo;
-                        msg.read(partNo);
-
-                        FetchKey key(id, partNo);
+                        FetchKey key(msg, (unsigned)sender); // key by {actid, partNo, sender}, to keep each context (from each slave) alive.
                         Owned<CFetchContext> fetchContext = ensureFetchContext(*currentJob, key);
                         CActivityContext *activityCtx = fetchContext->queryActivityCtx();
+
                         /* NB: clients will send it on their first request, but might already have from others
                          * If have it already, ignore/skip it.
                          * Alternative is to not send it by default on 1st request and send challenge response.
@@ -1232,9 +1308,47 @@ public:
                         StringAttr fname;
                         msg.read(fname);
                         // NB: will be ignored if it already has it
-                        activityCtx->addFetchFile(flags, partNo, fname);
+                        activityCtx->addFetchFile(flags, key.partNo, fname);
 
-                        Owned<CFetchLookupRequest> lookupRequest = new CFetchLookupRequest(activityCtx, partNo, sender, replyTag);
+                        RecordTranslationMode translationMode;
+                        msg.read(reinterpret_cast<std::underlying_type<RecordTranslationMode>::type &> (translationMode));
+                        if (RecordTranslationMode::None != translationMode)
+                        {
+                            unsigned publishedFormatCrc;
+                            msg.read(publishedFormatCrc);
+                            Owned<IOutputMetaData> publishedFormat = createTypeInfoOutputMetaData(msg, false, nullptr);
+                            Owned<IOutputMetaData> projectedFormat;
+                            bool projected;
+                            msg.read(projected);
+                            if (projected)
+                                projectedFormat.setown(createTypeInfoOutputMetaData(msg, false, nullptr));
+                            else
+                                projectedFormat.set(publishedFormat);
+
+                            IHThorKeyedJoinArg *helper = activityCtx->queryHelper();
+                            fetchContext->setTranslation(translationMode, publishedFormat, publishedFormatCrc, projectedFormat);
+                        }
+
+                        Owned<CFetchLookupRequest> lookupRequest = new CFetchLookupRequest(fetchContext, sender, replyTag);
+
+                        size32_t requestSz;
+                        msg.read(requestSz);
+                        lookupRequest->deserialize(requestSz, msg.readDirect(requestSz));
+
+                        msg.clear();
+                        // NB: kmc is added to cache at end of request handling
+                        processorPool->start(lookupRequest);
+                        break;
+                    }
+                    case kjs_fetchread:
+                    {
+                        unsigned handle;
+                        msg.read(handle);
+                        dbgassertex(handle);
+
+                        Owned<CFetchContext> fetchContext = getFetchContext(handle);
+                        CActivityContext *activityCtx = fetchContext->queryActivityCtx();
+                        Owned<CFetchLookupRequest> lookupRequest = new CFetchLookupRequest(fetchContext, sender, replyTag);
 
                         size32_t requestSz;
                         msg.read(requestSz);
@@ -1247,17 +1361,15 @@ public:
                     }
                     case kjs_fetchclose:
                     {
-                        activity_id id;
-                        msg.read(id);
-                        unsigned partNo;
-                        msg.read(partNo);
-                        FetchKey key(id, partNo);
-                        removeFetchContext(key);
+                        unsigned handle;
+                        msg.read(handle);
+                        bool res = removeFetchContext(handle);
                         msg.clear();
                         msg.append(errorCode);
+                        msg.append(res);
                         replyAttempt = true;
                         if (!queryNodeComm().send(msg, sender, replyTag, LONGTIMEOUT))
-                            throw MakeStringException(0, "kjs_close: Failed to reply to lookup request");
+                            throw MakeStringException(0, "kjs_fetchclose: Failed to reply to lookup request");
                         msg.clear();
                         break;
                     }

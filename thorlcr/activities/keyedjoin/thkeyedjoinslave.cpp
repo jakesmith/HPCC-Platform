@@ -411,6 +411,41 @@ public:
     }
 };
 
+struct PartIO
+{
+    PartIO() {}
+    ~PartIO()
+    {
+        ::Release(prefetcher);
+        ::Release(translator);
+        ::Release(iFileIO);
+        ::Release(stream);
+    }
+    PartIO(const PartIO &other)
+    {
+        iFileIO = LINK(other.iFileIO);
+        translator = LINK(other.translator);
+        prefetcher = LINK(other.prefetcher);
+        stream = LINK(other.stream);
+    }
+    PartIO& operator = (const PartIO &other)
+    {
+        ::Release(iFileIO);
+        ::Release(translator);
+        ::Release(prefetcher);
+        ::Release(stream);
+        iFileIO = LINK(other.iFileIO);
+        translator = LINK(other.translator);
+        prefetcher = LINK(other.prefetcher);
+        stream = LINK(other.stream);
+        return *this;
+    }
+    IFileIO *iFileIO = nullptr;
+    ITranslator *translator = nullptr;
+    ISourceRowPrefetcher *prefetcher = nullptr;
+    ISerialStream *stream = nullptr;
+};
+
 class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 {
     typedef CSlaveActivity PARENT;
@@ -501,6 +536,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         unsigned lookupQueuedBatchSize = 1000;
         rowcount_t total = 0;
         CLimiter *limiter = nullptr;
+        IArrayOf<IPartDescriptor> *allParts = nullptr; // only used for tracing purposes, set by key or fetch derived handlers
+
     public:
         CLookupHandler(CKeyedJoinSlave &_activity, IThorRowInterfaces *_rowIf) : threaded("CLookupHandler", this),
             activity(_activity), rowIf(_rowIf)
@@ -518,7 +555,26 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             lookupQueuedBatchSize = _batchSize;
         }
+        void trace()
+        {
+            for (auto &partCopy : parts)
+            {
+                unsigned partNo = partCopy & partMask;
+                unsigned copy = partCopy >> 24;
+                IPartDescriptor &pd = allParts->item(partNo);
+                RemoteFilename rfn;
+                pd.getFilename(copy, rfn);
+                StringBuffer path;
+                rfn.getRemotePath(path);
+                VStringBuffer msg("%s (%p): part=%u, copy=%u, handling: %s", typeid(*this).name(), this, partNo, copy, path.str());
+                trace(msg);
+            }
+        }
         unsigned queryPartNumIdx(unsigned partNo) const { return partNumMap[partNo]; }
+        virtual void trace(StringBuffer &msg) const
+        {
+            PROGLOG("%s", msg.str());
+        }
         virtual void beforeDispose() override
         {
             stop();
@@ -710,10 +766,29 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     class CKeyLookupLocalBase : public CLookupHandler
     {
         typedef CLookupHandler PARENT;
+    protected:
+        Owned<const ITranslator> translator;
+
+        void setupTranslation(unsigned partNo, IKeyManager &keyManager)
+        {
+            IPartDescriptor &part = activity.allIndexParts.item(partNo);
+            IPropertyTree &props = part.queryOwner().queryProperties();
+            unsigned publishedFormatCrc = (unsigned)props.getPropInt("@formatCrc", 0);
+            Owned<IOutputMetaData> publishedFormat = getDaliLayoutInfo(props);
+            unsigned expectedFormatCrc = helper->getIndexFormatCrc();
+            IOutputMetaData *projectedFormat = helper->queryProjectedIndexRecordSize();
+
+            RecordTranslationMode translationMode = getTranslationMode(activity);
+            const char *fname = helper->getIndexFileName();
+            translator.setown(getTranslators(fname, helper->queryIndexRecordSize(), publishedFormat, projectedFormat, translationMode, expectedFormatCrc, publishedFormatCrc));
+            if (translator)
+                keyManager.setLayoutTranslator(&translator->queryTranslator());
+        }
     public:
         CKeyLookupLocalBase(CKeyedJoinSlave &_activity) : CLookupHandler(_activity, _activity.keyLookupRowWithJGRowIf)
         {
             limiter = &activity.lookupThreadLimiter;
+            allParts = &activity.allIndexParts;
         }
         void processRows(CThorExpandingRowArray &processing, unsigned partNo, IKeyManager *keyManager)
         {
@@ -780,7 +855,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         typedef CKeyLookupLocalBase PARENT;
 
         std::vector<IKeyManager *> keyManagers;
-        Owned<ITranslator> translator;
     public:
         CKeyLookupLocalHandler(CKeyedJoinSlave &_activity) : CKeyLookupLocalBase(_activity)
         {
@@ -808,20 +882,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             if (!keyManager) // delayed until actually needed
             {
                 keyManager = activity.createPartKeyManager(partNo, copy);
-
                 // NB: potentially translation per part could be different if dealing with superkeys
-                IPartDescriptor &part = activity.allIndexParts.item(partNo);
-                IPropertyTree &props = part.queryOwner().queryProperties();
-                unsigned publishedFormatCrc = (unsigned)props.getPropInt("@formatCrc", 0);
-                Owned<IOutputMetaData> publishedFormat = getDaliLayoutInfo(props);
-                unsigned expectedFormatCrc = helper->getIndexFormatCrc();
-                IOutputMetaData *projectedFormat = helper->queryProjectedIndexRecordSize();
-
-                RecordTranslationMode translationMode = getTranslationMode(activity);
-                const char *fname = helper->getIndexFileName();
-                translator.setown(getTranslators(fname, helper->queryIndexRecordSize(), publishedFormat, projectedFormat, translationMode, expectedFormatCrc, publishedFormatCrc));
-                if (translator)
-                    keyManager->setLayoutTranslator(&translator->queryTranslator());
+                setupTranslation(partNo, *keyManager);
             }
             processRows(processing, partNo, keyManager);
         }
@@ -849,20 +911,20 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     partKeySet->addIndex(keyIndex.getClear());
                 }
                 keyManager.setown(createKeyMerger(helper->queryIndexRecordSize()->queryRecordAccessor(true), partKeySet, 0, nullptr));
-//                Owned<const ITranslator> translator = getLayoutTranslation(helper->getFileName(), partKeySet.item(0), translationMode, helper->queryIndexRecordSize(), projectedFormat, expectedFormatCrc);
-//                if (translator)
-//                    partManager->setLayoutTranslator(&translator->queryTranslator());
-//                translators.append(translator.getClear());
+                setupTranslation(0, *keyManager);
             }
             processRows(processing, 0, keyManager);
         }
     };
     class CRemoteLookupHandler : public CLookupHandler
     {
+        typedef CLookupHandler PARENT;
+
     protected:
         rank_t lookupSlave = RANK_NULL;
         mptag_t replyTag = TAG_NULL;
         ICommunicator *comm = nullptr;
+        std::vector<unsigned> handles;
 
         void readErrorCode(CMessageBuffer &msg)
         {
@@ -887,6 +949,34 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             fastLZCompressToBuffer(mb, tmpMB.length(), tmpMB.toByteArray());
             sizeMark.write();
         }
+        void initClose(CMessageBuffer &msg, KJServiceCmds cmd, unsigned handle)
+        {
+            msg.append((byte)cmd);
+            msg.append(replyTag);
+            msg.append(handle);
+        }
+        void doClose(KJServiceCmds closeCmd)
+        {
+            for (auto &h: handles)
+            {
+                if (h)
+                {
+                    CMessageBuffer msg;
+                    initClose(msg, closeCmd, h);
+                    if (!comm->send(msg, lookupSlave, kjServiceMpTag, LONGTIMEOUT))
+                        throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
+                    msg.clear();
+                    if (comm->recv(msg, lookupSlave, replyTag))
+                    {
+                        readErrorCode(msg);
+                        bool removed;
+                        msg.read(removed);
+                        if (!removed)
+                            WARNLOG("KJ service failed to remove [%u]", closeCmd);
+                    }
+                }
+            }
+        }
     public:
         CRemoteLookupHandler(CKeyedJoinSlave &_activity, IThorRowInterfaces *_rowIf, unsigned _lookupSlave)
             : CLookupHandler(_activity, _rowIf), lookupSlave(_lookupSlave)
@@ -894,21 +984,26 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             replyTag = activity.queryMPServer().createReplyTag();
             comm = &activity.queryJob().queryNodeComm();
         }
+        virtual void init() override
+        {
+            PARENT::init();
+            handles.resize(parts.size());
+            for (auto &h: handles)
+                h = 0;
+        }
     };
     class CKeyLookupRemoteHandler : public CRemoteLookupHandler
     {
         typedef CRemoteLookupHandler PARENT;
 
         CThorExpandingRowArray replyRows;
-        unsigned handle = 0;
-        bool opened = false;
 
-        void initRead(CMessageBuffer &msg, unsigned partNo, unsigned copy)
+        void initRead(CMessageBuffer &msg, unsigned selected, unsigned partNo, unsigned copy)
         {
-            byte cmd = opened ? kjs_read : kjs_open;
+            unsigned handle = handles[selected];
+            byte cmd = handle ? kjs_read : kjs_open;
             msg.append(cmd);
             msg.append(replyTag);
-            msg.append(activity.queryId());
             IPartDescriptor &part = activity.allIndexParts.item(partNo);
             unsigned crc;
             part.getCrc(crc);
@@ -916,8 +1011,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             part.getFilename(copy, rfn);
             StringBuffer fname;
             rfn.getLocalPath(fname);
+            msg.append(activity.queryId());
             msg.append(fname).append(crc);
-            if (opened)
+            if (handle)
                 msg.append(handle);
             else
             {
@@ -950,25 +1046,18 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 }
                 else
                     msg.append(static_cast<std::underlying_type<RecordTranslationMode>::type>(RecordTranslationMode::None));
-                opened = true;
             }
-        }
-        void initClose(CMessageBuffer &msg)
-        {
-            msg.append((byte)kjs_close);
-            msg.append(replyTag);
-            msg.append(handle);
         }
     public:
         CKeyLookupRemoteHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave) : PARENT(_activity, _activity.keyLookupRowWithJGRowIf, _lookupSlave), replyRows(_activity, _activity.keyLookupReplyOutputMetaRowIf)
         {
             limiter = &activity.lookupThreadLimiter;
+            allParts = &activity.allIndexParts;
         }
-        virtual void init() override
+        virtual void trace(StringBuffer &msg) const override
         {
-            PARENT::init();
-            opened = false;
-            handle = 0;
+            msg.appendf(", lookupSlave=%u", lookupSlave);
+            PARENT::trace(msg);
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
         {
@@ -978,7 +1067,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
             CMessageBuffer msg;
             // JCSMORE - don't _need_ filename in general after 1st call, but avoids challenge/response handling if other side has closed, and relatively small vs msg size
-            initRead(msg, partNo, copy);
+            initRead(msg, selected, partNo, copy);
             unsigned numRows = processing.ordinality();
             writeRowData(processing, msg);
 
@@ -996,7 +1085,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 readErrorCode(msg);
                 MemoryBuffer mb;
                 fastLZDecompressToBuffer(mb, msg);
-                mb.read(handle);
+                mb.read(handles[selected]);
                 unsigned count;
                 mb.read(count); // amount processed, could be all (i.e. numRows)
                 while (count--)
@@ -1079,22 +1168,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         virtual void end() override
         {
             PARENT::end();
-            CMessageBuffer msg;
-            if (opened)
-            {
-                initClose(msg);
-                if (!comm->send(msg, lookupSlave, kjServiceMpTag, LONGTIMEOUT))
-                    throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
-                msg.clear();
-                if (comm->recv(msg, lookupSlave, replyTag))
-                {
-                    readErrorCode(msg);
-                    bool removed;
-                    msg.read(removed);
-                    if (!removed)
-                        WARNLOG("KJ service failed to remove in use key manager");
-                }
-            }
+            doClose(kjs_close);
         }
     };
     class CFetchLocalLookupHandler : public CLookupHandler
@@ -1105,7 +1179,16 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         bool compressed = false;
         Owned<IEngineRowAllocator> fetchDiskAllocator;
         Owned<IOutputRowDeserializer> fetchDiskDeserializer;
+        CThorContiguousRowBuffer prefetchSource;
+        std::vector<PartIO> partIOs;
 
+        inline const PartIO &queryFetchPartIO(unsigned selected, unsigned partNo, unsigned copy, bool compressed, bool encrypted)
+        {
+            PartIO &partIO = partIOs[selected];
+            if (!partIO.stream)
+                partIO = activity.getFetchPartIO(partNo, copy, compressed, encrypted);
+            return partIO;
+        }
     public:
         CFetchLocalLookupHandler(CKeyedJoinSlave &_activity)
             : PARENT(_activity, _activity.fetchInputMetaRowIf)
@@ -1114,12 +1197,14 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             fetchDiskAllocator.set(fetchDiskRowIf->queryRowAllocator());
             fetchDiskDeserializer.set(fetchDiskRowIf->queryRowDeserializer());
             limiter = &activity.fetchThreadLimiter;
+            allParts = &activity.allDataParts;
         }
         virtual void init() override
         {
             PARENT::init();
             encrypted = activity.allDataParts.item(0).queryOwner().queryProperties().getPropBool("@encrypted");
             compressed = isCompressed(activity.allDataParts.item(0).queryOwner().queryProperties());
+            partIOs.resize(parts.size());
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
         {
@@ -1138,30 +1223,23 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 if (0 != helper->queryFetchInputRecordSize()->getMinRecordSize())
                     fetchKey = (const byte *)row.get() + sizeof(FetchRequestHeader);
 
-                PartIO &partIO = activity.queryFetchPartIO(partNo, copy, compressed, encrypted);
-                Owned<ISerialStream> stream = createFileSerialStream(partIO.iFileIO, requestHeader.fpos);
-                CThorStreamDeserializerSource ds(stream);
+                const PartIO &partIO = queryFetchPartIO(selected, partNo, copy, compressed, encrypted);
+                prefetchSource.setStream(partIO.stream);
+                prefetchSource.reset(requestHeader.fpos);
+                partIO.prefetcher->readAhead(prefetchSource);
+                const byte *diskFetchRow = prefetchSource.queryRow();
 
-                RtlDynamicRowBuilder fetchDiskRowBuilder(fetchDiskAllocator);
-                size32_t fetchedLen;
+                MemoryBuffer diskFetchRowMb;
                 if (partIO.translator)
                 {
-                    CThorContiguousRowBuffer prefetchBuffer;
-                    prefetchBuffer.setStream(stream);
-                    partIO.prefetcher->readAhead(prefetchBuffer);
-                    const byte * row = prefetchBuffer.queryRow();
-                    size32_t sz = prefetchBuffer.queryRowSize();
-                    fetchedLen = partIO.translator->queryTranslator().translate(fetchDiskRowBuilder, row);
-                    prefetchBuffer.finishedRow();
+                    MemoryBufferBuilder aBuilder(diskFetchRowMb, 0);
+                    partIO.translator->queryTranslator().translate(aBuilder, diskFetchRow);
+                    diskFetchRow = reinterpret_cast<const byte *>(diskFetchRowMb.toByteArray());
                 }
-                else
-                    fetchedLen = fetchDiskDeserializer->deserialize(fetchDiskRowBuilder, ds);
-
-                OwnedConstThorRow diskFetchRow = fetchDiskRowBuilder.finalizeRowClear(fetchedLen);
                 if (helper->fetchMatch(fetchKey, diskFetchRow))
                 {
                     RtlDynamicRowBuilder joinFieldsRow(activity.joinFieldsAllocator);
-                    size32_t joinFieldsSz = helper->extractJoinFields(joinFieldsRow, diskFetchRow.get(), (IBlobProvider*)nullptr); // JCSMORE is it right that passing NULL IBlobProvider here??
+                    size32_t joinFieldsSz = helper->extractJoinFields(joinFieldsRow, diskFetchRow, (IBlobProvider*)nullptr); // JCSMORE is it right that passing NULL IBlobProvider here??
                     const void *fetchRow = joinFieldsRow.finalizeRowClear(joinFieldsSz);
 
                     unsigned sequence = requestHeader.sequence & 0xffffffff;
@@ -1188,38 +1266,68 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
         CThorExpandingRowArray replyRows;
         byte flags = 0;
-        std::vector<unsigned> used;
 
-        void initRead(CMessageBuffer &msg, unsigned partNo, unsigned copy)
+        void initRead(CMessageBuffer &msg, unsigned selected, unsigned partNo, unsigned copy)
         {
-            msg.append((byte)kjs_fetch);
+            unsigned handle = handles[selected];
+            byte cmd = handle ? kjs_fetchread : kjs_fetchopen;
+            msg.append(cmd);
             msg.append(replyTag);
-            msg.append(activity.queryId());
-            msg.append(queryPartNumIdx(partNo));
-            /* JCSMORE consider not sending info. below with each packet,
-             * and instead expect challenge response from server-side, then send.
-             * But not sure worth it, as requests are batched, so this overhead is small
-             */
-            msg.append(flags);
-            IPartDescriptor &part = activity.allDataParts.item(partNo);
-            RemoteFilename rfn;
-            part.getFilename(copy, rfn);
-            StringBuffer fname;
-            rfn.getLocalPath(fname);
-            msg.append(fname);
-        }
-        void initClose(CMessageBuffer &msg, unsigned partNo)
-        {
-            msg.append((byte)kjs_fetchclose);
-            msg.append(replyTag);
-            msg.append(activity.queryId());
-            msg.append(queryPartNumIdx(partNo));
+            if (handle)
+                msg.append(handle);
+            else
+            {
+                msg.append(activity.queryId());
+                msg.append(partNo);
+                /* JCSMORE consider not sending info. below with each packet,
+                 * and instead expect challenge response from server-side, then send.
+                 * But not sure worth it, as requests are batched, so this overhead is small
+                 */
+                msg.append(flags);
+                IPartDescriptor &part = activity.allDataParts.item(partNo);
+                RemoteFilename rfn;
+                part.getFilename(copy, rfn);
+                StringBuffer fname;
+                rfn.getLocalPath(fname);
+                msg.append(fname);
+
+                // NB: potentially translation per part could be different if dealing with superkeys
+                IPropertyTree &props = part.queryOwner().queryProperties();
+                unsigned publishedFormatCrc = (unsigned)props.getPropInt("@formatCrc", 0);
+                Owned<IOutputMetaData> publishedFormat = getDaliLayoutInfo(props);
+                unsigned expectedFormatCrc = helper->getDiskFormatCrc();
+                IOutputMetaData *projectedFormat = helper->queryProjectedDiskRecordSize();
+
+                RecordTranslationMode translationMode = getTranslationMode(activity);
+
+                Owned<const ITranslator> translator = getTranslators(fname, helper->queryDiskRecordSize(), publishedFormat, projectedFormat, translationMode, expectedFormatCrc, publishedFormatCrc);
+                if (translator)
+                {
+                    if (!publishedFormat->queryTypeInfo()->canSerialize() || !projectedFormat->queryTypeInfo()->canSerialize())
+                        throw MakeActivityException(&activity, 0, "CFetchRemoteLookupHandler - translation required, but formats unserializable");
+                    msg.append(static_cast<std::underlying_type<RecordTranslationMode>::type>(translationMode));
+                    msg.append(publishedFormatCrc);
+                    if (!dumpTypeInfo(msg, publishedFormat->querySerializedDiskMeta()->queryTypeInfo()))
+                        throw MakeActivityException(&activity, 0, "CFetchRemoteLookupHandler [dumpTypeInfo] - failed handling publishedFormat");
+                    if (projectedFormat != publishedFormat)
+                    {
+                        msg.append(true);
+                        if (!dumpTypeInfo(msg, projectedFormat->querySerializedDiskMeta()->queryTypeInfo()))
+                            throw MakeActivityException(&activity, 0, "CFetchRemoteLookupHandler [dumpTypeInfo] - failed handling projectedFormat");
+                    }
+                    else
+                        msg.append(false);
+                }
+                else
+                    msg.append(static_cast<std::underlying_type<RecordTranslationMode>::type>(RecordTranslationMode::None));
+            }
         }
     public:
         CFetchRemoteLookupHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave)
             : PARENT(_activity, _activity.fetchInputMetaRowIf, _lookupSlave), replyRows(_activity, _activity.fetchOutputMetaRowIf)
         {
             limiter = &activity.fetchThreadLimiter;
+            allParts = &activity.allDataParts;
         }
         virtual void init() override
         {
@@ -1229,7 +1337,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 flags |= kjf_encrypted;
             if (isCompressed(activity.allDataParts.item(0).queryOwner().queryProperties()))
                 flags |= kjf_compressed;
-            used.clear();
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
         {
@@ -1237,18 +1344,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             unsigned partNo = partCopy & partMask;
             unsigned copy = partCopy >> 24;
 
-            while (selected >= used.size())
-                used.push_back(NotFound);
-            used[selected] = true; // used to track which to send 'close' message for.
-
             CMessageBuffer msg;
             // JCSMORE - don't _need_ filename in general after 1st call, but avoids challenge/response handling if other side has closed, and relatively small vs overall msg size
-            initRead(msg, partNo, copy);
+            initRead(msg, selected, partNo, copy);
             writeRowData(processing, msg);
 
             if (!comm->send(msg, lookupSlave, kjServiceMpTag, LONGTIMEOUT))
                 throw MakeActivityException(&activity, 0, "CFetchRemoteLookupHandler - comm send failed");
-
             msg.clear();
 
             unsigned numRows = processing.ordinality();
@@ -1261,6 +1363,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 readErrorCode(msg);
                 MemoryBuffer mb;
                 fastLZDecompressToBuffer(mb, msg);
+                mb.read(handles[selected]);
                 unsigned count;
                 mb.read(count); // amount processed, could be all (i.e. numRows)
                 if (count)
@@ -1301,20 +1404,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         virtual void end() override
         {
             PARENT::end();
-
-            for (unsigned s=0; s<used.size(); s++)
-            {
-                if (NotFound != used[s])
-                {
-                    CMessageBuffer msg;
-                    initClose(msg, s);
-                    if (!comm->send(msg, lookupSlave, kjServiceMpTag, LONGTIMEOUT))
-                        throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
-                    msg.clear();
-                    if (comm->recv(msg, lookupSlave, replyTag))
-                        readErrorCode(msg);
-                }
-            }
+            doClose(kjs_fetchclose);
         }
     };
     class CReadAheadThread : implements IThreaded
@@ -1364,6 +1454,11 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             handlers.kill();
             partIdxToHandler.clear();
+        }
+        void trace() const
+        {
+            ForEachItemIn(h, handlers)
+                handlers.item(h)->trace();
         }
         CLookupHandler *queryHandler(unsigned partNo)
         {
@@ -1505,74 +1600,60 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     CriticalSection fetchQueueCrit;
 
     CriticalSection fetchFileCrit;
-    struct PartIO
-    {
-        PartIO() {}
-        ~PartIO()
-        {
-            ::Release(prefetcher);
-            ::Release(translator);
-            ::Release(iFileIO);
-        }
-        PartIO(const PartIO &other)
-        {
-            iFileIO = LINK(other.iFileIO);
-            translator = LINK(other.translator);
-            prefetcher = LINK(other.prefetcher);
-        }
-        IFileIO *iFileIO = nullptr;
-        ITranslator *translator = nullptr;
-        ISourceRowPrefetcher *prefetcher = nullptr;
-    };
     std::vector<PartIO> openFetchParts;
 
-    PartIO &queryFetchPartIO(unsigned partNo, unsigned copy, bool compressed, bool encrypted)
+    PartIO getFetchPartIO(unsigned partNo, unsigned copy, bool compressed, bool encrypted)
     {
         CriticalBlock b(fetchFileCrit);
         if (partNo>=openFetchParts.size())
             openFetchParts.resize(partNo+1);
         PartIO &partIO = openFetchParts[partNo];
-        if (partIO.iFileIO)
-            return partIO;
-
-        IPartDescriptor &part = allDataParts.item(partNo);
-        RemoteFilename rfn;
-        part.getFilename(copy, rfn);
-        Owned<IFile> iFile = createIFile(rfn);
-
-        unsigned encryptedKeyLen;
-        void *encryptedKey;
-        helper->getFileEncryptKey(encryptedKeyLen,encryptedKey);
-        Owned<IExpander> eexp;
-        if (0 != encryptedKeyLen)
-        {
-            if (encrypted)
-                eexp.setown(createAESExpander256(encryptedKeyLen, encryptedKey));
-            memset(encryptedKey, 0, encryptedKeyLen);
-            free(encryptedKey);
-        }
-        if (nullptr != eexp.get())
-            partIO.iFileIO = createCompressedFileReader(iFile, eexp);
-        else if (compressed)
-            partIO.iFileIO = createCompressedFileReader(iFile);
-        else
-            partIO.iFileIO = iFile->open(IFOread);
         if (!partIO.iFileIO)
-            throw MakeStringException(0, "Failed to open fetch file part %u: %s", partNo, iFile->queryFilename());
-
-        // NB: potentially translation per part could be different if dealing with superkeys
-        IPropertyTree &props = part.queryOwner().queryProperties();
-        unsigned publishedFormatCrc = (unsigned)props.getPropInt("@formatCrc", 0);
-        Owned<IOutputMetaData> publishedFormat = getDaliLayoutInfo(props);
-        unsigned expectedFormatCrc = helper->getDiskFormatCrc();
-        IOutputMetaData *projectedFormat = helper->queryProjectedDiskRecordSize();
-        RecordTranslationMode translationMode = getTranslationMode(*this);
-        const char *fname = helper->getFileName();
-        partIO.translator = getTranslators(fname, helper->queryDiskRecordSize(), publishedFormat, projectedFormat, translationMode, expectedFormatCrc, publishedFormatCrc);
-        if (partIO.translator)
         {
-            partIO.prefetcher = partIO.translator->queryActualFormat().createDiskPrefetcher();
-            dbgassertex(partIO.prefetcher);
+            IPartDescriptor &part = allDataParts.item(partNo);
+            RemoteFilename rfn;
+            part.getFilename(copy, rfn);
+            Owned<IFile> iFile = createIFile(rfn);
+
+            unsigned encryptedKeyLen;
+            void *encryptedKey;
+            helper->getFileEncryptKey(encryptedKeyLen,encryptedKey);
+            Owned<IExpander> eexp;
+            if (0 != encryptedKeyLen)
+            {
+                if (encrypted)
+                    eexp.setown(createAESExpander256(encryptedKeyLen, encryptedKey));
+                memset(encryptedKey, 0, encryptedKeyLen);
+                free(encryptedKey);
+            }
+            if (nullptr != eexp.get())
+                partIO.iFileIO = createCompressedFileReader(iFile, eexp);
+            else if (compressed)
+                partIO.iFileIO = createCompressedFileReader(iFile);
+            else
+                partIO.iFileIO = iFile->open(IFOread);
+            if (!partIO.iFileIO)
+                throw MakeStringException(0, "Failed to open fetch file part %u: %s", partNo, iFile->queryFilename());
+
+            partIO.stream = createFileSerialStream(partIO.iFileIO, 0, (offset_t)-1, 0);
+
+            IOutputMetaData *expectedFormat = helper->queryDiskRecordSize();
+            // NB: potentially translation per part could be different if dealing with superkeys
+            IPropertyTree &props = part.queryOwner().queryProperties();
+            unsigned publishedFormatCrc = (unsigned)props.getPropInt("@formatCrc", 0);
+            Owned<IOutputMetaData> publishedFormat = getDaliLayoutInfo(props);
+            unsigned expectedFormatCrc = helper->getDiskFormatCrc();
+            IOutputMetaData *projectedFormat = helper->queryProjectedDiskRecordSize();
+            RecordTranslationMode translationMode = getTranslationMode(*this);
+            const char *fname = helper->getFileName();
+            partIO.translator = getTranslators(fname, expectedFormat, publishedFormat, projectedFormat, translationMode, expectedFormatCrc, publishedFormatCrc);
+            if (partIO.translator)
+            {
+                partIO.prefetcher = partIO.translator->queryActualFormat().createDiskPrefetcher();
+                dbgassertex(partIO.prefetcher);
+            }
+            else
+                partIO.prefetcher = expectedFormat->createDiskPrefetcher();
         }
         return partIO;
     }
@@ -1985,54 +2066,18 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 case ht_remotekeylookup:
                     lookupHandler = new CKeyLookupRemoteHandler(*this, lookupSlave+1); // +1 because 0 == master, 1st slave == 1
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
- PROGLOG("RemoteKeyLookup Handler (%p): partCopy=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partCopy, lookupSlave, handlerCount);
- {
-     IPartDescriptor &pd = allIndexParts.item(partNo);
-     RemoteFilename rfn;
-     pd.getFilename(copy, rfn);
-     StringBuffer str;
-     rfn.getRemotePath(str);
-     PROGLOG("RemoteKeyLookup - Dealing with : %s", str.str());
- }
                     break;
                 case ht_localkeylookup:
                     lookupHandler = new CKeyLookupLocalHandler(*this);
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
- PROGLOG("LocalKeyLookup Handler (%p): partCopy=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partCopy, lookupSlave, handlerCount);
- {
-     IPartDescriptor &pd = allIndexParts.item(partNo);
-     RemoteFilename rfn;
-     pd.getFilename(copy, rfn);
-     StringBuffer str;
-     rfn.getRemotePath(str);
-     PROGLOG("LocalKeyLookup - Dealing with : %s", str.str());
- }
                     break;
                 case ht_remotefetch:
                     lookupHandler = new CFetchRemoteLookupHandler(*this, lookupSlave+1);
                     lookupHandler->setBatchSize(fetchLookupQueuedBatchSize);
- PROGLOG("RemoteFetchLookup Handler (%p): partCopy=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partCopy, lookupSlave, handlerCount);
- {
-     IPartDescriptor &pd = allDataParts.item(partNo);
-     RemoteFilename rfn;
-     pd.getFilename(copy, rfn);
-     StringBuffer str;
-     rfn.getRemotePath(str);
-     PROGLOG("RemoteFetchLookup - Dealing with : %s", str.str());
- }
                     break;
                 case ht_localfetch:
                     lookupHandler = new CFetchLocalLookupHandler(*this);
                     lookupHandler->setBatchSize(fetchLookupQueuedBatchSize);
- PROGLOG("LocalFetchLookup Handler (%p): partCopy=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partCopy, lookupSlave, handlerCount);
- {
-     IPartDescriptor &pd = allDataParts.item(partNo);
-     RemoteFilename rfn;
-     pd.getFilename(copy, rfn);
-     StringBuffer str;
-     rfn.getRemotePath(str);
-     PROGLOG("LocalFetchLookup - Dealing with : %s", str.str());
- }
                     break;
                 default:
                     throwUnexpected();
@@ -2124,6 +2169,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 ++p;
             }
         }
+        handlerContainer.trace();
     }
 public:
     IMPLEMENT_IINTERFACE_USING(PARENT);
@@ -2661,6 +2707,8 @@ public:
 
 CActivityBase *createKeyedJoinSlave(CGraphElementBase *container) 
 { 
+    if (container->getOptBool("legacykj"))
+        return LegacyKJ::createKeyedJoinSlave(container);
     return new CKeyedJoinSlave(container);
 }
 
