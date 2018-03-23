@@ -498,5 +498,7 @@ public:
 
 CActivityBase *createKeyedJoinActivityMaster(CMasterGraphElement *info)
 {
+    if (info->getOptBool("legacykj"))
+        return LegacyKJ::createKeyedJoinActivityMaster(info);
     return new CKeyedJoinMaster(info);
 }
