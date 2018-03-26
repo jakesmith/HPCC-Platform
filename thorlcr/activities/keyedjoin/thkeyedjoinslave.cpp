@@ -53,6 +53,7 @@
 #include <atomic>
 #include <deque>
 #include <algorithm>
+#include <typeinfo>
 
 //#define TRACE_USAGE
 
@@ -484,6 +485,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         unsigned nextQueue = 0;
         bool stopped = false;
         unsigned lookupQueuedBatchSize = 1000;
+        rowcount_t total = 0;
     public:
         CLookupHandler(CKeyedJoinSlave &_activity, IThorRowInterfaces *_rowIf) : threaded("CLookupHandler", this),
             activity(_activity), rowIf(_rowIf)
@@ -666,6 +668,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 }
                 try
                 {
+                    total += processing.ordinality();
                     process(processing, selected);
                 }
                 catch (IException *e)
@@ -675,6 +678,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     e->Release();
                 }
                 processing.clearRows();
+                if (0 == (total % 10000))
+                    PROGLOG("%s: processed: %" I64F "u", typeid(*this).name(), total);
             }
             while (true);
             activity.lookupThreadLimiter.dec(); // unblocks any requests to start lookup threads
@@ -1779,18 +1784,54 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 case ht_remotekeylookup:
                     lookupHandler = new CKeyLookupRemoteHandler(*this, lookupSlave+1); // +1 because 0 == master, 1st slave == 1
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
+ PROGLOG("RemoteKeyLookup Handler (%p): partIdx=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partIdx, lookupSlave, handlerCount);
+ {
+     IPartDescriptor &pd = allIndexParts.item(partIdx);
+     RemoteFilename rfn;
+     pd.getFilename(0, rfn);
+     StringBuffer str;
+     rfn.getRemotePath(str);
+     PROGLOG("RemoteKeyLookup - Dealing with : %s", str.str());
+ }
                     break;
                 case ht_localkeylookup:
                     lookupHandler = new CKeyLookupLocalHandler(*this);
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
+ PROGLOG("LocalKeyLookup Handler (%p): partIdx=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partIdx, lookupSlave, handlerCount);
+ {
+     IPartDescriptor &pd = allIndexParts.item(partIdx);
+     RemoteFilename rfn;
+     pd.getFilename(0, rfn);
+     StringBuffer str;
+     rfn.getRemotePath(str);
+     PROGLOG("LocalKeyLookup - Dealing with : %s", str.str());
+ }
                     break;
                 case ht_remotefetch:
                     lookupHandler = new CFetchRemoteLookupHandler(*this, lookupSlave+1);
                     lookupHandler->setBatchSize(fetchLookupQueuedBatchSize);
+ PROGLOG("RemoteFetchLookup Handler (%p): partIdx=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partIdx, lookupSlave, handlerCount);
+ {
+     IPartDescriptor &pd = allDataParts.item(partIdx);
+     RemoteFilename rfn;
+     pd.getFilename(0, rfn);
+     StringBuffer str;
+     rfn.getRemotePath(str);
+     PROGLOG("RemoteFetchLookup - Dealing with : %s", str.str());
+ }
                     break;
                 case ht_localfetch:
                     lookupHandler = new CFetchLocalLookupHandler(*this);
                     lookupHandler->setBatchSize(fetchLookupQueuedBatchSize);
+ PROGLOG("LocalFetchLookup Handler (%p): partIdx=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partIdx, lookupSlave, handlerCount);
+ {
+     IPartDescriptor &pd = allDataParts.item(partIdx);
+     RemoteFilename rfn;
+     pd.getFilename(0, rfn);
+     StringBuffer str;
+     rfn.getRemotePath(str);
+     PROGLOG("LocalFetchLookup - Dealing with : %s", str.str());
+ }
                     break;
                 default:
                     throwUnexpected();
