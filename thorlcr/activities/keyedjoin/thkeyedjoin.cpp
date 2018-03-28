@@ -77,7 +77,7 @@ class CKeyedJoinMaster : public CMasterActivity
 
     CMap indexMap, dataMap;
     // Fills map
-    void mapParts(CMap &map, IDistributedFile *file, bool isIndexWithTlk)
+    void mapParts(CMap &map, IDistributedFile *file, bool isIndexWithTlk, bool primaryOnly)
     {
         Owned<IFileDescriptor> fileDesc = file->getFileDescriptor();
         assertex(fileDesc);
@@ -118,7 +118,7 @@ class CKeyedJoinMaster : public CMasterActivity
             const char *kind = isIndexWithTlk ? part->queryProperties().queryProp("@kind") : nullptr;
             if (!kind || !strsame("topLevelKey", kind))
             {
-                unsigned copies = part->numCopies();
+                unsigned copies = primaryOnly ? 1 : part->numCopies();
                 unsigned mappedPos = NotFound;
                 for (unsigned c=0; c<copies; c++)
                 {
@@ -288,7 +288,7 @@ public:
                             if (!rfn.queryIP().ipequals(container.queryJob().querySlaveGroup().queryNode(0).endpoint()))
                                 remoteKeyedFetch = false;
                         }
-                        mapParts(dataMap, dataFile, false);
+                        mapParts(dataMap, dataFile, false, container.queryLocalData());
                     }
                 }
             }
@@ -357,7 +357,7 @@ public:
                         initMb.append(tag);
                     initMb.append(remoteKeyedLookup);
                     initMb.append(remoteKeyedFetch);
-                    mapParts(indexMap, indexFile, keyHasTlk);
+                    mapParts(indexMap, indexFile, keyHasTlk, container.queryLocalData());
                     initMb.append(superIndexWidth); // 0 if not superIndex
                     if (localKey)
                         keyHasTlk = false; // JCSMORE, not used at least for now
@@ -428,18 +428,20 @@ public:
                 std::vector<unsigned> &parts = indexMap.querySlaveParts(slave);
                 unsigned numParts = parts.size();
                 dst.append(numParts);
-                indexFileDesc->serializeParts(dst, &parts[0], numParts);
+                if (numParts)
+                    indexFileDesc->serializeParts(dst, &parts[0], numParts);
             }
             else
             {
+                dst.append(totalIndexParts);
                 std::vector<unsigned> &parts = indexMap.queryAllParts();
-                unsigned numParts = parts.size();
-                dst.append(numParts);
-                indexFileDesc->serializeParts(dst, &parts[0], numParts);
+                indexFileDesc->serializeParts(dst, &parts[0], totalIndexParts);
                 if (remoteKeyedLookup)
                 {
                     std::vector<unsigned> &parts = indexMap.querySlaveParts(slave);
-                    dst.append(sizeof(unsigned)*parts.size(), &parts[0]);
+                    unsigned numSlaveParts = parts.size();
+                    dst.append(numSlaveParts);
+                    dst.append(sizeof(unsigned)*numSlaveParts, &parts[0]);
                     indexMap.serializePartMap(dst);
                 }
             }
@@ -454,7 +456,9 @@ public:
                 if (remoteKeyedFetch)
                 {
                     std::vector<unsigned> &parts = dataMap.querySlaveParts(slave);
-                    dst.append(sizeof(unsigned)*parts.size(), &parts[0]);
+                    unsigned numSlaveParts = parts.size();
+                    dst.append(numSlaveParts);
+                    dst.append(sizeof(unsigned)*numSlaveParts, &parts[0]);
                     dataMap.serializePartMap(dst);
                 }
             }

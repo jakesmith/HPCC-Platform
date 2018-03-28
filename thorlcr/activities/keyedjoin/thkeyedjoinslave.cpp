@@ -2064,8 +2064,11 @@ public:
             }
             if (remoteKeyedLookup)
             {
-                std::vector<unsigned> mappedParts(numIndexParts);
-                data.read(numIndexParts * sizeof(unsigned), &mappedParts[0]);
+                std::vector<unsigned> mappedParts;
+                unsigned numMappedParts;
+                data.read(numMappedParts);
+                mappedParts.resize(numMappedParts);
+                data.read(numMappedParts * sizeof(unsigned), &mappedParts[0]);
                 for (auto &p: mappedParts)
                 {
                     IPartDescriptor &part = allIndexParts.item(p);
@@ -2091,8 +2094,11 @@ public:
                     deserializePartFileDescriptors(data, allDataParts);
                 if (remoteKeyedFetch)
                 {
-                    std::vector<unsigned> mappedParts(numDataParts);
-                    data.read(numDataParts * sizeof(unsigned), &mappedParts[0]);
+                    std::vector<unsigned> mappedParts;
+                    unsigned numMappedParts;
+                    data.read(numMappedParts);
+                    mappedParts.resize(numMappedParts);
+                    data.read(numMappedParts * sizeof(unsigned), &mappedParts[0]);
                     for (auto &p: mappedParts)
                     {
                         IPartDescriptor &part = allDataParts.item(p);
@@ -2114,7 +2120,7 @@ public:
                 unsigned f;
                 for (f=0, e=&globalFPosToSlaveMap[0]; f<totalDataParts; f++, e++)
                 {
-                    IPartDescriptor &part = dataParts.item(f);
+                    IPartDescriptor &part = allDataParts.item(f);
                     e->base = part.queryProperties().getPropInt64("@offset");
                     e->top = e->base + part.queryProperties().getPropInt64("@size");
                     e->index = f;
