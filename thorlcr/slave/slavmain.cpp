@@ -94,7 +94,7 @@ void disableThorSlaveAsDaliClient()
 #endif
 }
 
-class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
+class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, implements IThreadFactory, implements IExceptionHandler
 {
     const unsigned defaultMaxCachedKJManagers = 1000;
     const unsigned defaultKeyLookupMaxProcessThreads = 16;
@@ -103,9 +103,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
     CThreadedPersistent threaded;
     mptag_t keyLookupMpTag = TAG_NULL;
     bool aborted = false;
-    CriticalSection availableProcessorCrit;
-    bool getAvailableBlocked = false;
-    Semaphore getAvailableSem;
     unsigned numCached = 0;
     CJobBase *currentJob = nullptr;
     unsigned maxCachedKJManagers = defaultMaxCachedKJManagers;
@@ -808,59 +805,31 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
     typedef CLookupHT<CKeyLookupContext> CKeyLookupContextHT;
     typedef CLookupHTOwned<CKMKeyEntry> CKMContextHT;
 
-    // JCSMORE - should prob. just be a thread pool or use TBB
-    class CRemoteLookupProcessor : public CSimpleInterfaceOf<IInterface>, implements IThreaded
+    class CRemoteLookupProcessor : public CSimpleInterfaceOf<IPooledThread>
     {
         CKJService &service;
-        CThreaded threaded;
-        Semaphore sem;
         Owned<CLookupRequest> lookupRequest;
-
         bool abortSoon = false;
 
     public:
-        CRemoteLookupProcessor(CKJService &_service) : threaded("CRemoteLookupProcessor", this), service(_service)
+        CRemoteLookupProcessor(CKJService &_service) : service(_service)
         {
         }
-        ~CRemoteLookupProcessor()
-        {
-            stop();
-        }
-        void start()
+    // IPooledThread impl.
+        virtual void init(void *param) override
         {
             abortSoon = false;
-            threaded.start();
+            lookupRequest.set((CLookupRequest *)param);
         }
-        void join()
+        virtual bool stop() override
         {
-            threaded.join();
+            abortSoon = true; return true;
         }
-        void stop()
-        {
-            abortSoon = true;
-            // NB: if handler is in middle of handling request will stop next time around
-            sem.signal();
-            join();
-        }
-        void handleRequest(CLookupRequest *_lookupRequest)
-        {
-            // NB: only here, because this processor is idle
-            assertex(!lookupRequest);
-            lookupRequest.set(_lookupRequest);
-            sem.signal();
-        }
-    // IThreaded
+        virtual bool canReuse() const override { return true; }
         virtual void threadmain() override
         {
-            while (true)
-            {
-                sem.wait();
-                if (!lookupRequest) // stop
-                    break;
-                Owned<CLookupRequest> request = lookupRequest.getClear();
-                request->process(abortSoon);
-                service.addAvailableProcessor(*this);
-            }
+            Owned<CLookupRequest> request = lookupRequest.getClear();
+            request->process(abortSoon);
         }
     };
     struct FetchKey
@@ -889,9 +858,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
     OwningSimpleHashTableOf<CFetchContext, FetchKey> fetchContextsHT;
     CICopyArrayOf<CKMContainer> cachedKMsMRU;
     CriticalSection kMCrit, lCCrit;
-
-    IArrayOf<CRemoteLookupProcessor> processors;
-    std::vector<CRemoteLookupProcessor *> availableProcessors;
+    Owned<IThreadPool> processorPool;
 
     CActivityContext *createActivityContext(CJobBase &job, activity_id id)
     {
@@ -1042,19 +1009,15 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded
         activityContextsHT.kill();
         keyLookupContextsHT.kill();
         fetchContextsHT.kill();
-        assertex(availableProcessors.size() == processors.ordinality());
         currentJob = nullptr;
     }
 public:
+    IMPLEMENT_IINTERFACE_USING(CSimpleInterfaceOf<IKJService>);
+
     CKJService(mptag_t _mpTag) : threaded("CKJService", this), keyLookupMpTag(_mpTag)
     {
         unsigned keyLookupMaxProcessThreads = 1; // JCSMORE delete it, now configurable
-        for (unsigned i=0; i<keyLookupMaxProcessThreads; i++)
-        {
-            CRemoteLookupProcessor *processor = new CRemoteLookupProcessor(*this);
-            processors.append(*processor);
-            availableProcessors.push_back(processor);
-        }
+        processorPool.setown(createThreadPool("KJService processor pool", this, this, keyLookupMaxProcessThreads));
     }
     ~CKJService()
     {
@@ -1080,56 +1043,14 @@ public:
         cachedKMsMRU.append(*kmc);
         ++numCached;
     }
-    void addAvailableProcessor(CRemoteLookupProcessor &processor)
-    {
-        CriticalBlock b(availableProcessorCrit);
-        availableProcessors.push_back(&processor);
-        if (getAvailableBlocked)
-        {
-            getAvailableBlocked = false;
-            getAvailableSem.signal();
-        }
-    }
-    CRemoteLookupProcessor *getAvailableProcessor()
-    {
-        while (!aborted)
-        {
-            {
-                CriticalBlock b(availableProcessorCrit);
-                if (0 == availableProcessors.size())
-                {
-                    if (aborted)
-                        return nullptr;
-                    getAvailableBlocked = true;
-                }
-                else
-                {
-                    CRemoteLookupProcessor *processor = availableProcessors.back();
-                    availableProcessors.pop_back();
-                    return processor;
-                }
-            }
-            getAvailableSem.wait();
-        }
-        return nullptr;
-    }
     void abort()
     {
         if (aborted)
             return;
         aborted = true;
         queryNodeComm().cancel(RANK_ALL, keyLookupMpTag);
-        ForEachItemIn(p, processors)
-            processors.item(p).stop();
-
-        {
-            CriticalBlock b(availableProcessorCrit);
-            if (getAvailableBlocked)
-            {
-                getAvailableBlocked = false;
-                getAvailableSem.signal();
-            }
-        }
+        processorPool->stopAll(true);
+        processorPool->joinAll(true);
         threaded.join();
         clearAll();
     }
@@ -1141,14 +1062,11 @@ public:
         size32_t requestSz;
         msg.read(requestSz);
         lookupRequest->deserialize(requestSz, msg.readDirect(requestSz));
-
-        CRemoteLookupProcessor *processor = getAvailableProcessor(); // will block if all busy
-        if (!processor) // only if aborting
-            return;
         msg.clear();
         // NB: kmc is added to cache at end of request handling
-        processor->handleRequest(lookupRequest); // links lookupRequest
+        processorPool->start(lookupRequest);
     }
+// IThreaded
     virtual void threadmain() override
     {
         while (!aborted)
@@ -1235,12 +1153,9 @@ public:
                         msg.read(requestSz);
                         lookupRequest->deserialize(requestSz, msg.readDirect(requestSz));
 
-                        CRemoteLookupProcessor *processor = getAvailableProcessor(); // will block if all busy
-                        if (!processor) // only if aborting
-                            return;
                         msg.clear();
                         // NB: kmc is added to cache at end of request handling
-                        processor->handleRequest(lookupRequest); // links lookupRequest
+                        processorPool->start(lookupRequest);
                         break;
                     }
                     case kjs_fetchclose:
@@ -1307,16 +1222,14 @@ public:
     virtual void reset() override
     {
         DBGLOG("KJService reset()");
-        ForEachItemIn(p, processors)
-            processors.item(p).stop();
+        processorPool->stopAll(true);
+        processorPool->joinAll(false);
         clearAll();
         DBGLOG("KJService reset() done");
     }
     virtual void start() override
     {
         aborted = false;
-        ForEachItemIn(p, processors)
-            processors.item(p).start(); // NB: waits for requests to handle
         threaded.start();
     }
     virtual void stop() override
@@ -1325,14 +1238,27 @@ public:
             return;
         PROGLOG("KJService stop()");
         queryNodeComm().cancel(RANK_ALL, keyLookupMpTag);
+        processorPool->stopAll(true);
+        processorPool->joinAll(true);
         while (!threaded.join(60000))
             PROGLOG("Receiver waiting on remote handlers to signal completion");
         if (aborted)
             return;
         aborted = true;
-        ForEachItemIn(p, processors)
-            processors.item(p).stop();
         clearAll();
+    }
+// IThreadFactory impl.
+    virtual IPooledThread *createNew() override
+    {
+        return new CRemoteLookupProcessor(*this);
+    }
+// IExceptionHandler impl.
+    virtual bool fireException(IException *e) override
+    {
+        // exceptions should always be handled by processor
+        EXCLOG(e, nullptr);
+        e->Release();
+        return true;
     }
 };
 
