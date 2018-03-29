@@ -77,6 +77,7 @@ class CKeyedJoinMaster : public CMasterActivity
 
     CMap indexMap, dataMap;
     // Fills map
+    static const unsigned partMask = 0x00ffffff;
     void mapParts(CMap &map, IDistributedFile *file, bool isIndexWithTlk, bool primaryOnly)
     {
         Owned<IFileDescriptor> fileDesc = file->getFileDescriptor();
@@ -133,7 +134,8 @@ class CKeyedJoinMaster : public CMasterActivity
                             std::vector<unsigned> &slaveParts = map.querySlaveParts(gn);
                             if (!partsOnSlaves->testSet(groupSize*p+gn))
                             {
-                                slaveParts.push_back(p);
+                                unsigned partCopy = p | (c << 24);
+                                slaveParts.push_back(partCopy);
                                 if (NotFound == mappedPos)
                                 {
                                     mappedPos = gn;
@@ -188,7 +190,7 @@ class CKeyedJoinMaster : public CMasterActivity
         std::sort(map.allParts.begin(), map.allParts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
         // ensure sorted by partIdx, so that consistent order for partHandlers/lookup
         for (auto &slaveParts : map.slavePartMap)
-            std::sort(slaveParts.begin(), slaveParts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
+            std::sort(slaveParts.begin(), slaveParts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a & partMask] < partsByPartIdx[b & partMask]; });
     }
 
 public:

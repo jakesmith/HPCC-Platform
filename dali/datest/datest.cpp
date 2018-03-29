@@ -20,7 +20,6 @@
 #include "jlib.hpp"
 #include "jexcept.hpp"
 #include "jmisc.hpp"
-#include "jset.hpp"
 #include "mpbase.hpp"
 #include "mpcomm.hpp"
 #include "sockfile.hpp"
@@ -32,14 +31,9 @@
 #include "danqs.hpp"
 #include "dautils.hpp"
 #include "dasess.hpp"
-#include "dadfs.hpp"
 #include "mplog.hpp"
 
 #include "jptree.hpp"
-
-#include <array>
-#include <vector>
-#include <algorithm>
 
 #define DEFAULT_TEST "RANDTEST"
 static const char *whichTest = DEFAULT_TEST;
@@ -1904,176 +1898,8 @@ void TestSubLocks()
     PrintLog("SubLocks test done");
 }
 
-class CMap
-{
-public:
-    std::vector<unsigned> allParts;
-    std::vector<std::vector<unsigned>> slavePartMap; // vector of slave parts (IPartDescriptor's slavePartMap[<slave>] serialized to each slave)
-    std::vector<unsigned> partToSlave; // vector mapping part index to slave (sent to all slaves)
-
-    CMap()
-    {
-    }
-    void setup(unsigned slaves, unsigned parts)
-    {
-        clear();
-        slavePartMap.resize(slaves);
-        partToSlave.resize(parts);
-    }
-    void clear()
-    {
-        allParts.clear();
-        slavePartMap.clear();
-        partToSlave.clear();
-    }
-    unsigned count() const { return partToSlave.size(); }
-#if 0
-    void serializePartMap(MemoryBuffer &mb)
-    {
-        mb.append(partToSlave.size() * sizeof(unsigned), &partToSlave[0]);
-    }
-#endif
-    unsigned querySlave(unsigned part) const { return partToSlave[part]; }
-    std::vector<unsigned> &querySlaveParts(unsigned slave) { return slavePartMap[slave]; }
-    std::vector<unsigned> &queryAllParts() { return allParts; }
-};
-// Fills map
-void mapParts(CMap &map, IDistributedFile *file, bool isIndexWithTlk)
-{
-    Owned<IFileDescriptor> fileDesc = file->getFileDescriptor();
-    assertex(fileDesc);
-    IDistributedSuperFile *super = file->querySuperFile();
-    ISuperFileDescriptor *superFileDesc = fileDesc->querySuperFileDescriptor();
-    unsigned totalParts = file->numParts();
-    if (isIndexWithTlk)
-        totalParts -= super ? super->numSubFiles(true) : 1;
-
-    IGroup &dfsGroup = *queryNamedGroupStore().lookup("mythor");
-    map.setup(dfsGroup.ordinality(), totalParts);
-
-
-    unsigned numSuperIndexSubs = 0;
-    unsigned superWidth = 0;
-    if (super)
-    {
-        if (super->numSubFiles(true))
-        {
-            if (!super->isInterleaved())
-                numSuperIndexSubs = super->numSubFiles(true);
-
-            IDistributedFile &sub = super->querySubFile(0, true);
-            superWidth = sub.numParts();
-            if (isIndexWithTlk)
-                --superWidth;
-        }
-    }
-
-    unsigned groupSize = dfsGroup.ordinality();
-    std::vector<unsigned> partsByPartIdx;
-    Owned<IBitSet> partsOnSlaves = createBitSet();
-    unsigned numParts = fileDesc->numParts();
-    unsigned nextGroupStartPos = 0;
-    for (unsigned p=0; p<numParts; p++)
-    {
-        IPartDescriptor *part = fileDesc->queryPart(p);
-        const char *kind = isIndexWithTlk ? part->queryProperties().queryProp("@kind") : nullptr;
-        if (!kind || !strsame("topLevelKey", kind))
-        {
-            unsigned copies = part->numCopies();
-            unsigned mappedPos = NotFound;
-            for (unsigned c=0; c<copies; c++)
-            {
-                INode *node = part->queryNode(c);
-                unsigned start=nextGroupStartPos;
-                unsigned gn=start;
-                do
-                {
-                    INode &groupNode = dfsGroup.queryNode(gn);
-                    if (node->equals(&groupNode))
-                    {
-                        std::vector<unsigned> &slaveParts = map.querySlaveParts(gn);
-                        if (!partsOnSlaves->testSet(groupSize*p+gn))
-                        {
-                            slaveParts.push_back(p);
-                            if (NotFound == mappedPos)
-                            {
-                                mappedPos = gn;
- StringBuffer partNodeStr, groupNodeStr;
- node->endpoint().getUrlStr(partNodeStr);
- groupNode.endpoint().getUrlStr(groupNodeStr);
- PROGLOG("part[%u]: part node=%s, group node=%s", p, partNodeStr.str(), groupNodeStr.str());
- PROGLOG("start=%u, nextGroupStartPos=%u, mappedPos=%u, p=%u, c=%u", start, nextGroupStartPos, mappedPos, p, c);
-                                nextGroupStartPos = gn+1;
-                                if (nextGroupStartPos == groupSize)
-                                    nextGroupStartPos = 0;
-                            }
-                        }
-                    }
-                    gn++;
-                    if (gn == groupSize)
-                        gn = 0;
-                }
-                while (gn != start);
-                if (NotFound == mappedPos)
-                {
- PROGLOG("p=%u: not found on cluster", p);
-                    // part not within the cluster, add it to all slave maps, meaning these part meta will be serialized to all slaves so they handle the lookups directly.
-                    for (auto &slaveParts : map.slavePartMap)
-                        slaveParts.push_back(p);
-                }
-            }
-            // NB: in case of queryLocalData(), doesn't really need whole map
-            unsigned partIdx = part->queryPartIndex();
-            if (superFileDesc)
-            {
-                unsigned subfile, subpartnum;
-                superFileDesc->mapSubPart(partIdx, subfile, subpartnum);
-                partIdx = superWidth*subfile+subpartnum;
-            }
-            partsByPartIdx.push_back(partIdx);
-            assertex(partIdx < totalParts);
-            map.partToSlave[partIdx] = mappedPos;
- PROGLOG("map[%u] = %u", partIdx, mappedPos);
-        }
-    }
-    if (0 == numSuperIndexSubs)
-    {
-        for (unsigned p=0; p<totalParts; p++)
-            map.allParts.push_back(p);
-    }
-    else // non-interleaved superindex
-    {
-        unsigned p=0;
-        for (unsigned i=0; i<numSuperIndexSubs; i++)
-        {
-            for (unsigned kp=0; kp<superWidth; kp++)
-                map.allParts.push_back(p++);
-            if (isIndexWithTlk)
-                p++; // TLK's serialized separately.
-        }
-    }
-    // ensure sorted by partIdx, so that consistent order for partHandlers/lookup
-    std::sort(map.allParts.begin(), map.allParts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
-    // ensure sorted by partIdx, so that consistent order for partHandlers/lookup
-    for (auto &slaveParts : map.slavePartMap)
-        std::sort(slaveParts.begin(), slaveParts.end(), [partsByPartIdx](unsigned a, unsigned b) { return partsByPartIdx[a] < partsByPartIdx[b]; });
-}
 void TestSDS1()
 {
-#if 1
-    {
-        const char *index = "kjspeedtest::rhsds.idx";
-        Owned<IDistributedFile> indexFile = queryDistributedFileDirectory().lookup(index, UNKNOWN_USER);
-        bool keyHasTlk = true;
-        CMap indexMap;
-        mapParts(indexMap, indexFile, keyHasTlk);
-
-        std::vector<unsigned> &parts = indexMap.querySlaveParts(0);
-        for (auto p: parts)
-            PROGLOG("slave 0 gets part %u", p);
-        return;
-    }
-#endif
     StringBuffer xml;
     ISDSManager &sdsManager = querySDS();
     IRemoteConnection *conn;

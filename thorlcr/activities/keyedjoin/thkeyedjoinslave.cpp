@@ -508,14 +508,15 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             stop();
         }
-        virtual void addPartNum(unsigned partNum)
+        virtual void addPartNum(unsigned partCopy)
         {
-            parts.push_back(partNum);
+            parts.push_back(partCopy);
             queues.push_back(new CThorExpandingRowArray(activity, rowIf));
             batchArrays.push_back(new CThorExpandingRowArray(activity));
-            while (partNum >= partNumMap.size())
+            unsigned partNo = partCopy & partMask;
+            while (partNo >= partNumMap.size())
                 partNumMap.push_back(NotFound);
-            partNumMap[partNum] = myParts++;
+            partNumMap[partNo] = myParts++;
         }
         void join()
         {
@@ -586,7 +587,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         void queueLookup(const void *row, unsigned partNo)
         {
             // NB: queueLookup() must be protected from re-entry by caller
-            unsigned partsIdx = partNumMap[partNo];
+            unsigned partsIdx = queryPartNumIdx(partNo);
             CThorExpandingRowArray &batchArray = *batchArrays[partsIdx];
             LinkThorRow(row);
             batchArray.append(row);
@@ -685,6 +686,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             activity.lookupThreadLimiter.dec(); // unblocks any requests to start lookup threads
         }
     };
+    static const unsigned partMask = 0x00ffffff;
     class CKeyLookupLocalHandler : public CLookupHandler
     {
         typedef CLookupHandler PARENT;
@@ -709,10 +711,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
         {
-            unsigned partNo = parts[selected];
+            unsigned partCopy = parts[selected];
+            unsigned partNo = partCopy & partMask;
+            unsigned copy = partCopy >> 24;
             IKeyManager *&keyManager = keyManagers[selected];
             if (!keyManager) // delayed until actually needed
-                keyManager = activity.createPartKeyManager(partNo);
+                keyManager = activity.createPartKeyManager(partNo, copy);
 
             for (unsigned r=0; r<processing.ordinality() && !stopped; r++)
             {
@@ -818,7 +822,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         unsigned handle = 0;
         bool opened = false;
 
-        void initRead(CMessageBuffer &msg, unsigned partNo)
+        void initRead(CMessageBuffer &msg, unsigned partNo, unsigned copy)
         {
             byte cmd = opened ? kjs_read : kjs_open;
             msg.append(cmd);
@@ -828,7 +832,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             unsigned crc;
             part.getCrc(crc);
             RemoteFilename rfn;
-            part.getFilename(0, rfn);
+            part.getFilename(copy, rfn);
             StringBuffer fname;
             rfn.getLocalPath(fname);
             msg.append(fname).append(crc);
@@ -849,11 +853,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
         {
-            unsigned partNo = parts[selected];
+            unsigned partCopy = parts[selected];
+            unsigned partNo = partCopy & partMask;
+            unsigned copy = partCopy >> 24;
 
             CMessageBuffer msg;
             // JCSMORE - don't _need_ filename in general after 1st call, but avoids challenge/response handling if other side has closed, and relatively small vs msg size
-            initRead(msg, partNo);
+            initRead(msg, partNo, copy);
             unsigned numRows = processing.ordinality();
             writeRowData(processing, msg);
 
@@ -986,15 +992,17 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         CFetchLocalLookupHandler(CKeyedJoinSlave &_activity)
             : PARENT(_activity, _activity.fetchInputMetaRowIf)
         {
-            encrypted = activity.dataParts.item(0).queryOwner().queryProperties().getPropBool("@encrypted");
-            compressed = isCompressed(activity.dataParts.item(0).queryOwner().queryProperties());
+            encrypted = activity.allDataParts.item(0).queryOwner().queryProperties().getPropBool("@encrypted");
+            compressed = isCompressed(activity.allDataParts.item(0).queryOwner().queryProperties());
             Owned<IThorRowInterfaces> fetchDiskRowIf = activity.createRowInterfaces(helper->queryDiskRecordSize());
             fetchDiskAllocator.set(fetchDiskRowIf->queryRowAllocator());
             fetchDiskDeserializer.set(fetchDiskRowIf->queryRowDeserializer());
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
         {
-            unsigned partNo = parts[selected];
+            unsigned partCopy = parts[selected];
+            unsigned partNo = partCopy & partMask;
+            unsigned copy = partCopy >> 24;
 
             unsigned numRows = processing.ordinality();
             for (unsigned r=0; r<processing.ordinality() && !stopped; r++)
@@ -1007,7 +1015,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 if (0 != helper->queryFetchInputRecordSize()->getMinRecordSize())
                     fetchKey = (const byte *)row.get() + sizeof(FetchRequestHeader);
 
-                Owned<IFileIO> iFileIO = activity.getFetchFileIO(partNo, compressed, encrypted);
+                Owned<IFileIO> iFileIO = activity.getFetchFileIO(partNo, copy, compressed, encrypted);
                 Owned<ISerialStream> stream = createFileSerialStream(iFileIO, requestHeader.fpos);
                 CThorStreamDeserializerSource ds(stream);
 
@@ -1047,12 +1055,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         byte flags = 0;
         std::vector<unsigned> used;
 
-        void initRead(CMessageBuffer &msg, unsigned partNo)
+        void initRead(CMessageBuffer &msg, unsigned partNo, unsigned copy)
         {
             msg.append((byte)kjs_fetch);
             msg.append(replyTag);
             msg.append(activity.queryId());
-            msg.append(partNumMap[partNo]);
+            msg.append(queryPartNumIdx(partNo));
             /* JCSMORE consider not sending info. below with each packet,
              * and instead expect challenge response from server-side, then send.
              * But not sure worth it, as requests are batched, so this overhead is small
@@ -1060,7 +1068,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             msg.append(flags);
             IPartDescriptor &part = activity.allDataParts.item(partNo);
             RemoteFilename rfn;
-            part.getFilename(0, rfn);
+            part.getFilename(copy, rfn);
             StringBuffer fname;
             rfn.getLocalPath(fname);
             msg.append(fname);
@@ -1070,20 +1078,22 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             msg.append((byte)kjs_fetchclose);
             msg.append(replyTag);
             msg.append(activity.queryId());
-            msg.append(partNumMap[partNo]);
+            msg.append(queryPartNumIdx(partNo));
         }
     public:
         CFetchRemoteLookupHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave)
             : PARENT(_activity, _activity.fetchInputMetaRowIf, _lookupSlave), replyRows(_activity, _activity.fetchOutputMetaRowIf)
         {
-            if (activity.dataParts.item(0).queryOwner().queryProperties().getPropBool("@encrypted"))
+            if (activity.allDataParts.item(0).queryOwner().queryProperties().getPropBool("@encrypted"))
                 flags |= kjf_encrypted;
-            if (isCompressed(activity.dataParts.item(0).queryOwner().queryProperties()))
+            if (isCompressed(activity.allDataParts.item(0).queryOwner().queryProperties()))
                 flags |= kjf_compressed;
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
         {
-            unsigned partNo = parts[selected];
+            unsigned partCopy = parts[selected];
+            unsigned partNo = partCopy & partMask;
+            unsigned copy = partCopy >> 24;
 
             while (selected >= used.size())
                 used.push_back(NotFound);
@@ -1091,7 +1101,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
             CMessageBuffer msg;
             // JCSMORE - don't _need_ filename in general after 1st call, but avoids challenge/response handling if other side has closed, and relatively small vs overall msg size
-            initRead(msg, partNo);
+            initRead(msg, partNo, copy);
             writeRowData(processing, msg);
 
             if (!comm->send(msg, lookupSlave, kjServiceMpTag, LONGTIMEOUT))
@@ -1289,8 +1299,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     unsigned blockedKeyLookupThreads = 0;
     unsigned blockedDoneGroupThreads = 0;
 
-    CPartDescriptorArray allDataParts, dataParts;
-    IArrayOf<IPartDescriptor> allIndexParts, indexParts;
+    CPartDescriptorArray allDataParts;
+    IArrayOf<IPartDescriptor> allIndexParts;
+    std::vector<unsigned> localIndexPartMap, localFetchPartMap;
     IArrayOf<IKeyIndex> tlkKeyIndexes;
     Owned<IEngineRowAllocator> joinFieldsAllocator;
     OwnedConstThorRow defaultRight;
@@ -1350,7 +1361,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
     CriticalSection fetchFileCrit;
     IPointerArrayOf<IFileIO> openFetchFiles;
-    IFileIO *getFetchFileIO(unsigned partNo, bool compressed, bool encrypted)
+    IFileIO *getFetchFileIO(unsigned partNo, unsigned copy, bool compressed, bool encrypted)
     {
         CriticalBlock b(fetchFileCrit);
         if (partNo>=openFetchFiles.ordinality())
@@ -1369,7 +1380,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         IPartDescriptor &part = allDataParts.item(partNo);
         RemoteFilename rfn;
-        part.getFilename(0, rfn);
+        part.getFilename(copy, rfn);
         Owned<IFile> iFile = createIFile(rfn);
 
         unsigned encryptedKeyLen;
@@ -1472,13 +1483,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         return tlkKeyIndexes.ordinality();
     }
-    IKeyManager *createPartKeyManager(unsigned partNo)
+    IKeyManager *createPartKeyManager(unsigned partNo, unsigned copy)
     {
         IPartDescriptor &filePart = allIndexParts.item(partNo);
         unsigned crc=0;
         filePart.getCrc(crc);
         RemoteFilename rfn;
-        filePart.getFilename(0, rfn);
+        filePart.getFilename(copy, rfn);
         StringBuffer filename;
         rfn.getPath(filename);
 
@@ -1514,10 +1525,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 keyManager.reset();
                 while (keyManager.lookup(false)) // JCSMORE !! even though the TLK's are in-memory keys, this is going via the node cache and blocking !!
                 {
-                    offset_t node = extractFpos(&keyManager);
-                    if (node) // don't bail out if part0 match, test again for 'real' tlk match.
+                    offset_t slave = extractFpos(&keyManager);
+                    if (slave) // don't bail out if part0 match, test again for 'real' tlk match.
                     {
-                        unsigned partNo = (unsigned)node;
+                        unsigned partNo = (unsigned)slave;
                         partNo = superWidth ? superWidth*whichKm+(partNo-1) : partNo-1;
                         if (container.queryLocalData())
                         {
@@ -1535,10 +1546,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         else // rootless or local key, lookup in all parts this slave has
         {
             indexLookupRow.setown(preparePendingLookupRow(keyFieldsRowBuilder.getUnfinalizedClear(), keyFieldsRowBuilder.getMaxLength(), lhsRow, keyedFieldsRowSize));
-            if (!remoteKeyedLookup) // either local only or legacy, either way lookup in all indexParts I have
+            if (!remoteKeyedLookup) // either local only or legacy, either way lookup in all allIndexParts I have
             {
-                ForEachItemIn(partNo, indexParts)
-                    queueLookupForPart(indexParts.item(partNo).queryPartIndex(), indexLookupRow);
+                ForEachItemIn(partNo, allIndexParts)
+                    queueLookupForPart(allIndexParts.item(partNo).queryPartIndex(), indexLookupRow);
             }
             else // global KJ, but rootless, need to make requests to all
             {
@@ -1759,12 +1770,14 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         return doneListLimiter.incNonBlocking(true);
     }
 
-    void addPartToHandler(CHandlerContainer &handlerContainer, const std::vector<unsigned> &partToSlaveMap, unsigned partIdx, HandlerType hType, std::vector<unsigned> &handlerCounts, std::vector<std::vector<CLookupHandler *>> &slaveHandlers, std::vector<unsigned> &slaveHandlersRR)
+    void addPartToHandler(CHandlerContainer &handlerContainer, const std::vector<unsigned> &partToSlaveMap, unsigned partCopy, HandlerType hType, std::vector<unsigned> &handlerCounts, std::vector<std::vector<CLookupHandler *>> &slaveHandlers, std::vector<unsigned> &slaveHandlersRR)
     {
-        // NB: This is called in partIdx ascending order
+        // NB: This is called in partNo ascending order
 
+        unsigned partNo = partCopy & partMask;
+        unsigned copy = partCopy >> 24;
         CLookupHandler *lookupHandler;
-        unsigned lookupSlave = partToSlaveMap.size() ? partToSlaveMap[partIdx] : 0;
+        unsigned lookupSlave = partToSlaveMap.size() ? partToSlaveMap[partNo] : 0;
         unsigned max = queryMaxHandlers(hType);
         unsigned &handlerCount = handlerCounts[lookupSlave];
         if (handlerCount >= max) // allow multiple handlers (up to max) for the same slave, then RR parts onto existing handlers
@@ -1784,11 +1797,11 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 case ht_remotekeylookup:
                     lookupHandler = new CKeyLookupRemoteHandler(*this, lookupSlave+1); // +1 because 0 == master, 1st slave == 1
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
- PROGLOG("RemoteKeyLookup Handler (%p): partIdx=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partIdx, lookupSlave, handlerCount);
+ PROGLOG("RemoteKeyLookup Handler (%p): partCopy=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partCopy, lookupSlave, handlerCount);
  {
-     IPartDescriptor &pd = allIndexParts.item(partIdx);
+     IPartDescriptor &pd = allIndexParts.item(partNo);
      RemoteFilename rfn;
-     pd.getFilename(0, rfn);
+     pd.getFilename(copy, rfn);
      StringBuffer str;
      rfn.getRemotePath(str);
      PROGLOG("RemoteKeyLookup - Dealing with : %s", str.str());
@@ -1797,11 +1810,11 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 case ht_localkeylookup:
                     lookupHandler = new CKeyLookupLocalHandler(*this);
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
- PROGLOG("LocalKeyLookup Handler (%p): partIdx=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partIdx, lookupSlave, handlerCount);
+ PROGLOG("LocalKeyLookup Handler (%p): partCopy=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partCopy, lookupSlave, handlerCount);
  {
-     IPartDescriptor &pd = allIndexParts.item(partIdx);
+     IPartDescriptor &pd = allIndexParts.item(partNo);
      RemoteFilename rfn;
-     pd.getFilename(0, rfn);
+     pd.getFilename(copy, rfn);
      StringBuffer str;
      rfn.getRemotePath(str);
      PROGLOG("LocalKeyLookup - Dealing with : %s", str.str());
@@ -1810,11 +1823,11 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 case ht_remotefetch:
                     lookupHandler = new CFetchRemoteLookupHandler(*this, lookupSlave+1);
                     lookupHandler->setBatchSize(fetchLookupQueuedBatchSize);
- PROGLOG("RemoteFetchLookup Handler (%p): partIdx=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partIdx, lookupSlave, handlerCount);
+ PROGLOG("RemoteFetchLookup Handler (%p): partCopy=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partCopy, lookupSlave, handlerCount);
  {
-     IPartDescriptor &pd = allDataParts.item(partIdx);
+     IPartDescriptor &pd = allDataParts.item(partNo);
      RemoteFilename rfn;
-     pd.getFilename(0, rfn);
+     pd.getFilename(copy, rfn);
      StringBuffer str;
      rfn.getRemotePath(str);
      PROGLOG("RemoteFetchLookup - Dealing with : %s", str.str());
@@ -1823,11 +1836,11 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 case ht_localfetch:
                     lookupHandler = new CFetchLocalLookupHandler(*this);
                     lookupHandler->setBatchSize(fetchLookupQueuedBatchSize);
- PROGLOG("LocalFetchLookup Handler (%p): partIdx=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partIdx, lookupSlave, handlerCount);
+ PROGLOG("LocalFetchLookup Handler (%p): partCopy=%u, lookupSlave=%u, handlerCount=%u", lookupHandler, partCopy, lookupSlave, handlerCount);
  {
-     IPartDescriptor &pd = allDataParts.item(partIdx);
+     IPartDescriptor &pd = allDataParts.item(partNo);
      RemoteFilename rfn;
-     pd.getFilename(0, rfn);
+     pd.getFilename(copy, rfn);
      StringBuffer str;
      rfn.getRemotePath(str);
      PROGLOG("LocalFetchLookup - Dealing with : %s", str.str());
@@ -1840,16 +1853,15 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             slaveHandlers[lookupSlave].push_back(lookupHandler);
         }
         ++handlerCount;
-        lookupHandler->addPartNum(partIdx);
-        dbgassertex(partIdx == handlerContainer.partIdxToHandler.size());
+        lookupHandler->addPartNum(partCopy);
+        dbgassertex(partNo == handlerContainer.partIdxToHandler.size());
         handlerContainer.partIdxToHandler.push_back(lookupHandler);
     }
-    void setupLookupHandlers(CHandlerContainer &handlerContainer, unsigned totalParts, const IArrayOf<IPartDescriptor> &parts, const std::vector<unsigned> &partToSlaveMap, bool localKey, HandlerType localHandlerType, HandlerType missingHandlerType)
+    void setupLookupHandlers(CHandlerContainer &handlerContainer, unsigned totalParts, std::vector<unsigned> &parts, const std::vector<unsigned> &partToSlaveMap, bool localKey, HandlerType localHandlerType, HandlerType missingHandlerType)
     {
         handlerContainer.clear();
 
-        unsigned numParts = parts.ordinality();
-        ISuperFileDescriptor *superFdesc = numParts ? parts.item(0).queryOwner().querySuperFileDescriptor() : nullptr;
+        unsigned numParts = parts.size();
 
         std::vector<std::vector<CLookupHandler *>> slaveHandlers;
         std::vector<unsigned> handlerCounts;
@@ -1865,25 +1877,25 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
         unsigned currentPart = 0;
         unsigned p =0;
-        unsigned partIdx = 0;
+        unsigned partNo = 0;
+        unsigned partCopy = 0;
         while (p<totalParts)
         {
-            if (currentPart<numParts)
+            if (0 == numParts) // local data, totalParts are local
+                partNo = partCopy = p;
+            else if (currentPart<numParts)
             {
-                IPartDescriptor &part = parts.item(currentPart++);
-                partIdx = part.queryPartIndex();
-                if (superFdesc && !localKey)
-                {
-                    unsigned subfile, subpartnum;
-                    superFdesc->mapSubPart(partIdx, subfile, subpartnum);
-                    partIdx = superWidth*subfile+subpartnum;
-                }
+                partCopy = parts[currentPart++];
+                partNo = partCopy & partMask;
             }
             else
-                partIdx = totalParts;
+            {
+                partNo = totalParts;
+                partCopy = 0;
+            }
 
             // create remote handlers for non-local parts
-            while (p<partIdx)
+            while (p<partNo)
             {
                 if (remoteLookup) // NB: only relevant if ,LOCAL and only some parts avail. otherwise if !remoteLookup all parts will have been sent
                     addPartToHandler(handlerContainer, partToSlaveMap, p, missingHandlerType, handlerCounts, slaveHandlers, slaveHandlersRR);
@@ -1894,7 +1906,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
             if (p==totalParts)
                 break;
-            addPartToHandler(handlerContainer, partToSlaveMap, p, localHandlerType, handlerCounts, slaveHandlers, slaveHandlersRR);
+            addPartToHandler(handlerContainer, partToSlaveMap, partCopy, localHandlerType, handlerCounts, slaveHandlers, slaveHandlersRR);
             ++p;
         }
     }
@@ -1980,9 +1992,9 @@ public:
             tags.clear();
             tlkKeyIndexes.kill();
             allIndexParts.kill();
-            indexParts.kill();
+            localIndexPartMap.clear();
+
             allDataParts.kill();
-            dataParts.kill();
             globalFPosToSlaveMap.clear();
             keyLookupHandlers.clear();
             fetchLookupHandlers.clear();
@@ -2064,27 +2076,19 @@ public:
             }
             if (remoteKeyedLookup)
             {
-                std::vector<unsigned> mappedParts;
                 unsigned numMappedParts;
                 data.read(numMappedParts);
-                mappedParts.resize(numMappedParts);
-                data.read(numMappedParts * sizeof(unsigned), &mappedParts[0]);
-                for (auto &p: mappedParts)
-                {
-                    IPartDescriptor &part = allIndexParts.item(p);
-                    indexParts.append(*LINK(&part));
-                }
+                localIndexPartMap.resize(numMappedParts);
+                data.read(numMappedParts * sizeof(unsigned), &localIndexPartMap[0]);
                 indexPartToSlaveMap.resize(totalIndexParts);
                 data.read(totalIndexParts * sizeof(unsigned), &indexPartToSlaveMap[0]);
             }
             else
             {
-                ForEachItemIn(p, allIndexParts)
-                    indexParts.append(*LINK(&allIndexParts.item(p)));
                 if (container.queryLocalData())
                     totalIndexParts = numIndexParts; // will be same unless local
             }
-            setupLookupHandlers(keyLookupHandlers, totalIndexParts, indexParts, indexPartToSlaveMap, localKey, forceRemoteKeyedLookup ? ht_remotekeylookup : ht_localkeylookup, ht_remotekeylookup);
+            setupLookupHandlers(keyLookupHandlers, totalIndexParts, localIndexPartMap, indexPartToSlaveMap, localKey, forceRemoteKeyedLookup ? ht_remotekeylookup : ht_localkeylookup, ht_remotekeylookup);
             data.read(totalDataParts);
             if (totalDataParts)
             {
@@ -2094,27 +2098,19 @@ public:
                     deserializePartFileDescriptors(data, allDataParts);
                 if (remoteKeyedFetch)
                 {
-                    std::vector<unsigned> mappedParts;
                     unsigned numMappedParts;
                     data.read(numMappedParts);
-                    mappedParts.resize(numMappedParts);
-                    data.read(numMappedParts * sizeof(unsigned), &mappedParts[0]);
-                    for (auto &p: mappedParts)
-                    {
-                        IPartDescriptor &part = allDataParts.item(p);
-                        dataParts.append(*LINK(&part));
-                    }
+                    localFetchPartMap.resize(numMappedParts);
+                    data.read(numMappedParts * sizeof(unsigned), &localFetchPartMap[0]);
                     dataPartToSlaveMap.resize(totalDataParts);
                     data.read(totalDataParts * sizeof(unsigned), &dataPartToSlaveMap[0]);
                 }
                 else
                 {
-                    ForEachItemIn(p, allDataParts)
-                        dataParts.append(*LINK(&allDataParts.item(p)));
                     if (container.queryLocalData())
                         totalDataParts = numDataParts;
                 }
-                setupLookupHandlers(fetchLookupHandlers, totalDataParts, dataParts, dataPartToSlaveMap, false, forceRemoteKeyedFetch ? ht_remotefetch : ht_localfetch, ht_remotefetch);
+                setupLookupHandlers(fetchLookupHandlers, totalDataParts, localFetchPartMap, dataPartToSlaveMap, false, forceRemoteKeyedFetch ? ht_remotefetch : ht_localfetch, ht_remotefetch);
                 globalFPosToSlaveMap.resize(totalDataParts);
                 FPosTableEntry *e;
                 unsigned f;
