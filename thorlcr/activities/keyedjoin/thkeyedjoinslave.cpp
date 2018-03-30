@@ -77,7 +77,8 @@
 
 static const unsigned defaultKeyLookupQueuedBatchSize = 1000;
 static const unsigned defaultKeyLookupFetchQueuedBatchSize = 1000;
-static const unsigned defaultKeyLookupMaxRequestThreads = 10;
+static const unsigned defaultMaxKeyLookupThreads = 10;
+static const unsigned defaultMaxFetchThreads = 10;
 static const unsigned defaultKeyLookupMaxQueued = 10000;
 static const unsigned defaultKeyLookupMaxDone = 10000;
 static const unsigned defaultKeyLookupMaxLocalHandlers = 10;
@@ -430,7 +431,17 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             max = _max;
             leeway = _leeway;
         }
-        bool incNonBlocking(bool pre) // if pre=true, allows increment above max, then blocks
+        bool preIncNonBlocking()
+        {
+            {
+                CriticalBlock b(crit);
+                if (count++ < max+leeway)
+                    return false;
+                ++blocked;
+            }
+            return true;
+        }
+        bool incNonBlocking()
         {
             {
                 CriticalBlock b(crit);
@@ -445,7 +456,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         void inc()
         {
-            while (incNonBlocking(false))
+            while (incNonBlocking())
                 sem.wait();
         }
         void dec()
@@ -486,6 +497,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         bool stopped = false;
         unsigned lookupQueuedBatchSize = 1000;
         rowcount_t total = 0;
+        CLimiter *limiter = nullptr;
     public:
         CLookupHandler(CKeyedJoinSlave &_activity, IThorRowInterfaces *_rowIf) : threaded("CLookupHandler", this),
             activity(_activity), rowIf(_rowIf)
@@ -558,10 +570,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 {
                     state = ts_starting;
                     b.leave();
-                    activity.lookupThreadLimiter.inc(); // blocks if hit lookup thread limit
+                    if (limiter)
+                        limiter->inc(); // blocks if hit lookup thread limit
                     if (activity.abortSoon)
                     {
-                        activity.lookupThreadLimiter.dec(); // normally handled at end of thread
+                        if (limiter)
+                            limiter->dec(); // normally handled at end of thread
                         return;
                     }
                     threaded.start();
@@ -683,7 +697,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     PROGLOG("%s: processed: %" I64F "u", typeid(*this).name(), total);
             }
             while (true);
-            activity.lookupThreadLimiter.dec(); // unblocks any requests to start lookup threads
+            if (limiter)
+                limiter->dec(); // unblocks any requests to start lookup threads
         }
     };
     static const unsigned partMask = 0x00ffffff;
@@ -695,6 +710,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     public:
         CKeyLookupLocalHandler(CKeyedJoinSlave &_activity) : CLookupHandler(_activity, _activity.keyLookupRowWithJGRowIf)
         {
+            limiter = &activity.lookupThreadLimiter;
         }
         ~CKeyLookupLocalHandler()
         {
@@ -850,6 +866,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     public:
         CKeyLookupRemoteHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave) : PARENT(_activity, _activity.keyLookupRowWithJGRowIf, _lookupSlave), replyRows(_activity, _activity.keyLookupReplyOutputMetaRowIf)
         {
+            limiter = &activity.lookupThreadLimiter;
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
         {
@@ -997,6 +1014,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             Owned<IThorRowInterfaces> fetchDiskRowIf = activity.createRowInterfaces(helper->queryDiskRecordSize());
             fetchDiskAllocator.set(fetchDiskRowIf->queryRowAllocator());
             fetchDiskDeserializer.set(fetchDiskRowIf->queryRowDeserializer());
+            limiter = &activity.fetchThreadLimiter;
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
         {
@@ -1088,6 +1106,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 flags |= kjf_encrypted;
             if (isCompressed(activity.allDataParts.item(0).queryOwner().queryProperties()))
                 flags |= kjf_compressed;
+            limiter = &activity.fetchThreadLimiter;
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
         {
@@ -1292,12 +1311,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     bool remoteDataFiles = false;
     CHandlerContainer keyLookupHandlers;
     CHandlerContainer fetchLookupHandlers;
-    CLimiter lookupThreadLimiter;
+    CLimiter lookupThreadLimiter, fetchThreadLimiter;
     CLimiter pendingKeyLookupLimiter;
     CLimiter doneListLimiter;
     rowcount_t totalQueuedLookupRowCount = 0;
-    unsigned blockedKeyLookupThreads = 0;
-    unsigned blockedDoneGroupThreads = 0;
 
     CPartDescriptorArray allDataParts;
     IArrayOf<IPartDescriptor> allIndexParts;
@@ -1320,7 +1337,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     rowcount_t rowLimit = 0;
     Linked<IHThorArg> inputHelper;
     unsigned keyLookupQueuedBatchSize = defaultKeyLookupQueuedBatchSize;
-    unsigned keyLookupMaxRequestThreads = defaultKeyLookupMaxRequestThreads;
+    unsigned maxKeyLookupThreads = defaultMaxKeyLookupThreads;
+    unsigned maxFetchThreads = defaultMaxFetchThreads;
     unsigned keyLookupMaxQueued = defaultKeyLookupMaxQueued;
     unsigned keyLookupMaxDone = defaultKeyLookupMaxDone;
     unsigned maxNumLocalHandlers = defaultKeyLookupMaxLocalHandlers;
@@ -1345,6 +1363,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     std::atomic<bool> waitingForDoneGroups{false};
     Semaphore waitingForDoneGroupsSem, doneGroupsExcessiveSem;
     CJoinGroupList pendingJoinGroupList, doneJoinGroupList;
+    unsigned totalPendingAdded = 0;
+    unsigned totalPendingRemoved = 0;
     Owned<IException> abortLimitException;
     Owned<CJoinGroup> currentJoinGroup;
     unsigned currentMatchIdx = 0;
@@ -1695,19 +1715,27 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 {
                     CriticalBlock b(onCompleteCrit); // protecting both pendingJoinGroupList and doneJoinGroupList
                     pendingJoinGroupList.addToTail(LINK(jg));
-                    pendingBlock = pendingKeyLookupLimiter.incNonBlocking(true);
+                    ++totalPendingAdded;
+                    pendingBlock = pendingKeyLookupLimiter.preIncNonBlocking();
                 }
+                jg->decPending(); // all lookups queued. joinGroup will complete when all lookups are done (i.e. they're running asynchronously)
                 if (pendingBlock)
                 {
                     if (preserveOrder || preserveGroups)
                     {
                         // some of the batches that are not yet queued may be holding up join groups that are ahead of others that are complete.
                         keyLookupHandlers.flush(false);
-                        fetchLookupHandlers.flush(true);
+                        if (needsDiskRead)
+                        {
+                            /* because the key lookup threads could queue a bunch of disparate fetch batches, need to wait until done before flushing
+                             * the ensuing fetch batches.
+                             */
+                            keyLookupHandlers.join();
+                            fetchLookupHandlers.flush(true);
+                        }
                     }
                     pendingKeyLookupLimiter.block();
                 }
-                jg->decPending(); // all lookups queued. joinGroup will complete when all lookups are done (i.e. they're running asynchronously)
             }
         }
         while (!endOfInput);
@@ -1767,7 +1795,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     {
         doneJoinGroupList.addToTail(joinGroup);
         pendingKeyLookupLimiter.dec();
-        return doneListLimiter.incNonBlocking(true);
+        ++totalPendingRemoved;
+        return doneListLimiter.preIncNonBlocking();
     }
 
     void addPartToHandler(CHandlerContainer &handlerContainer, const std::vector<unsigned> &partToSlaveMap, unsigned partCopy, HandlerType hType, std::vector<unsigned> &handlerCounts, std::vector<std::vector<CLookupHandler *>> &slaveHandlers, std::vector<unsigned> &slaveHandlersRR)
@@ -1919,7 +1948,8 @@ public:
         reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
 
         keyLookupQueuedBatchSize = getOptInt(THOROPT_KEYLOOKUP_QUEUED_BATCHSIZE, defaultKeyLookupQueuedBatchSize);
-        keyLookupMaxRequestThreads = getOptInt(THOROPT_KEYLOOKUP_MAX_REQUEST_THREADS, defaultKeyLookupMaxRequestThreads);
+        maxKeyLookupThreads = getOptInt(THOROPT_KEYLOOKUP_MAX_THREADS, defaultMaxKeyLookupThreads);
+        maxFetchThreads = getOptInt(THOROPT_KEYLOOKUP_MAX_FETCH_THREADS, defaultMaxFetchThreads);
         keyLookupMaxQueued = getOptInt(THOROPT_KEYLOOKUP_MAX_QUEUED, defaultKeyLookupMaxQueued);
         keyLookupMaxDone = getOptInt(THOROPT_KEYLOOKUP_MAX_DONE, defaultKeyLookupMaxDone);
         maxNumLocalHandlers = getOptInt(THOROPT_KEYLOOKUP_MAX_LOCAL_HANDLERS, defaultKeyLookupMaxLocalHandlers);
@@ -1931,7 +1961,10 @@ public:
 
         fetchLookupQueuedBatchSize = getOptInt(THOROPT_KEYLOOKUP_FETCH_QUEUED_BATCHSIZE, defaultKeyLookupFetchQueuedBatchSize);
 
-        lookupThreadLimiter.set(keyLookupMaxRequestThreads);
+        // JCSMORE - would perhaps be better to have combined limit, but would need to avoid lookup threads starving fetch threads
+        lookupThreadLimiter.set(maxKeyLookupThreads);
+        fetchThreadLimiter.set(maxFetchThreads);
+
         pendingKeyLookupLimiter.set(keyLookupMaxQueued, 100);
         doneListLimiter.set(keyLookupMaxDone, 100);
 
