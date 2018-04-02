@@ -628,7 +628,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     enqueue(*batchArray, b);
             }
         }
-        virtual void end() { }
+        virtual void end()
+        {
+            DBGLOG("%s: processed: %" I64F "u", typeid(*this).name(), total);
+        }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected) = 0;
     // IThreaded
         virtual void threadmain() override
@@ -693,8 +696,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     e->Release();
                 }
                 processing.clearRows();
-                if (0 == (total % 10000))
-                    PROGLOG("%s: processed: %" I64F "u", typeid(*this).name(), total);
             }
             while (true);
             if (limiter)
@@ -2368,7 +2369,7 @@ public:
     virtual void serializeStats(MemoryBuffer &mb) override
     {
         PARENT::serializeStats(mb);
-        for (unsigned s : statsArr)
+        for (unsigned __int64 s : statsArr)
             mb.append(s);
     }
     // IJoinProcessor

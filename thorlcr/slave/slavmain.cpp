@@ -94,7 +94,7 @@ void disableThorSlaveAsDaliClient()
 #endif
 }
 
-class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, implements IThreadFactory, implements IExceptionHandler
+class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, implements IExceptionHandler
 {
     const unsigned defaultMaxCachedKJManagers = 1000;
     const unsigned defaultKeyLookupMaxProcessThreads = 16;
@@ -851,6 +851,19 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         }
         const void *queryFindParam() const { return &key; } // for SimpleHashTableOf
     };
+    class CProcessorFactory : public CSimpleInterfaceOf<IThreadFactory>
+    {
+        CKJService &service;
+    public:
+        CProcessorFactory(CKJService &_service) : service(_service)
+        {
+        }
+    // IThreadFactory
+        virtual IPooledThread *createNew() override
+        {
+            return service.createProcessor();
+        }
+    };
     SimpleHashTableOf<CActivityContext, unsigned> activityContextsHT;
     CKeyLookupContextHT keyLookupContextsHT; // non-owning HT of CLookupContexts
     CKMContextHT cachedKMs; // NB: HT by {actId, fname, crc} links IKeyManager's within containers
@@ -960,6 +973,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             if (0 == kme->count())
                 verifyex(cachedKMs.removeExact(kme));
             verifyex(cachedKMsMRU.zap(*kmc));
+            --numCached;
         }
         return kmc.getClear();
     }
@@ -991,7 +1005,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         Owned<CKMContainer> kmc = getKeyManager(handle);
         if (!kmc)
             return false;
-        --numCached;
         return true;
     }
     unsigned getUniqId()
@@ -1010,14 +1023,15 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         keyLookupContextsHT.kill();
         fetchContextsHT.kill();
         currentJob = nullptr;
+        numCached = 0;
     }
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterfaceOf<IKJService>);
 
     CKJService(mptag_t _mpTag) : threaded("CKJService", this), keyLookupMpTag(_mpTag)
     {
-        unsigned keyLookupMaxProcessThreads = 1; // JCSMORE delete it, now configurable
-        processorPool.setown(createThreadPool("KJService processor pool", this, this, keyLookupMaxProcessThreads));
+        Owned<CProcessorFactory> factory = new CProcessorFactory(*this);
+        processorPool.setown(createThreadPool("KJService processor pool", factory, this, keyLookupMaxProcessThreads));
     }
     ~CKJService()
     {
@@ -1065,6 +1079,10 @@ public:
         msg.clear();
         // NB: kmc is added to cache at end of request handling
         processorPool->start(lookupRequest);
+    }
+    IPooledThread *createProcessor()
+    {
+        return new CRemoteLookupProcessor(*this);
     }
 // IThreaded
     virtual void threadmain() override
@@ -1246,11 +1264,6 @@ public:
             return;
         aborted = true;
         clearAll();
-    }
-// IThreadFactory impl.
-    virtual IPooledThread *createNew() override
-    {
-        return new CRemoteLookupProcessor(*this);
     }
 // IExceptionHandler impl.
     virtual bool fireException(IException *e) override
