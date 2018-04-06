@@ -501,6 +501,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         unsigned lookupQueuedBatchSize = 1000;
         rowcount_t total = 0;
         CLimiter *limiter = nullptr;
+        IArrayOf<IPartDescriptor> *allParts = nullptr; // only used for tracing purposes, set by key or fetch derived handlers
 
     public:
         CLookupHandler(CKeyedJoinSlave &_activity, IThorRowInterfaces *_rowIf) : threaded("CLookupHandler", this),
@@ -525,7 +526,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             {
                 unsigned partNo = partCopy & partMask;
                 unsigned copy = partCopy >> 24;
-                IPartDescriptor &pd = activity.allIndexParts.item(partNo);
+                IPartDescriptor &pd = allParts->item(partNo);
                 RemoteFilename rfn;
                 pd.getFilename(copy, rfn);
                 StringBuffer path;
@@ -752,6 +753,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         CKeyLookupLocalBase(CKeyedJoinSlave &_activity) : CLookupHandler(_activity, _activity.keyLookupRowWithJGRowIf)
         {
             limiter = &activity.lookupThreadLimiter;
+            allParts = &activity.allIndexParts;
         }
         void processRows(CThorExpandingRowArray &processing, unsigned partNo, IKeyManager *keyManager)
         {
@@ -1015,6 +1017,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         CKeyLookupRemoteHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave) : PARENT(_activity, _activity.keyLookupRowWithJGRowIf, _lookupSlave), replyRows(_activity, _activity.keyLookupReplyOutputMetaRowIf)
         {
             limiter = &activity.lookupThreadLimiter;
+            allParts = &activity.allIndexParts;
         }
         virtual void trace(StringBuffer &msg) const override
         {
@@ -1150,6 +1153,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             fetchDiskAllocator.set(fetchDiskRowIf->queryRowAllocator());
             fetchDiskDeserializer.set(fetchDiskRowIf->queryRowDeserializer());
             limiter = &activity.fetchThreadLimiter;
+            allParts = &activity.allDataParts;
         }
         virtual void init() override
         {
@@ -1286,6 +1290,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             : PARENT(_activity, _activity.fetchInputMetaRowIf, _lookupSlave), replyRows(_activity, _activity.fetchOutputMetaRowIf)
         {
             limiter = &activity.fetchThreadLimiter;
+            allParts = &activity.allDataParts;
         }
         virtual void init() override
         {
