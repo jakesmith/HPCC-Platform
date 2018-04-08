@@ -535,7 +535,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     IHThorArg *inputHelper;
     IRowStreamSetInput *resultDistStream;
     CPartDescriptorArray indexParts, dataParts;
-    Owned<IKeyIndexSet> tlkKeySet;
+    IArrayOf<IKeyIndex> tlkKeyIndexes;
     bool preserveGroups, preserveOrder, eos, needsDiskRead, atMostProvided, remoteDataFiles;
     unsigned joinFlags, abortLimit, parallelLookups, freeQSize, filePartTotal;
     size32_t fixedRecordSize;
@@ -1425,10 +1425,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                         }
                         if (!currentPart)
                         {
-                            if (++nextTlk < owner.tlkKeySet->numParts())
+                            if (++nextTlk < owner.tlkKeyIndexes.ordinality())
                             {
                                 tlkManager->releaseSegmentMonitors();
-                                currentTlk = owner.tlkKeySet->queryPart(nextTlk);
+                                currentTlk = &owner.tlkKeyIndexes.item(nextTlk);
                                 tlkManager->setKey(currentTlk);
                                 owner.helper->createSegmentMonitors(tlkManager, indexReadFieldsRow.getSelf());
                                 tlkManager->finishSegmentMonitors();
@@ -1494,7 +1494,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                         else
                         {
                             nextTlk = 0;
-                            currentTlk = owner.tlkKeySet->queryPart(nextTlk);
+                            currentTlk = &owner.tlkKeyIndexes.item(nextTlk);
                             tlkManager->setKey(currentTlk);
                             owner.helper->createSegmentMonitors(tlkManager, indexReadFieldsRow.getSelf());
                             tlkManager->finishSegmentMonitors();
@@ -1652,7 +1652,6 @@ public:
         preserveGroups = preserveOrder = false;
         eos = true; // keep as true until started.
         resultDistStream = NULL;
-        tlkKeySet.setown(createKeyIndexSet());
         pool = NULL;
         currentMatchIdx = currentJoinGroupSize = currentAdded = currentMatched = 0;
         portbase = 0;
@@ -1914,7 +1913,7 @@ public:
         }
         indexParts.kill();
         dataParts.kill();
-        tlkKeySet.setown(createKeyIndexSet());
+        tlkKeyIndexes.kill();
         unsigned numIndexParts;
         data.read(numIndexParts);
         if (numIndexParts)
@@ -1946,22 +1945,18 @@ public:
             if (keyHasTlk)
             {
                 unsigned tlks;
-                size32_t tlkSz;
                 data.read(tlks);
-                UnsignedArray posArray, lenArray;
+                unsigned p = 0;
                 while (tlks--)
                 {
+                    size32_t tlkSz;
                     data.read(tlkSz);
-                    posArray.append(tlkMb.length());
-                    lenArray.append(tlkSz);
-                    tlkMb.append(tlkSz, data.readDirect(tlkSz));
-                }
-                ForEachItemIn(p, posArray)
-                {
-                    Owned<IFileIO> iFileIO = createIFileI(lenArray.item(p), tlkMb.toByteArray()+posArray.item(p));
+                    const void *tlkData = data.readDirect(tlkSz);
+
                     StringBuffer name("TLK");
                     name.append('_').append(container.queryId()).append('_');
-                    tlkKeySet->addIndex(createKeyIndex(name.append(p).str(), 0, *iFileIO, true, false)); // MORE - not the right crc
+                    Owned<IKeyIndex> tlkKeyIndex = createInMemoryKeyIndex(name.append(p++), 0, tlkSz, tlkData, true); // MORE - not the right crc
+                    tlkKeyIndexes.append(*tlkKeyIndex.getClear());
                 }
             }
             if (needsDiskRead)
