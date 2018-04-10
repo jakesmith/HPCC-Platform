@@ -47,6 +47,7 @@ public:
     IKeyIndex *load(const char *fileName, unsigned crc, IFileIO *iFileIO, bool isTLK, bool allowPreload);
     IKeyIndex *load(const char *fileName, unsigned crc, IMemoryMappedFile *iMappedFile, bool isTLK, bool allowPreload);
     IKeyIndex *load(const char *fileName, unsigned crc, IReplicatedFile &part, bool isTLK, bool allowPreload);
+    IKeyIndex *load(const char *name, unsigned crc, size32_t sz, const void *data, bool isTLK);
     void clearCache(bool killAll);
     void clearCacheEntry(const char *name);
     void clearCacheEntry(const IFileIO *io);
@@ -62,46 +63,35 @@ enum request { LTE, GTE };
 interface INodeLoader
 {
     virtual CJHTreeNode *loadNode(offset_t offset) = 0;
+    virtual CJHTreeNode *getNode(offset_t offset, IContextLogger *ctx)  = 0;
+    virtual CJHTreeBlobNode *getBlobNode(offset_t nodepos) = 0;
 };
 
-class jhtree_decl CKeyIndex : implements IKeyIndex, implements INodeLoader, public CInterface
+class jhtree_decl CKeyIndexBase : public CInterfaceOf<IKeyIndex>, implements INodeLoader
 {
+    typedef CInterfaceOf<IKeyIndex> PARENT;
     friend class CKeyStore;
     friend class CKeyCursor;
 
 private:
-    CKeyIndex(CKeyIndex &);
+    CKeyIndexBase(CKeyIndexBase &);
 
 protected:
     int iD;
     StringAttr name;
-    CriticalSection blobCacheCrit;
-    Owned<CJHTreeBlobNode> cachedBlobNode;
-    Owned<BloomFilter> bloomFilter;
-    offset_t cachedBlobNodePos;
-
     CKeyHdr *keyHdr;
-    CNodeCache *cache;
     CJHTreeNode *rootNode;
     RelaxedAtomic<unsigned> keySeeks;
     RelaxedAtomic<unsigned> keyScans;
     offset_t latestGetNodeOffset;
 
-    CJHTreeNode *loadNode(char *nodeData, offset_t pos, bool needsCopy);
-    CJHTreeNode *getNode(offset_t offset, IContextLogger *ctx);
-    CJHTreeBlobNode *getBlobNode(offset_t nodepos);
+    CJHTreeNode *createNode(const void *nodeData, offset_t pos, bool needsCopy);
 
+    CKeyIndexBase(int _iD, const char *_name);
+    ~CKeyIndexBase();
+    void init(KeyHdr &hdr, bool isTLK);
 
-    CKeyIndex(int _iD, const char *_name);
-    ~CKeyIndex();
-    void init(KeyHdr &hdr, bool isTLK, bool allowPreload);
-    void cacheNodes(CNodeCache *cache, offset_t nodePos, bool isTLK);
-    void loadBloomFilter();
-    
 public:
-    IMPLEMENT_IINTERFACE;
-    virtual bool IsShared() const { return CInterface::IsShared(); }
-
 // IKeyIndex impl.
     virtual IKeyCursor *getCursor(IContextLogger *ctx);
 
@@ -124,30 +114,64 @@ public:
     virtual offset_t queryLatestGetNodeOffset() const { return latestGetNodeOffset; }
     virtual offset_t queryMetadataHead();
     virtual IPropertyTree * getMetadata();
-    virtual const BloomFilter * queryBloomFilter();
-    virtual unsigned getBloomKeyLength();
     virtual unsigned getNodeSize() { return keyHdr->getNodeSize(); }
+    virtual const char *queryFileName() { return name.get(); }
+    virtual const IFileIO *queryFileIO() const override { return nullptr; }
     virtual bool hasSpecialFileposition() const;
- 
- // INodeLoader impl.
-    virtual CJHTreeNode *loadNode(offset_t offset) = 0;
+
+// INodeLoader impl.
+    virtual CJHTreeNode *loadNode(offset_t offset) override = 0;
+    virtual CJHTreeBlobNode *getBlobNode(offset_t nodepos) override;
 };
 
-class jhtree_decl CMemKeyIndex : public CKeyIndex
+class jhtree_decl CKeyIndex : public CKeyIndexBase
 {
+    typedef CKeyIndexBase PARENT;
+
+    friend class CKeyStore;
+    friend class CKeyCursor;
+
+private:
+    CKeyIndex(CKeyIndex &);
+    bool preload = false;
+
+protected:
+    CriticalSection blobCacheCrit;
+    Owned<CJHTreeBlobNode> cachedBlobNode;
+    Owned<BloomFilter> bloomFilter;
+    offset_t cachedBlobNodePos;
+    CNodeCache *cache;
+
+    CKeyIndex(int _iD, const char *_name);
+    ~CKeyIndex();
+    void init(KeyHdr &hdr, bool isTLK, bool allowPreload);
+    void cacheNodes(CNodeCache *cache, offset_t nodePos, bool isTLK);
+    void loadBloomFilter();
+    
+    virtual const BloomFilter * queryBloomFilter() override;
+    virtual unsigned getBloomKeyLength() override;
+
+public:
+// INodeLoader impl.
+    virtual CJHTreeNode *getNode(offset_t offset, IContextLogger *ctx) override;
+    virtual CJHTreeBlobNode *getBlobNode(offset_t nodepos) override;
+};
+
+class jhtree_decl CMemoryMappedKeyIndex : public CKeyIndex
+{
+    typedef CKeyIndex PARENT;
 private:
     Linked<IMemoryMappedFile> io;
 public:
-    CMemKeyIndex(int _iD, IMemoryMappedFile *_io, const char *_name, bool _isTLK);
+    CMemoryMappedKeyIndex(int _iD, IMemoryMappedFile *_io, const char *_name, bool _isTLK);
 
-    virtual const char *queryFileName() { return name.get(); }
-    virtual const IFileIO *queryFileIO() const override { return nullptr; }
 // INodeLoader impl.
-    virtual CJHTreeNode *loadNode(offset_t offset);
+    virtual CJHTreeNode *loadNode(offset_t offset) override;
 };
 
 class jhtree_decl CDiskKeyIndex : public CKeyIndex
 {
+    typedef CKeyIndex PARENT;
 private:
     Linked<IFileIO> io;
     void cacheNodes(CNodeCache *cache, offset_t firstnode, bool isTLK);
@@ -155,17 +179,33 @@ private:
 public:
     CDiskKeyIndex(int _iD, IFileIO *_io, const char *_name, bool _isTLK, bool _allowPreload);
 
-    virtual const char *queryFileName() { return name.get(); }
     virtual const IFileIO *queryFileIO() const override { return io; }
 // INodeLoader impl.
-    virtual CJHTreeNode *loadNode(offset_t offset);
+    virtual CJHTreeNode *loadNode(offset_t offset) override;
+};
+
+class jhtree_decl CInMemoryKeyIndex : public CKeyIndexBase
+{
+    typedef CKeyIndexBase PARENT;
+private:
+    MemoryBuffer indexData;
+    PointerArrayOf<CJHTreeNode> nodes;
+    CriticalSection crit;
+public:
+    CInMemoryKeyIndex(int _iD, size32_t indexSz, const void *_indexData, const char *_name, bool isTLK);
+
+    virtual const BloomFilter * queryBloomFilter() override { return nullptr; }
+    virtual unsigned getBloomKeyLength() override { return 0; }
+// INodeLoader impl.
+    virtual CJHTreeNode *loadNode(offset_t offset) override;
+    virtual CJHTreeNode *getNode(offset_t offset, IContextLogger *ctx) override;
 };
 
 class jhtree_decl CKeyCursor : public IKeyCursor, public CInterface
 {
 private:
     IContextLogger *ctx;
-    CKeyIndex &key;
+    CKeyIndexBase &key;
     const BloomFilter *bloomFilter = nullptr;
     unsigned bloomLength = 0;
     Owned<CJHTreeNode> node;
@@ -177,7 +217,7 @@ private:
 
 public:
     IMPLEMENT_IINTERFACE;
-    CKeyCursor(CKeyIndex &_key, IContextLogger *ctx);
+    CKeyCursor(CKeyIndexBase &_key, IContextLogger *ctx);
     ~CKeyCursor();
 
     virtual bool next(char *dst);
