@@ -1066,7 +1066,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 readErrorCode(msg);
                 MemoryBuffer mb;
                 fastLZDecompressToBuffer(mb, msg);
-                mb.read(handles[selected]);
+                if (0 == received)
+                    mb.read(handles[selected]);
                 unsigned count;
                 mb.read(count); // amount processed, could be all (i.e. numRows)
                 while (count--)

@@ -737,6 +737,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 DelayedMarker<unsigned> countMarker(replyMb);
                 unsigned rowCount = getRowCount();
                 unsigned rowNum = 0;
+                unsigned rowStart = 0;
                 while (!abortSoon)
                 {
                     OwnedConstThorRow row = getRowClear(rowNum++);
@@ -745,11 +746,13 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                     bool last = rowNum == rowCount;
                     if (last || (replyMb.length() >= DEFAULT_KEYLOOKUP_MAXREPLYSZ))
                     {
-                        countMarker.write(rowNum);
+                        countMarker.write(rowNum-rowStart);
                         reply(replyMb);
                         if (last)
                             break;
                         replyMb.clear();
+                        countMarker.restart();
+                        rowStart = rowNum;
                     }
                     lookupResult.clear();
                 }
