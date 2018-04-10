@@ -2270,24 +2270,18 @@ public:
             data.read(keyHasTlk);
             if (keyHasTlk)
             {
-                MemoryBuffer tlkMb;
                 unsigned tlks;
                 data.read(tlks);
-                UnsignedArray posArray, lenArray;
-                size32_t tlkSz;
+                unsigned p = 0;
                 while (tlks--)
                 {
+                    size32_t tlkSz;
                     data.read(tlkSz);
-                    posArray.append(tlkMb.length());
-                    lenArray.append(tlkSz);
-                    tlkMb.append(tlkSz, data.readDirect(tlkSz));
-                }
-                ForEachItemIn(p, posArray)
-                {
-                    Owned<IFileIO> iFileIO = createIFileI(lenArray.item(p), tlkMb.toByteArray()+posArray.item(p));
+                    const void *tlkData = data.readDirect(tlkSz);
+
                     StringBuffer name("TLK");
                     name.append('_').append(container.queryId()).append('_');
-                    Owned<IKeyIndex> tlkKeyIndex = createKeyIndex(name.append(p).str(), 0, *iFileIO, true, false); // MORE - not the right crc
+                    Owned<IKeyIndex> tlkKeyIndex = createInMemoryKeyIndex(name.append(p++), 0, tlkSz, tlkData, true); // MORE - not the right crc
                     tlkKeyIndexes.append(*tlkKeyIndex.getClear());
                 }
             }
