@@ -463,13 +463,13 @@ public:
         dst.append(initMb);
         if (totalIndexParts)
         {
-            std::vector<unsigned> &parts = local ? indexMap.querySlaveParts(slave) : indexMap.queryAllParts();
-            unsigned numParts = parts.size();
+            std::vector<unsigned> &allParts = local ? indexMap.querySlaveParts(slave) : indexMap.queryAllParts();
+            unsigned numParts = allParts.size();
             dst.append(numParts);
             if (numParts)
             {
-                indexFileDesc->serializeParts(dst, &parts[0], numParts);
-                std::vector<unsigned> &parts = indexMap.querySlaveParts(slave);
+                indexFileDesc->serializeParts(dst, &allParts[0], numParts);
+                std::vector<unsigned> &parts = remoteKeyedLookup ? indexMap.querySlaveParts(slave) : allParts;
                 dst.append((unsigned)parts.size());
                 dst.append(sizeof(unsigned)*parts.size(), &parts[0]);
             }
@@ -479,13 +479,13 @@ public:
             dst.append(totalDataParts);
             if (totalDataParts)
             {
-                std::vector<unsigned> &parts = dataMap.queryAllParts();
-                unsigned numParts = parts.size();
+                std::vector<unsigned> &allParts = dataMap.queryAllParts();
+                unsigned numParts = allParts.size();
                 dst.append(numParts);
                 if (numParts)
                 {
-                    dataFileDesc->serializeParts(dst, &parts[0], numParts);
-                    std::vector<unsigned> &parts = dataMap.querySlaveParts(slave);
+                    dataFileDesc->serializeParts(dst, &allParts[0], numParts);
+                    std::vector<unsigned> &parts = remoteKeyedFetch ? dataMap.querySlaveParts(slave) : allParts;
                     unsigned numSlaveParts = parts.size();
                     dst.append(numSlaveParts);
                     dst.append(sizeof(unsigned)*numSlaveParts, &parts[0]);
