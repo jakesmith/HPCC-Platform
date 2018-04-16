@@ -990,6 +990,14 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         typedef CRemoteLookupHandler PARENT;
 
         CThorExpandingRowArray replyRows;
+        struct CCompare : implements ICompare
+        {
+            size32_t keySize = 0;
+            virtual int docompare(const void *a,const void *b) const override
+            {
+                return memcmp(((const byte *)a)+sizeof(KeyLookupHeader), ((const byte *)b)+sizeof(KeyLookupHeader), keySize);
+            }
+        } cCompare;
 
         void initRead(CMessageBuffer &msg, unsigned selected, unsigned partNo, unsigned copy)
         {
@@ -1061,7 +1069,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             // JCSMORE - don't _need_ filename in general after 1st call, but avoids challenge/response handling if other side has closed, and relatively small vs msg size
             initRead(msg, selected, partNo, copy);
             unsigned numRows = processing.ordinality();
-            // NB: if sortKeyRequestRows=true, sorting is performed at remote side (slightly better concurrency)
+            if (activity.sortKeyRequestRows)
+                processing.sort(cCompare, 0); // need to sort them client side, because we rely on same order coming back below
             writeRowData(processing, msg);
 
             if (!comm->send(msg, lookupSlave, kjServiceMpTag, LONGTIMEOUT))
