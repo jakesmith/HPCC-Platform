@@ -2326,7 +2326,16 @@ public:
 
                     StringBuffer name("TLK");
                     name.append('_').append(container.queryId()).append('_');
-                    Owned<IKeyIndex> tlkKeyIndex = createInMemoryKeyIndex(name.append(p++), 0, tlkSz, tlkData, true); // MORE - not the right crc
+                    bool disableInMem = getOptBool("disableInMemTlk");
+                    Owned<IKeyIndex> tlkKeyIndex;
+                    PROGLOG("disableInMem = %s", boolToStr(disableInMem));
+                    if (disableInMem)
+                    {
+                        Owned<IFileIO> iFileIO = createIFileI(tlkSz, tlkData);
+                        tlkKeyIndex.setown(createKeyIndex(name.append(p++), 0, *iFileIO, true, false)); // MORE - not the right crc
+                    }
+                    else
+                        tlkKeyIndex.setown(createInMemoryKeyIndex(name.append(p++), 0, tlkSz, tlkData, true)); // MORE - not the right crc
                     tlkKeyIndexes.append(*tlkKeyIndex.getClear());
                 }
             }
