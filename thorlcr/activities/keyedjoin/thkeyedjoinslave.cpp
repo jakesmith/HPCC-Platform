@@ -837,10 +837,19 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         typedef CKeyLookupLocalBase PARENT;
 
         std::vector<IKeyManager *> keyManagers;
+        struct CCompare : implements ICompare
+        {
+            size32_t keySize = 0;
+            virtual int docompare(const void *a,const void *b) const override
+            {
+                return memcmp(((const byte *)a)+sizeof(KeyLookupHeader), ((const byte *)b)+sizeof(KeyLookupHeader), keySize);
+            }
+        } cCompare;
     public:
         CKeyLookupLocalHandler(CKeyedJoinSlave &_activity) : CKeyLookupLocalBase(_activity)
         {
             limiter = &activity.lookupThreadLimiter;
+            cCompare.keySize = helper->queryIndexReadInputRecordSize()->getRecordSize(nullptr);
         }
         ~CKeyLookupLocalHandler()
         {
@@ -867,6 +876,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 // NB: potentially translation per part could be different if dealing with superkeys
                 setupTranslation(partNo, *keyManager);
             }
+            if (activity.sortKeyRequestRows)
+                processing.sort(cCompare, 0); // need to sort them client side, because we rely on same order coming back below
             processRows(processing, partNo, keyManager);
         }
     };
@@ -1050,6 +1061,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             // JCSMORE - don't _need_ filename in general after 1st call, but avoids challenge/response handling if other side has closed, and relatively small vs msg size
             initRead(msg, selected, partNo, copy);
             unsigned numRows = processing.ordinality();
+            // NB: if sortKeyRequestRows=true, sorting is performed at remote side (slightly better concurrency)
             writeRowData(processing, msg);
 
             if (!comm->send(msg, lookupSlave, kjServiceMpTag, LONGTIMEOUT))
@@ -1163,6 +1175,16 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         Owned<IOutputRowDeserializer> fetchDiskDeserializer;
         CThorContiguousRowBuffer prefetchSource;
         std::vector<PartIO> partIOs;
+        struct CCompare : implements ICompare
+        {
+            virtual int docompare(const void *a,const void *b) const override
+            {
+                offset_t fa, fb;
+                memcpy(&fa, a, sizeof(offset_t));
+                memcpy(&fb, b, sizeof(offset_t));
+                return fa < fb ? 1 : fa > fb ? -1 : 0;
+            }
+        } cCompare;
 
         inline const PartIO &queryFetchPartIO(unsigned selected, unsigned partNo, unsigned copy, bool compressed, bool encrypted)
         {
@@ -1194,6 +1216,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             unsigned partNo = partCopy & partMask;
             unsigned copy = partCopy >> 24;
 
+            if (activity.sortFetchRequestRows)
+                processing.sort(cCompare, 0);
             unsigned numRows = processing.ordinality();
             for (unsigned r=0; r<processing.ordinality() && !stopped; r++)
             {
@@ -1248,6 +1272,16 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
         CThorExpandingRowArray replyRows;
         byte flags = 0;
+        struct CCompare : implements ICompare
+        {
+            virtual int docompare(const void *a,const void *b) const override
+            {
+                offset_t fa, fb;
+                memcpy(&fa, a, sizeof(offset_t));
+                memcpy(&fb, b, sizeof(offset_t));
+                return fa < fb ? 1 : fa > fb ? -1 : 0;
+            }
+        } cCompare;
 
         void initRead(CMessageBuffer &msg, unsigned selected, unsigned partNo, unsigned copy)
         {
@@ -1329,6 +1363,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             CMessageBuffer msg;
             // JCSMORE - don't _need_ filename in general after 1st call, but avoids challenge/response handling if other side has closed, and relatively small vs overall msg size
             initRead(msg, selected, partNo, copy);
+            if (activity.sortFetchRequestRows)
+                processing.sort(cCompare, 0); // need to sort them client side, because we rely on same order coming back below
             writeRowData(processing, msg);
 
             if (!comm->send(msg, lookupSlave, kjServiceMpTag, LONGTIMEOUT))
@@ -1552,6 +1588,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     bool remoteKeyedFetch = false;
     bool forceRemoteKeyedLookup = false;
     bool forceRemoteKeyedFetch = false;
+    bool sortKeyRequestRows = false;
+    bool sortFetchRequestRows = false;
 
     Owned<IThorRowInterfaces> keyLookupRowWithJGRowIf;
     Owned<IThorRowInterfaces> keyLookupReplyOutputMetaRowIf;
@@ -2174,6 +2212,8 @@ public:
         maxNumRemoteFetchHandlers = getOptInt(THOROPT_KEYLOOKUP_MAX_FETCH_REMOTE_HANDLERS, defaultKeyLookupMaxFetchHandlers);
         forceRemoteKeyedLookup = getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUP);
         forceRemoteKeyedFetch = getOptBool(THOROPT_FORCE_REMOTE_KEYED_FETCH);
+        sortKeyRequestRows = getOptBool("keyedJoinSortKeyRequestRows", true);
+        sortFetchRequestRows = getOptBool("keyedJoinSortFetchRequestRows", true);
 
         fetchLookupQueuedBatchSize = getOptInt(THOROPT_KEYLOOKUP_FETCH_QUEUED_BATCHSIZE, defaultKeyLookupFetchQueuedBatchSize);
 

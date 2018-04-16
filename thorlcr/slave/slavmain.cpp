@@ -19,6 +19,7 @@
 
 #include <type_traits>
 #include <unordered_map>
+#include <algorithm>
 
 #include "jlib.hpp"
 #include "jexcept.hpp"
@@ -113,6 +114,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     CJobBase *currentJob = nullptr;
     unsigned maxCachedKJManagers = defaultMaxCachedKJManagers;
     unsigned keyLookupMaxProcessThreads = defaultKeyLookupMaxProcessThreads;
+    bool sortKeyRequestRows = false;
 
     class CLookupKey
     {
@@ -314,6 +316,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         CContext(CKJService &_service, CActivityContext *_activityCtx) : service(_service), activityCtx(_activityCtx)
         {
         }
+        inline CKJService &queryService() { return service; }
         virtual void beforeDispose() override
         {
             service.freeActivityContext(activityCtx.getClear());
@@ -651,6 +654,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         rowcount_t abortLimit = 0;
         rowcount_t atMost = 0;
         bool fetchRequired = false;
+        size32_t keySize = 0;
         IEngineRowAllocator *joinFieldsAllocator = nullptr;
 
         template <class HeaderStruct>
@@ -724,12 +728,16 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             if (abortLimit < atMost)
                 atMost = abortLimit;
             fetchRequired = helper->diskAccessRequired();
+            keySize = activityCtx->queryHelper()->queryIndexReadInputRecordSize()->getRecordSize(nullptr);
         }
         virtual void process(bool &abortSoon) override
         {
             Owned<IException> exception;
             try
             {
+                if (service.querySortKeyRequestRows())
+                    std::sort(rows.begin(), rows.end(), [this](const void * const &a, const void * const &b) { return memcmp(((const byte * const )a)+sizeof(KeyLookupHeader), ((const byte * const )b)+sizeof(KeyLookupHeader), keySize)<0; });
+
                 CKeyLookupResult lookupResult(*activityCtx); // reply for 1 request row
 
                 MemoryBuffer replyMb;
@@ -869,7 +877,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 unsigned rowCount = getRowCount();
                 unsigned rowNum = 0;
 
-                // JCSMORE sorting batch of requests by fpos could reduce seeking...
                 while (!abortSoon)
                 {
                     OwnedConstThorRow row = getRowClear(rowNum++);
@@ -1184,6 +1191,7 @@ public:
     {
         stop();
     }
+    inline bool querySortKeyRequestRows() const { return sortKeyRequestRows; }
     void addToKeyManagerCache(CKMContainer *kmc)
     {
         CriticalBlock b(kMCrit);
@@ -1440,6 +1448,7 @@ public:
             keyLookupMaxProcessThreads = newKeyLookupMaxProcessThreads;
             setupProcessorPool();
         }
+        sortKeyRequestRows = job.getOptBool("keyedJoinSortKeyRequestRows", true);
     }
     virtual void reset() override
     {
