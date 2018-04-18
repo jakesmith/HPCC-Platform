@@ -1022,10 +1022,7 @@ interface IOutputMetaData;
 inline activity_id createCompoundActSeqId(activity_id actId, byte seq)
 {
     if (seq)
-    {
-        dbgassertex(actId <= 0xffff); // normal max is MAX_ACTIVITY_ID (0xffffff), reserving 0x00ff0000 byte for seq if present
-        actId |= seq << 16;
-    }
+        actId |= seq << 24;
     return actId;
 }
 
