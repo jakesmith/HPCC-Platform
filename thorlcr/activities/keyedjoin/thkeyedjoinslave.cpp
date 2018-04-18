@@ -489,6 +489,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         unsigned maxExtraHandlers = 0;
         cycle_t timeQueuedWhilstStarted = 0;
         cycle_t blockedTime = 0;
+        cycle_t totalBlockedTime = 0;
         CriticalSection queueCrit, batchCrit;
         CThreaded threaded;
         std::atomic<bool> running{false};
@@ -577,6 +578,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             nextQueue = 0;
             totalQueued = 0;
             blockedTime = 0;
+            totalBlockedTime = 0;
             timeQueuedWhilstStarted = 0;
             currentHandler = (unsigned)-1;
             for (auto &h: extraHandlers)
@@ -694,7 +696,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         virtual void end()
         {
-            VStringBuffer log("processed: %" I64F "u, blockedTime(ms)=%" I64F "u, extraHandlers=%u", total, cycle_to_millisec(blockedTime), (unsigned)extraHandlers.size());
+            VStringBuffer log("processed: %" I64F "u, totalBlockedTime(ms=%" I64F "u blockedTime(ms)=%" I64F "u, extraHandlers=%u", total, cycle_to_millisec(totalBlockedTime), cycle_to_millisec(blockedTime), (unsigned)extraHandlers.size());
             trace(log);
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected, bool slow) = 0;
@@ -710,10 +712,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     CriticalBlock b(queueCrit);
                     if (0 == totalQueued)
                     {
-                        // irrelevant if 0 == maxExtraHandlers
-                        blockedTime = 0;
-                        timeQueuedWhilstStarted = 0;
-
                         if (state != ts_starting) // 1st time around the loop
                             assertex(state == ts_running);
                         state = ts_stopping; // only this thread can transition between ts_running and ts_stopping
@@ -724,6 +722,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     else
                     {
                         dbgassertex(state == ts_running);
+                        if (timeQueuedWhilstStarted)
+                        {
+                            cycle_t elapsed = get_cycles_now() - timeQueuedWhilstStarted;
+                            blockedTime += elapsed;
+                            timeQueuedWhilstStarted = 0;
+                        }
                     }
 #ifdef _DEBUG
                     unsigned startQueue = nextQueue;
@@ -755,6 +759,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
                     if (blockedTime > activity.slowThreshold)
                     {
+                        totalBlockedTime += blockedTime;
                         slow = true;
                         blockedTime = 0;
                         timeQueuedWhilstStarted = 0;
