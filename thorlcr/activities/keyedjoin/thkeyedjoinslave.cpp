@@ -180,7 +180,7 @@ public:
 #undef new
     void *operator new(size_t size, roxiemem::IRowManager *rowManager, activity_id activityId)
     {
-        return rowManager->allocate(size, createCompoundActSeqId(activityId, AT_JoinGroup));
+        return rowManager->allocate(size, activityId); // NB: can't encode AT_JoinGroup here with createCompoundActSeqId, because row manager limits act id to 2^20
     }
 #if defined(_DEBUG) && defined(_WIN32) && !defined(USING_MPATROL)
  #define new new(_NORMAL_BLOCK, __FILE__, __LINE__)
@@ -833,7 +833,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     public:
         CKeyLookupLocalHandler(CKeyedJoinSlave &_activity) : CKeyLookupLocalBase(_activity)
         {
-            limiter = &activity.lookupThreadLimiter;
         }
         ~CKeyLookupLocalHandler()
         {
@@ -2648,13 +2647,13 @@ public:
         {
             // If preserving order, a row array per handler/part is used to ensure order is preserved.
             numRowArrays = preserveOrder ? totalIndexParts : 1;
-            rowArrays = (RowArray *)rowManager->allocate(sizeof(RowArray)*numRowArrays, createCompoundActSeqId(queryId(), AT_JoinGroupRhsRows));
+            rowArrays = (RowArray *)rowManager->allocate(sizeof(RowArray)*numRowArrays, queryId()); // NB: can't encode AT_JoinGroupRhsRows here with createCompoundActSeqId, because row manager limits act id to 2^20
             memset(rowArrays, 0, sizeof(RowArray)*numRowArrays);
         }
         RowArray &rowArray = rowArrays[preserveOrder ? partNo : 0];
         if (!rowArray.rows)
         {
-            rowArray.rows = (Row *)rowManager->allocate(sizeof(Row), createCompoundActSeqId(queryId(), AT_JoinGroupRhsRows));
+            rowArray.rows = (Row *)rowManager->allocate(sizeof(Row), queryId()); // NB: can't encode AT_JoinGroupRhsRows here with createCompoundActSeqId, because row manager limits act id to 2^20
             rowArray.maxRows = RoxieRowCapacity(rowArray.rows) / sizeof(Row);
             rowArray.numRows = 0;
         }
