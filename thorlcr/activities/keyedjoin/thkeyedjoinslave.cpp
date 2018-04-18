@@ -533,6 +533,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             for (auto &a : queues)
                 a->Release();
         }
+        virtual CLookupHandler *createExtraHandler()
+        {
+            throwUnexpected();
+        }
         void setBatchSize(unsigned _batchSize)
         {
             lookupQueuedBatchSize = _batchSize;
@@ -584,6 +588,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             for (auto &h: extraHandlers)
                 h->Release();
             extraHandlers.clear();
+            numExtraHandlers = 0;
 
             state = ts_initial;
         }
@@ -605,9 +610,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             for (auto &batchArray : batchArrays)
                 batchArray->clearRows();
         }
-        void enqueue(CThorExpandingRowArray &newItems, unsigned partsIdx) // NB: enqueue starts thread
+        void doEnqueue(CThorExpandingRowArray &newItems, unsigned partsIdx) // NB: enqueue starts thread
         {
-            CLeavableCriticalBlock b(queueCrit);
+            CLeavableCriticalBlock b(queueCrit); // JCSMORE - I don't think is needed at all (at the moment at least) in the case of queueLookupForPart, which is only called from readAhead thread
             unsigned initTotalQueued = totalQueued;
             totalQueued += newItems.ordinality();
             queues[partsIdx]->appendRows(newItems, true);
@@ -615,17 +620,32 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             {
                 if (state == ts_running) // as long as running here, we know thread will process queue
                 {
-                    if (maxExtraHandlers)
+                    if (numExtraHandlers != maxExtraHandlers)
                     {
                         if (0 == initTotalQueued)
                             timeQueuedWhilstStarted = get_cycles_now();
-                        else
+                        else if (timeQueuedWhilstStarted)
                         {
-                            if (timeQueuedWhilstStarted)
+                            cycle_t elapsed = get_cycles_now() - timeQueuedWhilstStarted;
+                            blockedTime += elapsed;
+                            timeQueuedWhilstStarted = 0;
+
+                            if (blockedTime > activity.slowThreshold)
                             {
-                                cycle_t elapsed = get_cycles_now() - timeQueuedWhilstStarted;
-                                blockedTime += elapsed;
+                                totalBlockedTime += blockedTime;
+                                blockedTime = 0;
                                 timeQueuedWhilstStarted = 0;
+                                if (numExtraHandlers < maxExtraHandlers)
+                                {
+                                    /* could # new handlers and limits cause others (e.g. remote) to be starved? Perhaps I should increase limit at same time as adding new handler
+                                     *
+                                     * Should I reduce # of extra handlers if not slow any more? How?
+                                     *
+                                     * How should the extra handlers be selected (needs to be fast as per row)
+                                     */
+                                    extraHandlers.push_back(createExtraHandler());
+                                    ++numExtraHandlers;
+                                }
                             }
                         }
                     }
@@ -658,6 +678,23 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     // cycle around to start thread again, or bail out if someone else already has.
                 }
             }
+        }
+        void enqueue(CThorExpandingRowArray &newItems, unsigned partsIdx) // NB: enqueue starts thread
+        {
+            if (numExtraHandlers)
+            {
+                if ((unsigned)-1 == currentHandler) // -1 - fall through to std. handler
+                    ++currentHandler;
+                else
+                {
+                    extraHandlers[currentHandler]->enqueue(newItems, partsIdx);
+                    ++currentHandler;
+                    if (currentHandler==numExtraHandlers)
+                        currentHandler = (unsigned)-1;
+                    return;
+                }
+            }
+            doEnqueue(newItems, partsIdx);
         }
         void queueLookupTS(const void *row, unsigned partNo) // thread-safe queueLookup
         {
@@ -696,7 +733,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         virtual void end()
         {
-            VStringBuffer log("processed: %" I64F "u, totalBlockedTime(ms=%" I64F "u blockedTime(ms)=%" I64F "u, extraHandlers=%u", total, cycle_to_millisec(totalBlockedTime), cycle_to_millisec(blockedTime), (unsigned)extraHandlers.size());
+            VStringBuffer log("processed: %" I64F "u, totalBlockedTime(ms)=%" I64F "u blockedTime(ms)=%" I64F "u, extraHandlers=%u", total, cycle_to_millisec(totalBlockedTime), cycle_to_millisec(blockedTime), (unsigned)extraHandlers.size());
             trace(log);
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected, bool slow) = 0;
@@ -755,14 +792,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 #ifdef _DEBUG
                         assertex(nextQueue != startQueue); // sanity check: should never happen, as only here because totalQueued>0
 #endif
-                    }
-
-                    if (blockedTime > activity.slowThreshold)
-                    {
-                        totalBlockedTime += blockedTime;
-                        slow = true;
-                        blockedTime = 0;
-                        timeQueuedWhilstStarted = 0;
                     }
                 }
                 try
@@ -878,7 +907,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
         std::vector<IKeyManager *> keyManagers;
 
-        CKeyLookupLocalHandler *createExtraHandler()
+        virtual CLookupHandler *createExtraHandler() override
         {
             CKeyLookupLocalHandler *handler = new CKeyLookupLocalHandler(activity, 0);
             for (auto &p: parts)
@@ -905,36 +934,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected, bool slow) override
         {
-            if (slow && numExtraHandlers < maxExtraHandlers)
-            {
-                /* create new lookup handler, old original handler can do this.
-                 * if this handler is dealing with multiple parts, perhaps I should split so that each is dealing with 1 at this point (BUT this is not typical anyway and can be configured)
-                 * add new handler to a list somewhere
-                 * either add newItems now, or let these be added here, and new handler can start taking next ones.
-                 *
-                 * could # new handlers and limits cause others (e.g. remote) to be starved? Perhaps I should increase limit at same time as adding new handler
-                 *
-                 * Should I reduce # of extra handlers if not slow any more? How?
-                 *
-                 * How should the extra handlers be selected (needs to be fast as per row)
-                 */
-                extraHandlers.push_back(createExtraHandler());
-                ++numExtraHandlers;
-            }
-            if (numExtraHandlers)
-            {
-                if ((unsigned)-1 == currentHandler) // -1 - fall through to std. handler
-                    ++currentHandler;
-                else
-                {
-                    extraHandlers[currentHandler]->process(processing, selected, false);
-                    ++currentHandler;
-                    if (currentHandler==numExtraHandlers)
-                        currentHandler = (unsigned)-1;
-                    return;
-                }
-            }
-
             unsigned partCopy = parts[selected];
             unsigned partNo = partCopy & partMask;
             unsigned copy = partCopy >> 24;
