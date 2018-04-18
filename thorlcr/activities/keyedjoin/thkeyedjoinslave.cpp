@@ -486,6 +486,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         IHThorKeyedJoinArg *helper = nullptr;
         std::vector<CThorExpandingRowArray *> queues;
         unsigned totalQueued = 0;
+        unsigned maxExtraHandlers = 0;
+        cycle_t timeQueuedWhilstStarted = 0;
+        cycle_t blockedTime = 0;
         CriticalSection queueCrit, batchCrit;
         CThreaded threaded;
         std::atomic<bool> running{false};
@@ -502,6 +505,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         rowcount_t total = 0;
         CLimiter *limiter = nullptr;
         IArrayOf<IPartDescriptor> *allParts = nullptr; // only used for tracing purposes, set by key or fetch derived handlers
+        unsigned numExtraHandlers = 0;
+        unsigned currentHandler = (unsigned)-1;
+        std::vector<CLookupHandler *> extraHandlers;
 
         inline MemoryBuffer &doUncompress(MemoryBuffer &tgt, MemoryBuffer &src)
         {
@@ -570,6 +576,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             stopped = false;
             nextQueue = 0;
             totalQueued = 0;
+            blockedTime = 0;
+            timeQueuedWhilstStarted = 0;
+            currentHandler = (unsigned)-1;
+            for (auto &h: extraHandlers)
+                h->Release();
+            extraHandlers.clear();
+
             state = ts_initial;
         }
         void join()
@@ -593,16 +606,29 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         void enqueue(CThorExpandingRowArray &newItems, unsigned partsIdx) // NB: enqueue starts thread
         {
             CLeavableCriticalBlock b(queueCrit);
+            unsigned initTotalQueued = totalQueued;
             totalQueued += newItems.ordinality();
-            if (totalQueued > goingSlow)
-            {
-
-            }
             queues[partsIdx]->appendRows(newItems, true);
             while (true)
             {
                 if (state == ts_running) // as long as running here, we know thread will process queue
+                {
+                    if (maxExtraHandlers)
+                    {
+                        if (0 == initTotalQueued)
+                            timeQueuedWhilstStarted = get_cycles_now();
+                        else
+                        {
+                            if (timeQueuedWhilstStarted)
+                            {
+                                cycle_t elapsed = get_cycles_now() - timeQueuedWhilstStarted;
+                                blockedTime += elapsed;
+                                timeQueuedWhilstStarted = 0;
+                            }
+                        }
+                    }
                     break;
+                }
                 else if (state == ts_starting) // then another thread is dealing with transition (could be blocked in incRunningLookup())
                     break;
                 else if (state == ts_initial)
@@ -610,7 +636,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     state = ts_starting;
                     b.leave();
                     if (limiter)
-                        limiter->inc(); // blocks if hit lookup thread limit
+                        limiter->inc(); // blocks if hit lookup thread limit. JCSMORE - am a little worried this 'scheduling' could be unfair. Probably ok, because queues will balance it out.
                     if (activity.abortSoon)
                     {
                         if (limiter)
@@ -668,10 +694,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         virtual void end()
         {
-            VStringBuffer log("processed: %" I64F "u", total);
+            VStringBuffer log("processed: %" I64F "u, blockedTime(ms)=%" I64F "u, extraHandlers=%u", total, cycle_to_millisec(blockedTime), (unsigned)extraHandlers.size());
             trace(log);
         }
-        virtual void process(CThorExpandingRowArray &processing, unsigned selected) = 0;
+        virtual void process(CThorExpandingRowArray &processing, unsigned selected, bool slow) = 0;
     // IThreaded
         virtual void threadmain() override
         {
@@ -679,10 +705,15 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             unsigned selected = NotFound;
             while (true)
             {
+                bool slow = false;
                 {
                     CriticalBlock b(queueCrit);
                     if (0 == totalQueued)
                     {
+                        // irrelevant if 0 == maxExtraHandlers
+                        blockedTime = 0;
+                        timeQueuedWhilstStarted = 0;
+
                         if (state != ts_starting) // 1st time around the loop
                             assertex(state == ts_running);
                         state = ts_stopping; // only this thread can transition between ts_running and ts_stopping
@@ -721,11 +752,18 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         assertex(nextQueue != startQueue); // sanity check: should never happen, as only here because totalQueued>0
 #endif
                     }
+
+                    if (blockedTime > activity.slowThreshold)
+                    {
+                        slow = true;
+                        blockedTime = 0;
+                        timeQueuedWhilstStarted = 0;
+                    }
                 }
                 try
                 {
                     total += processing.ordinality();
-                    process(processing, selected);
+                    process(processing, selected, slow);
                 }
                 catch (IException *e)
                 {
@@ -834,9 +872,18 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         typedef CKeyLookupLocalBase PARENT;
 
         std::vector<IKeyManager *> keyManagers;
-    public:
-        CKeyLookupLocalHandler(CKeyedJoinSlave &_activity) : CKeyLookupLocalBase(_activity)
+
+        CKeyLookupLocalHandler *createExtraHandler()
         {
+            CKeyLookupLocalHandler *handler = new CKeyLookupLocalHandler(activity, 0);
+            for (auto &p: parts)
+                handler->addPartNum(p);
+            return handler;
+        }
+    public:
+        CKeyLookupLocalHandler(CKeyedJoinSlave &_activity, unsigned _maxExtraHandlers) : CKeyLookupLocalBase(_activity)
+        {
+            maxExtraHandlers = _maxExtraHandlers;
         }
         ~CKeyLookupLocalHandler()
         {
@@ -851,8 +898,38 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             PARENT::addPartNum(partNum);
             keyManagers.push_back(nullptr);
         }
-        virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
+        virtual void process(CThorExpandingRowArray &processing, unsigned selected, bool slow) override
         {
+            if (slow && numExtraHandlers < maxExtraHandlers)
+            {
+                /* create new lookup handler, old original handler can do this.
+                 * if this handler is dealing with multiple parts, perhaps I should split so that each is dealing with 1 at this point (BUT this is not typical anyway and can be configured)
+                 * add new handler to a list somewhere
+                 * either add newItems now, or let these be added here, and new handler can start taking next ones.
+                 *
+                 * could # new handlers and limits cause others (e.g. remote) to be starved? Perhaps I should increase limit at same time as adding new handler
+                 *
+                 * Should I reduce # of extra handlers if not slow any more? How?
+                 *
+                 * How should the extra handlers be selected (needs to be fast as per row)
+                 */
+                extraHandlers.push_back(createExtraHandler());
+                ++numExtraHandlers;
+            }
+            if (numExtraHandlers)
+            {
+                if ((unsigned)-1 == currentHandler) // -1 - fall through to std. handler
+                    ++currentHandler;
+                else
+                {
+                    extraHandlers[currentHandler]->process(processing, selected, false);
+                    ++currentHandler;
+                    if (currentHandler==numExtraHandlers)
+                        currentHandler = (unsigned)-1;
+                    return;
+                }
+            }
+
             unsigned partCopy = parts[selected];
             unsigned partNo = partCopy & partMask;
             unsigned copy = partCopy >> 24;
@@ -876,7 +953,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             limiter = &activity.lookupThreadLimiter;
         }
-        virtual void process(CThorExpandingRowArray &processing, unsigned __unused) override
+        virtual void process(CThorExpandingRowArray &processing, unsigned __unused, bool slow) override
         {
             if (!keyManager)
             {
@@ -1040,7 +1117,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             VStringBuffer log("%s, lookupSlave=%u", msg, lookupSlave);
             PARENT::trace(log);
         }
-        virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
+        virtual void process(CThorExpandingRowArray &processing, unsigned selected, bool slow) override
         {
             unsigned partCopy = parts[selected];
             unsigned partNo = partCopy & partMask;
@@ -1188,7 +1265,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             compressed = isCompressed(activity.allDataParts.item(0).queryOwner().queryProperties());
             partIOs.resize(parts.size());
         }
-        virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
+        virtual void process(CThorExpandingRowArray &processing, unsigned selected, bool slow) override
         {
             unsigned partCopy = parts[selected];
             unsigned partNo = partCopy & partMask;
@@ -1322,7 +1399,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             if (isCompressed(activity.allDataParts.item(0).queryOwner().queryProperties()))
                 flags |= kjf_compressed;
         }
-        virtual void process(CThorExpandingRowArray &processing, unsigned selected) override
+        virtual void process(CThorExpandingRowArray &processing, unsigned selected, bool slow) override
         {
             unsigned partCopy = parts[selected];
             unsigned partNo = partCopy & partMask;
@@ -1562,6 +1639,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     bool forceRemoteKeyedLookup = false;
     bool forceRemoteKeyedFetch = false;
     bool messageCompression = false;
+    cycle_t slowThreshold = 0;
 
     Owned<IThorRowInterfaces> keyLookupRowWithJGRowIf;
     Owned<IThorRowInterfaces> keyLookupReplyOutputMetaRowIf;
@@ -2060,9 +2138,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
                     break;
                 case ht_localkeylookup:
-                    lookupHandler = new CKeyLookupLocalHandler(*this);
+                {
+                    unsigned extraHandlers = getOptInt("keyedJoinExtraLocalHandlers", 0);
+                    lookupHandler = new CKeyLookupLocalHandler(*this, extraHandlers);
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
                     break;
+                }
                 case ht_remotefetch:
                     lookupHandler = new CFetchRemoteLookupHandler(*this, slave+1);
                     lookupHandler->setBatchSize(fetchLookupQueuedBatchSize);
@@ -2178,6 +2259,8 @@ public:
         forceRemoteKeyedLookup = getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUP);
         forceRemoteKeyedFetch = getOptBool(THOROPT_FORCE_REMOTE_KEYED_FETCH);
         messageCompression = getOptBool(THOROPT_KEYLOOKUP_COMPRESS_MESSAGES, true);
+        slowThreshold = getOptInt64("slowThreshold", 1000); // ms
+        slowThreshold = slowThreshold * queryOneSecCycles() / 1000;
 
         fetchLookupQueuedBatchSize = getOptInt(THOROPT_KEYLOOKUP_FETCH_QUEUED_BATCHSIZE, defaultKeyLookupFetchQueuedBatchSize);
 
