@@ -594,6 +594,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             CLeavableCriticalBlock b(queueCrit);
             totalQueued += newItems.ordinality();
+            if (totalQueued > goingSlow)
+            {
+
+            }
             queues[partsIdx]->appendRows(newItems, true);
             while (true)
             {
@@ -1447,7 +1451,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             ForEachItemIn(h, handlers)
                 handlers.item(h)->trace();
         }
-        CLookupHandler *queryHandler(unsigned partNo)
+        inline CLookupHandler *queryHandler(unsigned partNo)
         {
             return partIdxToHandler[partNo];
         }
