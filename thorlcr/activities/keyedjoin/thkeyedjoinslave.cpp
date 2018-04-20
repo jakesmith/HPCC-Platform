@@ -645,6 +645,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                                      */
                                     extraHandlers.push_back(createExtraHandler());
                                     ++numExtraHandlers;
+                                    PROGLOG("Extra handler created, total=%u", numExtraHandlers);
                                 }
                             }
                         }
@@ -1110,6 +1111,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     msg.append(static_cast<std::underlying_type<RecordTranslationMode>::type>(RecordTranslationMode::None));
             }
         }
+ unsigned totalSends = 0;
     public:
         CKeyLookupRemoteHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave) : PARENT(_activity, _activity.keyLookupRowWithJGRowIf, _lookupSlave), replyRows(_activity, _activity.keyLookupReplyOutputMetaRowIf)
         {
@@ -1135,6 +1137,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
             if (!comm->send(msg, lookupSlave, kjServiceMpTag, LONGTIMEOUT))
                 throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - comm send failed");
+            ++totalSends;
 
             msg.clear();
 
@@ -1142,14 +1145,23 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             unsigned received = 0;
             while (true)
             {
-                if (!comm->recv(msg, lookupSlave, replyTag))
-                    break;
+                rank_t sender;
+                if (!comm->recv(msg, lookupSlave, replyTag, &sender, 10000))
+                {
+                    if (activity.abortSoon)
+                        break;
+                    PROGLOG("CKeyLookupRemoteHandler timedout receiving from %u, send count=%u, current count=%u, totalSends=%u", lookupSlave, numRows, received, totalSends);
+                    continue;
+                }
+                assertex(sender == lookupSlave);
                 readErrorCode(msg);
                 MemoryBuffer tmpMB;
                 MemoryBuffer &mb = doUncompress(tmpMB, msg);
-                mb.read(handles[selected]);
+                if (0 == received)
+                    mb.read(handles[selected]);
                 unsigned count;
                 mb.read(count); // amount processed, could be all (i.e. numRows)
+                dbgassertex(count);
                 while (count--)
                 {
                     const void *requestRow = processing.query(received++);
@@ -1423,6 +1435,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             // read back results and feed in to appropriate join groups.
             unsigned accepted = 0;
             unsigned rejected = 0;
+
             unsigned received = 0;
             while (true)
             {
@@ -1431,7 +1444,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 readErrorCode(msg);
                 MemoryBuffer tmpMB;
                 MemoryBuffer &mb = doUncompress(tmpMB, msg);
-                mb.read(handles[selected]);
+                if (0 == received)
+                    mb.read(handles[selected]);
                 unsigned count;
                 mb.read(count); // amount processed, could be all (i.e. numRows)
                 if (count)

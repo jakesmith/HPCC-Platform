@@ -17,6 +17,7 @@
 
 #include <platform.h>
 
+#include <array>
 #include <type_traits>
 #include <unordered_map>
 
@@ -1266,16 +1267,30 @@ public:
             mptag_t replyTag = TAG_NULL;
             byte errorCode = 0;
             bool replyAttempt = false;
+
+	    std::array<std::array<unsigned, 7>, 12> stats{};
             try
             {
-                if (!queryNodeComm().recv(msg, RANK_ALL, keyLookupMpTag, &sender))
-                    break;
+                if (!queryNodeComm().recv(msg, RANK_ALL, keyLookupMpTag, &sender, 60000))
+                {
+                    if (aborted)
+                        break;
+                    for (unsigned s=0; s<12; s++)
+                    {
+                        VStringBuffer str("slave[%u]", s);
+                        for (unsigned st=0; st<7; st++)
+                            str.appendf(", st[%u]=%u", st, stats[s][st]);
+                        PROGLOG("%s", str.str());
+                    }
+                    continue;
+                }
                 if (!msg.length())
                     break;
                 assertex(currentJob);
                 KJServiceCmds cmd;
                 msg.read((byte &)cmd);
                 msg.read((unsigned &)replyTag);
+ stats[((unsigned)sender)-1][(byte)cmd] = stats[((unsigned)sender)-1][(byte)cmd] + 1;
                 switch (cmd)
                 {
                     case kjs_keyopen:
