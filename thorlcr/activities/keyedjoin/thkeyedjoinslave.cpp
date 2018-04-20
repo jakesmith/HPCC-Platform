@@ -198,6 +198,11 @@ public:
     {
         return candidates.fetch_add(1)+1;
     }
+    inline unsigned queryCandidates() const { return candidates; }
+    inline unsigned incCandidatesRelaxed()
+    {
+        return candidates.fetch_add(1, std::memory_order_relaxed)+1;
+    }
     inline unsigned addCandidates(unsigned n)
     {
         return candidates.fetch_add(n)+n;
@@ -271,7 +276,7 @@ public:
     }
     inline void addRightMatch(unsigned partNo, const void *right, offset_t fpos)
     {
-        CriticalBlock b(crit);
+//        CriticalBlock b(crit);
         if (hasFlag(GroupFlagLimitMask)) // NB: flag can be triggered asynchronously, via setAbortLimitHit() / setAtMostLimitHit()
             return;
         join->addRowEntry(partNo, right, fpos, rowArrays, numRowArrays);
@@ -854,9 +859,11 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 keyManager->reset();
 
                 // NB: keepLimit is not on hard matches and can only be applied later, since other filtering (e.g. in transform) may keep below keepLimit
+                unsigned candidates = 0;
                 while (keyManager->lookup(true))
                 {
-                    unsigned candidates = joinGroup->incCandidates();
+                    //candidates = joinGroup->incCandidatesRelaxed();
+                    ++candidates;
                     if (candidates > activity.abortLimit)
                     {
                         joinGroup->setAbortLimitHit(); // also clears existing rows
@@ -868,7 +875,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         break;
                     }
                     KLBlobProviderAdapter adapter(keyManager);
-                    byte const * keyRow = keyManager->queryKeyBuffer();
+                    byte const *keyRow = keyManager->queryKeyBuffer();
                     size_t fposOffset = keyManager->queryRowSize() - sizeof(offset_t);
                     offset_t fpos = rtlReadBigUInt8(keyRow + fposOffset);
                     if (helper->indexReadMatch(keyedFieldsRow, keyRow,  &adapter))
@@ -896,6 +903,15 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                             joinGroup->addRightMatch(partNo, joinFieldsRow, fpos);
                         }
                     }
+                }
+                if (candidates)
+                {
+//                    candidates = joinGroup->queryCandidates();
+                    candidates = joinGroup->addCandidates(candidates);
+                    if (candidates > activity.abortLimit)
+                        joinGroup->setAbortLimitHit(); // also clears existing rows
+                    else if (candidates > activity.atMost) // atMost - filter out group if > max hard matches
+                        joinGroup->setAtMostLimitHit(); // also clears existing rows
                 }
                 keyManager->releaseSegmentMonitors();
                 joinGroup->decPending(); // Every queued lookup row triggered an inc., this is the corresponding dec.
