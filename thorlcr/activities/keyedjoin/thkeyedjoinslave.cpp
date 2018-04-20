@@ -824,6 +824,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         typedef CLookupHandler PARENT;
     protected:
         Owned<const ITranslator> translator;
+        Owned<IEngineRowAllocator> joinFieldsAllocator;
 
         void setupTranslation(unsigned partNo, IKeyManager &keyManager)
         {
@@ -845,6 +846,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             limiter = &activity.lookupThreadLimiter;
             allParts = &activity.allIndexParts;
+            joinFieldsAllocator.setown(activity.getRowAllocator(helper->queryJoinFieldsRecordSize(), (roxiemem::RoxieHeapFlags)(activity.queryHeapFlags()|roxiemem::RHFunique), AT_JoinFields));
         }
         void processRows(CThorExpandingRowArray &processing, unsigned partNo, IKeyManager *keyManager)
         {
@@ -897,7 +899,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         }
                         else
                         {
-                            RtlDynamicRowBuilder joinFieldsRowBuilder(activity.joinFieldsAllocator);
+                            RtlDynamicRowBuilder joinFieldsRowBuilder(joinFieldsAllocator);
                             size32_t sz = activity.helper->extractJoinFields(joinFieldsRowBuilder, keyRow, &adapter);
                             const void *joinFieldsRow = joinFieldsRowBuilder.finalizeRowClear(sz);
                             joinGroup->addRightMatch(partNo, joinFieldsRow, fpos);
