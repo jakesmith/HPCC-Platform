@@ -820,6 +820,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     protected:
         Owned<const ITranslator> translator;
         Owned<IEngineRowAllocator> joinFieldsAllocator;
+        Owned<IEngineRowAllocator> fetchInputMetaAllocator;
 
         void setupTranslation(unsigned partNo, IKeyManager &keyManager)
         {
@@ -841,7 +842,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             limiter = &activity.lookupThreadLimiter;
             allParts = &activity.allIndexParts;
-            joinFieldsAllocator.setown(activity.getRowAllocator(helper->queryJoinFieldsRecordSize(), (roxiemem::RoxieHeapFlags)(activity.queryHeapFlags()|roxiemem::RHFunique), AT_JoinFields));
+            joinFieldsAllocator.setown(activity.getJoinFieldsAllocator());
+            if (activity.needsDiskRead)
+                fetchInputMetaAllocator.setown(activity.getFetchInputAllocator());
         }
         void processRows(CThorExpandingRowArray &processing, unsigned partNo, IKeyManager *keyManager)
         {
@@ -888,7 +891,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                             dbgassertex(sequence <= UINT_MAX);
                             sequence = sequence | (((unsigned __int64)partNo) << 32);
 
-                            activity.queueFetchLookup(fpos, sequence, joinGroup);
+                            activity.queueFetchLookup(fpos, sequence, joinGroup, fetchInputMetaAllocator);
                         }
                         else
                         {
@@ -1062,6 +1065,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         typedef CRemoteLookupHandler PARENT;
 
         CThorExpandingRowArray replyRows;
+        Owned<IEngineRowAllocator> fetchInputMetaAllocator;
 
         void initRead(CMessageBuffer &msg, unsigned selected, unsigned partNo, unsigned copy)
         {
@@ -1119,6 +1123,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             limiter = &activity.lookupThreadLimiter;
             allParts = &activity.allIndexParts;
+            fetchInputMetaAllocator.setown(activity.getFetchInputAllocator());
         }
         virtual void trace(const char *msg) const override
         {
@@ -1224,7 +1229,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                                         dbgassertex(sequence <= UINT_MAX);
                                         sequence = sequence | (((unsigned __int64)partNo) << 32);
 
-                                        activity.queueFetchLookup(fposs[r], sequence, joinGroup);
+                                        activity.queueFetchLookup(fposs[r], sequence, joinGroup, fetchInputMetaAllocator);
                                     }
                                     else
                                     {
@@ -1254,6 +1259,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
         bool encrypted = false;
         bool compressed = false;
+        Owned<IEngineRowAllocator> joinFieldsAllocator;
         Owned<IEngineRowAllocator> fetchDiskAllocator;
         Owned<IOutputRowDeserializer> fetchDiskDeserializer;
         CThorContiguousRowBuffer prefetchSource;
@@ -1270,11 +1276,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         CFetchLocalLookupHandler(CKeyedJoinSlave &_activity)
             : PARENT(_activity, _activity.fetchInputMetaRowIf)
         {
-            Owned<IThorRowInterfaces> fetchDiskRowIf = activity.createRowInterfaces(helper->queryDiskRecordSize());
-            fetchDiskAllocator.set(fetchDiskRowIf->queryRowAllocator());
-            fetchDiskDeserializer.set(fetchDiskRowIf->queryRowDeserializer());
+            fetchDiskAllocator.setown(activity.getFetchDiskAllocator());
+            fetchDiskDeserializer.set(activity.fetchDiskRowIf->queryRowDeserializer());
+
             limiter = &activity.fetchThreadLimiter;
             allParts = &activity.allDataParts;
+            joinFieldsAllocator.setown(activity.getJoinFieldsAllocator());
         }
         virtual void init() override
         {
@@ -1317,7 +1324,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 }
                 if (helper->fetchMatch(fetchKey, diskFetchRow))
                 {
-                    RtlDynamicRowBuilder joinFieldsRow(activity.joinFieldsAllocator);
+                    RtlDynamicRowBuilder joinFieldsRow(joinFieldsAllocator);
                     size32_t joinFieldsSz = helper->extractJoinFields(joinFieldsRow, diskFetchRow, (IBlobProvider*)nullptr); // JCSMORE is it right that passing NULL IBlobProvider here??
                     const void *fetchRow = joinFieldsRow.finalizeRowClear(joinFieldsSz);
 
@@ -1682,9 +1689,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
     unsigned currentAdded = 0;
     unsigned currentJoinGroupSize = 0;
 
+    Owned<IOutputMetaData> fetchInputMeta;
     Owned<IThorRowInterfaces> fetchInputMetaRowIf; // fetch request rows, header + fetch fields
     Owned<IThorRowInterfaces> fetchOutputMetaRowIf; // fetch request reply rows, header + [join fields as child row]
-    Owned<IEngineRowAllocator> fetchInputMetaAllocator;
+    Owned<IThorRowInterfaces> fetchDiskRowIf;
 
     CriticalSection fetchFileCrit;
     std::vector<PartIO> openFetchParts;
@@ -1821,6 +1829,18 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         return tlkKeyIndexes.ordinality();
     }
+    IEngineRowAllocator *getJoinFieldsAllocator()
+    {
+        return getRowAllocator(helper->queryJoinFieldsRecordSize(), (roxiemem::RoxieHeapFlags)(queryHeapFlags()|roxiemem::RHFunique), AT_JoinFields);
+    }
+    IEngineRowAllocator *getFetchInputAllocator()
+    {
+        return getRowAllocator(fetchInputMeta, (roxiemem::RoxieHeapFlags)(queryHeapFlags()|roxiemem::RHFunique), AT_FetchRequest);
+    }
+    IEngineRowAllocator *getFetchDiskAllocator()
+    {
+        return getRowAllocator(helper->queryDiskRecordSize(), (roxiemem::RoxieHeapFlags)(queryHeapFlags()|roxiemem::RHFunique), AT_FetchDisk);
+    }
     IKeyIndex *createPartKeyIndex(unsigned partNo, unsigned copy)
     {
         IPartDescriptor &filePart = allIndexParts.item(partNo);
@@ -1925,7 +1945,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         else
             return 0;
     }
-    void queueFetchLookup(offset_t fpos, unsigned __int64 sequence, CJoinGroup *jg)
+    void queueFetchLookup(offset_t fpos, unsigned __int64 sequence, CJoinGroup *jg, IEngineRowAllocator *allocator)
     {
         unsigned fetchPartNo;
         if (isLocalFpos(fpos))
@@ -1958,7 +1978,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
 
         // build request row
-        RtlDynamicRowBuilder fetchInputRowBuilder(fetchInputMetaAllocator);
+        RtlDynamicRowBuilder fetchInputRowBuilder(allocator);
         FetchRequestHeader &header = *(FetchRequestHeader *)fetchInputRowBuilder.getUnfinalized();
         header.fpos = fpos;
         header.sequence = sequence;
@@ -2311,15 +2331,16 @@ public:
         keyLookupRowWithJGRowIf.setown(createRowInterfaces(keyLookupRowOutputMetaData, (roxiemem::RoxieHeapFlags)(queryHeapFlags()|roxiemem::RHFpacked|roxiemem::RHFunique), AT_LookupWithJG));
         keyLookupRowWithJGAllocator = keyLookupRowWithJGRowIf->queryRowAllocator();
 
-        joinFieldsAllocator.setown(getRowAllocator(helper->queryJoinFieldsRecordSize(), roxiemem::RHFnone, AT_JoinFields));
+        joinFieldsAllocator.setown(getJoinFieldsAllocator());
         keyLookupReplyOutputMetaRowIf.setown(createRowInterfaces(helper->queryJoinFieldsRecordSize(), AT_LookupResponse));
 
-        Owned<IOutputMetaData> fetchInputMeta = new CPrefixedOutputMeta(sizeof(FetchRequestHeader), helper->queryFetchInputRecordSize());
+        fetchInputMeta.setown(new CPrefixedOutputMeta(sizeof(FetchRequestHeader), helper->queryFetchInputRecordSize()));
         fetchInputMetaRowIf.setown(createRowInterfaces(fetchInputMeta, AT_FetchRequest));
-        fetchInputMetaAllocator.set(fetchInputMetaRowIf->queryRowAllocator());
 
         Owned<IOutputMetaData> fetchOutputMeta = createOutputMetaDataWithChildRow(joinFieldsAllocator, sizeof(FetchReplyHeader));
         fetchOutputMetaRowIf.setown(createRowInterfaces(fetchOutputMeta, AT_FetchResponse));
+
+        fetchDiskRowIf.setown(createRowInterfaces(helper->queryDiskRecordSize()));
 
         appendOutputLinked(this);
     }
