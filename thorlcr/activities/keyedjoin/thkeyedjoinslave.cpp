@@ -487,9 +487,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         std::vector<CThorExpandingRowArray *> queues;
         unsigned totalQueued = 0;
         unsigned maxExtraHandlers = 0;
+        unsigned slowerAttempts = 0;
         cycle_t timeQueuedWhilstStarted = 0;
         cycle_t blockedTime = 0;
         cycle_t totalBlockedTime = 0;
+        cycle_t lastHandlerTimePerRec = 0;
+        unsigned totalSinceLastBlock = 0;
         CriticalSection queueCrit, batchCrit;
         CThreaded threaded;
         std::atomic<bool> running{false};
@@ -520,6 +523,14 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             else
                 return src;
         }
+        CLookupHandler *cloneHandler()
+        {
+            CLookupHandler *handler = createExtraHandler();
+            for (auto &p: parts)
+                handler->addPartNum(p);
+            handler->init();
+            return handler;
+        }
     public:
         CLookupHandler(CKeyedJoinSlave &_activity, IThorRowInterfaces *_rowIf) : threaded("CLookupHandler", this),
             activity(_activity), rowIf(_rowIf)
@@ -530,8 +541,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             for (auto &a : batchArrays)
                 a->Release();
-            for (auto &a : queues)
-                a->Release();
+            for (auto &q : queues)
+                q->Release();
         }
         virtual CLookupHandler *createExtraHandler()
         {
@@ -583,12 +594,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             totalQueued = 0;
             blockedTime = 0;
             totalBlockedTime = 0;
+            lastHandlerTimePerRec = 0;
             timeQueuedWhilstStarted = 0;
+            slowerAttempts = 0;
+            total = 0;
+            totalSinceLastBlock = 0;
             currentHandler = (unsigned)-1;
-            for (auto &h: extraHandlers)
-                h->Release();
-            extraHandlers.clear();
-            numExtraHandlers = 0;
 
             state = ts_initial;
         }
@@ -620,9 +631,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             {
                 if (state == ts_running) // as long as running here, we know thread will process queue
                 {
-                    if (numExtraHandlers != maxExtraHandlers)
+                    if (numExtraHandlers < maxExtraHandlers)
                     {
-                        if (0 == initTotalQueued)
+                        if (0 == initTotalQueued && total) // checking total, because don't want to start ramping up until at least 1st process complete (so any startup latency not considered).
                             timeQueuedWhilstStarted = get_cycles_now();
                         else if (timeQueuedWhilstStarted)
                         {
@@ -630,23 +641,35 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                             blockedTime += elapsed;
                             timeQueuedWhilstStarted = 0;
 
-                            if (blockedTime > activity.slowThreshold)
+                            cycle_t blockedTimePerRec = blockedTime / (total-totalSinceLastBlock);
+                            if (blockedTimePerRec > activity.slowThreshold)
                             {
-                                totalBlockedTime += blockedTime;
-                                blockedTime = 0;
-                                timeQueuedWhilstStarted = 0;
-                                if (numExtraHandlers < maxExtraHandlers)
+                                PROGLOG("Consider new handler: blockedTime=%u, last blockTimePerRec=%.2f, new blockedTimePerRec=%.2f", (unsigned)cycle_to_millisec(blockedTime), (float)(cycle_to_nanosec(lastHandlerTimePerRec)/1000.0), (float)(cycle_to_nanosec(blockedTimePerRec)/1000.0));
+                                if ((0 != lastHandlerTimePerRec) && (blockedTimePerRec > lastHandlerTimePerRec+(queryOneSecCycles()/1000000000*5))) // Less than 5ns faster per rec - don't bother
+                                {
+                                    PROGLOG("SLOWER than: %.2f", (float)(cycle_to_nanosec(lastHandlerTimePerRec+(queryOneSecCycles()/1000000000*5))/1000.0));
+                                    PROGLOG("cycle 1 sec = %" I64F "u, 1 ns cycles = %" I64F "u, times 5 = %" I64F "u", queryOneSecCycles(), queryOneSecCycles()/1000000000, queryOneSecCycles()/1000000000*5);
+                                    ++slowerAttempts;
+                                    if (slowerAttempts >= 10)
+                                        maxExtraHandlers = 0; // turn off further checking
+                                }
+                                else
                                 {
                                     /* could # new handlers and limits cause others (e.g. remote) to be starved? Perhaps I should increase limit at same time as adding new handler
                                      *
                                      * Should I reduce # of extra handlers if not slow any more? How?
                                      *
-                                     * How should the extra handlers be selected (needs to be fast as per row)
+                                     * Could be slower when adding more handlers because of extra contention....
                                      */
-                                    extraHandlers.push_back(createExtraHandler());
+                                    extraHandlers.push_back(cloneHandler());
                                     ++numExtraHandlers;
                                     PROGLOG("Extra handler created, total=%u", numExtraHandlers);
+                                    lastHandlerTimePerRec = blockedTimePerRec;
+                                    totalSinceLastBlock = total;
                                 }
+                                totalBlockedTime += blockedTime;
+                                blockedTime = 0;
+                                timeQueuedWhilstStarted = 0;
                             }
                         }
                     }
@@ -714,13 +737,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         void flushTS() // thread-safe flush
         {
-            for (unsigned b=0; b<batchArrays.size(); b++)
-            {
-                CThorExpandingRowArray *batchArray = batchArrays[b];
-                CriticalBlock block(batchCrit);
-                if (batchArray->ordinality())
-                    enqueue(*batchArray, b);
-            }
+            CriticalBlock block(batchCrit);
+            flush();
         }
         void flush()
         {
@@ -734,7 +752,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         virtual void end()
         {
-            VStringBuffer log("processed: %" I64F "u, totalBlockedTime(ms)=%" I64F "u blockedTime(ms)=%" I64F "u, extraHandlers=%u", total, cycle_to_millisec(totalBlockedTime), cycle_to_millisec(blockedTime), (unsigned)extraHandlers.size());
+            VStringBuffer log("processed: %" I64F "u, totalBlockedTime(ms)=%" I64F "u, blockedTime(ms)=%" I64F "u, extraHandlers=%u", total, cycle_to_millisec(totalBlockedTime), cycle_to_millisec(blockedTime), (unsigned)extraHandlers.size());
             trace(log);
         }
         virtual void process(CThorExpandingRowArray &processing, unsigned selected, bool slow) = 0;
@@ -797,8 +815,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 }
                 try
                 {
-                    total += processing.ordinality();
                     process(processing, selected, slow);
+                    total += processing.ordinality();
                 }
                 catch (IException *e)
                 {
@@ -916,8 +934,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         virtual CLookupHandler *createExtraHandler() override
         {
             CKeyLookupLocalHandler *handler = new CKeyLookupLocalHandler(activity, 0);
-            for (auto &p: parts)
-                handler->addPartNum(p);
+            activity.keyLookupHandlers.handlers.append(handler); // NB: keyLookupHandlers owns
             return handler;
         }
     public:
@@ -2299,8 +2316,7 @@ public:
         forceRemoteKeyedLookup = getOptBool(THOROPT_FORCE_REMOTE_KEYED_LOOKUP);
         forceRemoteKeyedFetch = getOptBool(THOROPT_FORCE_REMOTE_KEYED_FETCH);
         messageCompression = getOptBool(THOROPT_KEYLOOKUP_COMPRESS_MESSAGES, true);
-        slowThreshold = getOptInt64("slowThreshold", 1000); // ms
-        slowThreshold = slowThreshold * queryOneSecCycles() / 1000;
+        slowThreshold = nanosec_to_cycle(getOptInt64("slowThreshold", 1000000)); // 1 ms, NB: this represents an average of blockng for 1 ms per record
 
         fetchLookupQueuedBatchSize = getOptInt(THOROPT_KEYLOOKUP_FETCH_QUEUED_BATCHSIZE, defaultKeyLookupFetchQueuedBatchSize);
 

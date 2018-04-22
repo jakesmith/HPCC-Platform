@@ -426,10 +426,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             expectedFormat.set(activityCtx->queryHelper()->queryDiskRecordSize());
             expectedFormatCrc = activityCtx->queryHelper()->getDiskFormatCrc();
         }
-        ~CFetchContext()
-        {
-
-        }
         const void *queryFindParam() const { return &key; } // for SimpleHashTableOf
         unsigned queryHandle() const { return handle; }
         const FetchKey &queryKey() const { return key; }
