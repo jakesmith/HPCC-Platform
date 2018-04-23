@@ -487,6 +487,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         std::vector<CThorExpandingRowArray *> queues;
         unsigned totalQueued = 0;
         unsigned maxExtraHandlers = 0;
+        unsigned slowThreshold = 0;
         unsigned slowerAttempts = 0;
         cycle_t timeQueuedWhilstStarted = 0;
         cycle_t blockedTime = 0;
@@ -551,6 +552,14 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         void setBatchSize(unsigned _batchSize)
         {
             lookupQueuedBatchSize = _batchSize;
+        }
+        void setMaxExtraHandlers(unsigned _maxExtraHandlers)
+        {
+            maxExtraHandlers = _maxExtraHandlers;
+        }
+        void setSlowThreshold(unsigned _slowThreshold)
+        {
+            slowThreshold = _slowThreshold;
         }
         void trace()
         {
@@ -642,16 +651,24 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                             timeQueuedWhilstStarted = 0;
 
                             cycle_t blockedTimePerRec = blockedTime / (total-totalSinceLastBlock);
-                            if (blockedTimePerRec > activity.slowThreshold)
+                            if (blockedTimePerRec > slowThreshold)
                             {
-                                PROGLOG("Consider new handler: blockedTime=%u, last blockTimePerRec=%.2f, new blockedTimePerRec=%.2f", (unsigned)cycle_to_millisec(blockedTime), (float)(cycle_to_nanosec(lastHandlerTimePerRec)/1000.0), (float)(cycle_to_nanosec(blockedTimePerRec)/1000.0));
+                                VStringBuffer msg("Consider new handler: blockedTime=%u, last blockTimePerRec=%.2f, new blockedTimePerRec=%.2f", (unsigned)cycle_to_millisec(blockedTime), (float)(cycle_to_nanosec(lastHandlerTimePerRec)/1000.0), (float)(cycle_to_nanosec(blockedTimePerRec)/1000.0));
+                                trace(msg);
+                                msg.clear().appendf("Consider new handler: blockedTime=%u, last blockTimePerRec=%.2f, new blockedTimePerRec=%.2f", (unsigned)cycle_to_millisec(blockedTime), (float)(cycle_to_nanosec(lastHandlerTimePerRec)/1000.0), (float)(cycle_to_nanosec(blockedTimePerRec)/1000.0));
+                                trace(msg);
                                 if ((0 != lastHandlerTimePerRec) && (blockedTimePerRec > lastHandlerTimePerRec+(queryOneSecCycles()/1000000000*5))) // Less than 5ns faster per rec - don't bother
                                 {
-                                    PROGLOG("SLOWER than: %.2f", (float)(cycle_to_nanosec(lastHandlerTimePerRec+(queryOneSecCycles()/1000000000*5))/1000.0));
-                                    PROGLOG("cycle 1 sec = %" I64F "u, 1 ns cycles = %" I64F "u, times 5 = %" I64F "u", queryOneSecCycles(), queryOneSecCycles()/1000000000, queryOneSecCycles()/1000000000*5);
+                                    msg.clear().appendf("SLOWER than: %.2f", (float)(cycle_to_nanosec(lastHandlerTimePerRec+(queryOneSecCycles()/1000000000*5))/1000.0));
+                                    trace(msg);
+                                    msg.clear().appendf("cycle 1 sec = %" I64F "u, 1 ns cycles = %" I64F "u, times 5 = %" I64F "u", queryOneSecCycles(), queryOneSecCycles()/1000000000, queryOneSecCycles()/1000000000*5);
+                                    trace(msg);
                                     ++slowerAttempts;
                                     if (slowerAttempts >= 10)
+                                    {
+                                        --numExtraHandlers;
                                         maxExtraHandlers = 0; // turn off further checking
+                                    }
                                 }
                                 else
                                 {
@@ -663,7 +680,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                                      */
                                     extraHandlers.push_back(cloneHandler());
                                     ++numExtraHandlers;
-                                    PROGLOG("Extra handler created, total=%u", numExtraHandlers);
+                                    msg.clear().appendf("Extra handler created, total=%u", numExtraHandlers);
+                                    trace(msg);
                                     lastHandlerTimePerRec = blockedTimePerRec;
                                     totalSinceLastBlock = total;
                                 }
@@ -933,14 +951,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
 
         virtual CLookupHandler *createExtraHandler() override
         {
-            CKeyLookupLocalHandler *handler = new CKeyLookupLocalHandler(activity, 0);
+            CKeyLookupLocalHandler *handler = new CKeyLookupLocalHandler(activity);
             activity.keyLookupHandlers.handlers.append(handler); // NB: keyLookupHandlers owns
             return handler;
         }
     public:
-        CKeyLookupLocalHandler(CKeyedJoinSlave &_activity, unsigned _maxExtraHandlers) : CKeyLookupLocalBase(_activity)
+        CKeyLookupLocalHandler(CKeyedJoinSlave &_activity) : CKeyLookupLocalBase(_activity)
         {
-            maxExtraHandlers = _maxExtraHandlers;
         }
         ~CKeyLookupLocalHandler()
         {
@@ -2188,16 +2205,21 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         else
         {
+            unsigned maxExtraHandlers = 0;
+            unsigned slowThreshold = 0;
             switch (hType)
             {
                 case ht_remotekeylookup:
+                    maxExtraHandlers = getOptInt("keyedJoinExtraRemoteHandlers", 0);
+                    slowThreshold = getOptInt("keyedJoinExtraRemoteSlowThreshold", 0);
                     lookupHandler = new CKeyLookupRemoteHandler(*this, slave+1); // +1 because 0 == master, 1st slave == 1
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
                     break;
                 case ht_localkeylookup:
                 {
-                    unsigned extraHandlers = getOptInt("keyedJoinExtraLocalHandlers", 0);
-                    lookupHandler = new CKeyLookupLocalHandler(*this, extraHandlers);
+                    maxExtraHandlers = getOptInt("keyedJoinExtraLocalHandlers", 0);
+                    slowThreshold = getOptInt("keyedJoinExtraLocalSlowThreshold", 0);
+                    lookupHandler = new CKeyLookupLocalHandler(*this);
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
                     break;
                 }
@@ -2212,6 +2234,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 default:
                     throwUnexpected();
             }
+            lookupHandler->setSlowThreshold(slowThreshold);
+            lookupHandler->setMaxExtraHandlers(maxExtraHandlers);
             handlerContainer.handlers.append(lookupHandler);
             slaveHandlers[slave].push_back(lookupHandler);
         }
