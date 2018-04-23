@@ -1159,6 +1159,12 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             allParts = &activity.allIndexParts;
             fetchInputMetaAllocator.setown(activity.getFetchInputAllocator());
         }
+        virtual CLookupHandler *createExtraHandler() override
+        {
+            CKeyLookupRemoteHandler *handler = new CKeyLookupRemoteHandler(activity, lookupSlave);
+            activity.keyLookupHandlers.handlers.append(handler); // NB: keyLookupHandlers owns
+            return handler;
+        }
         virtual void trace(const char *msg) const override
         {
             VStringBuffer log("%s, lookupSlave=%u", msg, lookupSlave);
