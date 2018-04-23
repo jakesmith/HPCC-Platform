@@ -764,6 +764,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         }
         void processRows(CThorExpandingRowArray &processing, unsigned partNo, IKeyManager *keyManager)
         {
+            KLBlobProviderAdapter adapter(keyManager);
             for (unsigned r=0; r<processing.ordinality() && !stopped; r++)
             {
                 OwnedConstThorRow row = processing.getClear(r);
@@ -788,7 +789,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                         joinGroup->setAtMostLimitHit(); // also clears existing rows
                         break;
                     }
-                    KLBlobProviderAdapter adapter(keyManager);
                     byte const * keyRow = keyManager->queryKeyBuffer();
                     size_t fposOffset = keyManager->queryRowSize() - sizeof(offset_t);
                     offset_t fpos = rtlReadBigUInt8(keyRow + fposOffset);
