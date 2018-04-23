@@ -265,7 +265,6 @@ public:
     }
     inline void addRightMatch(unsigned partNo, const void *right, offset_t fpos)
     {
-        CriticalBlock b(crit);
         if (hasFlag(GroupFlagLimitMask)) // NB: flag can be triggered asynchronously, via setAbortLimitHit() / setAtMostLimitHit()
             return;
         join->addRowEntry(partNo, right, fpos, rowArrays, numRowArrays);
