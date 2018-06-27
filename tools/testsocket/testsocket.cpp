@@ -350,6 +350,7 @@ int readResults(ISocket * socket, bool readBlocked, bool useHTTP, StringBuffer &
                 response = (const char *)mb.readDirect(len);
                 // JCSMORE - json string coming back from IXmlWriterExt is always rootless the moment, so workaround it by supplying ptr_noRoot to reader
                 // writer should be fixed.
+                PROGLOG("\nresponse:\n%s\n", response);
                 Owned<IPropertyTree> tree = createPTreeFromJSONString(len, response, ipt_none, (PTreeReaderOptions)(ptr_ignoreWhiteSpace|ptr_noRoot));
                 responseTree.setown(tree->getPropTree("Response"));
                 assertex(responseTree);
