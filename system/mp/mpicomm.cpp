@@ -235,7 +235,10 @@ public:
         if (!messageFromSelf)
         {
             tm.timedout(&remaining);
-            hpcc_mpi::CommStatus status = hpcc_mpi::readData(srcrank, tag, mbuf, comm, remaining);
+            /* NB: originalGroup only used because of our dependence on CMessageBuffer.sender (SocketEndpoint).
+             * originalGroup is used to get the endpoint from the original group for the rank
+             */
+            hpcc_mpi::CommStatus status = hpcc_mpi::readData(srcrank, tag, mbuf, comm, originalGroup, remaining);
             _T("recv status="<<status);
             completed = (status == hpcc_mpi::CommStatus::SUCCESS);
             //TODO what if no message received and selfMsg bcomes available now?
@@ -376,8 +379,6 @@ ICommunicator *createMPICommunicator(IGroup *group)
     }
     // NB: NodeCommunicator takes ownership of group
     ICommunicator* comm = new NodeCommunicator(group, MPI_COMM_WORLD);
-    int rank = hpcc_mpi::rank(MPI_COMM_WORLD);
-//    initMyNode(rank);
     return comm;
 }
 

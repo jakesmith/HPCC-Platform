@@ -413,7 +413,7 @@ hpcc_mpi::CommStatus hpcc_mpi::sendData(rank_t dstRank, mptag_t mptag, CMessageB
     return status;
 }
 
-hpcc_mpi::CommStatus hpcc_mpi::readData(rank_t sourceRank, mptag_t mptag, CMessageBuffer &mbuf, MPI_Comm comm, unsigned timeout)
+hpcc_mpi::CommStatus hpcc_mpi::readData(rank_t sourceRank, mptag_t mptag, CMessageBuffer &mbuf, MPI_Comm comm, IGroup *originalGroup, unsigned timeout)
 {
     _TF("mpi_wrapper:readData", sourceRank, mptag, timeout);
     CTimeMon tm(timeout);
@@ -449,7 +449,7 @@ hpcc_mpi::CommStatus hpcc_mpi::readData(rank_t sourceRank, mptag_t mptag, CMessa
                 bool noCancellation = commData->lockFromCancellation();
                 if (noCancellation)
                 {
-                    SocketEndpoint ep(stat.MPI_SOURCE);
+                    const SocketEndpoint &ep = originalGroup->queryNode(stat.MPI_SOURCE).endpoint();
                     mbuf.init(ep, (mptag_t)getTag(stat.MPI_TAG), TAG_REPLY_BASE);
                     commData->releaseCancellationLock();
                 }
