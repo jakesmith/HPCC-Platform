@@ -107,7 +107,7 @@ private:
             }
         }
     };
-    IGroup *group;
+    Owned<IGroup> group, originalGroup;
     rank_t myrank;
     rank_t commSize;
     MPI_Comm comm;
@@ -326,18 +326,29 @@ public:
 
     IGroup &queryGroup()
     {
-        return *group;
+        return *originalGroup;
     }
     
     IGroup *getGroup()
     {
-        return group;
+        return LINK(originalGroup);
     }
 
     NodeCommunicator(IGroup *_group, MPI_Comm _comm)
     {
         hpcc_mpi::initialize(true);
-        this->group = _group;
+        originalGroup.setown(_group);
+        unsigned i = 0;
+        Owned<INodeIterator> iter = originalGroup->getIterator();
+        IArrayOf<INode> newNodes;
+        ForEach(*iter)
+        {
+            SocketEndpoint ep = iter->query().endpoint();
+            ep.port = i++;
+            newNodes.append(*createINode(ep));
+        }
+        group.setown(createIGroup(newNodes.ordinality(), newNodes.getArray()));
+
         this->comm = _comm;
         commSize = hpcc_mpi::size(comm);
         myrank = hpcc_mpi::rank(comm);
@@ -363,9 +374,10 @@ ICommunicator *createMPICommunicator(IGroup *group)
         }
         group = createIGroup(size, nodes);
     }
+    // NB: NodeCommunicator takes ownership of group
     ICommunicator* comm = new NodeCommunicator(group, MPI_COMM_WORLD);
     int rank = hpcc_mpi::rank(MPI_COMM_WORLD);
-    initMyNode(rank);
+//    initMyNode(rank);
     return comm;
 }
 
