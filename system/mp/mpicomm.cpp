@@ -107,7 +107,7 @@ private:
             }
         }
     };
-    Owned<IGroup> group, originalGroup;
+    Owned<IGroup> group;
     rank_t myrank;
     rank_t commSize;
     MPI_Comm comm;
@@ -235,10 +235,7 @@ public:
         if (!messageFromSelf)
         {
             tm.timedout(&remaining);
-            /* NB: originalGroup only used because of our dependence on CMessageBuffer.sender (SocketEndpoint).
-             * originalGroup is used to get the endpoint from the original group for the rank
-             */
-            hpcc_mpi::CommStatus status = hpcc_mpi::readData(srcrank, tag, mbuf, comm, originalGroup, remaining);
+            hpcc_mpi::CommStatus status = hpcc_mpi::readData(srcrank, tag, mbuf, comm, group, remaining);
             _T("recv status="<<status);
             completed = (status == hpcc_mpi::CommStatus::SUCCESS);
             //TODO what if no message received and selfMsg bcomes available now?
@@ -329,28 +326,17 @@ public:
 
     IGroup &queryGroup()
     {
-        return *originalGroup;
+        return *group;
     }
     
     IGroup *getGroup()
     {
-        return LINK(originalGroup);
+        return group.getLink();
     }
 
-    NodeCommunicator(IGroup *_group, MPI_Comm _comm)
+    NodeCommunicator(IGroup *_group, MPI_Comm _comm) : group(_group)
     {
         hpcc_mpi::initialize(true);
-        originalGroup.setown(_group);
-        unsigned i = 0;
-        Owned<INodeIterator> iter = originalGroup->getIterator();
-        IArrayOf<INode> newNodes;
-        ForEach(*iter)
-        {
-            SocketEndpoint ep = iter->query().endpoint();
-            ep.port = i++;
-            newNodes.append(*createINode(ep));
-        }
-        group.setown(createIGroup(newNodes.ordinality(), newNodes.getArray()));
 
         this->comm = _comm;
         commSize = hpcc_mpi::size(comm);
@@ -366,7 +352,9 @@ public:
 
 ICommunicator *createMPICommunicator(IGroup *group)
 {
-    if (!group)
+    if (group)
+        group->Link();
+    else
     {
         int size = hpcc_mpi::size(MPI_COMM_WORLD);
         INode* nodes[size];

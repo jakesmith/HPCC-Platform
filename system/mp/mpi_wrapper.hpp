@@ -92,7 +92,7 @@ namespace hpcc_mpi
     *                   releaseComm(...) function to release this object once
     *                   done using it.
     */
-    CommStatus readData(rank_t sourceRank, mptag_t tag, CMessageBuffer &mbuf, MPI_Comm comm, IGroup *originalGroup, unsigned timeout);
+    CommStatus readData(rank_t sourceRank, mptag_t tag, CMessageBuffer &mbuf, MPI_Comm comm, IGroup *group, unsigned timeout);
     
     /**
     * Check to see if there's a incoming message

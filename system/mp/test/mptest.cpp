@@ -834,7 +834,6 @@ int main(int argc, char* argv[])
         sprintf(logfile,"mptest-%d.log",my_port);
         // openLogFile(lf, logfile);
 
-
         IArrayOf<INode> nodes;
 
         const char * hostfile = nullptr;
@@ -892,7 +891,6 @@ int main(int argc, char* argv[])
                 }
                 j++;
             }
-
             char hoststr[256] = { "" };
             FILE *fp = fopen(hostfile, "r");
             if (fp == NULL)
