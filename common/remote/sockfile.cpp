@@ -3967,6 +3967,8 @@ static IOutputMetaData *getTypeInfoOutputMetaData(IPropertyTree &actNode, const 
     }
 }
 
+static bool useMetaBlobs = false;
+
 class CRemoteDiskBaseActivity : public CSimpleInterfaceOf<IRemoteActivity>, implements IVirtualFieldCallback
 {
 protected:
@@ -3985,8 +3987,6 @@ protected:
     void initCommon(IPropertyTree &config)
     {
         fileName.set(config.queryProp("fileName"));
-        if (isEmptyString(fileName))
-            throw MakeStringException(0, "CRemoteDiskBaseActivity: fileName missing");
 
         record = &inMeta->queryRecordAccessor(true);
         translator.setown(createRecordTranslator(outMeta->queryRecordAccessor(true), *record));
@@ -4421,34 +4421,79 @@ IRemoteActivity *createRemoteIndexCount(IPropertyTree &actNode)
     return new CRemoteIndexCountActivity(actNode);
 }
 
-bool propsMatch(IPropertyTree &t1, IPropertyTree &t1, const char *prop)
+bool propsMatch(IPropertyTree &t1, IPropertyTree &t2, const char *prop)
 {
-    const char *v1 = t1->queryProp(prop);
-    const char *v2 = t2->queryProp(prop);
+    const char *v1 = t1.queryProp(prop);
+    const char *v2 = t2.queryProp(prop);
     return strsame(v1, v2);
 }
-void verifyAuthroization(IPropertyTree &metaInfo, IPropertyTree &actNode)
+
+void verifyAuthorization(IPropertyTree &actNode, IPropertyTree &metaInfo)
 {
-    if (!propsMatch(metaInfo, actNode, "logicalFilename") ||
-        !propsMatch(metaInfo, actNode, "jobId") ||
-        !propsMatch(metaInfo, actNode, "accessType") ||
-        !propsMatch(metaInfo, actNode, "user") ||
-        !propsMatch(metaInfo, actNode, "key"))
-        throwStringExceptionV(0, "createRemoteActivity: verifyAuthroization failed");
+    if (!propsMatch(actNode, metaInfo, "logicalFilename") ||
+        !propsMatch(actNode, metaInfo, "jobId") ||
+        !propsMatch(actNode, metaInfo, "accessType") ||
+        !propsMatch(actNode, metaInfo, "user") ||
+        !propsMatch(actNode, metaInfo, "key"))
+        throwStringExceptionV(0, "createRemoteActivity: verifyAuthorization failed");
 
-    unsigned expirySecs = metaInfo.getPropInt("expirySecs");
+    const char *expiryTime = metaInfo.queryProp("expiryTime");
+    if (!isEmptyString(expiryTime))
+        throwStringExceptionV(0, "createRemoteActivity: invalid expiry specification");
+    CDateTime expiryTimeDt;
+    expiryTimeDt.setString(expiryTime);
+    CDateTime nowDt;
+    nowDt.setNow();
+    if (nowDt >= expiryTimeDt)
+        throwStringExceptionV(0, "createRemoteActivity: authorization expired");
+}
 
-    CDateTime now;
-    now.setNow();
-    CDateTime expiryTime(now);
-    expiryTime.adjustTimeSecs(expirySecs);
-    if ()
+void decrypt(MemoryBuffer &mb, const char *key)
+{
+    // TBD: decrypt using 'key'/decompress
 }
 
 IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
 {
-    const char *kindStr = actNode.queryProp("kind");
+    const char *partFilename = nullptr;
+    if (useMetaBlobs)
+    {
+        const char *key = actNode.queryProp("key");
+        if (isEmptyString(key))
+            throwStringExceptionV(0, "createRemoteActivity: missing key");
+        MemoryBuffer metaInfoMb;
+        if (!actNode.getPropBin("metaInfo", metaInfoMb))
+            throwStringExceptionV(0, "createRemoteActivity: missing meteInfo");
+        actNode.removeProp("metaInfo");
 
+        decrypt(metaInfoMb, key);
+        Owned<IPropertyTree> metaInfo = createPTree(metaInfoMb);
+
+        verifyAuthorization(actNode, *metaInfo);
+
+        IPropertyTree *inputTypeInfo = metaInfo->queryPropTree("input");
+        if (inputTypeInfo)
+            actNode.addPropTree("input", LINK(inputTypeInfo));
+        else
+        {
+            MemoryBuffer inputBinMb;
+            metaInfo->getPropBin("inputBin", inputBinMb);
+            actNode.setPropBin("inputBin", inputBinMb.length(), inputBinMb.bytes());
+        }
+
+        // get filename
+        assertex(actNode.hasProp("partNum"));
+        unsigned partNum = actNode.getPropInt("partNum");
+        unsigned partCopy = actNode.getPropInt("partCopy", 1);
+        VStringBuffer xpath("FileInfo/Part[%u]/Copy[%u]/@filePath", partNum, partCopy);
+        actNode.setProp("fileName", metaInfo->queryProp(xpath));
+    }
+    partFilename = actNode.queryProp("fileName");
+
+    if (isEmptyString(partFilename))
+        throw MakeStringException(0, "CRemoteDiskBaseActivity: file name missing");
+
+    const char *kindStr = actNode.queryProp("kind");
     ThorActivityKind kind = TAKnone;
     if (kindStr)
     {
@@ -4460,30 +4505,6 @@ IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
             kind = TAKindexcount;
         // else - auto-detect
     }
-
-    MemoryBuffer metaInfoMb;
-    if (!actNode.getPropBin(metaInfoMb, "metaInfo"))
-        throwStringExceptionV(0, "createRemoteActivity: missing meteInfo");
-    // TBD: decrypt using 'key'/decompress
-
-    Owned<IPropertyTree> metaInfo = createPTree(metaInfoMb);
-
-    verifyAuthroization(metaInfo, actNode);
-
-
-    const char *lfn = actNode.queryProp("logicalFilename");
-    if (isEmptyString(fileName))
-        throw MakeStringException(0, "createRemoteActivity: fileName missing");
-    const char *jobId = actNode.queryProp("jobId");
-    const char *accessType = actNode.queryProp("accessType");
-    const char *user = actNode.queryProp("user");
-    const char *key = actNode.queryProp("key");
-    unsigned partNum = actNode.getPropInt("partNum");
-    unsigned partCopy = actNode.getPropInt("partCopy");
-
-
-
-
 
     Owned<IRemoteActivity> activity;
     switch (kind)
@@ -4506,14 +4527,14 @@ IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
         default: // auto-detect file format
         {
             const char *action = actNode.queryProp("action");
-            if (isIndexFile(fileName))
+            if (isIndexFile(partFilename))
             {
                 if (!isEmptyString(action))
                 {
                     if (streq("count", action))
                         activity.setown(createRemoteIndexCount(actNode));
                     else
-                        throwStringExceptionV(0, "Unknown action '%s' on index '%s'", action, fileName);
+                        throwStringExceptionV(0, "Unknown action '%s' on index '%s'", action, partFilename);
                 }
                 else
                     activity.setown(createRemoteIndexRead(actNode));
@@ -4525,7 +4546,7 @@ IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
                     if (streq("count", action))
                         throwStringExceptionV(0, "Remote Disk Counts currently unsupported");
                     else
-                        throwStringExceptionV(0, "Unknown action '%s' on flat file '%s'", action, fileName);
+                        throwStringExceptionV(0, "Unknown action '%s' on flat file '%s'", action, partFilename);
                 }
                 else
                     activity.setown(createRemoteDiskRead(actNode));
