@@ -45,6 +45,40 @@ void CDiskReadMasterBase::init()
     queryThorFileManager().addScope(container.queryJob(), helperFileName, expandedFileName, mangle);
     fileName.set(expandedFileName);
 
+
+    /* JCSMORE - At this point, do I need a security token?
+     * are any of the parts non-local. NB: replication implies always writing (or potentially reading) non-locally, so maybe always need token?
+     * + Request a security token from Esp service for file (but without meta data, as already have it)
+     * + Keep it (in IDistributedFile?), so that each serializeSlaveData can serialize it.
+     */
+
+    /* JCSMORE
+     *
+     * At present - sequence of events:
+     * + Client (e.g. ThorMaster), calls DFS.lookup()
+     * + calls checkLogicalName->checkLogicalScope->getScopePermissions, calls querySessionManager().getPermissionsLDAP() comm to DALI
+     * + Client (ThorMaster), create SDS lock to DALI
+     * + Client (ThorMaster), effectively calls DALI (lazy fetching) to get File (or SuperFile) xml blob (for IDistributeFile)
+     * * COULD at this stage call ESP to get security token (BUT SO MANY HOPS!)
+     *
+     * Possible future:
+     * + Client (ThorMaster), calls DALI (or could be ESP service) that does: (ESP service makes more sense for external clients, e.g. Spark)
+     *  - calls with { LFN, User, JobId, Access, Expiry }
+     *   [in DALI/or ESP service]
+     *    - getScopePermissions - returns error/false if no access
+     *    - retrieve logical file XML
+     *    - create encrypted token of { user, jobId, access, lfn, expiry, key, file-meta-data }
+     *    - return { file-meta-data*all, security-token } to client (ThorMaster)
+     *    - ThorMaster create [lightweight] SDS lock to DALI
+     *    - Builds IDistributeFile that includes security token member/access method.
+     *    - ThorMaster serializes meta info to slaves as normal + security token
+     *    - IF slaves need to comm. with DAFILESRV, they send:
+     *      - security token + lfn, jobid, access, user, part #, copy #
+     *
+     * In 3rd party case (e.g. Spark)
+     *
+     * Want same as above, but do not want entire file-meta-data, which isn't easy to digest (e.g. doesn't enumerate where replicate copies are)
+     */
     Owned<IDistributedFile> file = queryThorFileManager().lookup(container.queryJob(), helperFileName, 0 != ((TDXtemporary|TDXjobtemp) & helper->getFlags()), 0 != (TDRoptional & helper->getFlags()), true);
     if (file)
     {
@@ -52,6 +86,7 @@ void CDiskReadMasterBase::init()
             throw MakeActivityException(this, 0, "Attempting to read index as a flat file: %s", helperFileName.get());
         if (file->isExternal() && (helper->getFlags() & TDXcompress))
             file->queryAttributes().setPropBool("@blockCompressed", true);
+
         if (file->numParts() > 1)
             fileDesc.setown(getConfiguredFileDescriptor(*file));
         else
@@ -99,6 +134,8 @@ void CDiskReadMasterBase::init()
         }
         else if (encrypted)
             throw MakeActivityException(this, 0, "File '%s' was published as encrypted but no encryption key provided", fileName.get());
+
+        file->getSecurityToken(securityToken);
     }
 }
 
@@ -116,6 +153,8 @@ void CDiskReadMasterBase::serializeSlaveData(MemoryBuffer &dst, unsigned slave)
         mapping->serializeMap(slave, dst);
     else
         CSlavePartMapping::serializeNullMap(dst);
+    dst.append(securityToken.length());
+    dst.append(securityToken);
 }
 
 void CDiskReadMasterBase::deserializeStats(unsigned node, MemoryBuffer &mb)

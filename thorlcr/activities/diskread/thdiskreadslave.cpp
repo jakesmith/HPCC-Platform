@@ -49,6 +49,11 @@
 
 //////////////////////////////////////////////
 
+void createRemoteFileBlob(MemoryBuffer &tgt)
+{
+
+}
+
 class CDiskReadSlaveActivityRecord : public CDiskReadSlaveActivityBase, implements IIndexReadContext
 {
 protected:
@@ -64,6 +69,7 @@ protected:
     rowcount_t stopAfter = 0;
     rowcount_t remoteLimit = 0;
     rowcount_t limit = 0;
+    MemoryBuffer blobMb;
 
     // return a ITranslator based on published format in part and expected/format
     ITranslator *getTranslators(IPartDescriptor &partDesc)
@@ -120,6 +126,8 @@ public:
         fieldFilters.kill();
         segMonitors.kill();
         helper->createSegmentMonitors(this);
+
+        createRemoteFileBlob(blobMb); // it's going to have to come from master(!) originall from esp(!)
     }
 
     virtual void serializeStats(MemoryBuffer &mb) override

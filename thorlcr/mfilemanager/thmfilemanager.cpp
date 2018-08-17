@@ -281,6 +281,12 @@ public:
         return ret;
     }
 
+    bool getSecurityToken(MemoryBuffer &securityToken, CJobBase &job, const char *logicalName)
+    {
+        const char *jobId = job.queryWuid();
+        return false; // TBD
+    }
+
 // IThorFileManager impl.
     void clearCacheEntry(const char *name)
     {
@@ -366,6 +372,14 @@ public:
             }
             return NULL;
         }
+
+        /* Really this should happen as part of DFS lookup() (would need to pass some token, like jobID), so that it
+         * could do scope authorization checks, meta fetching, security token fetching in 1 hop.
+         */
+        MemoryBuffer securityToken;
+        if (getSecurityToken(securityToken, job, logicalName))
+            file->setSecurityToken(securityToken);
+
         if (updateAccessed)
             file->setAccessed();
         return LINK(file);

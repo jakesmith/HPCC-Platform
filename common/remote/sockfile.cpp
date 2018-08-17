@@ -1784,6 +1784,8 @@ void CEndpointCS::beforeDispose()
     table.removeExact(this);
 }
 
+#define REMOTESTREAM_VERSION "2"
+
 class CRemoteFilteredFileIOBase : public CRemoteBase, implements IRemoteFileIO
 {
 public:
@@ -1796,9 +1798,10 @@ public:
         // NB: inputGrouped == outputGrouped for now, but may want output to be ungrouped
 
         openRequest();
-        request.appendf("\"format\" : \"binary\",\n"
+        request.appendf("\"version\" : \"%s\",\n"
+            "\"format\" : \"binary\",\n"
             "\"node\" : {\n"
-            " \"fileName\" : \"%s\"", filename);
+            " \"fileName\" : \"%s\"", REMOTESTREAM_VERSION, filename);
         if (chooseN)
             request.appendf(",\n \"chooseN\" : \"%" I64F "u\"", chooseN);
         if (fieldFilters.numFilterFields())

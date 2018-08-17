@@ -2686,6 +2686,7 @@ protected:
     bool dirty;
     bool external = false;
     Owned<IRemoteConnection> superOwnerLock;
+    MemoryBuffer securityToken;
 public:
 
     IPropertyTree *queryRoot() { return root; }
@@ -3196,6 +3197,17 @@ public:
     virtual bool getAccessedTime(CDateTime &dt) = 0;                            // get date and time last accessed (returns false if not set)
     virtual void setAccessedTime(const CDateTime &dt) = 0;                      // set date and time last accessed
     virtual bool isExternal() const { return external; }
+    virtual void setSecurityToken(MemoryBuffer &st)
+    {
+        securityToken.append(st);
+    }
+    virtual bool getSecurityToken(MemoryBuffer &st) const
+    {
+        if (0 == securityToken.length())
+            return false;
+        st.append(securityToken);
+        return true;
+    }
 };
 
 class CDistributedFile: public CDistributedFileBase<IDistributedFile>

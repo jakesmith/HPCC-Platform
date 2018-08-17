@@ -403,6 +403,8 @@ interface IDistributedFile: extends IInterface
     virtual IPropertyTree *queryHistory() const = 0;                         // DFile History records
     virtual void resetHistory() = 0;
     virtual bool isExternal() const = 0;
+    virtual void setSecurityToken(MemoryBuffer &st) = 0;
+    virtual bool getSecurityToken(MemoryBuffer &st) const = 0;
 };
 
 
