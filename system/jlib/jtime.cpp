@@ -358,11 +358,16 @@ void CDateTime::setTimeStamp(timestamp_type ts)
     nanosec = (ts % 1000000) * 1000;
 }
 
-void CDateTime::adjustTime(int deltaMins)
+void CDateTime::adjustTimeSecs(time_t deltaSecs)
 {
     time_t simple = getSimple();
-    simple += deltaMins * 60;
+    simple += deltaSecs;
     set(simple);
+}
+
+void CDateTime::adjustTime(int deltaMins)
+{
+    adjustTimeSecs(deltaMins * 60);
 }
 
 void CDateTime::getDate(unsigned & year, unsigned & month, unsigned & day, bool local) const

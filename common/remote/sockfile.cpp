@@ -4421,6 +4421,30 @@ IRemoteActivity *createRemoteIndexCount(IPropertyTree &actNode)
     return new CRemoteIndexCountActivity(actNode);
 }
 
+bool propsMatch(IPropertyTree &t1, IPropertyTree &t1, const char *prop)
+{
+    const char *v1 = t1->queryProp(prop);
+    const char *v2 = t2->queryProp(prop);
+    return strsame(v1, v2);
+}
+void verifyAuthroization(IPropertyTree &metaInfo, IPropertyTree &actNode)
+{
+    if (!propsMatch(metaInfo, actNode, "logicalFilename") ||
+        !propsMatch(metaInfo, actNode, "jobId") ||
+        !propsMatch(metaInfo, actNode, "accessType") ||
+        !propsMatch(metaInfo, actNode, "user") ||
+        !propsMatch(metaInfo, actNode, "key"))
+        throwStringExceptionV(0, "createRemoteActivity: verifyAuthroization failed");
+
+    unsigned expirySecs = metaInfo.getPropInt("expirySecs");
+
+    CDateTime now;
+    now.setNow();
+    CDateTime expiryTime(now);
+    expiryTime.adjustTimeSecs(expirySecs);
+    if ()
+}
+
 IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
 {
     const char *kindStr = actNode.queryProp("kind");
@@ -4437,9 +4461,29 @@ IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
         // else - auto-detect
     }
 
-    const char *fileName = actNode.queryProp("fileName");
+    MemoryBuffer metaInfoMb;
+    if (!actNode.getPropBin(metaInfoMb, "metaInfo"))
+        throwStringExceptionV(0, "createRemoteActivity: missing meteInfo");
+    // TBD: decrypt using 'key'/decompress
+
+    Owned<IPropertyTree> metaInfo = createPTree(metaInfoMb);
+
+    verifyAuthroization(metaInfo, actNode);
+
+
+    const char *lfn = actNode.queryProp("logicalFilename");
     if (isEmptyString(fileName))
         throw MakeStringException(0, "createRemoteActivity: fileName missing");
+    const char *jobId = actNode.queryProp("jobId");
+    const char *accessType = actNode.queryProp("accessType");
+    const char *user = actNode.queryProp("user");
+    const char *key = actNode.queryProp("key");
+    unsigned partNum = actNode.getPropInt("partNum");
+    unsigned partCopy = actNode.getPropInt("partCopy");
+
+
+
+
 
     Owned<IRemoteActivity> activity;
     switch (kind)
