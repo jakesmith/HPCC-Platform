@@ -1792,8 +1792,8 @@ public:
     IMPLEMENT_IINTERFACE;
     // Really a stream, but life (maybe) easier elsewhere if looks like a file
     // Sometime should refactor to be based on ISerialStream instead - or maybe IRowStream.
-    CRemoteFilteredFileIOBase(const MemoryBuffer &securityToken, SocketEndpoint &ep, const char *filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
-        : CRemoteBase(ep, filename)
+    CRemoteFilteredFileIOBase(const StringBuffer &securityInfo, SocketEndpoint &ep, unsigned partNum, unsigned partCopy, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
+        : CRemoteBase(ep, "dummy")
     {
         // NB: inputGrouped == outputGrouped for now, but may want output to be ungrouped
 
@@ -1801,7 +1801,14 @@ public:
         request.appendf("\"version\" : \"%s\",\n"
             "\"format\" : \"binary\",\n"
             "\"node\" : {\n"
-            " \"fileName\" : \"%s\"", REMOTESTREAM_VERSION, filename);
+            "\" securityInfo\" : \n", REMOTESTREAM_VERSION);
+        request.append(securityInfo).append(",\n");
+
+        // NB: 1 based partNum and partCopy in JSON request
+        request.appendf(" \" filePart\" : \"%u\"", partNum+1);
+        if (partCopy) // don't bother encoding if 0 (=default)
+            request.appendf(",\n \" filePartCopy\" : \"%u\",\n", partCopy+1);
+
         if (chooseN)
             request.appendf(",\n \"chooseN\" : \"%" I64F "u\"", chooseN);
         if (fieldFilters.numFilterFields())
@@ -1837,12 +1844,6 @@ public:
                 JBASE64_Encode(projectedTypeInfo.toByteArray(), projectedTypeInfo.length(), request, false);
                 request.append("\"");
             }
-        }
-        if (securityToken.length())
-        {
-            request.append(",\n \"securityToken\" : \"");
-            JBASE64_Encode(securityToken.bytes(), securityToken.length(), request, false);
-            request.append("\"");
         }
         bufPos = 0;
     }
@@ -2013,8 +2014,8 @@ class CRemoteFilteredFileIO : public CRemoteFilteredFileIOBase
 public:
     // Really a stream, but life (maybe) easier elsewhere if looks like a file
     // Sometime should refactor to be based on ISerialStream instead - or maybe IRowStream.
-    CRemoteFilteredFileIO(const MemoryBuffer &securityToken, SocketEndpoint &ep, const char *filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
-        : CRemoteFilteredFileIOBase(securityToken, ep, filename, actual, projected, fieldFilters, chooseN)
+    CRemoteFilteredFileIO(const StringBuffer &securityInfo, SocketEndpoint &ep, unsigned partNum, unsigned partCopy, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
+        : CRemoteFilteredFileIOBase(securityInfo, ep, partNum, partCopy, actual, projected, fieldFilters, chooseN)
     {
         // NB: inputGrouped == outputGrouped for now, but may want output to be ungrouped
         request.appendf(",\n \"kind\" : \"diskread\",\n"
@@ -2024,11 +2025,11 @@ public:
     }
 };
 
-extern IRemoteFileIO *createRemoteFilteredFile(const MemoryBuffer &securityToken, SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
+extern IRemoteFileIO *createRemoteFilteredFile(const StringBuffer &securityInfo, SocketEndpoint &ep, unsigned partNum, unsigned partCopy, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
 {
     try
     {
-        return new CRemoteFilteredFileIO(securityToken, ep, filename, actual, projected, fieldFilters, compressed, grouped, chooseN);
+        return new CRemoteFilteredFileIO(securityInfo, ep, partNum, partCopy, actual, projected, fieldFilters, compressed, grouped, chooseN);
     }
     catch (IException *e)
     {
@@ -2043,8 +2044,8 @@ class CRemoteFilteredKeyIO : public CRemoteFilteredFileIOBase
 public:
     // Really a stream, but life (maybe) easier elsewhere if looks like a file
     // Sometime should refactor to be based on ISerialStream instead - or maybe IRowStream.
-    CRemoteFilteredKeyIO(const MemoryBuffer &securityToken, SocketEndpoint &ep, const char *filename, unsigned crc, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
-        : CRemoteFilteredFileIOBase(securityToken, ep, filename, actual, projected, fieldFilters, chooseN)
+    CRemoteFilteredKeyIO(const StringBuffer &securityInfo, SocketEndpoint &ep, unsigned partNum, unsigned partCopy, unsigned crc, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
+        : CRemoteFilteredFileIOBase(securityInfo, ep, partNum, partCopy, actual, projected, fieldFilters, chooseN)
     {
         request.appendf(",\n \"kind\" : \"indexread\"");
         request.appendf(",\n \"crc\" : \"%u\"", crc);
@@ -2056,8 +2057,8 @@ class CRemoteFilteredKeyCountIO : public CRemoteFilteredFileIOBase
 public:
     // Really a stream, but life (maybe) easier elsewhere if looks like a file
     // Sometime should refactor to be based on ISerialStream instead - or maybe IRowStream.
-    CRemoteFilteredKeyCountIO(const MemoryBuffer &securityToken, SocketEndpoint &ep, const char *filename, unsigned crc, IOutputMetaData *actual, const RowFilter &fieldFilters, unsigned __int64 rowLimit)
-        : CRemoteFilteredFileIOBase(securityToken, ep, filename, actual, actual, fieldFilters, rowLimit)
+    CRemoteFilteredKeyCountIO(const StringBuffer &securityInfo, SocketEndpoint &ep, unsigned partNum, unsigned partCopy, unsigned crc, IOutputMetaData *actual, const RowFilter &fieldFilters, unsigned __int64 rowLimit)
+        : CRemoteFilteredFileIOBase(securityInfo, ep, partNum, partCopy, actual, actual, fieldFilters, rowLimit)
     {
         request.appendf(",\n \"kind\" : \"indexcount\"");
         request.appendf(",\n \"crc\" : \"%u\"", crc);
@@ -2073,22 +2074,22 @@ class CRemoteKey : public CSimpleInterfaceOf<IIndexLookup>
     Owned<ISerialStream> strm;
     bool pending = false;
     SocketEndpoint ep;
-    StringAttr filename;
+    unsigned partNum, partCopy;
     unsigned crc;
     Linked<IOutputMetaData> actual, projected;
     RowFilter fieldFilters;
-    MemoryBuffer securityToken;
+    StringBuffer securityInfo;
 
 public:
-    CRemoteKey(const MemoryBuffer &_securityToken, SocketEndpoint &_ep, const char *_filename, unsigned _crc, IOutputMetaData *_actual, IOutputMetaData *_projected, const RowFilter &_fieldFilters, unsigned __int64 rowLimit)
-        : ep(_ep), filename(_filename), crc(_crc), actual(_actual), projected(_projected)
+    CRemoteKey(const StringBuffer &_securityInfo, SocketEndpoint &_ep, unsigned _partNum, unsigned _partCopy, unsigned _crc, IOutputMetaData *_actual, IOutputMetaData *_projected, const RowFilter &_fieldFilters, unsigned __int64 rowLimit)
+        : ep(_ep), partNum(_partNum), partCopy(_partCopy), crc(_crc), actual(_actual), projected(_projected)
     {
-        securityToken.append(_securityToken.length(), _securityToken.bytes());
+        securityInfo.append(_securityInfo.length(), _securityInfo.str());
         for (unsigned f=0; f<_fieldFilters.numFilterFields(); f++)
             fieldFilters.addFilter(OLINK(_fieldFilters.queryFilter(f)));
-        iRemoteFileIO.setown(new CRemoteFilteredKeyIO(securityToken, ep, filename, crc, actual, projected, fieldFilters, rowLimit));
+        iRemoteFileIO.setown(new CRemoteFilteredKeyIO(securityInfo, ep, partNum, partCopy, crc, actual, projected, fieldFilters, rowLimit));
         if (!iRemoteFileIO)
-            throw MakeStringException(0, "Unable to open remote key part: '%s'", filename.get());
+            throw MakeStringException(0, "Unable to open remote key file: '%s'", _securityInfo.str());
         strm.setown(createFileSerialStream(iRemoteFileIO));
         prefetcher.setown(projected->createDiskPrefetcher());
         assertex(prefetcher);
@@ -2105,7 +2106,7 @@ public:
     }
     virtual unsigned __int64 checkCount(unsigned __int64 limit) override
     {
-        Owned<IFileIO> iFileIO = new CRemoteFilteredKeyCountIO(securityToken, ep, filename, crc, actual, fieldFilters, limit);
+        Owned<IFileIO> iFileIO = new CRemoteFilteredKeyCountIO(securityInfo, ep, partNum, partCopy, crc, actual, fieldFilters, limit);
         unsigned __int64 result;
         iFileIO->read(0, sizeof(result), &result);
         return result;
@@ -2126,11 +2127,11 @@ public:
 };
 
 
-extern IIndexLookup *createRemoteFilteredKey(const MemoryBuffer &securityToken, SocketEndpoint &ep, const char * filename, unsigned crc, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
+extern IIndexLookup *createRemoteFilteredKey(const StringBuffer &securityInfo, SocketEndpoint &ep, unsigned partNum, unsigned partCopy, unsigned crc, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
 {
     try
     {
-        return new CRemoteKey(securityToken, ep, filename, crc, actual, projected, fieldFilters, chooseN);
+        return new CRemoteKey(securityInfo, ep, partNum, partCopy, crc, actual, projected, fieldFilters, chooseN);
     }
     catch (IException *e)
     {
@@ -3959,8 +3960,6 @@ static IOutputMetaData *getTypeInfoOutputMetaData(IPropertyTree &actNode, const 
     }
 }
 
-static bool useMetaBlobs = false;
-
 class CRemoteDiskBaseActivity : public CSimpleInterfaceOf<IRemoteActivity>, implements IVirtualFieldCallback
 {
 protected:
@@ -4420,16 +4419,15 @@ bool propsMatch(IPropertyTree &t1, IPropertyTree &t2, const char *prop)
     return strsame(v1, v2);
 }
 
-void verifyAuthorization(IPropertyTree &actNode, IPropertyTree &metaInfo)
+void verifyAuthorization(IPropertyTree &securityInfo, IPropertyTree &secureMetaInfo)
 {
-    if (!propsMatch(actNode, metaInfo, "logicalFilename") ||
-        !propsMatch(actNode, metaInfo, "jobId") ||
-        !propsMatch(actNode, metaInfo, "accessType") ||
-        !propsMatch(actNode, metaInfo, "user") ||
-        !propsMatch(actNode, metaInfo, "key"))
+    if (!propsMatch(securityInfo, secureMetaInfo, "logicalFilename") ||
+        !propsMatch(securityInfo, secureMetaInfo, "jobId") ||
+        !propsMatch(securityInfo, secureMetaInfo, "accessType") ||
+        !propsMatch(securityInfo, secureMetaInfo, "user"))
         throwStringExceptionV(0, "createRemoteActivity: verifyAuthorization failed");
 
-    const char *expiryTime = metaInfo.queryProp("expiryTime");
+    const char *expiryTime = secureMetaInfo.queryProp("expiryTime");
     if (!isEmptyString(expiryTime))
         throwStringExceptionV(0, "createRemoteActivity: invalid expiry specification");
     CDateTime expiryTimeDt;
@@ -4440,50 +4438,40 @@ void verifyAuthorization(IPropertyTree &actNode, IPropertyTree &metaInfo)
         throwStringExceptionV(0, "createRemoteActivity: authorization expired");
 }
 
-void decryptSecurityToken(MemoryBuffer &mb, const char *key)
+IPropertyTree *decryptSecurityToken(MemoryBuffer &mb, const char *key)
 {
     // TBD: decrypt using 'key'/decompress
+    Owned<IPropertyTree> secureMetaInfo = createPTreeFromJSONString(mb.length(), (const char *)mb.bytes());
+    return secureMetaInfo.getClear();
 }
 
 IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
 {
-    const char *partFilename = nullptr;
-    if (useMetaBlobs)
-    {
-        const char *key = actNode.queryProp("key");
-        if (isEmptyString(key))
-            throwStringExceptionV(0, "createRemoteActivity: missing key");
-        MemoryBuffer securityTokenMb;
-        if (!actNode.getPropBin("securityToken", securityTokenMb))
-            throwStringExceptionV(0, "createRemoteActivity: missing securityToken");
-        actNode.removeProp("securityToken");
+    IPropertyTree *securityInfo = actNode.queryPropTree("securityInfo");
+    dbgassertex(securityInfo);
+    const char *key = securityInfo->queryProp("key");
+    if (isEmptyString(key))
+        throwStringExceptionV(0, "createRemoteActivity: missing key");
+    MemoryBuffer securityMb;
+    if (!securityInfo->getPropBin("securityToken", securityMb))
+        throwStringExceptionV(0, "createRemoteActivity: missing securityToken");
+    Owned<IPropertyTree> secureMetaInfo = decryptSecurityToken(securityMb, key);
 
-        decryptSecurityToken(securityTokenMb, key);
-        Owned<IPropertyTree> metaInfo = createPTree(securityTokenMb);
+    verifyAuthorization(*securityInfo, *secureMetaInfo);
 
-        verifyAuthorization(actNode, *metaInfo);
+    dbgassertex(actNode.hasProp("filePart"));
+    unsigned partNum = actNode.getPropInt("filePart");
+    unsigned partCopy = actNode.getPropInt("filePartCopy", 1);
 
-        IPropertyTree *inputTypeInfo = metaInfo->queryPropTree("input");
-        if (inputTypeInfo)
-            actNode.addPropTree("input", LINK(inputTypeInfo));
-        else
-        {
-            MemoryBuffer inputBinMb;
-            metaInfo->getPropBin("inputBin", inputBinMb);
-            actNode.setPropBin("inputBin", inputBinMb.length(), inputBinMb.bytes());
-        }
-
-        // get filename
-        assertex(actNode.hasProp("partNum"));
-        unsigned partNum = actNode.getPropInt("partNum");
-        unsigned partCopy = actNode.getPropInt("partCopy", 1);
-        VStringBuffer xpath("FileInfo/Part[%u]/Copy[%u]/@filePath", partNum, partCopy);
-        actNode.setProp("fileName", metaInfo->queryProp(xpath));
-    }
-    partFilename = actNode.queryProp("fileName");
-
+    // get filename
+    VStringBuffer xpath("FileInfo/Part[%u]/Copy[%u]/@filePath", partNum, partCopy);
+    const char *partFilename = secureMetaInfo->queryProp(xpath);
     if (isEmptyString(partFilename))
         throw MakeStringException(0, "CRemoteDiskBaseActivity: file name missing");
+
+    actNode.setProp("fileName", partFilename);
+
+    verifyex(actNode.removeTree(securityInfo)); // no longer needed, info extracted/merged into actNode
 
     const char *kindStr = actNode.queryProp("kind");
     ThorActivityKind kind = TAKnone;

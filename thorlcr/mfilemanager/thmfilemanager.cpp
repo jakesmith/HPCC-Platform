@@ -284,9 +284,62 @@ public:
         return ret;
     }
 
-    bool getSecurityToken(MemoryBuffer &securityToken, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
+    bool getSecurityInfo(StringBuffer &securityInfoResult, IDistributedFile &file, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
     {
-        const char *jobId = job.queryWuid();
+        /*
+         * REQUEST { lfn, access, jobId, *implicit user* } -> ESP service..
+         *
+         * RESPONSE { lfn, access, jobId, user, key, securityToken }  // securityToken contains lfn,access,jobId,user as well.
+         */
+
+        // JCSMORE - fake it for now
+
+        Owned<IPropertyTree> securityInfo = createPTree();
+        securityInfo->setProp("logicalFilename", logicalName);
+        securityInfo->setProp("jobId", job.queryWuid());
+        securityInfo->setProp("accessType", access);
+        StringBuffer userStr;
+        securityInfo->setProp("user", job.queryUserDescriptor()->getUserName(userStr).str());
+
+        securityInfo->setProp("key", "a key!"); // JCSMORE!!
+
+        //
+        time_t simple;
+        time(&simple);
+        simple += expirySecs;
+        CDateTime expiryDt;
+        expiryDt.set(simple);
+        StringBuffer expiryTimeStr;
+        expiryDt.getString(expiryTimeStr);
+        Owned<IPropertyTree> secureMetaInfo = createPTreeFromIPT(securityInfo);
+        secureMetaInfo->setProp("expiryTime", expiryTimeStr);
+
+        IPropertyTree *fileInfoTree = secureMetaInfo->setPropTree("FileInfo", createPTree());
+        Owned<IDistributedFilePartIterator> partIter = file.getIterator();
+        ForEach(*partIter)
+        {
+            IPropertyTree *partTree = fileInfoTree->addPropTree("Part", createPTree());
+            IDistributedFilePart &part = partIter->query();
+            unsigned nc = part.numCopies();
+            for (unsigned c=0; c<nc; c++)
+            {
+                RemoteFilename rfn;
+                part.getFilename(rfn, c);
+                StringBuffer path;
+                rfn.getRemotePath(path);
+
+                IPropertyTree *copyTree = partTree->addPropTree("Copy", createPTree());
+                copyTree->setProp("@filePath", path);
+            }
+        }
+
+        StringBuffer securityTokenStr;
+        toJSON(secureMetaInfo, securityTokenStr);
+
+        securityInfo->setProp("securityToken", securityTokenStr);
+
+        toJSON(secureMetaInfo, securityInfoResult);
+
         return false; // TBD
     }
 
@@ -379,9 +432,9 @@ public:
         /* Really this should happen as part of DFS lookup() (would need to pass some tokens, like jobID), so that it
          * could do scope authorization checks, meta fetching, security token fetching in 1 hop.
          */
-        MemoryBuffer securityToken;
-        if (getSecurityToken(securityToken, job, logicalName, "READ", defaultDafilesrvExpirySecs))
-            file->setSecurityToken(securityToken);
+        StringBuffer securityInfo;
+        if (getSecurityInfo(securityInfo, *file, job, scopedName, "READ", defaultDafilesrvExpirySecs))
+            file->setSecurityInfo(securityInfo);
 
         if (updateAccessed)
             file->setAccessed();

@@ -135,7 +135,7 @@ void CDiskReadMasterBase::init()
         else if (encrypted)
             throw MakeActivityException(this, 0, "File '%s' was published as encrypted but no encryption key provided", fileName.get());
 
-        file->getSecurityToken(securityToken);
+        file->getSecurityInfo(securityInfo);
     }
 }
 
@@ -153,8 +153,8 @@ void CDiskReadMasterBase::serializeSlaveData(MemoryBuffer &dst, unsigned slave)
         mapping->serializeMap(slave, dst);
     else
         CSlavePartMapping::serializeNullMap(dst);
-    dst.append(securityToken.length());
-    dst.append(securityToken);
+    dst.append(securityInfo.length());
+    dst.append(securityInfo.length(), securityInfo.str());
 }
 
 void CDiskReadMasterBase::deserializeStats(unsigned node, MemoryBuffer &mb)

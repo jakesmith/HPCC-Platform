@@ -71,7 +71,7 @@ protected:
     Owned<IKeyIndexSet> keyIndexSet;
     IConstPointerArrayOf<ITranslator> translators;
 
-    MemoryBuffer securityToken;
+    StringBuffer securityInfo;
 
     class TransformCallback : implements IThorIndexCallback , public CSimpleInterface
     {
@@ -203,7 +203,10 @@ public:
                             else
                                 actualFilter.appendFilters(fieldFilters);
 
-                            Owned<IIndexLookup> indexLookup = createRemoteFilteredKey(securityToken, ep, lPath, crc, actualFormat, projectedFormat, actualFilter, remoteLimit);
+                            /* JCSMORE - should 'crc' really be within the securityInfo
+                             * I think it's only used to make a unique reference within the cache
+                             */
+                            Owned<IIndexLookup> indexLookup = createRemoteFilteredKey(securityInfo, ep, partNum, copy, crc, actualFormat, projectedFormat, actualFilter, remoteLimit);
                             if (indexLookup)
                             {
                                 try
@@ -423,9 +426,9 @@ public:
         statsArr = _statsArr.getArray();
         lastSeeks = lastScans = 0;
         localMerge = (localKey && partDescs.ordinality()>1) || seekGEOffset;
-        size32_t securityTokenSz;
-        data.read(securityTokenSz);
-        securityToken.append(securityTokenSz, data.readDirect(securityTokenSz));
+        size32_t securityInfoSz;
+        data.read(securityInfoSz);
+        securityInfo.append(securityInfoSz, (const char *)data.readDirect(securityInfoSz));
     }
     // IThorDataLink
     virtual void start() override
