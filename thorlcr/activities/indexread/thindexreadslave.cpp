@@ -71,6 +71,8 @@ protected:
     Owned<IKeyIndexSet> keyIndexSet;
     IConstPointerArrayOf<ITranslator> translators;
 
+    MemoryBuffer securityToken;
+
     class TransformCallback : implements IThorIndexCallback , public CSimpleInterface
     {
     protected:
@@ -201,7 +203,7 @@ public:
                             else
                                 actualFilter.appendFilters(fieldFilters);
 
-                            Owned<IIndexLookup> indexLookup = createRemoteFilteredKey(ep, lPath, crc, actualFormat, projectedFormat, actualFilter, remoteLimit);
+                            Owned<IIndexLookup> indexLookup = createRemoteFilteredKey(securityToken, ep, lPath, crc, actualFormat, projectedFormat, actualFilter, remoteLimit);
                             if (indexLookup)
                             {
                                 try
@@ -421,6 +423,9 @@ public:
         statsArr = _statsArr.getArray();
         lastSeeks = lastScans = 0;
         localMerge = (localKey && partDescs.ordinality()>1) || seekGEOffset;
+        size32_t securityTokenSz;
+        data.read(securityTokenSz);
+        securityToken.append(securityTokenSz, data.readDirect(securityTokenSz));
     }
     // IThorDataLink
     virtual void start() override

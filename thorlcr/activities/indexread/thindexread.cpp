@@ -38,6 +38,7 @@ protected:
     UnsignedArray progressKinds;
     Owned<ProgressInfo> inputProgress;
     StringBuffer fileName;
+    MemoryBuffer securityToken;
 
     rowcount_t aggregateToLimit()
     {
@@ -178,6 +179,7 @@ protected:
             if (width != f->numParts()-1)
                 throw MakeActivityException(this, 0, "Super key %s, with mixture of sub key width are not supported.", f->queryLogicalName());
         }
+        index->getSecurityToken(securityToken);
     }
 
 public:
@@ -260,6 +262,8 @@ public:
             partNumbers.append(parts.item(p2).queryPartIndex());
         if (partNumbers.ordinality())
             fileDesc->serializeParts(dst, partNumbers);
+        dst.append(securityToken.length());
+        dst.append(securityToken);
     }
     virtual void deserializeStats(unsigned node, MemoryBuffer &mb)
     {
