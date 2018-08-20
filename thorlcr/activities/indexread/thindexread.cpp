@@ -263,7 +263,7 @@ public:
         if (partNumbers.ordinality())
             fileDesc->serializeParts(dst, partNumbers);
         dst.append(securityInfo.length());
-        dst.append(securityInfo);
+        dst.append(securityInfo.length(), securityInfo.str());
     }
     virtual void deserializeStats(unsigned node, MemoryBuffer &mb)
     {
