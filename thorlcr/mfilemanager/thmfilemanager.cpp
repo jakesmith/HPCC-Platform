@@ -38,6 +38,17 @@
 
 #include "workunit.hpp"
 
+
+// JCSMORE temporary
+#if defined(_USE_OPENSSL)
+#include <openssl/pem.h>
+#include <openssl/evp.h>
+#include <openssl/rsa.h>
+#include <openssl/err.h>
+#endif
+
+
+
 #define CHECKPOINTSCOPE "checkpoints"
 #define TMPSCOPE "temporary"
 
@@ -47,6 +58,59 @@ static IThorFileManager *fileManager = NULL;
 
 
 static const unsigned defaultDafilesrvExpirySecs = (3600*24);
+
+
+
+class OwnedBio
+{
+    BIO *bio;
+public:
+    OwnedBio(BIO *_bio) : bio(_bio) { }
+    ~OwnedBio()
+    {
+        BIO_free(bio);
+    }
+    inline BIO * operator -> () const { return bio; }
+    inline operator BIO *() const     { return bio; }
+};
+class OwnedEnvPKey
+{
+    EVP_PKEY *pkey;
+public:
+    OwnedEnvPKey(EVP_PKEY *_pkey) : pkey(_pkey) { }
+    ~OwnedEnvPKey()
+    {
+        EVP_PKEY_free(pkey);
+    }
+    inline EVP_PKEY * operator -> () const { return pkey; }
+    inline operator EVP_PKEY *() const     { return pkey; }
+};
+class OwnedEnvPKeyCtx
+{
+    EVP_PKEY_CTX *ctx;
+public:
+    OwnedEnvPKeyCtx(EVP_PKEY_CTX *_ctx) : ctx(_ctx) { }
+    ~OwnedEnvPKeyCtx()
+    {
+        EVP_PKEY_CTX_free(ctx);
+    }
+    inline EVP_PKEY_CTX * operator -> () const { return ctx; }
+    inline operator EVP_PKEY_CTX *() const     { return ctx; }
+};
+class OwnedOpenSSLMalloc
+{
+    void *mem;
+public:
+    OwnedOpenSSLMalloc(void *_mem) : mem(_mem) { }
+    ~OwnedOpenSSLMalloc()
+    {
+        OPENSSL_free(mem);
+    }
+    inline void *get() const { return mem; }
+    inline void * operator -> () const { return mem; }
+    inline operator void *() const     { return mem; }
+};
+
 
 typedef OwningStringHTMapping<IDistributedFile> CIDistributeFileMapping;
 class CFileManager : public CSimpleInterface, implements IThorFileManager
@@ -283,7 +347,105 @@ public:
         normalizeLFN(tmp.str(), ret);
         return ret;
     }
+    void encryptSecurityToken(StringBuffer &token, StringBuffer &signatureRes, const char *key)
+    {
+        StringBuffer keyPath(key); // JCSMORE - may want to get path from environment.conf or xml
+        const char *passPhrase = nullptr; // need there be one?
 
+        MemoryBuffer privateKeyMb;
+        OwnedIFile iFile = createIFile(keyPath);
+        OwnedIFileIO iFileIO = iFile->open(IFOread);
+        size32_t sz = read(iFileIO, 0, iFile->size(), privateKeyMb);
+
+        OpenSSL_add_all_algorithms();
+
+        OwnedBio privateKeyBio(BIO_new_mem_buf(privateKeyMb.bufferBase(), -1));
+
+        RSA *privateKey = PEM_read_bio_RSAPrivateKey(privateKeyBio, nullptr, nullptr, (void*)passPhrase);
+
+        OwnedEnvPKey signingKey(EVP_PKEY_new());
+        EVP_PKEY_set1_RSA(signingKey, privateKey);
+
+        OwnedEnvPKeyCtx ctx = EVP_PKEY_CTX_new(signingKey, nullptr);
+        verifyex(ctx);
+        verifyex(EVP_PKEY_sign_init(ctx));
+        verifyex(EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING));
+        verifyex(EVP_PKEY_CTX_set_signature_md(ctx, EVP_sha256()));
+
+        /* Determine buffer length */
+        size_t sigLen;
+        if (EVP_PKEY_sign(ctx, nullptr, &sigLen, (const unsigned char*)token.str(), token.length()) <= 0)
+            throwStringExceptionV(0, "EVP_PKEY_sign");
+
+        OwnedOpenSSLMalloc signature = OPENSSL_malloc(sigLen);
+        assertex(signature);
+
+        int res = EVP_PKEY_sign(ctx, (unsigned char *)signature.get(), &sigLen, (const unsigned char*)token.str(), token.length());
+        if (res <= 0)
+        {
+            unsigned lastErr = ERR_get_error();
+
+            MemoryBuffer mb;
+            size32_t bufMax = 100000;
+            void *buf = mb.reserve(bufMax);
+            ERR_error_string_n(lastErr, (char *)buf, bufMax);
+            char *lastErrStr = ERR_error_string(lastErr, nullptr);
+            const char *eReason = ERR_reason_error_string(4);
+            const char *eLib = ERR_lib_error_string(142);
+            const char *eFunc = ERR_func_error_string(143);
+            PROGLOG("lastErrStr = %s", lastErrStr);
+            PROGLOG("eReason = %s", eReason);
+            PROGLOG("eLib = %s", eLib);
+            PROGLOG("eFunc = %s", eFunc);
+
+            ERR_print_errors_fp(stdout);
+            throwStringExceptionV(0, "EVP_PKEY_sign");
+        }
+
+        /* Signature is siglen bytes written to buffer sig */
+
+        signatureRes.append(sigLen, (const char *)signature.get());
+    }
+    void decryptSecurityToken(StringBuffer &token, StringBuffer &signature, const char *key)
+    {
+        StringBuffer keyPath(key); // JCSMORE - may want to get path from environment.conf or xml
+        keyPath.append(".pub"); // JCSMORE
+        const char *passPhrase = nullptr; // need there be one?
+
+
+        MemoryBuffer publicKeyMb;
+        OwnedIFile iFile = createIFile(keyPath);
+        OwnedIFileIO iFileIO = iFile->open(IFOread);
+        size32_t sz = read(iFileIO, 0, iFile->size(), publicKeyMb);
+
+        OpenSSL_add_all_algorithms();
+
+        OwnedBio publicKeyBio(BIO_new_mem_buf(publicKeyMb.bufferBase(), -1));
+
+        RSA *publicKey = PEM_read_bio_RSAPublicKey(publicKeyBio, nullptr, nullptr, (void*)passPhrase);
+
+        OwnedEnvPKey verifyKey(EVP_PKEY_new());
+        EVP_PKEY_set1_RSA(verifyKey, publicKey);
+
+        OwnedEnvPKeyCtx ctx = EVP_PKEY_CTX_new(verifyKey, nullptr);
+        verifyex(ctx);
+        verifyex(EVP_PKEY_verify_recover_init(ctx));
+        verifyex(EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING));
+        verifyex(EVP_PKEY_CTX_set_signature_md(ctx, EVP_sha256()));
+
+        /* Determine buffer length */
+        size_t recoveredSz;
+        if (EVP_PKEY_verify_recover(ctx, nullptr, &recoveredSz, (unsigned char *)signature.str(), signature.length()) <= 0)
+            throwStringExceptionV(0, "EVP_PKEY_verify_recover");
+
+        OwnedOpenSSLMalloc recoveredData = OPENSSL_malloc(recoveredSz);
+        assertex(recoveredData);
+
+        if (EVP_PKEY_verify_recover(ctx, (unsigned char *)recoveredData.get(), &recoveredSz, (unsigned char *)signature.str(), signature.length()) <= 0)
+            throwStringExceptionV(0, "EVP_PKEY_verify_recover");
+
+        token.append(recoveredSz, (const char *)recoveredData.get());
+    }
     bool getSecurityInfo(StringBuffer &securityInfoResult, IDistributedFile &file, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
     {
         /*
@@ -301,7 +463,8 @@ public:
         StringBuffer userStr;
         securityInfo->setProp("user", job.queryUserDescriptor()->getUserName(userStr).str());
 
-        securityInfo->setProp("key", "a key!"); // JCSMORE!!
+        const char *key = "/home/jsmith/jsmith/.ssh/id_rsa";
+        securityInfo->setProp("key", key); // JCSMORE!!
 
         //
         time_t simple;
@@ -325,22 +488,34 @@ public:
             {
                 RemoteFilename rfn;
                 part.getFilename(rfn, c);
-                StringBuffer path;
-                rfn.getRemotePath(path);
 
                 IPropertyTree *copyTree = partTree->addPropTree("Copy", createPTree());
-                copyTree->setProp("@filePath", path);
+                StringBuffer path;
+                copyTree->setProp("@filePath", rfn.getLocalPath(path));
+                // JCSMORE - don't really need host once it request reaches dafilesrv
+                StringBuffer epStr;
+                copyTree->setProp("@host", rfn.queryEndpoint().getUrlStr(epStr));
             }
         }
 
         StringBuffer securityTokenStr;
         toJSON(secureMetaInfo, securityTokenStr);
 
-        securityInfo->setProp("securityToken", securityTokenStr);
+        PROGLOG("Pre-signing:\n%s", securityTokenStr.str());
+        StringBuffer signature;
+        encryptSecurityToken(securityTokenStr, signature, key);
+        PROGLOG("Post-signing:\n%s", signature.str());
+        // encrypt/compress
+        securityInfo->setProp("securityToken", signature);
 
-        toJSON(secureMetaInfo, securityInfoResult);
+        StringBuffer token;
+        decryptSecurityToken(signature, token, key);
+        PROGLOG("Post-verifying:\n%s", signature.str());
 
-        return false; // TBD
+
+        toJSON(securityInfo, securityInfoResult);
+
+        return true;
     }
 
 // IThorFileManager impl.

@@ -1801,13 +1801,13 @@ public:
         request.appendf("\"version\" : \"%s\",\n"
             "\"format\" : \"binary\",\n"
             "\"node\" : {\n"
-            "\" securityInfo\" : \n", REMOTESTREAM_VERSION);
+            " \"securityInfo\" : \n", REMOTESTREAM_VERSION);
         request.append(securityInfo).append(",\n");
 
         // NB: 1 based partNum and partCopy in JSON request
-        request.appendf(" \" filePart\" : \"%u\"", partNum+1);
+        request.appendf(" \"filePart\" : \"%u\"", partNum+1);
         if (partCopy) // don't bother encoding if 0 (=default)
-            request.appendf(",\n \" filePartCopy\" : \"%u\",\n", partCopy+1);
+            request.appendf(",\n \"filePartCopy\" : \"%u\",\n", partCopy+1);
 
         if (chooseN)
             request.appendf(",\n \"chooseN\" : \"%" I64F "u\"", chooseN);
@@ -4428,7 +4428,7 @@ void verifyAuthorization(IPropertyTree &securityInfo, IPropertyTree &secureMetaI
         throwStringExceptionV(0, "createRemoteActivity: verifyAuthorization failed");
 
     const char *expiryTime = secureMetaInfo.queryProp("expiryTime");
-    if (!isEmptyString(expiryTime))
+    if (isEmptyString(expiryTime))
         throwStringExceptionV(0, "createRemoteActivity: invalid expiry specification");
     CDateTime expiryTimeDt;
     expiryTimeDt.setString(expiryTime);
