@@ -35,6 +35,14 @@
 
 #include "jptree.hpp"
 
+#if defined(_USE_OPENSSL)
+#include <openssl/pem.h>
+#include <openssl/evp.h>
+#include <openssl/rsa.h>
+#include <openssl/err.h>
+#endif
+
+
 #define DEFAULT_TEST "RANDTEST"
 static const char *whichTest = DEFAULT_TEST;
 static StringArray testParams;
@@ -3046,6 +3054,118 @@ void usage(const char *error=NULL)
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
+template <class TYPE, void (*FUNC)(TYPE *)> class OwnedEVPObject
+{
+    TYPE *thing;
+
+public:
+    OwnedEVPObject<TYPE, FUNC>(TYPE *_thing) : thing(_thing) { }
+    ~OwnedEVPObject<TYPE, FUNC>()
+    {
+        FUNC(thing);
+    }
+    inline TYPE *get() const           { return thing; }
+    inline TYPE * operator -> () const { return thing; }
+    inline operator TYPE *() const     { return thing; }
+};
+
+void myBIOfree(BIO *bio) { BIO_free(bio); }
+void myOpenSSLFree(void *m) { OPENSSL_free(m); }
+void encryptSecurityToken(StringBuffer &token, StringBuffer &signatureRes, const char *key)
+{
+    StringBuffer keyPath(key); // JCSMORE - may want to get path from environment.conf or xml
+    const char *passPhrase = nullptr; // need there be one?
+
+    MemoryBuffer privateKeyMb;
+    OwnedIFile iFile = createIFile(keyPath);
+    OwnedIFileIO iFileIO = iFile->open(IFOread);
+    size32_t sz = read(iFileIO, 0, iFile->size(), privateKeyMb);
+
+    OpenSSL_add_all_algorithms();
+
+    OwnedEVPObject<BIO, myBIOfree> privateKeyBio(BIO_new_mem_buf(privateKeyMb.bufferBase(), -1));
+
+    RSA *privateKey = PEM_read_bio_RSAPrivateKey(privateKeyBio, nullptr, nullptr, (void*)passPhrase);
+
+    OwnedEVPObject<EVP_PKEY, EVP_PKEY_free> signingKey(EVP_PKEY_new());
+    EVP_PKEY_set1_RSA(signingKey, privateKey);
+
+    OwnedEVPObject<EVP_PKEY_CTX, EVP_PKEY_CTX_free> ctx = EVP_PKEY_CTX_new(signingKey, nullptr);
+    verifyex(ctx);
+    verifyex(EVP_PKEY_sign_init(ctx));
+    verifyex(EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING));
+    verifyex(EVP_PKEY_CTX_set_signature_md(ctx, EVP_sha256()));
+
+    /* Determine buffer length */
+    size_t sigLen;
+    if (EVP_PKEY_sign(ctx, nullptr, &sigLen, (const unsigned char*)token.str(), token.length()) <= 0)
+        throwStringExceptionV(0, "EVP_PKEY_sign");
+
+    OwnedEVPObject<void, myOpenSSLFree> signature = OPENSSL_malloc(sigLen);
+    assertex(signature);
+
+    ERR_load_EVP_strings();
+    MemoryBuffer mb;
+    size32_t bufMax = 100000;
+    char *errorStr = (char *)mb.reserve(bufMax);
+    int res = EVP_PKEY_sign(ctx, (unsigned char *)signature.get(), &sigLen, (const unsigned char*)token.str(), token.length());
+    if (res <= 0)
+    {
+        unsigned lastErr = ERR_get_error();
+
+        ERR_error_string_n(lastErr, errorStr, bufMax);
+        char *lastErrStr = ERR_error_string(lastErr, nullptr);
+        PROGLOG("lastErrStr = %s", lastErrStr);
+
+        throwStringExceptionV(0, "EVP_PKEY_sign");
+    }
+
+    /* Signature is siglen bytes written to buffer sig */
+
+    signatureRes.append(sigLen, (const char *)signature.get());
+}
+
+void decryptSecurityToken(StringBuffer &token, StringBuffer &signature, const char *key)
+{
+    StringBuffer keyPath(key); // JCSMORE - may want to get path from environment.conf or xml
+    keyPath.append(".pub"); // JCSMORE
+    const char *passPhrase = nullptr; // need there be one?
+
+
+    MemoryBuffer publicKeyMb;
+    OwnedIFile iFile = createIFile(keyPath);
+    OwnedIFileIO iFileIO = iFile->open(IFOread);
+    size32_t sz = read(iFileIO, 0, iFile->size(), publicKeyMb);
+
+    OpenSSL_add_all_algorithms();
+
+    OwnedEVPObject<BIO, myBIOfree> publicKeyBio(BIO_new_mem_buf(publicKeyMb.bufferBase(), -1));
+
+    RSA *publicKey = PEM_read_bio_RSAPublicKey(publicKeyBio, nullptr, nullptr, (void*)passPhrase);
+
+    OwnedEVPObject<EVP_PKEY, EVP_PKEY_free> verifyKey(EVP_PKEY_new());
+    EVP_PKEY_set1_RSA(verifyKey, publicKey);
+
+    OwnedEVPObject<EVP_PKEY_CTX, EVP_PKEY_CTX_free> ctx = EVP_PKEY_CTX_new(verifyKey, nullptr);
+    verifyex(ctx);
+    verifyex(EVP_PKEY_verify_recover_init(ctx));
+    verifyex(EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING));
+    verifyex(EVP_PKEY_CTX_set_signature_md(ctx, EVP_sha256()));
+
+    /* Determine buffer length */
+    size_t recoveredSz;
+    if (EVP_PKEY_verify_recover(ctx, nullptr, &recoveredSz, (unsigned char *)signature.str(), signature.length()) <= 0)
+        throwStringExceptionV(0, "EVP_PKEY_verify_recover");
+
+    OwnedEVPObject<void, myOpenSSLFree> recoveredData = OPENSSL_malloc(recoveredSz);
+    assertex(recoveredData);
+
+    if (EVP_PKEY_verify_recover(ctx, (unsigned char *)recoveredData.get(), &recoveredSz, (unsigned char *)signature.str(), signature.length()) <= 0)
+        throwStringExceptionV(0, "EVP_PKEY_verify_recover");
+
+    token.append(recoveredSz, (const char *)recoveredData.get());
+}
+
 int main(int argc, char* argv[])
 {   
     ReleaseAtomBlock rABlock;
@@ -3053,7 +3173,27 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
-    try {
+    try
+    {
+#if 1
+        {
+            const char *key = "/home/jsmith/.ssh/id_rsa";
+            StringBuffer securityTokenStr("dhwiuohg oehwvohsohwguhwgfwfwf");
+
+            StringBuffer signature;
+            encryptSecurityToken(securityTokenStr, signature, key);
+            PROGLOG("Post-signing:\n%s", signature.str());
+
+            StringBuffer token;
+            decryptSecurityToken(signature, token, key);
+            PROGLOG("Post-verifying:\n%s", signature.str());
+
+
+            return 0;
+        }
+#endif
+
+
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
         StringBuffer lf;
