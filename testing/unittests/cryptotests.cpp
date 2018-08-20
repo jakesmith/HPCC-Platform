@@ -16,7 +16,7 @@
 ############################################################################## */
 
 /*
- * digisign regression tests
+ * cryptohelper regression tests
  *
  */
 
@@ -24,6 +24,7 @@
 
 #include "unittests.hpp"
 #include "digisign.hpp"
+#include "pke.hpp"
 
 /* ============================================================= */
 
@@ -69,11 +70,16 @@ const char * pubKey =
 
 /* ============================================================= */
 
-class DigiSignUnitTest : public CppUnit::TestFixture
+
+using namespace cryptohelper;
+
+class CryptoUnitTest : public CppUnit::TestFixture
 {
 public:
-    CPPUNIT_TEST_SUITE(DigiSignUnitTest);
-        CPPUNIT_TEST(testSimple);
+    CPPUNIT_TEST_SUITE(CryptoUnitTest);
+        CPPUNIT_TEST(digiSignTests);
+        CPPUNIT_TEST(pkeTests);
+        CPPUNIT_TEST(aesWithRsaEncryptedKey);
     CPPUNIT_TEST_SUITE_END();
 
 protected:
@@ -168,7 +174,7 @@ protected:
         printf("Asynchronous asyncDigiSignAndVerifyUnitTest() test complete\n");
 }
 
-    void testSimple()
+    void digiSignTests()
     {
         Owned<IException> exception;
         CppUnit::Exception *cppunitException;
@@ -279,7 +285,6 @@ protected:
             asyncDigiSignAndVerifyUnitTest(dsm);
             printf("digiSign/digiverify 1000 async iterations took %d MS\n", msTick() - now);
         }
-
         catch (IException *e)
         {
             StringBuffer err;
@@ -294,9 +299,116 @@ protected:
         }
         printf("Completed executing digiSign() unit tests\n");
     }
+
+    void fillRandomData(size32_t writeSz, void *_writePtr)
+    {
+        assertex(0 == (writeSz % sizeof(unsigned)));
+        unsigned *writePtr = (unsigned *)_writePtr;
+        unsigned *bufEnd = (unsigned *)(((byte *)writePtr)+writeSz);
+        while (true)
+        {
+            *writePtr++ = getRandom();
+            if (writePtr+sizeof(unsigned)>=bufEnd)
+                break;
+        }
+    }
+
+    void fillRandomData(size32_t writeSz, MemoryBuffer &mb)
+    {
+        void *writePtr = mb.reserveTruncate(writeSz);
+        fillRandomData(writeSz, writePtr);
+    }
+
+    void pkeTests()
+    {
+        try
+        {
+            Owned<CLoadedKey> publicKey = loadPublicKeyFromMemory(pubKey, nullptr);
+            Owned<CLoadedKey> privateKey = loadPrivateKeyFromMemory(privKey, nullptr);
+
+            // create random data
+            MemoryBuffer toEncryptMb;
+            fillRandomData(244, toEncryptMb); // max for RSA
+
+            MemoryBuffer pkeMb;
+            publicKeyEncrypt(pkeMb, toEncryptMb.length(), toEncryptMb.bytes(), *publicKey);
+
+            MemoryBuffer decryptedMb;
+            privateKeyDecrypt(decryptedMb, pkeMb.length(), pkeMb.bytes(), *privateKey);
+
+            ASSERT(toEncryptMb.length() == decryptedMb.length());
+            ASSERT(0 == memcmp(toEncryptMb.bytes(), decryptedMb.bytes(), toEncryptMb.length()));
+        }
+        catch (IException *e)
+        {
+            StringBuffer err;
+            e->errorMessage(err);
+            printf("pkeTests IException thrown:%s\n", err.str());
+            throw;
+        }
+        catch (CppUnit::Exception &e)
+        {
+            printf("pkeTests CppUnit::Exception thrown\n");
+            throw;
+        }
+    }
+
+    void aesWithRsaEncryptedKey()
+    {
+        try
+        {
+            // create random data
+            MemoryBuffer messageMb;
+            fillRandomData(1024*100, messageMb);
+
+            char aesKey[aesKeySize];
+            char aesIV[aesBlockSize];
+            fillRandomData(aesKeySize, aesKey);
+            fillRandomData(aesBlockSize, aesIV);
+
+            Owned<CLoadedKey> publicKey = loadPublicKeyFromMemory(pubKey, nullptr);
+
+            // Encrypt AES key with public key of server we're going to send to.
+            MemoryBuffer aesEncryptedKey;
+            publicKeyEncrypt(aesEncryptedKey, aesKeySize, aesKey, *publicKey);
+
+            MemoryBuffer encryptedMessageMb;
+            aesKeyEncrypt(encryptedMessageMb, messageMb.length(), messageMb.bytes(), aesKey, aesIV);
+
+
+            // Now imagine aesEncryptedKey + encryptedMessageMb + aesIV are transmitted to remote server
+
+
+            Owned<CLoadedKey> privateKey = loadPrivateKeyFromMemory(privKey, nullptr);
+
+            MemoryBuffer decryptedAesKeyMb;
+            privateKeyDecrypt(decryptedAesKeyMb, aesEncryptedKey.length(), aesEncryptedKey.bytes(), *privateKey);
+
+            ASSERT(decryptedAesKeyMb.length() == aesKeySize);
+            ASSERT(0 == memcmp(aesKey, decryptedAesKeyMb.bytes(), aesKeySize));
+
+            MemoryBuffer decryptedMessageMb;
+            aesKeyDecrypt(decryptedMessageMb, encryptedMessageMb.length(), encryptedMessageMb.bytes(), (const char *)decryptedAesKeyMb.bytes(), aesIV);
+
+            ASSERT(messageMb.length() == decryptedMessageMb.length());
+            ASSERT(0 == memcmp(messageMb.bytes(), decryptedMessageMb.bytes(), messageMb.length()));
+        }
+        catch (IException *e)
+        {
+            StringBuffer err;
+            e->errorMessage(err);
+            printf("pkeTests IException thrown:%s\n", err.str());
+            throw;
+        }
+        catch (CppUnit::Exception &e)
+        {
+            printf("pkeTests CppUnit::Exception thrown\n");
+            throw;
+        }
+    }
 };
 
-CPPUNIT_TEST_SUITE_REGISTRATION( DigiSignUnitTest );
-CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( DigiSignUnitTest, "DigiSignUnitTest" );
+CPPUNIT_TEST_SUITE_REGISTRATION( CryptoUnitTest );
+CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( CryptoUnitTest, "CryptoUnitTest" );
 
 #endif // _USE_CPPUNIT

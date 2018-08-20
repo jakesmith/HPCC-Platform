@@ -291,7 +291,7 @@ static void addAlgorithms()
 extern "C"
 {
     //Returns reference to singleton instance created from environment.conf key file settings
-    DIGISIGN_API IDigitalSignatureManager * queryDigitalSignatureManagerInstanceFromEnv()
+    CRYPTOHELPER_API IDigitalSignatureManager * queryDigitalSignatureManagerInstanceFromEnv()
     {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
         std::call_once(dsmInitFlag, createDigitalSignatureManagerInstance, &dsm);
@@ -303,7 +303,7 @@ extern "C"
 
     //Create using given key filespecs
     //Caller must release when no longer needed
-    DIGISIGN_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromFiles(const char * _pubKey, const char *_privKey, const char * _passPhrase)
+    CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromFiles(const char * _pubKey, const char *_privKey, const char * _passPhrase)
     {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
         StringBuffer privateKeyBuff;
@@ -345,7 +345,7 @@ extern "C"
 
     //Create using given PEM formatted keys
     //Caller must release when no longer needed
-    DIGISIGN_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(StringBuffer & _pubKeyBuff, StringBuffer & _privKeyBuff, const char * _passPhrase)
+    CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(StringBuffer & _pubKeyBuff, StringBuffer & _privKeyBuff, const char * _passPhrase)
     {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
         std::call_once(dsmAddAlgoFlag, addAlgorithms);
