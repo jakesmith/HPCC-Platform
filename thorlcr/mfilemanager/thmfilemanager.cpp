@@ -45,6 +45,9 @@
 
 static IThorFileManager *fileManager = NULL;
 
+
+static const unsigned defaultDafilesrvExpirySecs = (3600*24);
+
 typedef OwningStringHTMapping<IDistributedFile> CIDistributeFileMapping;
 class CFileManager : public CSimpleInterface, implements IThorFileManager
 {
@@ -281,7 +284,7 @@ public:
         return ret;
     }
 
-    bool getSecurityToken(MemoryBuffer &securityToken, CJobBase &job, const char *logicalName)
+    bool getSecurityToken(MemoryBuffer &securityToken, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
     {
         const char *jobId = job.queryWuid();
         return false; // TBD
@@ -373,11 +376,11 @@ public:
             return NULL;
         }
 
-        /* Really this should happen as part of DFS lookup() (would need to pass some token, like jobID), so that it
+        /* Really this should happen as part of DFS lookup() (would need to pass some tokens, like jobID), so that it
          * could do scope authorization checks, meta fetching, security token fetching in 1 hop.
          */
         MemoryBuffer securityToken;
-        if (getSecurityToken(securityToken, job, logicalName))
+        if (getSecurityToken(securityToken, job, logicalName, "READ", defaultDafilesrvExpirySecs))
             file->setSecurityToken(securityToken);
 
         if (updateAccessed)

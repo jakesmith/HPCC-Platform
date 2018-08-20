@@ -286,6 +286,7 @@ void CDiskRecordPartHandler::open()
                     else
                         actualFilter.appendFilters(activity.fieldFilters);
                 }
+
                 Owned<IRemoteFileIO> iRemoteFileIO = createRemoteFilteredFile(activity.securityToken, ep, path, actualFormat, projectedFormat, actualFilter, compressed, activity.grouped, activity.remoteLimit);
                 if (iRemoteFileIO)
                 {

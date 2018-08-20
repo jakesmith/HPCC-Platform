@@ -4440,7 +4440,7 @@ void verifyAuthorization(IPropertyTree &actNode, IPropertyTree &metaInfo)
         throwStringExceptionV(0, "createRemoteActivity: authorization expired");
 }
 
-void decrypt(MemoryBuffer &mb, const char *key)
+void decryptSecurityToken(MemoryBuffer &mb, const char *key)
 {
     // TBD: decrypt using 'key'/decompress
 }
@@ -4453,13 +4453,13 @@ IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
         const char *key = actNode.queryProp("key");
         if (isEmptyString(key))
             throwStringExceptionV(0, "createRemoteActivity: missing key");
-        MemoryBuffer metaInfoMb;
-        if (!actNode.getPropBin("metaInfo", metaInfoMb))
-            throwStringExceptionV(0, "createRemoteActivity: missing meteInfo");
-        actNode.removeProp("metaInfo");
+        MemoryBuffer securityTokenMb;
+        if (!actNode.getPropBin("securityToken", securityTokenMb))
+            throwStringExceptionV(0, "createRemoteActivity: missing securityToken");
+        actNode.removeProp("securityToken");
 
-        decrypt(metaInfoMb, key);
-        Owned<IPropertyTree> metaInfo = createPTree(metaInfoMb);
+        decryptSecurityToken(securityTokenMb, key);
+        Owned<IPropertyTree> metaInfo = createPTree(securityTokenMb);
 
         verifyAuthorization(actNode, *metaInfo);
 
