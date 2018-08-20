@@ -1994,12 +1994,20 @@ protected:
     std::unordered_map<std::string, std::string> virtualFields;
 };
 
+
+bool getSecurityToken(MemoryBuffer &securityToken, const char *token)
+{
+    return false; // TBD
+}
+
+
+
 class CRemoteFilteredFileIO : public CRemoteFilteredFileIOBase
 {
 public:
     // Really a stream, but life (maybe) easier elsewhere if looks like a file
     // Sometime should refactor to be based on ISerialStream instead - or maybe IRowStream.
-    CRemoteFilteredFileIO(SocketEndpoint &ep, const char *filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
+    CRemoteFilteredFileIO(const MemoryBuffer &securityToken, SocketEndpoint &ep, const char *filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
         : CRemoteFilteredFileIOBase(ep, filename, actual, projected, fieldFilters, chooseN)
     {
         // NB: inputGrouped == outputGrouped for now, but may want output to be ungrouped
@@ -2010,38 +2018,11 @@ public:
     }
 };
 
-class CRemoteFilteredRowStream : public CRemoteFilteredFileIO, implements IRowStream
-{
-public:
-    CRemoteFilteredRowStream(const RtlRecord &_recInfo, SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped)
-        : CRemoteFilteredFileIO(ep, filename, actual, projected, fieldFilters, compressed, grouped, 0), recInfo(_recInfo)
-    {
-    }
-    virtual const byte *queryNextRow()  // NOTE - rows returned must NOT be freed
-    {
-        if (!bufRemaining && !eof)
-            refill();
-        if (eof)
-            return nullptr;
-        unsigned len = recInfo.getRecordSize(reply.readDirect(0));
-        bufPos += len;
-        bufRemaining -= len;
-        return reply.readDirect(len);
-    }
-    virtual void stop() override
-    {
-        close();
-        eof = true;
-    }
-protected:
-    const RtlRecord &recInfo;
-};
-
-extern IRemoteFileIO *createRemoteFilteredFile(SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
+extern IRemoteFileIO *createRemoteFilteredFile(const MemoryBuffer &securityToken, SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
 {
     try
     {
-        return new CRemoteFilteredFileIO(ep, filename, actual, projected, fieldFilters, compressed, grouped, chooseN);
+        return new CRemoteFilteredFileIO(securityToken, ep, filename, actual, projected, fieldFilters, compressed, grouped, chooseN);
     }
     catch (IException *e)
     {

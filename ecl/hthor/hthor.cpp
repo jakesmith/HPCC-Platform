@@ -8304,7 +8304,8 @@ bool CHThorDiskReadBaseActivity::openNext()
                         SocketEndpoint ep(rfilename.queryEndpoint());
                         setDafsEndpointPort(ep);
 
-                        Owned<IRemoteFileIO> remoteFileIO = createRemoteFilteredFile(ep, path, actualDiskMeta, projectedDiskMeta, actualFilter, compressed, grouped, remoteLimit);
+                        MemoryBuffer securityToken;
+                        Owned<IRemoteFileIO> remoteFileIO = createRemoteFilteredFile(securityToken, ep, path, actualDiskMeta, projectedDiskMeta, actualFilter, compressed, grouped, remoteLimit);
                         if (remoteFileIO)
                         {
                             StringBuffer tmp;

@@ -85,7 +85,7 @@ interface IRemoteFileIO : extends IFileIO
     virtual void addVirtualFieldMapping(const char *fieldName, const char *fieldValue) = 0;
     virtual void ensureAvailable() = 0;
 };
-extern REMOTE_API IRemoteFileIO *createRemoteFilteredFile(SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseNLimit);
+extern REMOTE_API IRemoteFileIO *createRemoteFilteredFile(const MemoryBuffer &securityToken, SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseNLimit);
 
 interface IIndexLookup;
 extern REMOTE_API IIndexLookup *createRemoteFilteredKey(SocketEndpoint &ep, const char * filename, unsigned crc, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseNLimit);
