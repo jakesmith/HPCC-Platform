@@ -417,6 +417,29 @@ public:
         return true;
     }
 
+    bool getSecurityInfo2(StringBuffer &securityInfoResult, IDistributedFile &file, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
+    {
+        Owned<IClientWsWorkunits> client = createCmdClient(WsWorkunits, *this);
+        Owned<IClientWUMultiQuerySetDetailsRequest> req = client->createWUMultiQuerysetDetailsRequest();
+        setCmdRequestTimeouts(req->rpc(), 0, optWaitConnectMs, optWaitReadSec);
+
+        req->setQuerySetName(optTargetCluster.get());
+        req->setClusterName(optTargetCluster.get());
+        req->setFilterType("All");
+        req->setCheckAllNodes(optCheckAllNodes);
+
+        Owned<IClientWUMultiQuerySetDetailsResponse> resp = client->WUMultiQuerysetDetails(req);
+        int ret = outputMultiExceptionsEx(resp->getExceptions());
+        if (ret == 0)
+        {
+            IArrayOf<IConstWUQuerySetDetail> &querysets = resp->getQuerysets();
+            ForEachItemIn(i, querysets)
+                outputQueryset(querysets.item(i));
+        }
+        return true;
+    }
+
+
 // IThorFileManager impl.
     void clearCacheEntry(const char *name)
     {
