@@ -61,57 +61,6 @@ static const unsigned defaultDafilesrvExpirySecs = (3600*24);
 
 
 
-class OwnedBio
-{
-    BIO *bio;
-public:
-    OwnedBio(BIO *_bio) : bio(_bio) { }
-    ~OwnedBio()
-    {
-        BIO_free(bio);
-    }
-    inline BIO * operator -> () const { return bio; }
-    inline operator BIO *() const     { return bio; }
-};
-class OwnedEnvPKey
-{
-    EVP_PKEY *pkey;
-public:
-    OwnedEnvPKey(EVP_PKEY *_pkey) : pkey(_pkey) { }
-    ~OwnedEnvPKey()
-    {
-        EVP_PKEY_free(pkey);
-    }
-    inline EVP_PKEY * operator -> () const { return pkey; }
-    inline operator EVP_PKEY *() const     { return pkey; }
-};
-class OwnedEnvPKeyCtx
-{
-    EVP_PKEY_CTX *ctx;
-public:
-    OwnedEnvPKeyCtx(EVP_PKEY_CTX *_ctx) : ctx(_ctx) { }
-    ~OwnedEnvPKeyCtx()
-    {
-        EVP_PKEY_CTX_free(ctx);
-    }
-    inline EVP_PKEY_CTX * operator -> () const { return ctx; }
-    inline operator EVP_PKEY_CTX *() const     { return ctx; }
-};
-class OwnedOpenSSLMalloc
-{
-    void *mem;
-public:
-    OwnedOpenSSLMalloc(void *_mem) : mem(_mem) { }
-    ~OwnedOpenSSLMalloc()
-    {
-        OPENSSL_free(mem);
-    }
-    inline void *get() const { return mem; }
-    inline void * operator -> () const { return mem; }
-    inline operator void *() const     { return mem; }
-};
-
-
 typedef OwningStringHTMapping<IDistributedFile> CIDistributeFileMapping;
 class CFileManager : public CSimpleInterface, implements IThorFileManager
 {
