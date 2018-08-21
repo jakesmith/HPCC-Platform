@@ -128,6 +128,10 @@ interface IRandomNumberGenerator: public IInterface
 
 extern jlib_decl IRandomNumberGenerator *createRandomNumberGenerator();
 
+extern jlib_decl void fillRandomData(size32_t writeSz, void *writePtr);
+extern jlib_decl void fillRandomData(size32_t writeSz, MemoryBuffer &mb);
+
+
 #ifdef WIN32
 
 // Reentrant version of the rand() function for use with multithreaded applications.

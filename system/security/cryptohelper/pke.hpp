@@ -66,8 +66,8 @@ CRYPTOHELPER_API void privateKeyDecrypt(MemoryBuffer &out, size32_t inLen, const
 const unsigned aesKeySize = 256/8; // 256 bite
 const unsigned aesBlockSize = 128/8; // 128 bits
 
-CRYPTOHELPER_API void aesKeyDecrypt(MemoryBuffer &out, size32_t inSz, const void *inBytes, const char key[aesKeySize], const char iv[aesBlockSize]);
 CRYPTOHELPER_API void aesKeyEncrypt(MemoryBuffer &out, size32_t inSz, const void *inBytes, const char key[aesKeySize], const char iv[aesBlockSize]);
+CRYPTOHELPER_API void aesKeyDecrypt(MemoryBuffer &out, size32_t inSz, const void *inBytes, const char key[aesKeySize], const char iv[aesBlockSize]);
 
 
 #endif // end of #if defined(_USE_OPENSSL) && !defined(_WIN32)

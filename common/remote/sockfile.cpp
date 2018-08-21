@@ -53,6 +53,11 @@
 #include "rtlcommon.hpp"
 #include "rtlformat.hpp"
 
+#include "jflz.hpp"
+#include "pke.hpp"
+
+using namespace cryptohelper;
+
 
 #define SOCKET_CACHE_MAX 500
 
@@ -4438,10 +4443,26 @@ void verifyAuthorization(IPropertyTree &securityInfo, IPropertyTree &secureMetaI
         throwStringExceptionV(0, "createRemoteActivity: authorization expired");
 }
 
-IPropertyTree *decryptSecurityToken(MemoryBuffer &mb, const char *key)
+IPropertyTree *decryptSecurityToken(MemoryBuffer &securityInfoMb, const char *keyPairName, MemoryBuffer &encryptedSecurityKeyMb, MemoryBuffer &aesIVMb)
 {
-    // TBD: decrypt using 'key'/decompress
-    Owned<IPropertyTree> secureMetaInfo = createPTreeFromJSONString(mb.length(), (const char *)mb.bytes());
+    assertex(encryptedSecurityKeyMb.length() == aesKeySize);
+    assertex(aesIVMb.length() == aesBlockSize);
+    /* NB: As it's a single encrypted block - implies all DAFILESRV's share same private key
+     * Otherwise server would need to create multiple encrypted packets each encrypted with the public key of each DAFILESRV...
+     */
+
+    // 1st decrypt AES key with my private key
+    Owned<CLoadedKey> privateKey = loadPrivateKeyFromFile(keyPairName, nullptr);
+    MemoryBuffer decryptedAesKeyMb;
+    privateKeyDecrypt(decryptedAesKeyMb, encryptedSecurityKeyMb.length(), encryptedSecurityKeyMb.bytes(), *privateKey);
+    // 2nd decrypt secureInfo with aes+IV
+    MemoryBuffer decryptedSecureMetaInfoMb;
+    aesKeyEncrypt(decryptedSecureMetaInfoMb, securityInfoMb.length(), securityInfoMb.bytes(), (const char *)decryptedAesKeyMb.bytes(), (const char *)aesIVMb.bytes());
+    // 3rd decompress
+    MemoryBuffer decompressedSecuredMetaInfoMb;
+    fastLZDecompressToBuffer(decompressedSecuredMetaInfoMb, decryptedSecureMetaInfoMb);
+    // 4th create IPT
+    Owned<IPropertyTree> secureMetaInfo = createPTreeFromJSONString(decompressedSecuredMetaInfoMb.length(), (const char *)decompressedSecuredMetaInfoMb.bytes());
     return secureMetaInfo.getClear();
 }
 
@@ -4449,13 +4470,18 @@ IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
 {
     IPropertyTree *securityInfo = actNode.queryPropTree("securityInfo");
     dbgassertex(securityInfo);
-    const char *key = securityInfo->queryProp("key");
-    if (isEmptyString(key))
-        throwStringExceptionV(0, "createRemoteActivity: missing key");
-    MemoryBuffer securityMb;
-    if (!securityInfo->getPropBin("securityToken", securityMb))
+    const char *keyPairName = securityInfo->queryProp("keyPairName");
+    if (isEmptyString(keyPairName))
+        throwStringExceptionV(0, "createRemoteActivity: missing keyPairName");
+    MemoryBuffer securityInfoMb;
+    if (!securityInfo->getPropBin("secureInfo", securityInfoMb))
         throwStringExceptionV(0, "createRemoteActivity: missing securityToken");
-    Owned<IPropertyTree> secureMetaInfo = decryptSecurityToken(securityMb, key);
+    MemoryBuffer encryptedSecurityKeyMb;
+    securityInfo->getPropBin("securityKey", encryptedSecurityKeyMb);
+    MemoryBuffer aesIVMb;
+    securityInfo->getPropBin("securityIV", aesIVMb);
+
+    Owned<IPropertyTree> secureMetaInfo = decryptSecurityToken(securityInfoMb, keyPairName, encryptedSecurityKeyMb, aesIVMb);
 
     verifyAuthorization(*securityInfo, *secureMetaInfo);
 

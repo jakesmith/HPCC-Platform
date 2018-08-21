@@ -45,6 +45,11 @@
 #include <openssl/evp.h>
 #include <openssl/rsa.h>
 #include <openssl/err.h>
+
+#include "jflz.hpp"
+#include "pke.hpp"
+using namespace cryptohelper;
+
 #endif
 
 
@@ -59,6 +64,19 @@ static IThorFileManager *fileManager = NULL;
 
 static const unsigned defaultDafilesrvExpirySecs = (3600*24);
 
+
+void fillRandomData(size32_t writeSz, void *_writePtr)
+{
+    assertex(0 == (writeSz % sizeof(unsigned)));
+    unsigned *writePtr = (unsigned *)_writePtr;
+    unsigned *bufEnd = (unsigned *)(((byte *)writePtr)+writeSz);
+    while (true)
+    {
+        *writePtr++ = getRandom();
+        if (writePtr+sizeof(unsigned)>=bufEnd)
+            break;
+    }
+}
 
 
 typedef OwningStringHTMapping<IDistributedFile> CIDistributeFileMapping;
@@ -296,105 +314,7 @@ public:
         normalizeLFN(tmp.str(), ret);
         return ret;
     }
-    void encryptSecurityToken(StringBuffer &token, StringBuffer &signatureRes, const char *key)
-    {
-        StringBuffer keyPath(key); // JCSMORE - may want to get path from environment.conf or xml
-        const char *passPhrase = nullptr; // need there be one?
 
-        MemoryBuffer privateKeyMb;
-        OwnedIFile iFile = createIFile(keyPath);
-        OwnedIFileIO iFileIO = iFile->open(IFOread);
-        size32_t sz = read(iFileIO, 0, iFile->size(), privateKeyMb);
-
-        OpenSSL_add_all_algorithms();
-
-        OwnedBio privateKeyBio(BIO_new_mem_buf(privateKeyMb.bufferBase(), -1));
-
-        RSA *privateKey = PEM_read_bio_RSAPrivateKey(privateKeyBio, nullptr, nullptr, (void*)passPhrase);
-
-        OwnedEnvPKey signingKey(EVP_PKEY_new());
-        EVP_PKEY_set1_RSA(signingKey, privateKey);
-
-        OwnedEnvPKeyCtx ctx = EVP_PKEY_CTX_new(signingKey, nullptr);
-        verifyex(ctx);
-        verifyex(EVP_PKEY_sign_init(ctx));
-        verifyex(EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING));
-        verifyex(EVP_PKEY_CTX_set_signature_md(ctx, EVP_sha256()));
-
-        /* Determine buffer length */
-        size_t sigLen;
-        if (EVP_PKEY_sign(ctx, nullptr, &sigLen, (const unsigned char*)token.str(), token.length()) <= 0)
-            throwStringExceptionV(0, "EVP_PKEY_sign");
-
-        OwnedOpenSSLMalloc signature = OPENSSL_malloc(sigLen);
-        assertex(signature);
-
-        int res = EVP_PKEY_sign(ctx, (unsigned char *)signature.get(), &sigLen, (const unsigned char*)token.str(), token.length());
-        if (res <= 0)
-        {
-            unsigned lastErr = ERR_get_error();
-
-            MemoryBuffer mb;
-            size32_t bufMax = 100000;
-            void *buf = mb.reserve(bufMax);
-            ERR_error_string_n(lastErr, (char *)buf, bufMax);
-            char *lastErrStr = ERR_error_string(lastErr, nullptr);
-            const char *eReason = ERR_reason_error_string(4);
-            const char *eLib = ERR_lib_error_string(142);
-            const char *eFunc = ERR_func_error_string(143);
-            PROGLOG("lastErrStr = %s", lastErrStr);
-            PROGLOG("eReason = %s", eReason);
-            PROGLOG("eLib = %s", eLib);
-            PROGLOG("eFunc = %s", eFunc);
-
-            ERR_print_errors_fp(stdout);
-            throwStringExceptionV(0, "EVP_PKEY_sign");
-        }
-
-        /* Signature is siglen bytes written to buffer sig */
-
-        signatureRes.append(sigLen, (const char *)signature.get());
-    }
-    void decryptSecurityToken(StringBuffer &token, StringBuffer &signature, const char *key)
-    {
-        StringBuffer keyPath(key); // JCSMORE - may want to get path from environment.conf or xml
-        keyPath.append(".pub"); // JCSMORE
-        const char *passPhrase = nullptr; // need there be one?
-
-
-        MemoryBuffer publicKeyMb;
-        OwnedIFile iFile = createIFile(keyPath);
-        OwnedIFileIO iFileIO = iFile->open(IFOread);
-        size32_t sz = read(iFileIO, 0, iFile->size(), publicKeyMb);
-
-        OpenSSL_add_all_algorithms();
-
-        OwnedBio publicKeyBio(BIO_new_mem_buf(publicKeyMb.bufferBase(), -1));
-
-        RSA *publicKey = PEM_read_bio_RSAPublicKey(publicKeyBio, nullptr, nullptr, (void*)passPhrase);
-
-        OwnedEnvPKey verifyKey(EVP_PKEY_new());
-        EVP_PKEY_set1_RSA(verifyKey, publicKey);
-
-        OwnedEnvPKeyCtx ctx = EVP_PKEY_CTX_new(verifyKey, nullptr);
-        verifyex(ctx);
-        verifyex(EVP_PKEY_verify_recover_init(ctx));
-        verifyex(EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING));
-        verifyex(EVP_PKEY_CTX_set_signature_md(ctx, EVP_sha256()));
-
-        /* Determine buffer length */
-        size_t recoveredSz;
-        if (EVP_PKEY_verify_recover(ctx, nullptr, &recoveredSz, (unsigned char *)signature.str(), signature.length()) <= 0)
-            throwStringExceptionV(0, "EVP_PKEY_verify_recover");
-
-        OwnedOpenSSLMalloc recoveredData = OPENSSL_malloc(recoveredSz);
-        assertex(recoveredData);
-
-        if (EVP_PKEY_verify_recover(ctx, (unsigned char *)recoveredData.get(), &recoveredSz, (unsigned char *)signature.str(), signature.length()) <= 0)
-            throwStringExceptionV(0, "EVP_PKEY_verify_recover");
-
-        token.append(recoveredSz, (const char *)recoveredData.get());
-    }
     bool getSecurityInfo(StringBuffer &securityInfoResult, IDistributedFile &file, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
     {
         /*
@@ -403,8 +323,15 @@ public:
          * RESPONSE { lfn, access, jobId, user, key, securityToken }  // securityToken contains lfn,access,jobId,user as well.
          */
 
-        // JCSMORE - fake it for now
+        /* JCSMORE - fake it for now
+         *
+         * Should be replaced, by call to SOAP service, that sends REQUEST...
+         * and gets back something like the fake 'securityInfo' tree (in JSON form(?)) being created below
+         */
 
+
+
+        // THIS WILL BE CREATED AT THE SERVER(ESP) ...
         Owned<IPropertyTree> securityInfo = createPTree();
         securityInfo->setProp("logicalFilename", logicalName);
         securityInfo->setProp("jobId", job.queryWuid());
@@ -412,8 +339,8 @@ public:
         StringBuffer userStr;
         securityInfo->setProp("user", job.queryUserDescriptor()->getUserName(userStr).str());
 
-        const char *key = "/home/jsmith/jsmith/.ssh/id_rsa";
-        securityInfo->setProp("key", key); // JCSMORE!!
+        const char *key = "/home/jsmith/jsmith/.ssh/id_rsa"; // JCSMORE!!
+        securityInfo->setProp("keyPairName", key); // JCSMORE!!
 
         //
         time_t simple;
@@ -441,27 +368,45 @@ public:
                 IPropertyTree *copyTree = partTree->addPropTree("Copy", createPTree());
                 StringBuffer path;
                 copyTree->setProp("@filePath", rfn.getLocalPath(path));
-                // JCSMORE - don't really need host once it request reaches dafilesrv
+                // JCSMORE - don't really need host once request reaches dafilesrv
                 StringBuffer epStr;
                 copyTree->setProp("@host", rfn.queryEndpoint().getUrlStr(epStr));
             }
         }
 
-        StringBuffer securityTokenStr;
-        toJSON(secureMetaInfo, securityTokenStr);
+        StringBuffer secureMetaInfoJson;
+        toJSON(secureMetaInfo, secureMetaInfoJson);
 
-        PROGLOG("Pre-signing:\n%s", securityTokenStr.str());
-        StringBuffer signature;
-        encryptSecurityToken(securityTokenStr, signature, key);
-        PROGLOG("Post-signing:\n%s", signature.str());
-        // encrypt/compress
-        securityInfo->setProp("securityToken", signature);
+        MemoryBuffer compressedSecureMetaInfoMb;
+        fastLZCompressToBuffer(compressedSecureMetaInfoMb, secureMetaInfoJson.length(), secureMetaInfoJson.str());
+        // Remember: this is on [supposed to be] on ESP
 
-        StringBuffer token;
-        decryptSecurityToken(signature, token, key);
-        PROGLOG("Post-verifying:\n%s", signature.str());
+        PROGLOG("Pre-encrypting:\n%s", secureMetaInfoJson.str());
 
+        // create random AES key and IV
+        char randomAesKey[aesKeySize];
+        char randomIV[aesBlockSize];
+        fillRandomData(aesKeySize, randomAesKey);
+        fillRandomData(aesBlockSize, randomIV);
 
+        // Encrypt with AES key
+        MemoryBuffer encryptedSecureMetaInfoMb;
+        aesKeyEncrypt(encryptedSecureMetaInfoMb, compressedSecureMetaInfoMb.length(), compressedSecureMetaInfoMb.bytes(), randomAesKey, randomIV);
+
+        securityInfo->setPropBin("secureInfo", encryptedSecureMetaInfoMb.length(), encryptedSecureMetaInfoMb.bytes());
+
+        // Encrypt AES key with public *DAFILESRV* key
+        Owned<CLoadedKey> publicKey = loadPublicKeyFromFile("/home/jsmith/.ssh/id_rsa.pub.pem", nullptr);
+        MemoryBuffer encryptedAesKeyMb;
+        publicKeyEncrypt(encryptedAesKeyMb, aesKeySize, randomAesKey, *publicKey);
+
+        /* perhaps should combine into single prob..
+         * Does IV need to be generated/sent each time?
+         */
+        securityInfo->setPropBin("securityKey", encryptedAesKeyMb.length(), encryptedAesKeyMb.bytes());
+        securityInfo->setPropBin("securityIV", aesBlockSize, randomIV);
+
+        // This is what client (e.g. Spark, ThorMaster or HThor) will see.
         toJSON(securityInfo, securityInfoResult);
 
         return true;

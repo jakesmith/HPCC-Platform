@@ -901,6 +901,35 @@ IRandomNumberGenerator *createRandomNumberGenerator()
     return new CRandom();
 }
 
+void fillRandomData(size32_t writeSz, void *_writePtr)
+{
+    Owned<IRandomNumberGenerator> generator = createRandomNumberGenerator();
+    assertex(0 == (writeSz % sizeof(unsigned)));
+    unsigned *writePtr = (unsigned *)_writePtr;
+    unsigned *bufEnd = (unsigned *)(((byte *)writePtr)+writeSz);
+    while (true)
+    {
+        *writePtr++ = generator->next();
+        size32_t diff = (const byte *)bufEnd - (const byte *)writePtr;
+        if (!diff)
+            break;
+        else if (diff<sizeof(unsigned))
+        {
+            // last few bytes
+            byte *p = (byte *)writePtr;
+            while (diff--)
+                *p++ = generator->next()%256;
+        }
+    }
+}
+
+void fillRandomData(size32_t writeSz, MemoryBuffer &mb)
+{
+    void *writePtr = mb.reserveTruncate(writeSz);
+    fillRandomData(writeSz, writePtr);
+}
+
+
 #ifdef WIN32
 // This function has the same prototype for rand_r, but seed is ignored.
 
