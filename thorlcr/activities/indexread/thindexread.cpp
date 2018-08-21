@@ -179,7 +179,6 @@ protected:
             if (width != f->numParts()-1)
                 throw MakeActivityException(this, 0, "Super key %s, with mixture of sub key width are not supported.", f->queryLogicalName());
         }
-        index->getSecurityInfo(securityInfo);
     }
 
 public:
@@ -235,6 +234,7 @@ public:
                 addReadFile(index);
                 mapping.setown(getFileSlaveMaps(index->queryLogicalName(), *fileDesc, container.queryJob().queryUserDescriptor(), container.queryJob().querySlaveGroup(), container.queryLocalOrGrouped(), true, NULL, index->querySuperFile()));
             }
+            index->getSecurityInfo(securityInfo);
         }
     }
     virtual void serializeSlaveData(MemoryBuffer &dst, unsigned slave)

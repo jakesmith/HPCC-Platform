@@ -4445,7 +4445,6 @@ void verifyAuthorization(IPropertyTree &securityInfo, IPropertyTree &secureMetaI
 
 IPropertyTree *decryptSecurityToken(MemoryBuffer &securityInfoMb, const char *keyPairName, MemoryBuffer &encryptedSecurityKeyMb, MemoryBuffer &aesIVMb)
 {
-    assertex(encryptedSecurityKeyMb.length() == aesKeySize);
     assertex(aesIVMb.length() == aesBlockSize);
     /* NB: As it's a single encrypted block - implies all DAFILESRV's share same private key
      * Otherwise server would need to create multiple encrypted packets each encrypted with the public key of each DAFILESRV...
@@ -4455,9 +4454,11 @@ IPropertyTree *decryptSecurityToken(MemoryBuffer &securityInfoMb, const char *ke
     Owned<CLoadedKey> privateKey = loadPrivateKeyFromFile(keyPairName, nullptr);
     MemoryBuffer decryptedAesKeyMb;
     privateKeyDecrypt(decryptedAesKeyMb, encryptedSecurityKeyMb.length(), encryptedSecurityKeyMb.bytes(), *privateKey);
+    assertex(decryptedAesKeyMb.length() == aesKeySize);
+
     // 2nd decrypt secureInfo with aes+IV
     MemoryBuffer decryptedSecureMetaInfoMb;
-    aesKeyEncrypt(decryptedSecureMetaInfoMb, securityInfoMb.length(), securityInfoMb.bytes(), (const char *)decryptedAesKeyMb.bytes(), (const char *)aesIVMb.bytes());
+    aesKeyDecrypt(decryptedSecureMetaInfoMb, securityInfoMb.length(), securityInfoMb.bytes(), (const char *)decryptedAesKeyMb.bytes(), (const char *)aesIVMb.bytes());
     // 3rd decompress
     MemoryBuffer decompressedSecuredMetaInfoMb;
     fastLZDecompressToBuffer(decompressedSecuredMetaInfoMb, decryptedSecureMetaInfoMb);

@@ -317,6 +317,11 @@ public:
 
     bool getSecurityInfo(StringBuffer &securityInfoResult, IDistributedFile &file, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
     {
+        const char *keyPairName = "/home/jsmith/.ssh/id_rsa"; // JCSMORE!!
+        const char *privateKeyFName = keyPairName;
+        StringBuffer publicKeyStr(keyPairName);
+        const char *publicKeyFName = publicKeyStr.append(".pub.pem");
+
         /*
          * REQUEST { lfn, access, jobId, *implicit user* } -> ESP service..
          *
@@ -339,8 +344,7 @@ public:
         StringBuffer userStr;
         securityInfo->setProp("user", job.queryUserDescriptor()->getUserName(userStr).str());
 
-        const char *key = "/home/jsmith/jsmith/.ssh/id_rsa"; // JCSMORE!!
-        securityInfo->setProp("keyPairName", key); // JCSMORE!!
+        securityInfo->setProp("keyPairName", keyPairName); // JCSMORE!!
 
         //
         time_t simple;
@@ -374,29 +378,30 @@ public:
             }
         }
 
-        StringBuffer secureMetaInfoJson;
-        toJSON(secureMetaInfo, secureMetaInfoJson);
-
-        MemoryBuffer compressedSecureMetaInfoMb;
-        fastLZCompressToBuffer(compressedSecureMetaInfoMb, secureMetaInfoJson.length(), secureMetaInfoJson.str());
-        // Remember: this is on [supposed to be] on ESP
-
-        PROGLOG("Pre-encrypting:\n%s", secureMetaInfoJson.str());
-
         // create random AES key and IV
         char randomAesKey[aesKeySize];
         char randomIV[aesBlockSize];
         fillRandomData(aesKeySize, randomAesKey);
         fillRandomData(aesBlockSize, randomIV);
 
-        // Encrypt with AES key
+        // 1st serialize to JSON
+        StringBuffer secureMetaInfoJson;
+        toJSON(secureMetaInfo, secureMetaInfoJson);
+        PROGLOG("Pre-encrypting:\n%s", secureMetaInfoJson.str());
+
+        // 2nd compress
+        MemoryBuffer compressedSecureMetaInfoMb;
+        fastLZCompressToBuffer(compressedSecureMetaInfoMb, secureMetaInfoJson.length(), secureMetaInfoJson.str());
+        // Remember: this is on [supposed to be] on ESP
+
+        // 3rd encrypt with AES key
         MemoryBuffer encryptedSecureMetaInfoMb;
         aesKeyEncrypt(encryptedSecureMetaInfoMb, compressedSecureMetaInfoMb.length(), compressedSecureMetaInfoMb.bytes(), randomAesKey, randomIV);
 
         securityInfo->setPropBin("secureInfo", encryptedSecureMetaInfoMb.length(), encryptedSecureMetaInfoMb.bytes());
 
-        // Encrypt AES key with public *DAFILESRV* key
-        Owned<CLoadedKey> publicKey = loadPublicKeyFromFile("/home/jsmith/.ssh/id_rsa.pub.pem", nullptr);
+        // 4th encrypt AES key with public *DAFILESRV* key
+        Owned<CLoadedKey> publicKey = loadPublicKeyFromFile(publicKeyFName, nullptr);
         MemoryBuffer encryptedAesKeyMb;
         publicKeyEncrypt(encryptedAesKeyMb, aesKeySize, randomAesKey, *publicKey);
 
