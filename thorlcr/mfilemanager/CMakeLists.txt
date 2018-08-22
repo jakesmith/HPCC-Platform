@@ -51,6 +51,7 @@ include_directories (
          ./../../roxie/roxiemem
          ./../../system/security/shared
          ./../../system/security/cryptohelper
+         ./../../esp/clients/wsdfuaccess
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DMFILEMANAGER_EXPORTS )
@@ -71,6 +72,8 @@ target_link_libraries ( mfilemanager_lcr
          jhtree 
          graph_lcr 
          cryptohelper
+         wsdfuaccess
+         esphttp
     )
 
 

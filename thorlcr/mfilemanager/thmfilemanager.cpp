@@ -38,6 +38,8 @@
 
 #include "workunit.hpp"
 
+#include "wsdfuaccess.hpp"
+
 
 // JCSMORE temporary
 #if defined(_USE_OPENSSL)
@@ -48,6 +50,7 @@
 
 #include "jflz.hpp"
 #include "pke.hpp"
+
 using namespace cryptohelper;
 
 #endif
@@ -315,6 +318,18 @@ public:
         return ret;
     }
 
+#if 1
+    bool getSecurityInfo(StringBuffer &securityInfoResult, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
+    {
+        IConstWorkUnit &wu = job.queryWorkUnit();
+        StringBuffer token, user, password;
+        job.queryWorkUnit().getSecurityToken(StringBufferAdaptor(token));
+        extractToken(token, wu.queryWuid(), StringBufferAdaptor(user), StringBufferAdaptor(password));
+        WsDfuAccess_getSecurityInfo(securityInfoResult, logicalName, job.queryWuid(), access, expirySecs, user, password);
+
+        return true;
+    }
+#else
     bool getSecurityInfo(StringBuffer &securityInfoResult, IDistributedFile &file, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
     {
         const char *keyPairName = "/home/jsmith/.ssh/id_rsa"; // JCSMORE!!
@@ -416,29 +431,7 @@ public:
 
         return true;
     }
-
-    bool getSecurityInfo2(StringBuffer &securityInfoResult, IDistributedFile &file, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
-    {
-        Owned<IClientWsWorkunits> client = createCmdClient(WsWorkunits, *this);
-        Owned<IClientWUMultiQuerySetDetailsRequest> req = client->createWUMultiQuerysetDetailsRequest();
-        setCmdRequestTimeouts(req->rpc(), 0, optWaitConnectMs, optWaitReadSec);
-
-        req->setQuerySetName(optTargetCluster.get());
-        req->setClusterName(optTargetCluster.get());
-        req->setFilterType("All");
-        req->setCheckAllNodes(optCheckAllNodes);
-
-        Owned<IClientWUMultiQuerySetDetailsResponse> resp = client->WUMultiQuerysetDetails(req);
-        int ret = outputMultiExceptionsEx(resp->getExceptions());
-        if (ret == 0)
-        {
-            IArrayOf<IConstWUQuerySetDetail> &querysets = resp->getQuerysets();
-            ForEachItemIn(i, querysets)
-                outputQueryset(querysets.item(i));
-        }
-        return true;
-    }
-
+#endif
 
 // IThorFileManager impl.
     void clearCacheEntry(const char *name)
@@ -526,12 +519,23 @@ public:
             return NULL;
         }
 
-        /* Really this should happen as part of DFS lookup() (would need to pass some tokens, like jobID), so that it
-         * could do scope authorization checks, meta fetching, security token fetching in 1 hop.
-         */
-        StringBuffer securityInfo;
-        if (getSecurityInfo(securityInfo, *file, job, scopedName, "READ", defaultDafilesrvExpirySecs))
-            file->setSecurityInfo(securityInfo);
+        try
+        {
+            /* Really this should happen as part of DFS lookup() (would need to pass some tokens, like jobID), so that it
+             * could do scope authorization checks, meta fetching, security token fetching in 1 hop.
+             */
+            StringBuffer securityInfo;
+            if (getSecurityInfo(securityInfo, job, scopedName, "READ", defaultDafilesrvExpirySecs))
+                file->setSecurityInfo(securityInfo);
+        }
+        catch (IException *e)
+        {
+            StringBuffer eMsg;
+            e->errorMessage(eMsg);
+            int code = e->errorCode();
+            e->Release();
+            throwStringExceptionV(0, "Security failure looking up file: %s - [%d, %s]", logicalName, code, eMsg.str());
+        }
 
         if (updateAccessed)
             file->setAccessed();

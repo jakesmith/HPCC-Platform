@@ -264,6 +264,8 @@ void CDiskRecordPartHandler::open()
     Owned<ITranslator> translator = activity.getTranslators(*partDesc);
     IOutputMetaData *actualFormat = translator ? &translator->queryActualFormat() : expectedFormat;
     bool canSerializeTypeInfo = actualFormat->queryTypeInfo()->canSerialize() && projectedFormat->queryTypeInfo()->canSerialize();
+    unsigned remoteCopiesAttempted = 0;
+    Owned<IMultiException> remoteExceptions;
     if (canSerializeTypeInfo)
     {
         for (unsigned copy=0; copy<partDesc->numCopies(); copy++)
@@ -274,6 +276,7 @@ void CDiskRecordPartHandler::open()
             StringBuffer path;
             if (isRemoteReadCandidate(activity, rfn, path))
             {
+                ++remoteCopiesAttempted;
                 // Open a stream from remote file, having passed actual, expected, projected, and filters to it
                 SocketEndpoint ep(rfn.queryEndpoint());
                 setDafsEndpointPort(ep);
@@ -305,7 +308,9 @@ void CDiskRecordPartHandler::open()
                     catch (IException *e)
                     {
                         EXCLOG(e, nullptr);
-                        e->Release();
+                        if (!remoteExceptions)
+                            remoteExceptions.setown(makeMultiException("mfilemanager"));
+                        remoteExceptions->append(*e);
                         continue; // try next copy and ultimately failover to local when no more copies
                     }
                     partStream.setown(createRowStreamEx(iRemoteFileIO, activity.queryProjectedDiskRowInterfaces(), 0, (offset_t)-1, (unsigned __int64)-1, rwFlags, nullptr, this));
@@ -314,6 +319,14 @@ void CDiskRecordPartHandler::open()
                 }
             }
         }
+    }
+
+    // if forced and all remote copies failed, report exceptions
+    if (activity.getOptBool(THOROPT_FORCE_REMOTE_READ) && (remoteCopiesAttempted == partDesc->numCopies()))
+    {
+        StringBuffer msg;
+        remoteExceptions->errorMessage(msg);
+        throwStringExceptionV(0, "Force remote read, failed to open any remote part. Exceptions: %s", msg.str());
     }
 
     if (!partStream)

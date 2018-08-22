@@ -165,6 +165,8 @@ public:
 
                 unsigned crc=0;
                 part.getCrc(crc);
+                unsigned remoteCopiesAttempted = 0;
+                Owned<IMultiException> remoteExceptions;
                 if (canSerializeTypeInfo && !usesBlobs && !localMerge)
                 {
                     for (unsigned copy=0; copy<part.numCopies(); copy++)
@@ -177,6 +179,8 @@ public:
                         StringBuffer lPath;
                         if (isRemoteReadCandidate(*this, rfn, lPath))
                         {
+                            ++remoteCopiesAttempted;
+
                             // Open a stream from remote file, having passed actual, expected, projected, and filters to it
                             SocketEndpoint ep(rfn.queryEndpoint());
                             setDafsEndpointPort(ep);
@@ -225,6 +229,13 @@ public:
                             }
                         }
                     }
+                }
+                // if forced and all remote copies failed, report exceptions
+                if (getOptBool(THOROPT_FORCE_REMOTE_READ) && (remoteCopiesAttempted == part.numCopies()))
+                {
+                    StringBuffer msg;
+                    remoteExceptions->errorMessage(msg);
+                    throwStringExceptionV(0, "Force remote read, failed to open any remote part. Exceptions: %s", msg.str());
                 }
 
                 // local key handling
