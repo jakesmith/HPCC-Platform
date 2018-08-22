@@ -5898,26 +5898,6 @@ int CWsDfuEx::GetIndexData(IEspContext &context, bool bSchemaOnly, const char* i
     return iRet;
 }
 
-bool CWsDfuEx::createDigitalSignature(const char *scope, IUserDescriptor *udesc, unsigned expirationMinutes, StringBuffer &b64sig)
-{
-    /*IDigitalSignatureManager *pDSM = queryDigitalSignatureManagerInstanceFromEnv();
-    if (!pDSM || !pDSM->isDigiSignerConfigured())
-        return false;
-
-    StringBuffer username;
-    if (udesc)
-        udesc->getUserName(username);
-    StringBuffer timeStr;
-    CDateTime expiration;
-    expiration.setNow();
-    expiration.adjustTime(expirationMinutes);
-    expiration.getString(timeStr, false);//get UTC timestamp
-
-    VStringBuffer toSign("%s;%s;%s", scope, username.str(), timeStr.str());
-    pDSM->digiSign(toSign.str(), b64sig);//Sign "scope;username;timeStamp"*/
-    return true;
-}
-
 unsigned CWsDfuEx::getFilePartsInfo(IEspContext &context, IDistributedFile *df, const char *clusterName,
     IArrayOf<IEspDFUPartLocations> &dfuPartLocations, IArrayOf<IEspDFUPartCopies> &dfuPartCopies)
 {
@@ -6112,7 +6092,6 @@ bool CWsDfuEx::onDFUReadAccess(IEspContext &context, IEspDFUReadAccessRequest &r
             userDesc.setown(createUserDescriptor());
             userDesc->set(userID.str(), context.queryPassword(), context.querySignature());
         }
-        DFUReadAccessResponse dfuReadAccessResp;
         getReadAccess(context, userDesc, req, resp);
     }
     catch (IException *e)

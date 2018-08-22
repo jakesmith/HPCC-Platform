@@ -52,7 +52,7 @@ bool WsDfuAccess_getMetaInfo(StringBuffer &metaInfoResult, const char *jobId, co
     dfuReq->setExpirySeconds(expirySecs);
     dfuReq->setAccessType(CSecAccessType_Read);
     dfuReq->setJobId(jobId);
-    //dfuReq->setRefresh(bool val);
+    dfuReq->setReturnFileInfo(true); // tmp test
     dfuReq->setReturnBinTypeInfo(true);
 
     Owned<IClientDFUReadAccessResponse> dfuResp = dfuClient->DFUReadAccess(dfuReq);
