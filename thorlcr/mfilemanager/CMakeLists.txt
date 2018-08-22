@@ -50,7 +50,6 @@ include_directories (
          ./../../common/thorhelper 
          ./../../roxie/roxiemem
          ./../../system/security/shared
-         ./../../system/security/cryptohelper
          ./../../esp/clients/wsdfuaccess
     )
 
@@ -71,9 +70,7 @@ target_link_libraries ( mfilemanager_lcr
          workunit 
          jhtree 
          graph_lcr 
-         cryptohelper
          wsdfuaccess
-         esphttp
     )
 
 

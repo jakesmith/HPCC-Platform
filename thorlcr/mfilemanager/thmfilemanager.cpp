@@ -41,22 +41,6 @@
 #include "wsdfuaccess.hpp"
 
 
-// JCSMORE temporary
-#if defined(_USE_OPENSSL)
-#include <openssl/pem.h>
-#include <openssl/evp.h>
-#include <openssl/rsa.h>
-#include <openssl/err.h>
-
-#include "jflz.hpp"
-#include "pke.hpp"
-
-using namespace cryptohelper;
-
-#endif
-
-
-
 #define CHECKPOINTSCOPE "checkpoints"
 #define TMPSCOPE "temporary"
 
@@ -66,20 +50,6 @@ static IThorFileManager *fileManager = NULL;
 
 
 static const unsigned defaultDafilesrvExpirySecs = (3600*24);
-
-
-void fillRandomData(size32_t writeSz, void *_writePtr)
-{
-    assertex(0 == (writeSz % sizeof(unsigned)));
-    unsigned *writePtr = (unsigned *)_writePtr;
-    unsigned *bufEnd = (unsigned *)(((byte *)writePtr)+writeSz);
-    while (true)
-    {
-        *writePtr++ = getRandom();
-        if (writePtr+sizeof(unsigned)>=bufEnd)
-            break;
-    }
-}
 
 
 typedef OwningStringHTMapping<IDistributedFile> CIDistributeFileMapping;
@@ -318,15 +288,13 @@ public:
         return ret;
     }
 
-    bool getMetaInfo(StringBuffer &metaInfoResult, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
+    void getMetaInfo(StringBuffer &metaInfoResult, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
     {
         IConstWorkUnit &wu = job.queryWorkUnit();
         StringBuffer token, user, password;
-        job.queryWorkUnit().getSecurityToken(StringBufferAdaptor(token));
+        wu.getSecurityToken(StringBufferAdaptor(token));
         extractToken(token, wu.queryWuid(), StringBufferAdaptor(user), StringBufferAdaptor(password));
-        WsDfuAccess_getMetaInfo(metaInfoResult, job.queryWuid(), logicalName, access, expirySecs, user, password);
-
-        return true;
+        WsDfuAccess_getMetaInfo(metaInfoResult, wu.queryWuid(), logicalName, access, expirySecs, user, password);
     }
 
 // IThorFileManager impl.
@@ -421,8 +389,8 @@ public:
              * could do scope authorization checks, meta fetching, security token fetching in 1 hop.
              */
             StringBuffer metaInfo;
-            if (getMetaInfo(metaInfo, job, scopedName, "READ", defaultDafilesrvExpirySecs))
-                file->setMetaInfo(metaInfo);
+            getMetaInfo(metaInfo, job, scopedName, "READ", defaultDafilesrvExpirySecs);
+            file->setMetaInfo(metaInfo);
         }
         catch (IException *e)
         {

@@ -5961,14 +5961,15 @@ unsigned CWsDfuEx::getFilePartsInfo(IEspContext &context, IDistributedFile *df, 
 }
 
 static const char *securityInfoVersion="1";
-void getFileMeta(IPropertyTree &metaInfo, IDistributedFile &file, IUserDescriptor &user, const char *keyPairName, IConstDFUReadAccessRequest &req)
+void getFileMeta(IPropertyTree &metaInfo, IDistributedFile &file, IUserDescriptor *user, const char *keyPairName, IConstDFUReadAccessRequest &req)
 {
     metaInfo.setProp("version", securityInfoVersion);
     metaInfo.setProp("logicalFilename", file.queryLogicalName());
     metaInfo.setProp("jobId", req.getJobId());
     metaInfo.setProp("accessType", req.getAccessTypeAsString());
     StringBuffer userStr;
-    metaInfo.setProp("user", user.getUserName(userStr).str());
+    if (user)
+        metaInfo.setProp("user", user->getUserName(userStr).str());
 
     const char *clusterName = req.getCluster(); // can be null
     Owned<IFileDescriptor> fDesc = file.getFileDescriptor(clusterName);
@@ -6085,7 +6086,7 @@ void CWsDfuEx::getReadAccess(IEspContext &context, IUserDescriptor *udesc, IEspD
     const char *keyPairName = getFileDafilesrvKeyName(*df);
 
     Owned<IPropertyTree> metaInfo = createPTree();
-    getFileMeta(*metaInfo, *df, *udesc, keyPairName, req);
+    getFileMeta(*metaInfo, *df, udesc, keyPairName, req);
     StringBuffer metaInfoJsonBlob;
     toJSON(metaInfo, metaInfoJsonBlob);
     resp.setMetaInfoBlob(metaInfoJsonBlob);

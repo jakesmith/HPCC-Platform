@@ -52,6 +52,9 @@
 #include "rtldynfield.hpp"
 #include "rtlnewkey.hpp"
 
+#include "wsdfuaccess.hpp"
+
+
 #define EMPTY_LOOP_LIMIT 1000
 
 static unsigned const hthorReadBufferSize = 0x10000;
@@ -65,6 +68,9 @@ using roxiemem::OwnedRoxieString;
 using roxiemem::OwnedConstRoxieRow;
 
 IRowManager * theRowManager;
+
+static const unsigned defaultDafilesrvExpirySecs = (3600*24);
+
 
 void setHThorRowManager(IRowManager * manager)
 {
@@ -8060,6 +8066,15 @@ void CHThorDiskReadBaseActivity::stop()
     CHThorActivityBase::stop();
 }
 
+void CHThorDiskReadBaseActivity::getMetaInfo(StringBuffer &metaInfoResult, const char *logicalName, const char *access, unsigned expirySecs)
+{
+    IConstWorkUnit &wu = *agent.queryWorkUnit();
+    StringBuffer token, user, password;
+    wu.getSecurityToken(StringBufferAdaptor(token));
+    extractToken(token, wu.queryWuid(), StringBufferAdaptor(user), StringBufferAdaptor(password));
+    WsDfuAccess_getMetaInfo(metaInfoResult, wu.queryWuid(), logicalName, access, expirySecs, user, password);
+}
+
 void CHThorDiskReadBaseActivity::resolve()
 {
     OwnedRoxieString fileName(helper.getFileName());
@@ -8113,6 +8128,23 @@ void CHThorDiskReadBaseActivity::resolve()
                     agent.logFileAccess(dFile, "HThor", "READ");
                 if(getLayoutTranslationMode()==RecordTranslationMode::None)
                     verifyRecordFormatCrc();
+
+                try
+                {
+                    /* Really this should happen as part of DFS lookup() (would need to pass some tokens, like jobID), so that it
+                     * could do scope authorization checks, meta fetching, security token fetching in 1 hop.
+                     */
+                    getMetaInfo(metaInfo, dFile->queryLogicalName(), "READ", defaultDafilesrvExpirySecs);
+                    dFile->setMetaInfo(metaInfo);
+                }
+                catch (IException *e)
+                {
+                    StringBuffer eMsg;
+                    e->errorMessage(eMsg);
+                    int code = e->errorCode();
+                    e->Release();
+                    throwStringExceptionV(0, "Security failure looking up file: %s - [%d, %s]", dFile->queryLogicalName(), code, eMsg.str());
+                }
             }
         }
         if (!ldFile)
@@ -8304,8 +8336,7 @@ bool CHThorDiskReadBaseActivity::openNext()
                         SocketEndpoint ep(rfilename.queryEndpoint());
                         setDafsEndpointPort(ep);
 
-                        StringBuffer securityInfo; // JCSMORE - TBD!
-                        Owned<IRemoteFileIO> remoteFileIO = createRemoteFilteredFile(securityInfo, ep, partNum, copy, actualDiskMeta, projectedDiskMeta, actualFilter, compressed, grouped, remoteLimit);
+                        Owned<IRemoteFileIO> remoteFileIO = createRemoteFilteredFile(metaInfo, ep, partNum, copy, actualDiskMeta, projectedDiskMeta, actualFilter, compressed, grouped, remoteLimit);
                         if (remoteFileIO)
                         {
                             StringBuffer tmp;
