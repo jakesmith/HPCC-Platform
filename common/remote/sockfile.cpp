@@ -1789,21 +1789,33 @@ void CEndpointCS::beforeDispose()
     table.removeExact(this);
 }
 
+#define REMOTESTREAM_VERSION "2"
+
 class CRemoteFilteredFileIOBase : public CRemoteBase, implements IRemoteFileIO
 {
 public:
     IMPLEMENT_IINTERFACE;
     // Really a stream, but life (maybe) easier elsewhere if looks like a file
     // Sometime should refactor to be based on ISerialStream instead - or maybe IRowStream.
-    CRemoteFilteredFileIOBase(SocketEndpoint &ep, const char *filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
-        : CRemoteBase(ep, filename)
+    CRemoteFilteredFileIOBase(const SocketEndpoint &ep, const StringBuffer &metaInfo, const char *partFileName, unsigned partNum, unsigned partCopy, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
+        : CRemoteBase(ep, partFileName)
     {
         // NB: inputGrouped == outputGrouped for now, but may want output to be ungrouped
 
         openRequest();
-        request.appendf("\"format\" : \"binary\",\n"
-            "\"node\" : {\n"
-            " \"fileName\" : \"%s\"", filename);
+        request.appendf("\"version\" : \"%s\",\n"
+            "\"format\" : \"binary\",\n"
+            "\"node\" : {\n", REMOTESTREAM_VERSION);
+        if (metaInfo.length())
+            request.append(" \"metaInfo\" : \"").append(metaInfo).append("\",\n");
+        else if (!isEmptyString(partFileName))
+            request.appendf(" \"fileName\" : \"%s\",\n", partFileName);
+
+        // NB: 1 based partNum and partCopy in JSON request
+        request.appendf(" \"filePart\" : \"%u\"", partNum+1);
+        if (partCopy) // don't bother encoding if 0 (=default)
+            request.appendf(",\n \"filePartCopy\" : \"%u\",\n", partCopy+1);
+
         if (chooseN)
             request.appendf(",\n \"chooseN\" : \"%" I64F "u\"", chooseN);
         if (fieldFilters.numFilterFields())
@@ -2001,8 +2013,8 @@ class CRemoteFilteredFileIO : public CRemoteFilteredFileIOBase
 public:
     // Really a stream, but life (maybe) easier elsewhere if looks like a file
     // Sometime should refactor to be based on ISerialStream instead - or maybe IRowStream.
-    CRemoteFilteredFileIO(SocketEndpoint &ep, const char *filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
-        : CRemoteFilteredFileIOBase(ep, filename, actual, projected, fieldFilters, chooseN)
+    CRemoteFilteredFileIO(const SocketEndpoint &ep, const StringBuffer &metaInfo, const char *partFileName, unsigned partNum, unsigned partCopy, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
+        : CRemoteFilteredFileIOBase(ep, metaInfo, partFileName, partNum, partCopy, actual, projected, fieldFilters, chooseN)
     {
         // NB: inputGrouped == outputGrouped for now, but may want output to be ungrouped
         request.appendf(",\n \"kind\" : \"diskread\",\n"
@@ -2012,38 +2024,11 @@ public:
     }
 };
 
-class CRemoteFilteredRowStream : public CRemoteFilteredFileIO, implements IRowStream
-{
-public:
-    CRemoteFilteredRowStream(const RtlRecord &_recInfo, SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped)
-        : CRemoteFilteredFileIO(ep, filename, actual, projected, fieldFilters, compressed, grouped, 0), recInfo(_recInfo)
-    {
-    }
-    virtual const byte *queryNextRow()  // NOTE - rows returned must NOT be freed
-    {
-        if (!bufRemaining && !eof)
-            refill();
-        if (eof)
-            return nullptr;
-        unsigned len = recInfo.getRecordSize(reply.readDirect(0));
-        bufPos += len;
-        bufRemaining -= len;
-        return reply.readDirect(len);
-    }
-    virtual void stop() override
-    {
-        close();
-        eof = true;
-    }
-protected:
-    const RtlRecord &recInfo;
-};
-
-extern IRemoteFileIO *createRemoteFilteredFile(SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
+extern IRemoteFileIO *createRemoteFilteredFile(const SocketEndpoint &ep, const StringBuffer &metaInfo, const char *partFileName, unsigned partNum, unsigned partCopy, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseN)
 {
     try
     {
-        return new CRemoteFilteredFileIO(ep, filename, actual, projected, fieldFilters, compressed, grouped, chooseN);
+        return new CRemoteFilteredFileIO(ep, metaInfo, partFileName, partNum, partCopy, actual, projected, fieldFilters, compressed, grouped, chooseN);
     }
     catch (IException *e)
     {
@@ -2058,8 +2043,8 @@ class CRemoteFilteredKeyIO : public CRemoteFilteredFileIOBase
 public:
     // Really a stream, but life (maybe) easier elsewhere if looks like a file
     // Sometime should refactor to be based on ISerialStream instead - or maybe IRowStream.
-    CRemoteFilteredKeyIO(SocketEndpoint &ep, const char *filename, unsigned crc, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
-        : CRemoteFilteredFileIOBase(ep, filename, actual, projected, fieldFilters, chooseN)
+    CRemoteFilteredKeyIO(const SocketEndpoint &ep, const StringBuffer &metaInfo, const char *partFileName, unsigned partNum, unsigned partCopy, unsigned crc, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
+        : CRemoteFilteredFileIOBase(ep, metaInfo, partFileName, partNum, partCopy, actual, projected, fieldFilters, chooseN)
     {
         request.appendf(",\n \"kind\" : \"indexread\"");
         request.appendf(",\n \"crc\" : \"%u\"", crc);
@@ -2071,8 +2056,8 @@ class CRemoteFilteredKeyCountIO : public CRemoteFilteredFileIOBase
 public:
     // Really a stream, but life (maybe) easier elsewhere if looks like a file
     // Sometime should refactor to be based on ISerialStream instead - or maybe IRowStream.
-    CRemoteFilteredKeyCountIO(SocketEndpoint &ep, const char *filename, unsigned crc, IOutputMetaData *actual, const RowFilter &fieldFilters, unsigned __int64 rowLimit)
-        : CRemoteFilteredFileIOBase(ep, filename, actual, actual, fieldFilters, rowLimit)
+    CRemoteFilteredKeyCountIO(const SocketEndpoint &ep, const StringBuffer &metaInfo, const char *partFileName, unsigned partNum, unsigned partCopy, unsigned crc, IOutputMetaData *actual, const RowFilter &fieldFilters, unsigned __int64 rowLimit)
+        : CRemoteFilteredFileIOBase(ep, metaInfo, partFileName, partNum, partCopy, actual, actual, fieldFilters, rowLimit)
     {
         request.appendf(",\n \"kind\" : \"indexcount\"");
         request.appendf(",\n \"crc\" : \"%u\"", crc);
@@ -2088,20 +2073,24 @@ class CRemoteKey : public CSimpleInterfaceOf<IIndexLookup>
     Owned<ISerialStream> strm;
     bool pending = false;
     SocketEndpoint ep;
-    StringAttr filename;
+    unsigned partNum, partCopy;
     unsigned crc;
     Linked<IOutputMetaData> actual, projected;
     RowFilter fieldFilters;
+    StringBuffer metaInfo;
+    StringAttr partFileName;
 
 public:
-    CRemoteKey(SocketEndpoint &_ep, const char *_filename, unsigned _crc, IOutputMetaData *_actual, IOutputMetaData *_projected, const RowFilter &_fieldFilters, unsigned __int64 rowLimit)
-        : ep(_ep), filename(_filename), crc(_crc), actual(_actual), projected(_projected)
+    CRemoteKey(const SocketEndpoint &_ep, const StringBuffer &_metaInfo, const char *_partFileName, unsigned _partNum, unsigned _partCopy, unsigned _crc, IOutputMetaData *_actual, IOutputMetaData *_projected, const RowFilter &_fieldFilters, unsigned __int64 rowLimit)
+        : ep(_ep), partNum(_partNum), partCopy(_partCopy), crc(_crc), actual(_actual), projected(_projected)
     {
+        metaInfo.append(_metaInfo.length(), _metaInfo.str());
+        partFileName.set(_partFileName);
         for (unsigned f=0; f<_fieldFilters.numFilterFields(); f++)
             fieldFilters.addFilter(OLINK(_fieldFilters.queryFilter(f)));
-        iRemoteFileIO.setown(new CRemoteFilteredKeyIO(ep, filename, crc, actual, projected, fieldFilters, rowLimit));
+        iRemoteFileIO.setown(new CRemoteFilteredKeyIO(ep, metaInfo, partFileName, partNum, partCopy, crc, actual, projected, fieldFilters, rowLimit));
         if (!iRemoteFileIO)
-            throw MakeStringException(0, "Unable to open remote key part: '%s'", filename.get());
+            throw MakeStringException(0, "Unable to open remote key file: '%s'", _partFileName);
         strm.setown(createFileSerialStream(iRemoteFileIO));
         prefetcher.setown(projected->createDiskPrefetcher());
         assertex(prefetcher);
@@ -2118,7 +2107,7 @@ public:
     }
     virtual unsigned __int64 checkCount(unsigned __int64 limit) override
     {
-        Owned<IFileIO> iFileIO = new CRemoteFilteredKeyCountIO(ep, filename, crc, actual, fieldFilters, limit);
+        Owned<IFileIO> iFileIO = new CRemoteFilteredKeyCountIO(ep, metaInfo, partFileName, partNum, partCopy, crc, actual, fieldFilters, limit);
         unsigned __int64 result;
         iFileIO->read(0, sizeof(result), &result);
         return result;
@@ -2139,11 +2128,11 @@ public:
 };
 
 
-extern IIndexLookup *createRemoteFilteredKey(SocketEndpoint &ep, const char * filename, unsigned crc, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
+extern IIndexLookup *createRemoteFilteredKey(const SocketEndpoint &ep, const StringBuffer &metaInfo, const char *partFileName, unsigned partNum, unsigned partCopy, unsigned crc, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseN)
 {
     try
     {
-        return new CRemoteKey(ep, filename, crc, actual, projected, fieldFilters, chooseN);
+        return new CRemoteKey(ep, metaInfo, partFileName, partNum, partCopy, crc, actual, projected, fieldFilters, chooseN);
     }
     catch (IException *e)
     {
@@ -3990,8 +3979,6 @@ protected:
     void initCommon(IPropertyTree &config)
     {
         fileName.set(config.queryProp("fileName"));
-        if (isEmptyString(fileName))
-            throw MakeStringException(0, "CRemoteDiskBaseActivity: fileName missing");
 
         record = &inMeta->queryRecordAccessor(true);
         translator.setown(createRecordTranslator(outMeta->queryRecordAccessor(true), *record));
@@ -4474,7 +4461,6 @@ void verifyMetaInfo(IPropertyTree &actNode, bool authorizedOnly, const IProperty
         unsigned securityVersion = metaInfo->getPropInt("version");
 
         const char *keyPairName = metaInfo->queryProp("keyPairName");
-
         StringBuffer metaInfoSignature;
         if (!metaInfoEnvelope->getProp("signature", metaInfoSignature))
             throwStringExceptionV(0, "createRemoteActivity: missing signature");

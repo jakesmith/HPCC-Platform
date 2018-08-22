@@ -80,5 +80,6 @@ target_link_libraries ( remote
 IF (USE_OPENSSL)
     target_link_libraries ( remote 
     	securesocket
+        cryptohelper
     )
 ENDIF()
