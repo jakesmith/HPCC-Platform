@@ -837,22 +837,24 @@ ESPrequest DFUReadAccessRequest
 {
     string Name;
     string Cluster;
-    int ExpiryMinutes(1);
+    int ExpirySeconds(60);
     ESPenum SecAccessType AccessType;
-    string JobId; // job id from client ??
-    bool Refresh(false); // only return signature
-    bool ReturnJsonTypeInfo(false);    // optional ??
-    bool ReturnBinTypeInfo(false);     // optional ??
+    string JobId;
+    bool ReturnFileInfo(false);
+    bool ReturnJsonTypeInfo(false);
+    bool ReturnBinTypeInfo(false);
 };
 
 ESPresponse [exceptions_inline] DFUReadAccessResponse
 {
     string MetaInfoBlob;
     string KeyName;         // name of key used to encrypt
-    int ExpiryMinutes;
+    
+    // {NumParts, FilePartLocations, FileParts} depend on ReturnFileInfo in request
     int NumParts;        // number of parts in logical file
     ESParray<EspStruct DFUPartLocations> FilePartLocations;
     ESParray<EspStruct DFUPartCopies> FileParts;
+    
     binary RecordTypeInfoBin;   // optional
     string RecordTypeInfoJson;  // optional
 };

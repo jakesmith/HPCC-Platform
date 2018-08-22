@@ -5978,7 +5978,12 @@ void getFileMeta(IPropertyTree &metaInfo, IDistributedFile &file, IUserDescripto
     {
         metaInfo.setProp("keyPairName", keyPairName);
 
-        unsigned expirySecs = req.getExpiryMinutes()*60;
+        unsigned expirySecs = req.getExpirySeconds();
+
+        // JCSMORE - make this configurable
+        if (expirySecs > 86400)
+            expirySecs = 86400; //24 hours
+
         // setup "expiryTime"
         time_t simple;
         time(&simple);
@@ -6043,106 +6048,73 @@ const char *getFileDafilesrvKeyName(IDistributedFile &file)
     return keyPairName;
 }
 
-void CWsDfuEx::getReadAccess(IEspContext &context, IUserDescriptor *udesc, IEspDFUReadAccessRequest &oreq, DFUReadAccessRequest &req, IEspDFUReadAccessResponse &oresp, DFUReadAccessResponse &resp)
+void CWsDfuEx::getReadAccess(IEspContext &context, IUserDescriptor *udesc, IEspDFUReadAccessRequest &req, IEspDFUReadAccessResponse &resp)
 {
-    Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(req.logicalName, udesc, false, false, true); // lock super-owners
+    Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(req.getName(), udesc, false, false, true); // lock super-owners
     if (!df)
-        throw MakeStringException(ECLWATCH_FILE_NOT_EXIST,"Cannot find file %s.", req.logicalName);
+        throw MakeStringException(ECLWATCH_FILE_NOT_EXIST,"Cannot find file %s.", req.getName());
 
-    StringArray clusters;
-    df->getClusterNames(clusters);
-    if (!FindInStringArray(clusters, req.clusterName))
-        throw MakeStringException(ECLWATCH_FILE_NOT_EXIST,"Cannot find file %s on %s.", req.logicalName, req.clusterName);
-
-    if (!req.refresh)
+    if (!isEmptyString(req.getCluster()))
     {
-        resp.numParts = getFilePartsInfo(context, df, req.clusterName, resp.dfuPartLocations, resp.dfuPartCopies);
-        if (req.returnJsonTypeInfo || req.returnBinTypeInfo)
+        StringArray clusters;
+        df->getClusterNames(clusters);
+        if (!FindInStringArray(clusters, req.getCluster()))
+            throw MakeStringException(ECLWATCH_FILE_NOT_EXIST,"Cannot find file %s on %s.", req.getName(), req.getCluster());
+    }
+
+    if (req.getReturnFileInfo())
+    {
+        IArrayOf<IEspDFUPartLocations> dfuPartLocations;
+        IArrayOf<IEspDFUPartCopies> dfuPartCopies;
+        resp.setNumParts(getFilePartsInfo(context, df, req.getCluster(), dfuPartLocations, dfuPartCopies));
+        resp.setFilePartLocations(dfuPartLocations);
+        resp.setFileParts(dfuPartCopies);
+        if (req.getReturnJsonTypeInfo() || req.getReturnJsonTypeInfo())
         {
-            if (!getRecordFormatFromRtlType(resp.binLayout, resp.jsonLayout, df->queryAttributes(), req.returnBinTypeInfo, req.returnJsonTypeInfo))
-                getRecordFormatFromECL(resp.binLayout.clear(), resp.jsonLayout.clear(), df->queryAttributes(), req.returnBinTypeInfo, req.returnJsonTypeInfo);
+            MemoryBuffer binLayout;
+            StringBuffer jsonLayout;
+            if (!getRecordFormatFromRtlType(binLayout, jsonLayout, df->queryAttributes(), req.getReturnJsonTypeInfo(), req.getReturnJsonTypeInfo()))
+                getRecordFormatFromECL(binLayout, jsonLayout, df->queryAttributes(), req.getReturnJsonTypeInfo(), req.getReturnJsonTypeInfo());
+            if (req.getReturnJsonTypeInfo() && jsonLayout.length())
+                resp.setRecordTypeInfoJson(jsonLayout.str());
+            if (req.getReturnBinTypeInfo() && binLayout.length())
+                resp.setRecordTypeInfoBin(binLayout);
         }
     }
 
     const char *keyPairName = getFileDafilesrvKeyName(*df);
 
     Owned<IPropertyTree> metaInfo = createPTree();
-    getFileMeta(*metaInfo, *df, *udesc, keyPairName, oreq);
+    getFileMeta(*metaInfo, *df, *udesc, keyPairName, req);
     StringBuffer metaInfoJsonBlob;
     toJSON(metaInfo, metaInfoJsonBlob);
-    oresp.setMetaInfoBlob(metaInfoJsonBlob);
-    oresp.setKeyName(keyPairName);
+    resp.setMetaInfoBlob(metaInfoJsonBlob);
+    resp.setKeyName(keyPairName);
 }
 
 bool CWsDfuEx::onDFUReadAccess(IEspContext &context, IEspDFUReadAccessRequest &req, IEspDFUReadAccessResponse &resp)
 {
     try
     {
-        if (!context.validateFeatureAccess(FEATURE_URL, SecAccess_Read, false))
+        if (!context.validateFeatureAccess(FEATURE_URL, SecAccess_Read, false) || req.getAccessType() != CSecAccessType_Read)
             throw MakeStringException(ECLWATCH_DFU_ACCESS_DENIED, "Failed to CreateAndPublish. Permission denied.");
 
-        /* JCSMORE why is DFUReadAccessRequest necessary? why not pass/use IEspDFUReadAccessRequest ?
-         * NB: have changed to [for now alsp] pass IEspDFUReadAccessRequest to getReadAccess
-         */
-        DFUReadAccessRequest dfuReadAccessReq;
-        dfuReadAccessReq.logicalName = req.getName();
-        dfuReadAccessReq.clusterName = req.getCluster();
-
-        if (isEmptyString(dfuReadAccessReq.logicalName))
+        if (isEmptyString(req.getName()))
              throw MakeStringException(ECLWATCH_INVALID_INPUT, "No Name defined.");
-
-//        if (isEmptyString(dfuReadAccessReq.clusterName))
-//             throw MakeStringException(ECLWATCH_INVALID_INPUT, "No Cluster defined.");
-
-        dfuReadAccessReq.accessType = req.getAccessType();
-        if (dfuReadAccessReq.accessType == SecAccessType_Undefined)
-            throw MakeStringException(ECLWATCH_INVALID_INPUT,"AccessType not defined.");
 
         StringBuffer userID;
         context.getUserID(userID);
 
         Owned<IUserDescriptor> userDesc;
-        if(!userID.isEmpty())
+        if (!userID.isEmpty())
         {
             userDesc.setown(createUserDescriptor());
             userDesc->set(userID.str(), context.queryPassword(), context.querySignature());
         }
-
-        // JCSMORE - need to change this into a 'get securityInfo only' type flag
-        dfuReadAccessReq.refresh = req.getRefresh();
-        if (!dfuReadAccessReq.refresh)
-        {
-            dfuReadAccessReq.returnJsonTypeInfo = req.getReturnJsonTypeInfo();
-            dfuReadAccessReq.returnBinTypeInfo = req.getReturnBinTypeInfo();
-        }
-
-
-        // JCSMORE - make this configurable
-        dfuReadAccessReq.expiry = req.getExpiryMinutes();
-        if (dfuReadAccessReq.expiry > 1440)
-            dfuReadAccessReq.expiry = 1440; //24 hours
-
-        // JCSMORE why use DFUReadAccessResponse and not use IEspDFUReadAccessResponse directly?
         DFUReadAccessResponse dfuReadAccessResp;
-        getReadAccess(context, userDesc, req, dfuReadAccessReq, resp, dfuReadAccessResp);
-
-        if (!dfuReadAccessReq.refresh)
-        {
-            resp.setNumParts(dfuReadAccessResp.numParts);
-            resp.setFilePartLocations(dfuReadAccessResp.dfuPartLocations);
-            resp.setFileParts(dfuReadAccessResp.dfuPartCopies);
-            if (dfuReadAccessReq.returnJsonTypeInfo && dfuReadAccessResp.jsonLayout.length())
-                resp.setRecordTypeInfoJson(dfuReadAccessResp.jsonLayout.str());
-            if (dfuReadAccessReq.returnBinTypeInfo && dfuReadAccessResp.binLayout.length())
-                resp.setRecordTypeInfoBin(dfuReadAccessResp.binLayout);
-        }
-
-        ///    resp.setAccessToken(accessToken.str());
-        ///resp.setKeyName(keyName);
-        ///resp.setAccessType(accessType);
-        resp.setExpiryMinutes(dfuReadAccessReq.expiry);
+        getReadAccess(context, userDesc, req, resp);
     }
-    catch(IException *e)
+    catch (IException *e)
     {
         FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
     }

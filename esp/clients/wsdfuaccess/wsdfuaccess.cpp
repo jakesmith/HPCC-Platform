@@ -17,6 +17,7 @@
 
 //Jlib
 #include "jliball.hpp"
+#include "dautils.hpp"
 
 #include "ws_dfu.hpp"
 
@@ -39,10 +40,16 @@ bool WsDfuAccess_getMetaInfo(StringBuffer &metaInfoResult, const char *jobId, co
 
     Owned<IClientDFUReadAccessRequest> dfuReq = dfuClient->createDFUReadAccessRequest();
 
-    dfuReq->setName(logicalName);
-    //dfuReq->setCluster(const char * val);
-    unsigned expiryMins = expirySecs<=90?1:(expirySecs+30)/60;
-    dfuReq->setExpiryMinutes(expiryMins);
+    CDfsLogicalFileName lfn;
+    lfn.set(logicalName);
+
+    StringBuffer cluster, lfnName;
+    lfn.getCluster(cluster);
+    lfn.get(lfnName); // remove cluster if present
+
+    dfuReq->setName(lfnName);
+    dfuReq->setCluster(cluster);
+    dfuReq->setExpirySeconds(expirySecs);
     dfuReq->setAccessType(CSecAccessType_Read);
     dfuReq->setJobId(jobId);
     //dfuReq->setRefresh(bool val);

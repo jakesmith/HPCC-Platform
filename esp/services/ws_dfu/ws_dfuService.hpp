@@ -256,7 +256,7 @@ private:
     bool createDigitalSignature(const char *scope, IUserDescriptor *udesc, unsigned expirationMinutes, StringBuffer &b64sig);
     unsigned getFilePartsInfo(IEspContext &context, IDistributedFile *df, const char *clusterName,
         IArrayOf<IEspDFUPartLocations> &dfuPartLocations, IArrayOf<IEspDFUPartCopies> &dfuPartCopies);
-    void getReadAccess(IEspContext &context, IUserDescriptor *udesc, IEspDFUReadAccessRequest &oreq, DFUReadAccessRequest &req, IEspDFUReadAccessResponse &oresp, DFUReadAccessResponse &resp);
+    void getReadAccess(IEspContext &context, IUserDescriptor *udesc, IEspDFUReadAccessRequest &req, IEspDFUReadAccessResponse &resp);
 
     bool attachServiceToDali() override
     {

@@ -38,6 +38,8 @@ include_directories (
          ./../../../system/xmllib
          ./../../../system/security/shared 
          ./../../../system/security/securesocket 
+         ./../../../dali/base
+         ./../../../system/mp
          ./../../bindings 
          ./../../bindings/SOAP/client 
          ./../../bindings/SOAP/xpp 
@@ -54,6 +56,7 @@ target_link_libraries ( wsdfuaccess
          jlib
          xmllib 
          esphttp 
+         dalibase
     )
 
 
