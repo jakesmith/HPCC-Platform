@@ -3066,3 +3066,27 @@ IFileDescriptor *createFileDescriptorFromRoxieXML(IPropertyTree *tree,const char
     }
     return res.getLink();
 }
+
+void extractFilePartInfo(IPropertyTree &info, IFileDescriptor &file)
+{
+    IPropertyTree *fileInfoTree = info.setPropTree("FileInfo", createPTree());
+    Owned<IPartDescriptorIterator> partIter = file.getIterator();
+    ForEach(*partIter)
+    {
+        IPropertyTree *partTree = fileInfoTree->addPropTree("Part", createPTree());
+        IPartDescriptor &part = partIter->query();
+        unsigned nc = part.numCopies();
+        for (unsigned c=0; c<nc; c++)
+        {
+            RemoteFilename rfn;
+            part.getFilename(c, rfn);
+
+            IPropertyTree *copyTree = partTree->addPropTree("Copy", createPTree());
+            StringBuffer path;
+            copyTree->setProp("@filePath", rfn.getLocalPath(path));
+            // JCSMORE - don't really need host once request reaches dafilesrv
+            StringBuffer epStr;
+            copyTree->setProp("@host", rfn.queryEndpoint().getUrlStr(epStr));
+        }
+    }
+}

@@ -58,6 +58,19 @@
 #include "package.h"
 #include "daaudit.hpp"
 
+#if defined(_USE_OPENSSL)
+#include <openssl/pem.h>
+#include <openssl/evp.h>
+#include <openssl/rsa.h>
+#include <openssl/err.h>
+
+#include "jflz.hpp"
+#include "pke.hpp"
+
+using namespace cryptohelper;
+
+#endif
+
 #define     Action_Delete           "Delete"
 #define     Action_AddtoSuperfile   "Add To Superfile"
 static const char* FEATURE_URL="DfuAccess";
@@ -5938,10 +5951,84 @@ unsigned CWsDfuEx::getFilePartsInfo(IEspContext &context, IDistributedFile *df, 
     return df->numParts();
 }
 
-void CWsDfuEx::getReadAccess(IEspContext &context, IUserDescriptor *udesc, DFUReadAccessRequest &req, DFUReadAccessResponse &resp)
+void getFileSecurityMetaBlob(StringBuffer &securityInfoJsonBlob, IDistributedFile &file, IUserDescriptor &user, const char *keyPairName, IConstDFUReadAccessRequest &req)
+{
+    Owned<IPropertyTree> securityInfo = createPTree();
+    securityInfo->setProp("logicalFilename", file.queryLogicalName());
+    securityInfo->setProp("jobId", req.getJobId());
+    securityInfo->setProp("accessType", req.getAccessTypeAsString());
+    StringBuffer userStr;
+    securityInfo->setProp("user", user.getUserName(userStr).str());
+
+    securityInfo->setProp("keyPairName", keyPairName);
+
+    unsigned expirySecs = req.getExpiryMinutes()*60;
+    // setup "expiryTime"
+    time_t simple;
+    time(&simple);
+    simple += expirySecs;
+    CDateTime expiryDt;
+    expiryDt.set(simple);
+    StringBuffer expiryTimeStr;
+    expiryDt.getString(expiryTimeStr);
+    Owned<IPropertyTree> secureMetaInfo = createPTreeFromIPT(securityInfo);
+    secureMetaInfo->setProp("expiryTime", expiryTimeStr);
+
+    const char *clusterName = req.getCluster(); // can be null
+    Owned<IFileDescriptor> fDesc = file.getFileDescriptor(clusterName);
+    extractFilePartInfo(*secureMetaInfo, *fDesc);
+
+    // create random AES key and IV
+    char randomAesKey[aesKeySize];
+    char randomIV[aesBlockSize];
+    fillRandomData(aesKeySize, randomAesKey);
+    fillRandomData(aesBlockSize, randomIV);
+
+    // 1st serialize to JSON
+    StringBuffer secureMetaInfoJson;
+    toJSON(secureMetaInfo, secureMetaInfoJson);
+    PROGLOG("Pre-encrypting:\n%s", secureMetaInfoJson.str());
+
+    // 2nd compress
+    MemoryBuffer compressedSecureMetaInfoMb;
+    fastLZCompressToBuffer(compressedSecureMetaInfoMb, secureMetaInfoJson.length(), secureMetaInfoJson.str());
+
+    // 3rd encrypt with AES key
+    MemoryBuffer encryptedSecureMetaInfoMb;
+    aesKeyEncrypt(encryptedSecureMetaInfoMb, compressedSecureMetaInfoMb.length(), compressedSecureMetaInfoMb.bytes(), randomAesKey, randomIV);
+
+    securityInfo->setPropBin("secureInfo", encryptedSecureMetaInfoMb.length(), encryptedSecureMetaInfoMb.bytes());
+
+    // 4th encrypt AES key with public *DAFILESRV* key
+    VStringBuffer publicKeyFName("%s.pub.pem", keyPairName); // JCSMORE - could cache loaded keys
+    Owned<CLoadedKey> publicKey = loadPublicKeyFromFile(publicKeyFName, nullptr);
+    MemoryBuffer encryptedAesKeyMb;
+    publicKeyEncrypt(encryptedAesKeyMb, aesKeySize, randomAesKey, *publicKey);
+
+    /* perhaps should combine into single prob..
+     * Does IV need to be generated/sent each time?
+     */
+    securityInfo->setPropBin("securityKey", encryptedAesKeyMb.length(), encryptedAesKeyMb.bytes());
+    securityInfo->setPropBin("securityIV", aesBlockSize, randomIV);
+
+    toJSON(securityInfo, securityInfoJsonBlob);
+}
+
+const char *getFileDafilesrvKeyName(IDistributedFile &file)
+{
+    /* JCSMORE - key needs to be looked up..
+     * potentially different per target group, but must be same for all dafilesrv's related to a file.
+     * [ unless we change scheme so that there is a separate encrypted blob per part - then we could have a different key per dafilesrv. ]
+     */
+    const char *keyPairName = "/home/jsmith/.ssh/id_rsa";
+
+    return keyPairName;
+}
+
+void CWsDfuEx::getReadAccess(IEspContext &context, IUserDescriptor *udesc, IEspDFUReadAccessRequest &oreq, DFUReadAccessRequest &req, IEspDFUReadAccessResponse &oresp, DFUReadAccessResponse &resp)
 {
     Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(req.logicalName, udesc, false, false, true); // lock super-owners
-    if(!df)
+    if (!df)
         throw MakeStringException(ECLWATCH_FILE_NOT_EXIST,"Cannot find file %s.", req.logicalName);
 
     StringArray clusters;
@@ -5959,15 +6046,12 @@ void CWsDfuEx::getReadAccess(IEspContext &context, IUserDescriptor *udesc, DFURe
         }
     }
 
-    //TODO: Still not decide what kind of string should be used for createDigitalSignature? scope, file name,
-    //the xml string of the IDistributedFile, or the xml string of the FileDetail?
-    /*StringBuffer scopes, accessToken;
-    CDfsLogicalFileName dlfn;
-    dlfn.set(logicalName);
-    dlfn.getScopes(scopes);
-    if (createDigitalSignature(scopes.str(), userDesc, expiry, accessToken))
-        resp.setAccessToken(accessToken.str());*/
+    const char *keyPairName = getFileDafilesrvKeyName(*df);
 
+    StringBuffer securityInfoJsonBlob;
+    getFileSecurityMetaBlob(securityInfoJsonBlob, *df, *udesc, keyPairName, oreq);
+    oresp.setMetaInfoBlob(securityInfoJsonBlob);
+    oresp.setKeyName(keyPairName);
 }
 
 bool CWsDfuEx::onDFUReadAccess(IEspContext &context, IEspDFUReadAccessRequest &req, IEspDFUReadAccessResponse &resp)
@@ -5977,13 +6061,19 @@ bool CWsDfuEx::onDFUReadAccess(IEspContext &context, IEspDFUReadAccessRequest &r
         if (!context.validateFeatureAccess(FEATURE_URL, SecAccess_Read, false))
             throw MakeStringException(ECLWATCH_DFU_ACCESS_DENIED, "Failed to CreateAndPublish. Permission denied.");
 
+        /* JCSMORE why is DFUReadAccessRequest necessary? why not pass/use IEspDFUReadAccessRequest ?
+         * NB: have changed to [for now alsp] pass IEspDFUReadAccessRequest to getReadAccess
+         */
         DFUReadAccessRequest dfuReadAccessReq;
         dfuReadAccessReq.logicalName = req.getName();
         dfuReadAccessReq.clusterName = req.getCluster();
+
         if (isEmptyString(dfuReadAccessReq.logicalName))
              throw MakeStringException(ECLWATCH_INVALID_INPUT, "No Name defined.");
-        if (isEmptyString(dfuReadAccessReq.clusterName))
-             throw MakeStringException(ECLWATCH_INVALID_INPUT, "No Cluster defined.");
+
+//        if (isEmptyString(dfuReadAccessReq.clusterName))
+//             throw MakeStringException(ECLWATCH_INVALID_INPUT, "No Cluster defined.");
+
         dfuReadAccessReq.accessType = req.getAccessType();
         if (dfuReadAccessReq.accessType == SecAccessType_Undefined)
             throw MakeStringException(ECLWATCH_INVALID_INPUT,"AccessType not defined.");
@@ -5998,18 +6088,23 @@ bool CWsDfuEx::onDFUReadAccess(IEspContext &context, IEspDFUReadAccessRequest &r
             userDesc->set(userID.str(), context.queryPassword(), context.querySignature());
         }
 
+        // JCSMORE - need to change this into a 'get securityInfo only' type flag
         dfuReadAccessReq.refresh = req.getRefresh();
         if (!dfuReadAccessReq.refresh)
         {
             dfuReadAccessReq.returnJsonTypeInfo = req.getReturnJsonTypeInfo();
             dfuReadAccessReq.returnBinTypeInfo = req.getReturnBinTypeInfo();
         }
+
+
+        // JCSMORE - make this configurable
         dfuReadAccessReq.expiry = req.getExpiryMinutes();
         if (dfuReadAccessReq.expiry > 1440)
             dfuReadAccessReq.expiry = 1440; //24 hours
 
+        // JCSMORE why use DFUReadAccessResponse and not use IEspDFUReadAccessResponse directly?
         DFUReadAccessResponse dfuReadAccessResp;
-        getReadAccess(context, userDesc, dfuReadAccessReq, dfuReadAccessResp);
+        getReadAccess(context, userDesc, req, dfuReadAccessReq, resp, dfuReadAccessResp);
 
         if (!dfuReadAccessReq.refresh)
         {

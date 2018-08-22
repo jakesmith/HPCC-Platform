@@ -325,7 +325,7 @@ public:
         StringBuffer token, user, password;
         job.queryWorkUnit().getSecurityToken(StringBufferAdaptor(token));
         extractToken(token, wu.queryWuid(), StringBufferAdaptor(user), StringBufferAdaptor(password));
-        WsDfuAccess_getSecurityInfo(securityInfoResult, logicalName, job.queryWuid(), access, expirySecs, user, password);
+        WsDfuAccess_getSecurityInfo(securityInfoResult, job.queryWuid(), logicalName, access, expirySecs, user, password);
 
         return true;
     }

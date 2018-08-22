@@ -322,7 +322,7 @@ void CDiskRecordPartHandler::open()
     }
 
     // if forced and all remote copies failed, report exceptions
-    if (activity.getOptBool(THOROPT_FORCE_REMOTE_READ) && (remoteCopiesAttempted == partDesc->numCopies()))
+    if (activity.getOptBool(THOROPT_FORCE_REMOTE_READ) && (remoteExceptions && remoteCopiesAttempted == remoteExceptions->ordinality()))
     {
         StringBuffer msg;
         remoteExceptions->errorMessage(msg);

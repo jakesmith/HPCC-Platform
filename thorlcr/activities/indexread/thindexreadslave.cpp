@@ -231,7 +231,7 @@ public:
                     }
                 }
                 // if forced and all remote copies failed, report exceptions
-                if (getOptBool(THOROPT_FORCE_REMOTE_READ) && (remoteCopiesAttempted == part.numCopies()))
+                if (getOptBool(THOROPT_FORCE_REMOTE_READ) && (remoteExceptions && remoteCopiesAttempted == remoteExceptions->ordinality()))
                 {
                     StringBuffer msg;
                     remoteExceptions->errorMessage(msg);
