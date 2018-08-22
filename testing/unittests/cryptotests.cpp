@@ -78,8 +78,10 @@ class CryptoUnitTest : public CppUnit::TestFixture
 public:
     CPPUNIT_TEST_SUITE(CryptoUnitTest);
         CPPUNIT_TEST(digiSignTests);
+#ifdef _USE_OPENSSL
         CPPUNIT_TEST(pkeTests);
         CPPUNIT_TEST(aesWithRsaEncryptedKey);
+#endif
     CPPUNIT_TEST_SUITE_END();
 
 protected:
@@ -300,25 +302,7 @@ protected:
         printf("Completed executing digiSign() unit tests\n");
     }
 
-    void fillRandomData(size32_t writeSz, void *_writePtr)
-    {
-        assertex(0 == (writeSz % sizeof(unsigned)));
-        unsigned *writePtr = (unsigned *)_writePtr;
-        unsigned *bufEnd = (unsigned *)(((byte *)writePtr)+writeSz);
-        while (true)
-        {
-            *writePtr++ = getRandom();
-            if (writePtr+sizeof(unsigned)>=bufEnd)
-                break;
-        }
-    }
-
-    void fillRandomData(size32_t writeSz, MemoryBuffer &mb)
-    {
-        void *writePtr = mb.reserveTruncate(writeSz);
-        fillRandomData(writeSz, writePtr);
-    }
-
+#ifdef _USE_OPENSSL
     void pkeTests()
     {
         try
@@ -406,6 +390,8 @@ protected:
             throw;
         }
     }
+#endif
+
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION( CryptoUnitTest );

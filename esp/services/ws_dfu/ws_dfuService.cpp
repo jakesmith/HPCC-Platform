@@ -5964,6 +5964,7 @@ void getFileMeta(IPropertyTree &metaInfo, IDistributedFile &file, IUserDescripto
     const char *clusterName = req.getCluster(); // can be null
     Owned<IFileDescriptor> fDesc = file.getFileDescriptor(clusterName);
 
+#ifdef _USE_OPENSSL
     if (keyPairName) // without it, meta data is not encrypted
     {
         metaInfo.setProp("keyPairName", keyPairName);
@@ -6015,6 +6016,7 @@ void getFileMeta(IPropertyTree &metaInfo, IDistributedFile &file, IUserDescripto
         metaInfo.setPropBin("securityIV", aesBlockSize, randomIV);
     }
     else
+#endif
         extractFilePartInfo(metaInfo, *fDesc);
 }
 
@@ -6025,6 +6027,9 @@ const char *getFileDafilesrvKeyName(IDistributedFile &file)
      * [ unless we change scheme so that there is a separate encrypted blob per part - then we could have a different key per dafilesrv. ]
      */
     const char *keyPairName = "/home/jsmith/.ssh/id_rsa";
+
+    // JCSMORE - option to have authorization disabled in configuration
+    //keyPairName = nullptr;
 
     return keyPairName;
 }

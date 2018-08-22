@@ -186,7 +186,7 @@ struct dummyReadWrite
 // backward compatible modes
 typedef enum { compatIFSHnone, compatIFSHread, compatIFSHwrite, compatIFSHexec, compatIFSHall} compatIFSHmode;
 
-static const char *VERSTRING= "DS V2.2"       // dont forget FILESRV_VERSION in header
+static const char *VERSTRING= "DS V2.3"       // dont forget FILESRV_VERSION in header
 #ifdef _WIN32
 "Windows ";
 #else
@@ -4443,15 +4443,24 @@ void verifyAuthorization(IPropertyTree &securityInfo, IPropertyTree &secureMetaI
         throwStringExceptionV(0, "createRemoteActivity: authorization expired");
 }
 
-IPropertyTree *verifyMetaInfo(IPropertyTree &metaInfo)
+IPropertyTree *verifyMetaInfo(IPropertyTree &metaInfo, bool authorizedOnly)
 {
-#if defined(_USE_OPENSSL) && !defined(_WIN32)
+#ifdef _USE_OPENSSL
     // version for future use
     unsigned securityVersion = metaInfo.getPropInt("version");
 
     const char *keyPairName = metaInfo.queryProp("keyPairName");
     if (isEmptyString(keyPairName))
-        throwStringExceptionV(0, "createRemoteActivity: missing keyPairName");
+    {
+        if (authorizedOnly)
+            throwStringExceptionV(0, "createRemoteActivity: unathorized meta info");
+        else
+        {
+            IPropertyTree *fileInfo = metaInfo.queryPropTree("FileInfo");
+            assertex(fileInfo);
+            return LINK(fileInfo);
+        }
+    }
 
     MemoryBuffer secureInfoMb;
     if (!metaInfo.getPropBin("secureInfo", secureInfoMb))
@@ -4487,13 +4496,12 @@ IPropertyTree *verifyMetaInfo(IPropertyTree &metaInfo)
     return metaInfo.getPropTree("FileInfo");
 }
 
-IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
+IRemoteActivity *createRemoteActivity(IPropertyTree &actNode, bool authorizedOnly)
 {
     IPropertyTree *metaInfo = actNode.queryPropTree("metaInfo");
     dbgassertex(metaInfo);
 
-    Owned<IPropertyTree> fileInfo = verifyMetaInfo(*metaInfo);
-
+    Owned<IPropertyTree> fileInfo = verifyMetaInfo(*metaInfo, authorizedOnly);
 
     dbgassertex(actNode.hasProp("filePart"));
     unsigned partNum = actNode.getPropInt("filePart");
@@ -4574,11 +4582,11 @@ IRemoteActivity *createRemoteActivity(IPropertyTree &actNode)
     return activity.getClear();
 }
 
-IRemoteActivity *createOutputActivity(IPropertyTree &requestTree)
+IRemoteActivity *createOutputActivity(IPropertyTree &requestTree, bool authorizedOnly)
 {
     IPropertyTree *actNode = requestTree.queryPropTree("node");
     assertex(actNode);
-    return createRemoteActivity(*actNode);
+    return createRemoteActivity(*actNode, authorizedOnly);
 }
 
 #define MAX_KEYDATA_SZ 0x10000
@@ -5220,6 +5228,7 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
     CClientStatsTable clientStatsTable;
     atomic_t globallasttick;
     unsigned targetActiveThreads;
+    bool authorizedOnly;
 
     int getNextHandle()
     {
@@ -5371,8 +5380,8 @@ public:
 
     IMPLEMENT_IINTERFACE
 
-    CRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy)
-        : asyncCommandManager(maxAsyncCopy), stdCmdThrottler("stdCmdThrotlter"), slowCmdThrottler("slowCmdThrotlter")
+    CRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy, bool _authorizedOnly)
+        : asyncCommandManager(maxAsyncCopy), stdCmdThrottler("stdCmdThrotlter"), slowCmdThrottler("slowCmdThrotlter"), authorizedOnly(_authorizedOnly)
     {
         lasthandle = 0;
         selecthandler.setown(createSocketSelectHandler(NULL));
@@ -6344,7 +6353,7 @@ public:
             replyLimit = requestTree->getPropInt64("replyLimit", defaultDaFSReplyLimitKB) * 1024;
 
             // In future this may be passed the request and build a chain of activities and return sink.
-            outputActivity.setown(createOutputActivity(*requestTree));
+            outputActivity.setown(createOutputActivity(*requestTree, authorizedOnly));
 
             Owned<CRemoteRequest> remoteRequest = new CRemoteRequest(outputFormat, replyLimit, outputActivity);
 
@@ -7245,12 +7254,12 @@ public:
 };
 
 
-IRemoteFileServer * createRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy)
+IRemoteFileServer * createRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy, bool authorizedOnly)
 {
 #if SIMULATE_PACKETLOSS
     errorSimulationOn = false;
 #endif
-    return new CRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy);
+    return new CRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy, authorizedOnly);
 }
 
 
