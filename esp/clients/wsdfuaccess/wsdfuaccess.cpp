@@ -23,7 +23,7 @@
 #include "wsdfuaccess.hpp"
 
 
-bool WsDfuAccess_getSecurityInfo(StringBuffer &securityInfoResult, const char *jobId, const char *logicalName, const char *access, unsigned expirySecs, const char *user, const char *token)
+bool WsDfuAccess_getMetaInfo(StringBuffer &metaInfoResult, const char *jobId, const char *logicalName, const char *access, unsigned expirySecs, const char *user, const char *token)
 {
     // JCSMORE via config
     const char *espHost = "localhost";
@@ -55,6 +55,6 @@ bool WsDfuAccess_getSecurityInfo(StringBuffer &securityInfoResult, const char *j
     if (excep->ordinality() > 0)
         throw LINK((IMultiException *)excep); // JCSMORE - const IException.. not caught in general..
 
-    securityInfoResult.append(dfuResp->getMetaInfoBlob());
+    metaInfoResult.append(dfuResp->getMetaInfoBlob());
     return true;
 }

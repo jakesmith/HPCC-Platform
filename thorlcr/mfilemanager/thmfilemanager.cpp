@@ -318,120 +318,16 @@ public:
         return ret;
     }
 
-#if 1
-    bool getSecurityInfo(StringBuffer &securityInfoResult, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
+    bool getMetaInfo(StringBuffer &metaInfoResult, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
     {
         IConstWorkUnit &wu = job.queryWorkUnit();
         StringBuffer token, user, password;
         job.queryWorkUnit().getSecurityToken(StringBufferAdaptor(token));
         extractToken(token, wu.queryWuid(), StringBufferAdaptor(user), StringBufferAdaptor(password));
-        WsDfuAccess_getSecurityInfo(securityInfoResult, job.queryWuid(), logicalName, access, expirySecs, user, password);
+        WsDfuAccess_getMetaInfo(metaInfoResult, job.queryWuid(), logicalName, access, expirySecs, user, password);
 
         return true;
     }
-#else
-    bool getSecurityInfo(StringBuffer &securityInfoResult, IDistributedFile &file, CJobBase &job, const char *logicalName, const char *access, unsigned expirySecs)
-    {
-        const char *keyPairName = "/home/jsmith/.ssh/id_rsa"; // JCSMORE!!
-        const char *privateKeyFName = keyPairName;
-        StringBuffer publicKeyStr(keyPairName);
-        const char *publicKeyFName = publicKeyStr.append(".pub.pem");
-
-        /*
-         * REQUEST { lfn, access, jobId, *implicit user* } -> ESP service..
-         *
-         * RESPONSE { lfn, access, jobId, user, key, securityToken }  // securityToken contains lfn,access,jobId,user as well.
-         */
-
-        /* JCSMORE - fake it for now
-         *
-         * Should be replaced, by call to SOAP service, that sends REQUEST...
-         * and gets back something like the fake 'securityInfo' tree (in JSON form(?)) being created below
-         */
-
-
-
-        // THIS WILL BE CREATED AT THE SERVER(ESP) ...
-        Owned<IPropertyTree> securityInfo = createPTree();
-        securityInfo->setProp("logicalFilename", logicalName);
-        securityInfo->setProp("jobId", job.queryWuid());
-        securityInfo->setProp("accessType", access);
-        StringBuffer userStr;
-        securityInfo->setProp("user", job.queryUserDescriptor()->getUserName(userStr).str());
-
-        securityInfo->setProp("keyPairName", keyPairName); // JCSMORE!!
-
-        //
-        time_t simple;
-        time(&simple);
-        simple += expirySecs;
-        CDateTime expiryDt;
-        expiryDt.set(simple);
-        StringBuffer expiryTimeStr;
-        expiryDt.getString(expiryTimeStr);
-        Owned<IPropertyTree> secureMetaInfo = createPTreeFromIPT(securityInfo);
-        secureMetaInfo->setProp("expiryTime", expiryTimeStr);
-
-        IPropertyTree *fileInfoTree = secureMetaInfo->setPropTree("FileInfo", createPTree());
-        Owned<IDistributedFilePartIterator> partIter = file.getIterator();
-        ForEach(*partIter)
-        {
-            IPropertyTree *partTree = fileInfoTree->addPropTree("Part", createPTree());
-            IDistributedFilePart &part = partIter->query();
-            unsigned nc = part.numCopies();
-            for (unsigned c=0; c<nc; c++)
-            {
-                RemoteFilename rfn;
-                part.getFilename(rfn, c);
-
-                IPropertyTree *copyTree = partTree->addPropTree("Copy", createPTree());
-                StringBuffer path;
-                copyTree->setProp("@filePath", rfn.getLocalPath(path));
-                // JCSMORE - don't really need host once request reaches dafilesrv
-                StringBuffer epStr;
-                copyTree->setProp("@host", rfn.queryEndpoint().getUrlStr(epStr));
-            }
-        }
-
-        // create random AES key and IV
-        char randomAesKey[aesKeySize];
-        char randomIV[aesBlockSize];
-        fillRandomData(aesKeySize, randomAesKey);
-        fillRandomData(aesBlockSize, randomIV);
-
-        // 1st serialize to JSON
-        StringBuffer secureMetaInfoJson;
-        toJSON(secureMetaInfo, secureMetaInfoJson);
-        PROGLOG("Pre-encrypting:\n%s", secureMetaInfoJson.str());
-
-        // 2nd compress
-        MemoryBuffer compressedSecureMetaInfoMb;
-        fastLZCompressToBuffer(compressedSecureMetaInfoMb, secureMetaInfoJson.length(), secureMetaInfoJson.str());
-        // Remember: this is on [supposed to be] on ESP
-
-        // 3rd encrypt with AES key
-        MemoryBuffer encryptedSecureMetaInfoMb;
-        aesKeyEncrypt(encryptedSecureMetaInfoMb, compressedSecureMetaInfoMb.length(), compressedSecureMetaInfoMb.bytes(), randomAesKey, randomIV);
-
-        securityInfo->setPropBin("secureInfo", encryptedSecureMetaInfoMb.length(), encryptedSecureMetaInfoMb.bytes());
-
-        // 4th encrypt AES key with public *DAFILESRV* key
-        Owned<CLoadedKey> publicKey = loadPublicKeyFromFile(publicKeyFName, nullptr);
-        MemoryBuffer encryptedAesKeyMb;
-        publicKeyEncrypt(encryptedAesKeyMb, aesKeySize, randomAesKey, *publicKey);
-
-        /* perhaps should combine into single prob..
-         * Does IV need to be generated/sent each time?
-         */
-        securityInfo->setPropBin("securityKey", encryptedAesKeyMb.length(), encryptedAesKeyMb.bytes());
-        securityInfo->setPropBin("securityIV", aesBlockSize, randomIV);
-
-        // This is what client (e.g. Spark, ThorMaster or HThor) will see.
-        toJSON(securityInfo, securityInfoResult);
-
-        return true;
-    }
-#endif
 
 // IThorFileManager impl.
     void clearCacheEntry(const char *name)
@@ -524,9 +420,9 @@ public:
             /* Really this should happen as part of DFS lookup() (would need to pass some tokens, like jobID), so that it
              * could do scope authorization checks, meta fetching, security token fetching in 1 hop.
              */
-            StringBuffer securityInfo;
-            if (getSecurityInfo(securityInfo, job, scopedName, "READ", defaultDafilesrvExpirySecs))
-                file->setSecurityInfo(securityInfo);
+            StringBuffer metaInfo;
+            if (getMetaInfo(metaInfo, job, scopedName, "READ", defaultDafilesrvExpirySecs))
+                file->setMetaInfo(metaInfo);
         }
         catch (IException *e)
         {

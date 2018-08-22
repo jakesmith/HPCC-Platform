@@ -27,9 +27,9 @@
 
 #endif
 
-#include "cryptocommon.hpp"
-
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
+
+#include "cryptocommon.hpp"
 
 namespace cryptohelper
 {
@@ -70,9 +70,9 @@ CRYPTOHELPER_API void aesKeyEncrypt(MemoryBuffer &out, size32_t inSz, const void
 CRYPTOHELPER_API void aesKeyDecrypt(MemoryBuffer &out, size32_t inSz, const void *inBytes, const char key[aesKeySize], const char iv[aesBlockSize]);
 
 
-#endif // end of #if defined(_USE_OPENSSL) && !defined(_WIN32)
-
 } // end of namespace cryptohelper
 
-#endif
+#endif // end of #if defined(_USE_OPENSSL) && !defined(_WIN32)
+
+#endif // PKE_HPP
 

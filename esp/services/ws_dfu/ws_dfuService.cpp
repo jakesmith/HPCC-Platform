@@ -5951,67 +5951,71 @@ unsigned CWsDfuEx::getFilePartsInfo(IEspContext &context, IDistributedFile *df, 
     return df->numParts();
 }
 
-void getFileSecurityMetaBlob(StringBuffer &securityInfoJsonBlob, IDistributedFile &file, IUserDescriptor &user, const char *keyPairName, IConstDFUReadAccessRequest &req)
+static const char *securityInfoVersion="1";
+void getFileMeta(IPropertyTree &metaInfo, IDistributedFile &file, IUserDescriptor &user, const char *keyPairName, IConstDFUReadAccessRequest &req)
 {
-    Owned<IPropertyTree> securityInfo = createPTree();
-    securityInfo->setProp("logicalFilename", file.queryLogicalName());
-    securityInfo->setProp("jobId", req.getJobId());
-    securityInfo->setProp("accessType", req.getAccessTypeAsString());
+    metaInfo.setProp("version", securityInfoVersion);
+    metaInfo.setProp("logicalFilename", file.queryLogicalName());
+    metaInfo.setProp("jobId", req.getJobId());
+    metaInfo.setProp("accessType", req.getAccessTypeAsString());
     StringBuffer userStr;
-    securityInfo->setProp("user", user.getUserName(userStr).str());
-
-    securityInfo->setProp("keyPairName", keyPairName);
-
-    unsigned expirySecs = req.getExpiryMinutes()*60;
-    // setup "expiryTime"
-    time_t simple;
-    time(&simple);
-    simple += expirySecs;
-    CDateTime expiryDt;
-    expiryDt.set(simple);
-    StringBuffer expiryTimeStr;
-    expiryDt.getString(expiryTimeStr);
-    Owned<IPropertyTree> secureMetaInfo = createPTreeFromIPT(securityInfo);
-    secureMetaInfo->setProp("expiryTime", expiryTimeStr);
+    metaInfo.setProp("user", user.getUserName(userStr).str());
 
     const char *clusterName = req.getCluster(); // can be null
     Owned<IFileDescriptor> fDesc = file.getFileDescriptor(clusterName);
-    extractFilePartInfo(*secureMetaInfo, *fDesc);
 
-    // create random AES key and IV
-    char randomAesKey[aesKeySize];
-    char randomIV[aesBlockSize];
-    fillRandomData(aesKeySize, randomAesKey);
-    fillRandomData(aesBlockSize, randomIV);
+    if (keyPairName) // without it, meta data is not encrypted
+    {
+        metaInfo.setProp("keyPairName", keyPairName);
 
-    // 1st serialize to JSON
-    StringBuffer secureMetaInfoJson;
-    toJSON(secureMetaInfo, secureMetaInfoJson);
-    PROGLOG("Pre-encrypting:\n%s", secureMetaInfoJson.str());
+        unsigned expirySecs = req.getExpiryMinutes()*60;
+        // setup "expiryTime"
+        time_t simple;
+        time(&simple);
+        simple += expirySecs;
+        CDateTime expiryDt;
+        expiryDt.set(simple);
+        StringBuffer expiryTimeStr;
+        expiryDt.getString(expiryTimeStr);
+        Owned<IPropertyTree> secureMetaInfo = createPTreeFromIPT(&metaInfo);
+        secureMetaInfo->setProp("expiryTime", expiryTimeStr);
 
-    // 2nd compress
-    MemoryBuffer compressedSecureMetaInfoMb;
-    fastLZCompressToBuffer(compressedSecureMetaInfoMb, secureMetaInfoJson.length(), secureMetaInfoJson.str());
+        extractFilePartInfo(*secureMetaInfo, *fDesc);
 
-    // 3rd encrypt with AES key
-    MemoryBuffer encryptedSecureMetaInfoMb;
-    aesKeyEncrypt(encryptedSecureMetaInfoMb, compressedSecureMetaInfoMb.length(), compressedSecureMetaInfoMb.bytes(), randomAesKey, randomIV);
+        // create random AES key and IV
+        char randomAesKey[aesKeySize];
+        char randomIV[aesBlockSize];
+        fillRandomData(aesKeySize, randomAesKey);
+        fillRandomData(aesBlockSize, randomIV);
 
-    securityInfo->setPropBin("secureInfo", encryptedSecureMetaInfoMb.length(), encryptedSecureMetaInfoMb.bytes());
+        // 1st serialize to JSON
+        StringBuffer secureMetaInfoJson;
+        toJSON(secureMetaInfo, secureMetaInfoJson);
 
-    // 4th encrypt AES key with public *DAFILESRV* key
-    VStringBuffer publicKeyFName("%s.pub.pem", keyPairName); // JCSMORE - could cache loaded keys
-    Owned<CLoadedKey> publicKey = loadPublicKeyFromFile(publicKeyFName, nullptr);
-    MemoryBuffer encryptedAesKeyMb;
-    publicKeyEncrypt(encryptedAesKeyMb, aesKeySize, randomAesKey, *publicKey);
+        // 2nd compress
+        MemoryBuffer compressedSecureMetaInfoMb;
+        fastLZCompressToBuffer(compressedSecureMetaInfoMb, secureMetaInfoJson.length(), secureMetaInfoJson.str());
 
-    /* perhaps should combine into single prob..
-     * Does IV need to be generated/sent each time?
-     */
-    securityInfo->setPropBin("securityKey", encryptedAesKeyMb.length(), encryptedAesKeyMb.bytes());
-    securityInfo->setPropBin("securityIV", aesBlockSize, randomIV);
+        // 3rd encrypt with AES key
+        MemoryBuffer encryptedSecureMetaInfoMb;
+        aesKeyEncrypt(encryptedSecureMetaInfoMb, compressedSecureMetaInfoMb.length(), compressedSecureMetaInfoMb.bytes(), randomAesKey, randomIV);
 
-    toJSON(securityInfo, securityInfoJsonBlob);
+        metaInfo.setPropBin("secureInfo", encryptedSecureMetaInfoMb.length(), encryptedSecureMetaInfoMb.bytes());
+
+        // 4th encrypt AES key with public *DAFILESRV* key
+        VStringBuffer publicKeyFName("%s.pub.pem", keyPairName); // JCSMORE - could cache loaded keys
+        Owned<CLoadedKey> publicKey = loadPublicKeyFromFile(publicKeyFName, nullptr);
+        MemoryBuffer encryptedAesKeyMb;
+        publicKeyEncrypt(encryptedAesKeyMb, aesKeySize, randomAesKey, *publicKey);
+
+        /* perhaps should combine into single prob..
+         * Does IV need to be generated/sent each time?
+         */
+        metaInfo.setPropBin("securityKey", encryptedAesKeyMb.length(), encryptedAesKeyMb.bytes());
+        metaInfo.setPropBin("securityIV", aesBlockSize, randomIV);
+    }
+    else
+        extractFilePartInfo(metaInfo, *fDesc);
 }
 
 const char *getFileDafilesrvKeyName(IDistributedFile &file)
@@ -6048,9 +6052,11 @@ void CWsDfuEx::getReadAccess(IEspContext &context, IUserDescriptor *udesc, IEspD
 
     const char *keyPairName = getFileDafilesrvKeyName(*df);
 
-    StringBuffer securityInfoJsonBlob;
-    getFileSecurityMetaBlob(securityInfoJsonBlob, *df, *udesc, keyPairName, oreq);
-    oresp.setMetaInfoBlob(securityInfoJsonBlob);
+    Owned<IPropertyTree> metaInfo = createPTree();
+    getFileMeta(*metaInfo, *df, *udesc, keyPairName, oreq);
+    StringBuffer metaInfoJsonBlob;
+    toJSON(metaInfo, metaInfoJsonBlob);
+    oresp.setMetaInfoBlob(metaInfoJsonBlob);
     oresp.setKeyName(keyPairName);
 }
 

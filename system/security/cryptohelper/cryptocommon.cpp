@@ -14,20 +14,19 @@
     See the License for the specific language governing permissions and
     limitations under the License.
 ############################################################################## */
-#include "jliball.hpp"
+
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
+
+#include "jliball.hpp"
 #include <openssl/pem.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
-#endif
 #include "cryptocommon.hpp"
 
 
 static void addAlgorithms()
 {
-#if defined(_USE_OPENSSL) && !defined(_WIN32)
     OpenSSL_add_all_algorithms();
-#endif
 }
 
 MODULE_INIT(INIT_PRIORITY_STANDARD)
@@ -82,3 +81,5 @@ void throwEVPException(int code, const char *format, ...)
 }
 
 } // end of namespace cryptohelper
+
+#endif // #if defined(_USE_OPENSSL) && !defined(_WIN32)

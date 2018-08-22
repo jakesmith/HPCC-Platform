@@ -18,6 +18,6 @@
 #ifndef _WSDFUACCESS_HPP
 #define _WSDFUACCESS_HPP
 
-bool WsDfuAccess_getSecurityInfo(StringBuffer &securityInfoResult, const char *jobId, const char *logicalName, const char *access, unsigned expirySecs, const char *user, const char *token);
+bool WsDfuAccess_getMetaInfo(StringBuffer &metaInfoResult, const char *jobId, const char *logicalName, const char *access, unsigned expirySecs, const char *user, const char *token);
 
 #endif // _WSDFUACCESS_HPP

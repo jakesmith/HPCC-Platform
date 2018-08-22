@@ -15,8 +15,9 @@
     limitations under the License.
 ############################################################################## */
 
-#include "jliball.hpp"
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
+
+#include "jliball.hpp"
 #include <openssl/pem.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -237,7 +238,8 @@ void privateKeyDecrypt(MemoryBuffer &out, size32_t inSz, const void *inBytes, co
     out.append(outLen, decrypted);
 }
 
-#endif // end of #if defined(_USE_OPENSSL) && !defined(_WIN32)
 
 } // end of namespace cryptohelper
+
+#endif // end of #if defined(_USE_OPENSSL) && !defined(_WIN32)
 
