@@ -151,7 +151,12 @@ private:
                 const char *name = keyPair.queryProp("@name");
                 const char *publicKeyPath = keyPair.queryProp("@publicKey");
                 const char *privateKeyPath = keyPair.queryProp("@privateKey");
-                if (isEmptyString(name) || isEmptyString(publicKeyPath) || isEmptyString(privateKeyPath))
+                if (isEmptyString(name))
+                {
+                    WARNLOG("skipping invalid EnvSettings/Key/KeyPair entry, name not defined");
+                    continue;
+                }
+                if (isEmptyString(publicKeyPath) || isEmptyString(privateKeyPath))
                 {
                     WARNLOG("skipping invalid EnvSettings/Key/KeyPair entry, name=%s", name);
                     continue;
@@ -186,7 +191,6 @@ private:
                     WARNLOG("skipping EnvSettings/Keys/Cluster entry with no name");
                     continue;
                 }
-                const char *keyPath = nullptr;
                 if (cluster.hasProp("@keyPairName"))
                 {
                     const char *keyPairName = cluster.queryProp("@keyPairName");

@@ -139,7 +139,7 @@ private:
     std::atomic<bool> m_daliDetached{false};
     Owned<IEnvironmentFactory> factory;
     Owned<IConstEnvironment> env;
-    static const unsigned defaultFileAccessExpirySeconds=86400; // 24 hours
+    static const unsigned defaultMaxFileAccessExpirySeconds=86400; // 24 hours
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -268,7 +268,7 @@ private:
     StringBuffer user_;
     StringBuffer password_;
     StringAttr   espProcess;
-    unsigned fileAccessExpirySeconds = defaultFileAccessExpirySeconds;
+    unsigned maxFileAccessExpirySeconds = defaultMaxFileAccessExpirySeconds;
 };
 
 

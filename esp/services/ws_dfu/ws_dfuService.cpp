@@ -175,7 +175,7 @@ void CWsDfuEx::init(IPropertyTree *cfg, const char *process, const char *service
 
     factory.setown(getEnvironmentFactory(true));
     env.setown(factory->openEnvironment());
-    fileAccessExpirySeconds = serviceTree->getPropInt("@fileAccessExpirySeconds", defaultFileAccessExpirySeconds);
+    maxFileAccessExpirySeconds = serviceTree->getPropInt("@maxFileAccessExpirySeconds", defaultMaxFileAccessExpirySeconds);
 }
 
 bool CWsDfuEx::onDFUSearch(IEspContext &context, IEspDFUSearchRequest & req, IEspDFUSearchResponse & resp)
@@ -6073,8 +6073,8 @@ void CWsDfuEx::getFileAccess(IEspContext &context, IUserDescriptor *udesc, SecAc
 
     // setup "expiryTime"
     unsigned expirySecs = req.getExpirySeconds();
-    if (expirySecs > fileAccessExpirySeconds)
-        expirySecs = fileAccessExpirySeconds;
+    if (expirySecs > maxFileAccessExpirySeconds)
+        expirySecs = maxFileAccessExpirySeconds;
     time_t now;
     time(&now);
     CDateTime expiryDt;
