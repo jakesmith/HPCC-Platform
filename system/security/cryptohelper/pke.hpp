@@ -30,15 +30,12 @@
 
 #endif
 
+#if defined(_USE_OPENSSL) && !defined(_WIN32)
+
 #include "cryptocommon.hpp"
 
 namespace cryptohelper
 {
-
-#if defined(_USE_OPENSSL) && !defined(_WIN32)
-
-#include <openssl/evp.h>
-#include <openssl/err.h>
 
 class CLoadedKey : public CSimpleInterfaceOf<IInterface>
 {
@@ -71,11 +68,9 @@ CRYPTOHELPER_API size32_t privateKeyDecrypt(MemoryBuffer &out, size32_t inLen, c
 CRYPTOHELPER_API size32_t publicKeyEncrypt(void *dst, size32_t dstMaxSz, size32_t inLen, const void *inBytes, const CLoadedKey &key);
 CRYPTOHELPER_API size32_t privateKeyDecrypt(void *dst, size32_t dstMaxSz, size32_t inLen, const void *inBytes, const CLoadedKey &key);
 
-
-#endif // end of #if defined(_USE_OPENSSL) && !defined(_WIN32)
-
 } // end of namespace cryptohelper
 
+#endif // end of #if defined(_USE_OPENSSL) && !defined(_WIN32)
 
 #endif // PKE_HPP
 

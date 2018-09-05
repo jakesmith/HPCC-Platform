@@ -27,31 +27,41 @@
 
 #endif
 
+#include "jstring.hpp"
+
+#include "pke.hpp"
+
 namespace cryptohelper
 {
+
+//Create base 64 encoded digital signature of given text string
+bool digiSign(StringBuffer &b64Signature, const char *text, const CLoadedKey &signingKey);
+
+//Verify the given text was used to create the given digital signature
+bool digiVerify(StringBuffer &b64Signature, const char *text, const CLoadedKey &verifyingKey);
 
 //General purpose digital signature manager
 //Useful to sign a text string, so the consumer can be assured it has not been altered
 interface IDigitalSignatureManager : extends IInterface //Public/Private key message signer/verifyer
 {
 public:
-    virtual bool isDigiSignerConfigured() = 0;
-    virtual bool isDigiVerifierConfigured() = 0;
-    virtual bool digiSign(const char * text, StringBuffer & b64Signature) = 0;//signs, using private key
-    virtual bool digiVerify(const char * text, StringBuffer & b64Signature) = 0;//verifies, using public key
+    virtual bool isDigiSignerConfigured() const = 0;
+    virtual bool isDigiVerifierConfigured() const = 0;
+    virtual bool digiSign(StringBuffer & b64Signature, const char * text) const = 0;//signs, using private key
+    virtual bool digiVerify(StringBuffer & b64Signature, const char * text) const = 0;//verifies, using public key
 };
 
-extern "C"
-{
-    //Uses the HPCCPublicKey/HPCCPrivateKey key files specified in environment.conf
-    CRYPTOHELPER_API IDigitalSignatureManager * queryDigitalSignatureManagerInstanceFromEnv();
+//Uses the HPCCPublicKey/HPCCPrivateKey key files specified in environment.conf
+CRYPTOHELPER_API IDigitalSignatureManager * queryDigitalSignatureManagerInstanceFromEnv();
 
-    //Create using the given key files
-    CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromFiles(const char * _pubKey, const char *_privKey, const char * _passPhrase);
+//Create using the given key files
+CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromFiles(const char *pubKeyFileName, const char *privKeyFileName, const char *passPhrase);
 
-    //Create using the given PEM formatted keys
-    CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(StringBuffer & _pubKeyBuff, StringBuffer & _privKeyBuff, const char * _passPhrase);
-}
+//Create using the given PEM formatted keys
+CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(const char *pubKeyString, const char *privKeyString, const char *passPhrase);
+
+//Create using preloaded keys.
+CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(CLoadedKey *pubKey, CLoadedKey *privKey);
 
 } // namespace cryptohelper
 

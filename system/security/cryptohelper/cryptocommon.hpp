@@ -34,6 +34,8 @@
 #include <openssl/evp.h>
 #include <openssl/err.h>
 
+#include "jbuff.hpp"
+
 namespace cryptohelper
 {
 
@@ -51,10 +53,15 @@ typedef OwnedPtrCustomFree<EVP_PKEY_CTX, EVP_PKEY_CTX_free> OwnedEVPPkeyCtx;
 typedef OwnedPtrCustomFree<void, voidOpenSSLFree> OwnedEVPMemory;
 typedef OwnedPtrCustomFree<EVP_CIPHER_CTX, EVP_CIPHER_CTX_free> OwnedEVPCipherCtx;
 typedef OwnedPtrCustomFree<RSA, RSA_free> OwnedEVPRSA;
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+typedef OwnedPtrCustomFree<EVP_MD_CTX, EVP_MD_CTX_destroy> OwnedEVPMdCtx;
+#else
+typedef OwnedPtrCustomFree<EVP_MD_CTX, EVP_MD_CTX_free> OwnedEVPMdCtx;
+#endif
 
 } // end of namespace cryptohelper
 
 #endif // end of #if defined(_USE_OPENSSL) && !defined(_WIN32)
 
-#endif
+#endif // CRYPTOCOMMON_HPP
 

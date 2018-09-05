@@ -85,11 +85,11 @@ class CryptoUnitTest : public CppUnit::TestFixture
 public:
     CPPUNIT_TEST_SUITE(CryptoUnitTest);
         CPPUNIT_TEST(digiSignTests);
-        CPPUNIT_TEST(pkeEncryptDecryptTest);
-        CPPUNIT_TEST(pkeParallelTest);
-        CPPUNIT_TEST(aesEncryptDecryptTests);
-        CPPUNIT_TEST(aesWithRsaEncryptedKey);
-        CPPUNIT_TEST(aesParallelTest);
+//        CPPUNIT_TEST(pkeEncryptDecryptTest);
+//        CPPUNIT_TEST(pkeParallelTest);
+//        CPPUNIT_TEST(aesEncryptDecryptTests);
+//        CPPUNIT_TEST(aesWithRsaEncryptedKey);
+//        CPPUNIT_TEST(aesParallelTest);
     CPPUNIT_TEST_SUITE_END();
 
 protected:
@@ -108,15 +108,22 @@ protected:
             {
                 VStringBuffer text("I am here %d", idx);
                 StringBuffer sig;
-                bool ok = dsm->digiSign(text, sig);
-                if (!ok)
-                    printf("Asynchronous asyncDigiSignUnitTest() test %d failed!\n", idx);
-                ASSERT(ok);
+                for (unsigned i=0; i<1; i++)
+                {
+                    bool ok = dsm->digiSign(text, sig.clear());
+                    if (!ok)
+                    {
+                        printf("Asynchronous asyncDigiSignUnitTest() test %d failed!\n", idx);
+                        ASSERT(ok);
+                    }
+                }
             }
         } afor(_dsm);
 
-        printf("Executing 1000 asyncDigiSignUnitTest() operations\n");
-        afor.For(1000,20,true,true);
+        unsigned num=256;
+        unsigned threads=32;
+        printf("Executing %u (on %u threads) asyncDigiSignUnitTest() operations\n", num, threads);
+        afor.For(num,threads,true,true);
         printf("Asynchronous asyncDigiSignUnitTest() test complete\n");
     }
 
@@ -201,66 +208,65 @@ protected:
             printf("\nExecuting digiSign() unit tests\n");
 
             //Create instance of digital signature manager
-            StringBuffer _pubKeyBuff(pubKey);
-            StringBuffer _privKeyBuff(privKey);
-            Owned<IDigitalSignatureManager> dsm(createDigitalSignatureManagerInstanceFromKeys(_pubKeyBuff, _privKeyBuff, nullptr));
+            Owned<IDigitalSignatureManager> dsm(createDigitalSignatureManagerInstanceFromKeys(pubKey, privKey, nullptr));
 
-
+/*
+>>>>>>> 97a468019... wip
             printf("digiSign() test 1\n");
             StringBuffer txt(text1);
-            bool ok = dsm->digiSign(text1, sig1.clear());
+            bool ok = dsm->digiSign(sig1.clear(), text1);
             ASSERT(ok);
             ASSERT(0 == strcmp(text1, txt.str()));//source string should be unchanged
             ASSERT(!sig1.isEmpty());//signature should be populated
 
             StringBuffer sig(sig1);
-            ok = dsm->digiVerify(text1, sig1);
+            ok = dsm->digiVerify(sig1, text1);
             ASSERT(ok);
             ASSERT(0 == strcmp(text1, txt.str()));//source string should be unchanged
             ASSERT(0 == strcmp(sig.str(), sig1.str()));//signature should be unchanged
 
             printf("digiSign() test 2\n");
-            ok = dsm->digiVerify(text1, sig1);
+            ok = dsm->digiVerify(sig1, text1);
             ASSERT(ok);
-            ok = dsm->digiVerify(text1, sig1);
+            ok = dsm->digiVerify(sig1, text1);
             ASSERT(ok);
 
             printf("digiSign() test 3\n");
-            ok = dsm->digiSign(text2, sig2.clear());
+            ok = dsm->digiSign(sig2.clear(), text2);
             ASSERT(ok);
-            ok = dsm->digiVerify(text2, sig2);
+            ok = dsm->digiVerify(sig2, text2);
             ASSERT(ok);
-            ok = dsm->digiSign(text2, sig2.clear());
+            ok = dsm->digiSign(sig2.clear(), text2);
             ASSERT(ok);
-            ok = dsm->digiVerify(text2, sig2);
+            ok = dsm->digiVerify(sig2, text2);
             ASSERT(ok);
 
             printf("digiSign() test 4\n");
-            ok = dsm->digiVerify(text1, sig1);
+            ok = dsm->digiVerify(sig1, text1);
             ASSERT(ok);
 
             printf("digiSign() test 5\n");
-            ok = dsm->digiVerify(text2, sig2);
+            ok = dsm->digiVerify(sig2, text2);
             ASSERT(ok);
 
             printf("digiSign() test 6\n");
-            ok = dsm->digiVerify(text1, sig2);
+            ok = dsm->digiVerify(sig2, text1);
             ASSERT(!ok);//should fail
 
             printf("digiSign() test 7\n");
-            ok = dsm->digiVerify(text2, sig1);
+            ok = dsm->digiVerify(sig1, text2);
             ASSERT(!ok);//should fail
 
             printf("digiSign() test 8\n");
-            ok = dsm->digiSign(text3, sig3.clear());
+            ok = dsm->digiSign(sig3.clear(), text3);
             ASSERT(ok);
 
             printf("digiSign() test 9\n");
-            ok = dsm->digiVerify(text3, sig1);
+            ok = dsm->digiVerify(sig1, text3);
             ASSERT(!ok);//should fail
-            ok = dsm->digiVerify(text3, sig2);
+            ok = dsm->digiVerify(sig2, text3);
             ASSERT(!ok);//should fail
-            ok = dsm->digiVerify(text3, sig3);
+            ok = dsm->digiVerify(sig3, text3);
             ASSERT(ok);
 
             //Perform
@@ -268,7 +274,7 @@ protected:
             unsigned now = msTick();
             for (int x=0; x<1000; x++)
             {
-                dsm->digiSign(text3, sig3.clear());
+                dsm->digiSign(sig3.clear(), text3);
             }
             printf("digiSign() 1000 iterations took %d MS\n", msTick() - now);
 
@@ -276,15 +282,16 @@ protected:
             now = msTick();
             for (int x=0; x<1000; x++)
             {
-                dsm->digiVerify(text3, sig3);
+                dsm->digiVerify(sig3, text3);
             }
             printf("digiverify 1000 iterations took %d MS\n", msTick() - now);
 
-            now = msTick();
+*/
+            unsigned now = msTick();
             printf("\nAsynchronous test digiSign\n");
             asyncDigiSignUnitTest(dsm);
             printf("digiSign 1000 async iterations took %d MS\n", msTick() - now);
-
+/*
             now = msTick();
             printf("\nAsynchronous test digiVerify\n");
             asyncDigiVerifyUnitTest(dsm);
@@ -294,6 +301,7 @@ protected:
             printf("\nAsynchronous test digiSign and digiVerify\n");
             asyncDigiSignAndVerifyUnitTest(dsm);
             printf("digiSign/digiverify 1000 async iterations took %d MS\n", msTick() - now);
+*/
         }
         catch (IException *e)
         {
