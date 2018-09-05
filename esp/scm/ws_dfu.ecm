@@ -46,11 +46,15 @@ ESPenum SecAccessType : string
     Full("Full")
 };
 
+/* The FileAccessRole differentiates what type of info is returned in the response
+ * "Token" will generally be used to refresh an expired token.
+ * "Engine" may not be required long term, but allows the service to tailor and hopefully optimize the reply with info. the engines need. 
+ */
 ESPenum FileAccessRole : string
 {
-    Token("Token"),
-    Engine("Engine"),
-    External("External"),
+    Token("Token"),       // Request for security token only, no plain text file information will be return in the response. May be used to refresh an expired token.
+    Engine("Engine"),     // For internal HPCC engines, plain text file meta info may differ from external clients (for now at least). 
+    External("External"), // For external clients (e.g. Spark), plain text less verbose than legacy format needed by engines (e.g. only needs locations, # parts only). 
 };
 
 ESPStruct SpaceItem
