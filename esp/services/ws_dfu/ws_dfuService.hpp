@@ -239,7 +239,7 @@ private:
     unsigned getFilePartsInfo(IEspContext &context, IDistributedFile *df, const char *clusterName,
         IArrayOf<IEspDFUPartLocations> &dfuPartLocations, IArrayOf<IEspDFUPartCopies> &dfuPartCopies);
     StringBuffer &getFileDafilesrvKeyName(StringBuffer &keyPairName, IDistributedFile &file);
-    void getFileMeta(IPropertyTree &metaInfo, IDistributedFile &file, IUserDescriptor *user, CFileAccessRole role, const char *expiryTime, const char *keyPairName, IConstDFUFileAccessRequest &req);
+    void getFileMeta(StringBuffer &metaInfo, IDistributedFile &file, IUserDescriptor *user, CFileAccessRole role, const char *expiryTime, const char *keyPairName, IConstDFUFileAccessRequest &req);
     void getFileAccess(IEspContext &context, IUserDescriptor *udesc, SecAccessFlags accessType, IEspDFUFileAccessRequest &req, IEspDFUFileAccessResponse &resp);
 
     bool attachServiceToDali() override

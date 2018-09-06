@@ -59,7 +59,7 @@
 #include "daaudit.hpp"
 
 #include "jflz.hpp"
-#include "ske.hpp"
+#include "digisign.hpp"
 
 using namespace cryptohelper;
 
@@ -5935,18 +5935,15 @@ unsigned CWsDfuEx::getFilePartsInfo(IEspContext &context, IDistributedFile *df, 
 }
 
 static const char *securityInfoVersion="1";
-void CWsDfuEx::getFileMeta(IPropertyTree &metaInfo, IDistributedFile &file, IUserDescriptor *user, CFileAccessRole role, const char *expiryTime, const char *keyPairName, IConstDFUFileAccessRequest &req)
+void CWsDfuEx::getFileMeta(StringBuffer &metaInfoStr, IDistributedFile &file, IUserDescriptor *user, CFileAccessRole role, const char *expiryTime, const char *keyPairName, IConstDFUFileAccessRequest &req)
 {
-    metaInfo.setProp("version", securityInfoVersion);
-    metaInfo.setProp("logicalFilename", file.queryLogicalName());
-    metaInfo.setProp("jobId", req.getJobId());
-    metaInfo.setProp("accessType", req.getAccessTypeAsString());
-    StringBuffer userStr;
-    if (user)
-        metaInfo.setProp("user", user->getUserName(userStr).str());
-
+    Owned<IPropertyTree> metaInfoEnvelope = createPTree();
+    Owned<IPropertyTree> metaInfo = createPTree();
     const char *clusterName = req.getCluster(); // can be null
     Owned<IFileDescriptor> fDesc = file.getFileDescriptor(clusterName);
+    extractFilePartInfo(*metaInfo, *fDesc);
+
+    MemoryBuffer metaInfoMb;
 
     /* NB: If file access security is disabled in the environment, or on a per cluster basis
      * keyPairName will be blank. In that case the meta data is returned in plain format.
@@ -5957,31 +5954,36 @@ void CWsDfuEx::getFileMeta(IPropertyTree &metaInfo, IDistributedFile &file, IUse
 #ifdef _USE_OPENSSL
     if (!isEmptyString(keyPairName)) // without it, meta data is not encrypted
     {
-        metaInfo.setProp("keyPairName", keyPairName);
+        metaInfo->setProp("version", securityInfoVersion);
+        metaInfo->setProp("logicalFilename", file.queryLogicalName());
+        metaInfo->setProp("jobId", req.getJobId());
+        metaInfo->setProp("accessType", req.getAccessTypeAsString());
+        StringBuffer userStr;
+        if (user)
+            metaInfo->setProp("user", user->getUserName(userStr).str());
+        metaInfo->setProp("keyPairName", keyPairName);
+        metaInfo->setProp("expiryTime", expiryTime);
 
-        Owned<IPropertyTree> secureMetaInfo = createPTreeFromIPT(&metaInfo);
-        secureMetaInfo->setProp("expiryTime", expiryTime);
+        MemoryBuffer metaInfoBlob;
+        metaInfo->serialize(metaInfoBlob);
+        metaInfoEnvelope->setPropBin("metaInfoBlob", metaInfoBlob.length(), metaInfoBlob.bytes());
 
-        extractFilePartInfo(*secureMetaInfo, *fDesc);
-
-        // 1st serialize to JSON
-        StringBuffer secureMetaInfoJson;
-        toJSON(secureMetaInfo, secureMetaInfoJson);
-
-        // 2nd compress
-        MemoryBuffer compressedSecureMetaInfoMb;
-        fastLZCompressToBuffer(compressedSecureMetaInfoMb, secureMetaInfoJson.length(), secureMetaInfoJson.str());
-
-        // 3rd encrypt
-        const char *publicKeyFName = env->getPublicKeyPath(keyPairName);
-        Owned<CLoadedKey> publicKey = loadPublicKeyFromFile(publicKeyFName, nullptr);
-        MemoryBuffer encryptedSecureMetaInfoMb;
-        aesEncryptWithRSAEncryptedKey(encryptedSecureMetaInfoMb, compressedSecureMetaInfoMb.length(), compressedSecureMetaInfoMb.bytes(), *publicKey);
-        metaInfo.setPropBin("secureInfo", encryptedSecureMetaInfoMb.length(), encryptedSecureMetaInfoMb.bytes());
+        const char *privateKeyFName = env->getPrivateKeyPath(keyPairName);
+        Owned<CLoadedKey> privateKey = loadPrivateKeyFromFile(privateKeyFName, nullptr);
+        StringBuffer metaInfoSignature;
+        digiSign(metaInfoSignature, metaInfoBlob.length(), metaInfoBlob.bytes(), *privateKey);
+        metaInfoEnvelope->setProp("signature", metaInfoSignature);
+        metaInfo->serialize(metaInfoMb);
+        metaInfoEnvelope->setPropBin("metaInfoBlob", metaInfoMb.length(), metaInfoMb.bytes());
+        metaInfoEnvelope->serialize(metaInfoMb.clear());
     }
     else
 #endif
-        extractFilePartInfo(metaInfo, *fDesc);
+        metaInfo->serialize(metaInfoMb);
+
+    MemoryBuffer compressedMetaInfoMb;
+    fastLZCompressToBuffer(compressedMetaInfoMb, metaInfoMb.length(), metaInfoMb.bytes());
+    JBASE64_Encode(compressedMetaInfoMb.bytes(), compressedMetaInfoMb.length(), metaInfoStr, false);
 }
 
 StringBuffer &CWsDfuEx::getFileDafilesrvKeyName(StringBuffer &keyPairName, IDistributedFile &file)
@@ -5995,7 +5997,7 @@ StringBuffer &CWsDfuEx::getFileDafilesrvKeyName(StringBuffer &keyPairName, IDist
         if (0 == c)
             keyPairName.set(_keyPairName);
         else if (!strsame(keyPairName, _keyPairName))
-            throwStringExceptionV(0, "Configuration issue - file '%s' is on multiple clusters, public keys for file access must match", file.queryLogicalName());
+            throwStringExceptionV(0, "Configuration issue - file '%s' is on multiple clusters, keys for file access must match", file.queryLogicalName());
     }
 
     return keyPairName;
@@ -6085,11 +6087,9 @@ void CWsDfuEx::getFileAccess(IEspContext &context, IUserDescriptor *udesc, SecAc
     StringBuffer keyPairName;
     getFileDafilesrvKeyName(keyPairName, *df);
 
-    Owned<IPropertyTree> metaInfo = createPTree();
-    getFileMeta(*metaInfo, *df, udesc, role, expiryTimeStr, keyPairName, req);
-    StringBuffer metaInfoJsonBlob;
-    toJSON(metaInfo, metaInfoJsonBlob);
-    resp.setMetaInfoBlob(metaInfoJsonBlob);
+    StringBuffer metaInfo;
+    getFileMeta(metaInfo, *df, udesc, role, expiryTimeStr, keyPairName, req);
+    resp.setMetaInfoBlob(metaInfo);
     resp.setExpiryTime(expiryTimeStr);
 }
 
