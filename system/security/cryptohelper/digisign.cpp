@@ -161,12 +161,12 @@ public:
         return false;
     }
 
-    virtual bool digiSign(const char * text, StringBuffer & b64Signature) const override
+    virtual bool digiSign(StringBuffer & b64Signature, const char * text) const override
     {
         throwStringExceptionV(-1, "digiVerify: unavailable without openssl");
     }
 
-    virtual bool digiVerify(const char * text, StringBuffer & b64Signature) const overrides
+    virtual bool digiVerify(StringBuffer & b64Signature, const char * text) const override
     {
         throwStringExceptionV(-1, "digiVerify: unavailable without openssl");
     }
@@ -196,7 +196,7 @@ static void createDigitalSignatureManagerInstance(IDigitalSignatureManager * * p
 
 
 //Returns reference to singleton instance created from environment.conf key file settings
-CRYPTOHELPER_API IDigitalSignatureManager * queryDigitalSignatureManagerInstanceFromEnv()
+IDigitalSignatureManager * queryDigitalSignatureManagerInstanceFromEnv()
 {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
     std::call_once(dsmInitFlag, createDigitalSignatureManagerInstance, &dsm);
@@ -208,7 +208,7 @@ CRYPTOHELPER_API IDigitalSignatureManager * queryDigitalSignatureManagerInstance
 
 //Create using given key filespecs
 //Caller must release when no longer needed
-CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromFiles(const char * pubKeyFileName, const char *privKeyFileName, const char * passPhrase)
+IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromFiles(const char * pubKeyFileName, const char *privKeyFileName, const char * passPhrase)
 {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
     Owned<CLoadedKey> pubKey, privKey;
@@ -246,7 +246,7 @@ CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanc
 
 //Create using given PEM formatted keys
 //Caller must release when no longer needed
-CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(const char * pubKeyString, const char * privKeyString, const char * passPhrase)
+IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(const char * pubKeyString, const char * privKeyString, const char * passPhrase)
 {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
     Owned<CLoadedKey> pubKey, privKey;
@@ -282,7 +282,7 @@ CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanc
 
 //Create using preloaded keys
 //Caller must release when no longer needed
-CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(CLoadedKey *pubKey, CLoadedKey *privKey)
+IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(CLoadedKey *pubKey, CLoadedKey *privKey)
 {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
     return new CDigitalSignatureManager(pubKey, privKey);

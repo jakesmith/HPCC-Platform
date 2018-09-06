@@ -17,17 +17,7 @@
 #ifndef DIGISIGN_HPP
 #define DIGISIGN_HPP
 
-#ifndef CRYPTOHELPER_API
-
-#ifndef CRYPTOHELPER_EXPORTS
-    #define CRYPTOHELPER_API DECL_IMPORT
-#else
-    #define CRYPTOHELPER_API DECL_EXPORT
-#endif //CRYPTOHELPER_EXPORTS
-
-#endif
-
-#include "jstring.hpp"
+#include "jiface.hpp"
 
 #include "pke.hpp"
 
@@ -35,14 +25,14 @@ namespace cryptohelper
 {
 
 //Create base 64 encoded digital signature of given text string
-bool digiSign(StringBuffer &b64Signature, const char *text, const CLoadedKey &signingKey);
+jlib_decl bool digiSign(StringBuffer &b64Signature, const char *text, const CLoadedKey &signingKey);
 
 //Verify the given text was used to create the given digital signature
-bool digiVerify(StringBuffer &b64Signature, const char *text, const CLoadedKey &verifyingKey);
+jlib_decl bool digiVerify(StringBuffer &b64Signature, const char *text, const CLoadedKey &verifyingKey);
 
 //General purpose digital signature manager
 //Useful to sign a text string, so the consumer can be assured it has not been altered
-interface IDigitalSignatureManager : extends IInterface //Public/Private key message signer/verifyer
+interface jlib_decl IDigitalSignatureManager : extends IInterface //Public/Private key message signer/verifyer
 {
 public:
     virtual bool isDigiSignerConfigured() const = 0;
@@ -52,18 +42,18 @@ public:
 };
 
 //Uses the HPCCPublicKey/HPCCPrivateKey key files specified in environment.conf
-CRYPTOHELPER_API IDigitalSignatureManager * queryDigitalSignatureManagerInstanceFromEnv();
+jlib_decl IDigitalSignatureManager * queryDigitalSignatureManagerInstanceFromEnv();
 
 //Create using the given key files
-CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromFiles(const char *pubKeyFileName, const char *privKeyFileName, const char *passPhrase);
+jlib_decl IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromFiles(const char *pubKeyFileName, const char *privKeyFileName, const char *passPhrase);
 
 //Create using the given PEM formatted keys
-CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(const char *pubKeyString, const char *privKeyString, const char *passPhrase);
+jlib_decl IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(const char *pubKeyString, const char *privKeyString, const char *passPhrase);
 
 //Create using preloaded keys.
-CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(CLoadedKey *pubKey, CLoadedKey *privKey);
+jlib_decl IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(CLoadedKey *pubKey, CLoadedKey *privKey);
 
 } // namespace cryptohelper
 
-#endif
+#endif // DIGISIGN_HPP
 
