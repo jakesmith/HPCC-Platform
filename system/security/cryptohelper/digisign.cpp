@@ -31,8 +31,8 @@ namespace cryptohelper
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
 
 
-//Create base 64 encoded digital signature of given text string
-bool digiSign(StringBuffer &b64Signature, const char *text, const CLoadedKey &signingKey)
+//Create base 64 encoded digital signature of given data
+bool digiSign(StringBuffer &b64Signature, size32_t dataSz, const void *data, const CLoadedKey &signingKey)
 {
     OwnedEVPMdCtx signingCtx(EVP_MD_CTX_create());
     //initialize context for SHA-256 hashing function
@@ -41,7 +41,7 @@ bool digiSign(StringBuffer &b64Signature, const char *text, const CLoadedKey &si
         throwEVPException(-1, "digiSign:EVP_DigestSignInit");
 
     //add string to the context
-    if (EVP_DigestSignUpdate(signingCtx, text, strlen(text)) <= 0)
+    if (EVP_DigestSignUpdate(signingCtx, data, dataSz) <= 0)
         throwEVPException(-1, "digiSign:EVP_DigestSignUpdate");
 
     //compute length of signature
@@ -66,8 +66,8 @@ bool digiSign(StringBuffer &b64Signature, const char *text, const CLoadedKey &si
     return true;
 }
 
-//Verify the given text was used to create the given digital signature
-bool digiVerify(StringBuffer &b64Signature, const char *text, const CLoadedKey &verifyingKey)
+//Verify the given data was used to create the given digital signature
+bool digiVerify(StringBuffer &b64Signature, size32_t dataSz, const void *data, const CLoadedKey &verifyingKey)
 {
     OwnedEVPMdCtx verifyingCtx(EVP_MD_CTX_create());
     int rc = EVP_DigestVerifyInit(verifyingCtx, nullptr, EVP_sha256(), nullptr, verifyingKey);
@@ -78,7 +78,7 @@ bool digiVerify(StringBuffer &b64Signature, const char *text, const CLoadedKey &
     StringBuffer decodedSig;
     JBASE64_Decode(b64Signature, decodedSig);
 
-    if (EVP_DigestVerifyUpdate(verifyingCtx, text, strlen(text)) <= 0)
+    if (EVP_DigestVerifyUpdate(verifyingCtx, data, dataSz) <= 0)
         throwEVPException(-1, "digiVerify:EVP_DigestVerifyUpdate");
 
     return 1 == EVP_DigestVerifyFinal(verifyingCtx, (unsigned char *)decodedSig.str(), decodedSig.length());
@@ -109,23 +109,32 @@ public:
         return verifyingConfigured;
     }
 
-    //Create base 64 encoded digital signature of given text string
-    virtual bool digiSign(StringBuffer & b64Signature, const char * text) const override
+    //Create base 64 encoded digital signature of given data
+    virtual bool digiSign(StringBuffer & b64Signature, size32_t dataSz, const void *data) const override
     {
         if (!signingConfigured)
             throw MakeStringException(-1, "digiSign:Creating Digital Signatures not configured");
 
-        return cryptohelper::digiSign(b64Signature, text, *privKey);
+        return cryptohelper::digiSign(b64Signature, dataSz, data, *privKey);
     }
 
+    virtual bool digiSign(StringBuffer & b64Signature, const char *text) const override
+    {
+        return digiSign(b64Signature, strlen(text), text);
+    }
 
-    //Verify the given text was used to create the given digital signature
-    virtual bool digiVerify(StringBuffer & b64Signature, const char * text) const override
+    //Verify the given data was used to create the given digital signature
+    virtual bool digiVerify(StringBuffer & b64Signature, size32_t dataSz, const void *data) const override
     {
         if (!verifyingConfigured)
             throw MakeStringException(-1, "digiVerify:Verifying Digital Signatures not configured");
 
-        return cryptohelper::digiVerify(b64Signature, text, *pubKey);
+        return cryptohelper::digiVerify(b64Signature, dataSz, data, *pubKey);
+    }
+
+    virtual bool digiVerify(StringBuffer & b64Signature, const char *text) const override
+    {
+        return digiVerify(b64Signature, strlen(text), text);
     }
 };
 
@@ -161,12 +170,12 @@ public:
         return false;
     }
 
-    virtual bool digiSign(const char * text, StringBuffer & b64Signature) const override
+    virtual bool digiSign(StringBuffer & b64Signature, const char * text) const override
     {
         throwStringExceptionV(-1, "digiVerify: unavailable without openssl");
     }
 
-    virtual bool digiVerify(const char * text, StringBuffer & b64Signature) const overrides
+    virtual bool digiVerify(StringBuffer & b64Signature, const char * text) const override
     {
         throwStringExceptionV(-1, "digiVerify: unavailable without openssl");
     }
@@ -196,7 +205,7 @@ static void createDigitalSignatureManagerInstance(IDigitalSignatureManager * * p
 
 
 //Returns reference to singleton instance created from environment.conf key file settings
-CRYPTOHELPER_API IDigitalSignatureManager * queryDigitalSignatureManagerInstanceFromEnv()
+IDigitalSignatureManager * queryDigitalSignatureManagerInstanceFromEnv()
 {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
     std::call_once(dsmInitFlag, createDigitalSignatureManagerInstance, &dsm);
@@ -208,7 +217,7 @@ CRYPTOHELPER_API IDigitalSignatureManager * queryDigitalSignatureManagerInstance
 
 //Create using given key filespecs
 //Caller must release when no longer needed
-CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromFiles(const char * pubKeyFileName, const char *privKeyFileName, const char * passPhrase)
+IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromFiles(const char * pubKeyFileName, const char *privKeyFileName, const char * passPhrase)
 {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
     Owned<CLoadedKey> pubKey, privKey;
@@ -246,7 +255,7 @@ CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanc
 
 //Create using given PEM formatted keys
 //Caller must release when no longer needed
-CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(const char * pubKeyString, const char * privKeyString, const char * passPhrase)
+IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(const char * pubKeyString, const char * privKeyString, const char * passPhrase)
 {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
     Owned<CLoadedKey> pubKey, privKey;
@@ -282,7 +291,7 @@ CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanc
 
 //Create using preloaded keys
 //Caller must release when no longer needed
-CRYPTOHELPER_API IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(CLoadedKey *pubKey, CLoadedKey *privKey)
+IDigitalSignatureManager * createDigitalSignatureManagerInstanceFromKeys(CLoadedKey *pubKey, CLoadedKey *privKey)
 {
 #if defined(_USE_OPENSSL) && !defined(_WIN32)
     return new CDigitalSignatureManager(pubKey, privKey);
