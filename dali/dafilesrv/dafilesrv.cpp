@@ -369,20 +369,8 @@ int main(int argc,char **argv)
     const char *    sslKeyFile;
     queryDafsSecSettings(&connectMethod, &port, &sslport, &sslCertFile, &sslKeyFile, nullptr);
 
-    unsigned maxThreads = DEFAULT_THREADLIMIT;
-    unsigned maxThreadsDelayMs = DEFAULT_THREADLIMITDELAYMS;
-    unsigned maxAsyncCopy = DEFAULT_ASYNCCOPYMAX;
-    unsigned parallelRequestLimit = DEFAULT_STDCMD_PARALLELREQUESTLIMIT;
-    unsigned throttleDelayMs = DEFAULT_STDCMD_THROTTLEDELAYMS;
-    unsigned throttleCPULimit = DEFAULT_STDCMD_THROTTLECPULIMIT;
-    unsigned throttleQueueLimit = DEFAULT_STDCMD_THROTTLEQUEUELIMIT;
-    unsigned parallelSlowRequestLimit = DEFAULT_SLOWCMD_PARALLELREQUESTLIMIT;
-    unsigned throttleSlowDelayMs = DEFAULT_SLOWCMD_THROTTLEDELAYMS;
-    unsigned throttleSlowCPULimit = DEFAULT_SLOWCMD_THROTTLECPULIMIT;
-    unsigned throttleSlowQueueLimit = DEFAULT_SLOWCMD_THROTTLEQUEUELIMIT;
-    bool authorizedOnly = DEFAULT_AUTHORIZED_ONLY;
-
     Owned<IPropertyTree> env = getHPCCEnvironment();
+    Owned<IPropertyTree> config = createPTree();
     IPropertyTree *keyPairInfo = nullptr;
     if (env)
     {
@@ -391,25 +379,9 @@ int main(int argc,char **argv)
             dafilesrvPath.appendf("[@name=\"%s\"]", instanceName.str());
         IPropertyTree *daFileSrv = env->queryPropTree(dafilesrvPath);
         if (daFileSrv)
+            synchronizePTree(config, daFileSrv);
+        if (daFileSrv)
         {
-            // global DaFileSrv settings:
-
-            maxThreads = daFileSrv->getPropInt("@maxThreads", DEFAULT_THREADLIMIT);
-            maxThreadsDelayMs = daFileSrv->getPropInt("@maxThreadsDelayMs", DEFAULT_THREADLIMITDELAYMS);
-            maxAsyncCopy = daFileSrv->getPropInt("@maxAsyncCopy", DEFAULT_ASYNCCOPYMAX);
-
-            parallelRequestLimit = daFileSrv->getPropInt("@parallelRequestLimit", DEFAULT_STDCMD_PARALLELREQUESTLIMIT);
-            throttleDelayMs = daFileSrv->getPropInt("@throttleDelayMs", DEFAULT_STDCMD_THROTTLEDELAYMS);
-            throttleCPULimit = daFileSrv->getPropInt("@throttleCPULimit", DEFAULT_STDCMD_THROTTLECPULIMIT);
-            throttleQueueLimit = daFileSrv->getPropInt("@throttleQueueLimit", DEFAULT_STDCMD_THROTTLEQUEUELIMIT);
-
-            parallelSlowRequestLimit = daFileSrv->getPropInt("@parallelSlowRequestLimit", DEFAULT_SLOWCMD_PARALLELREQUESTLIMIT);
-            throttleSlowDelayMs = daFileSrv->getPropInt("@throttleSlowDelayMs", DEFAULT_SLOWCMD_THROTTLEDELAYMS);
-            throttleSlowCPULimit = daFileSrv->getPropInt("@throttleSlowCPULimit", DEFAULT_SLOWCMD_THROTTLECPULIMIT);
-            throttleSlowQueueLimit = daFileSrv->getPropInt("@throttleSlowQueueLimit", DEFAULT_SLOWCMD_THROTTLEQUEUELIMIT);
-
-            authorizedOnly = daFileSrv->getPropBool("@authorizedOnly", DEFAULT_AUTHORIZED_ONLY);
-
             // any overrides by Instance definitions?
             // NB: This won't work if netAddress is "." or if we start supporting hostnames there
             StringBuffer ipStr;
@@ -417,23 +389,7 @@ int main(int argc,char **argv)
             VStringBuffer daFileSrvPath("Instance[@netAddress=\"%s\"]", ipStr.str());
             IPropertyTree *dafileSrvInstance = daFileSrv->queryPropTree(daFileSrvPath);
             if (dafileSrvInstance)
-            {
-                maxThreads = dafileSrvInstance->getPropInt("@maxThreads", maxThreads);
-                maxThreadsDelayMs = dafileSrvInstance->getPropInt("@maxThreadsDelayMs", maxThreadsDelayMs);
-                maxAsyncCopy = dafileSrvInstance->getPropInt("@maxAsyncCopy", maxAsyncCopy);
-
-                parallelRequestLimit = dafileSrvInstance->getPropInt("@parallelRequestLimit", parallelRequestLimit);
-                throttleDelayMs = dafileSrvInstance->getPropInt("@throttleDelayMs", throttleDelayMs);
-                throttleCPULimit = dafileSrvInstance->getPropInt("@throttleCPULimit", throttleCPULimit);
-                throttleQueueLimit = dafileSrvInstance->getPropInt("@throttleQueueLimit", throttleQueueLimit);
-
-                parallelSlowRequestLimit = dafileSrvInstance->getPropInt("@parallelSlowRequestLimit", parallelSlowRequestLimit);
-                throttleSlowDelayMs = dafileSrvInstance->getPropInt("@throttleSlowDelayMs", throttleSlowDelayMs);
-                throttleSlowCPULimit = dafileSrvInstance->getPropInt("@throttleSlowCPULimit", throttleSlowCPULimit);
-                throttleSlowQueueLimit = dafileSrvInstance->getPropInt("@throttleSlowQueueLimit", throttleSlowQueueLimit);
-
-                authorizedOnly = dafileSrvInstance->getPropBool("@authorizedOnly", authorizedOnly);
-            }
+                synchronizePTree(config, dafileSrvInstance, true);
         }
         keyPairInfo = env->queryPropTree("EnvSettings/Keys");
     }
@@ -591,15 +547,6 @@ int main(int argc,char **argv)
             DAFSConnectCfg connectMethod;
             SocketEndpoint listenep;
             bool requireauthenticate;
-            unsigned maxThreads;
-            unsigned maxThreadsDelayMs;
-            unsigned maxAsyncCopy;
-            unsigned parallelRequestLimit;
-            unsigned throttleDelayMs;
-            unsigned throttleCPULimit;
-            unsigned parallelSlowRequestLimit;
-            unsigned throttleSlowDelayMs;
-            unsigned throttleSlowCPULimit;
             unsigned sslport;
             StringBuffer secMethod;
             
@@ -627,11 +574,7 @@ int main(int argc,char **argv)
                         unsigned _parallelRequestLimit, unsigned _throttleDelayMs, unsigned _throttleCPULimit,
                         unsigned _parallelSlowRequestLimit, unsigned _throttleSlowDelayMs, unsigned _throttleSlowCPULimit,
                         unsigned _sslport, const char * _secMethod)
-            : connectMethod(_connectMethod), listenep(_listenep), pollthread(this),
-                  maxThreads(_maxThreads), maxThreadsDelayMs(_maxThreadsDelayMs), maxAsyncCopy(_maxAsyncCopy),
-                  parallelRequestLimit(_parallelRequestLimit), throttleDelayMs(_throttleDelayMs), throttleCPULimit(_throttleCPULimit),
-                  parallelSlowRequestLimit(_parallelSlowRequestLimit), throttleSlowDelayMs(_throttleSlowDelayMs), throttleSlowCPULimit(_throttleSlowCPULimit),
-                  sslport(_sslport), secMethod(_secMethod)
+            : connectMethod(_connectMethod), listenep(_listenep), pollthread(this), sslport(_sslport), secMethod(_secMethod)
             {
                 stopped = false;
                 started = false;
@@ -715,9 +658,7 @@ int main(int argc,char **argv)
                 PROGLOG("Version: %s", verstring);
                 PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
                 PROGLOG(DAFS_SERVICE_DISPLAY_NAME " Running");
-                server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy));
-                server->setThrottle(ThrottleStd, parallelRequestLimit, throttleDelayMs, throttleCPULimit);
-                server->setThrottle(ThrottleSlow, parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit);
+                server.setown(createRemoteFileServer());
                 try {
                     server->run(connectMethod, listenep, sslport);
                 }
@@ -728,10 +669,7 @@ int main(int argc,char **argv)
                 PROGLOG(DAFS_SERVICE_DISPLAY_NAME " Stopped");
                 stopped = true;
             }
-        } service(connectMethod, listenep,
-                maxThreads, maxThreadsDelayMs, maxAsyncCopy,
-                parallelRequestLimit, throttleDelayMs, throttleCPULimit,
-                parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit, sslport, secMethod);
+        } service(connectMethod, listenep, sslport, secMethod);
         service.start();
         return 0;
 #else
@@ -749,7 +687,6 @@ int main(int argc,char **argv)
 
     write_pidfile(instanceName.str());
     PROGLOG("Dafilesrv starting - Build %s", BUILD_TAG);
-    PROGLOG("Parallel request limit = %d, throttleDelayMs = %d, throttleCPULimit = %d", parallelRequestLimit, throttleDelayMs, throttleCPULimit);
 
     const char * verstring = remoteServerVersionString();
 
@@ -778,9 +715,7 @@ int main(int argc,char **argv)
 
     PROGLOG("Version: %s", verstring);
     PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
-    server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy, authorizedOnly, keyPairInfo));
-    server->setThrottle(ThrottleStd, parallelRequestLimit, throttleDelayMs, throttleCPULimit);
-    server->setThrottle(ThrottleSlow, parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit);
+    server.setown(createRemoteFileServer(config, keyPairInfo));
     class CPerfHook : public CSimpleInterfaceOf<IPerfMonHook>
     {
     public:

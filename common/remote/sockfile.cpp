@@ -3756,8 +3756,16 @@ class CAsyncCommandManager
     unsigned limit;
 
 public:
-    CAsyncCommandManager(unsigned _limit) : limit(_limit)
+    CAsyncCommandManager()
     {
+    }
+    void init(unsigned _limit)
+    {
+        // reset limit if previously set
+        while (limit--)
+            threadsem.wait();
+
+        limit = _limit;
         if (limit) // 0 == unbound
             threadsem.signal(limit); // max number of async jobs
     }
@@ -5025,11 +5033,11 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
         {
             totalThrottleDelay = 0;
             limit = 0;
-            delayMs = DEFAULT_STDCMD_THROTTLEDELAYMS;
-            cpuThreshold = DEFAULT_STDCMD_THROTTLECPULIMIT;
+            delayMs = defaultStdCmdThrottleDelayMs;
+            cpuThreshold = defaultStdCmdThrottleCpuLimit;
             disabledLimit = 0;
-            queueLimit = DEFAULT_STDCMD_THROTTLEQUEUELIMIT;
-            statsIntervalSecs = DEFAULT_STDCMD_THROTTLECPULIMIT;
+            queueLimit = defaultStdCmdThrottleQueueLimit;
+            statsIntervalSecs = 60;
         }
         ~CThrottler()
         {
@@ -5302,7 +5310,7 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
     CClientStatsTable clientStatsTable;
     atomic_t globallasttick;
     unsigned targetActiveThreads;
-    bool authorizedOnly;
+    bool authorizedOnly = false;
     Owned<IPropertyTree> keyPairInfo;
 
     int getNextHandle()
@@ -5471,14 +5479,58 @@ public:
 
     IMPLEMENT_IINTERFACE
 
-    CRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy, bool _authorizedOnly, IPropertyTree *_keyPairInfo)
-        : asyncCommandManager(maxAsyncCopy), stdCmdThrottler("stdCmdThrotlter"), slowCmdThrottler("slowCmdThrotlter"), authorizedOnly(_authorizedOnly), keyPairInfo(_keyPairInfo)
+    CRemoteFileServer(IPropertyTree *config, IPropertyTree *_keyPairInfo)
+        : stdCmdThrottler("stdCmdThrotlter"), slowCmdThrottler("slowCmdThrotlter"), keyPairInfo(_keyPairInfo)
     {
+        unsigned maxThreads = defaultThreadLimit;
+        unsigned maxThreadsDelayMs = defaultThreadLimitDelayMs;
+        unsigned maxAsyncCopy = defaultAsyncCopyMax;
+
+        unsigned parallelRequestLimit = defaultStdCmdParallelRequestLimit;
+        unsigned throttleDelayMs = defaultStdCmdThrottleDelayMs;
+        unsigned throttleCPULimit = defaultStdCmdThrottleCpuLimit;
+        unsigned throttleQueueLimit = defaultStdCmdThrottleQueueLimit;
+
+        unsigned parallelSlowRequestLimit = defaultSlowCmdParallelRequestLimit;
+        unsigned throttleSlowDelayMs = defaultSlowCmdThrottleDelayMs;
+        unsigned throttleSlowCPULimit = defaultSlowCmdThrottleCpuLimit;
+        unsigned throttleSlowQueueLimit = defaultSlowCmdThrottleQueueLimit;
+
+        bool authorizedOnly = defaultAuthorizedOnly;
+
+        if (config)
+        {
+            maxThreads = config->getPropInt("@maxThreads", maxThreads);
+            maxThreadsDelayMs = config->getPropInt("@maxThreadsDelayMs", maxThreadsDelayMs);
+            maxAsyncCopy = config->getPropInt("@maxAsyncCopy", maxAsyncCopy);
+
+            parallelRequestLimit = config->getPropInt("@parallelRequestLimit", parallelRequestLimit);
+            throttleDelayMs = config->getPropInt("@throttleDelayMs", throttleDelayMs);
+            throttleCPULimit = config->getPropInt("@throttleCPULimit", throttleCPULimit);
+            throttleQueueLimit = config->getPropInt("@throttleQueueLimit", throttleQueueLimit);
+
+            parallelSlowRequestLimit = config->getPropInt("@parallelSlowRequestLimit", parallelSlowRequestLimit);
+            throttleSlowDelayMs = config->getPropInt("@throttleSlowDelayMs", throttleSlowDelayMs);
+            throttleSlowCPULimit = config->getPropInt("@throttleSlowCPULimit", throttleSlowCPULimit);
+            throttleSlowQueueLimit = config->getPropInt("@throttleSlowQueueLimit", throttleSlowQueueLimit);
+
+            authorizedOnly = config->getPropBool("@authorizedOnly", authorizedOnly);
+        }
+
+        // NB: if no OOPENSSL, no authorization checks
+#ifndef _USE_OPENSSL
+        authorizedOnly = false;
+#endif
+
+        asyncCommandManager.init(maxAsyncCopy);
+
         lasthandle = 0;
         selecthandler.setown(createSocketSelectHandler(NULL));
 
-        stdCmdThrottler.configure(DEFAULT_STDCMD_PARALLELREQUESTLIMIT, DEFAULT_STDCMD_THROTTLEDELAYMS, DEFAULT_STDCMD_THROTTLECPULIMIT, DEFAULT_STDCMD_THROTTLEQUEUELIMIT);
-        slowCmdThrottler.configure(DEFAULT_SLOWCMD_PARALLELREQUESTLIMIT, DEFAULT_SLOWCMD_THROTTLEDELAYMS, DEFAULT_SLOWCMD_THROTTLECPULIMIT, DEFAULT_SLOWCMD_THROTTLEQUEUELIMIT);
+        stdCmdThrottler.configure(parallelRequestLimit, throttleDelayMs, throttleCPULimit, throttleQueueLimit);
+        slowCmdThrottler.configure(parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit, throttleSlowQueueLimit);
+
+        PROGLOG("Parallel request limit = %d, throttleDelayMs = %d, throttleCPULimit = %d", parallelRequestLimit, throttleDelayMs, throttleCPULimit);
 
         unsigned targetMinThreads=maxThreads*20/100; // 20%
         if (0 == targetMinThreads) targetMinThreads = 1;
@@ -7436,17 +7488,12 @@ public:
 };
 
 
-IRemoteFileServer * createRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy, bool authorizedOnly, IPropertyTree *keyPairInfo)
+IRemoteFileServer * createRemoteFileServer(IPropertyTree *config, IPropertyTree *keyPairInfo)
 {
 #if SIMULATE_PACKETLOSS
     errorSimulationOn = false;
 #endif
-
-// NB: if no OOPENSSL, no authorization checks
-#ifndef _USE_OPENSSL
-    authorizedOnly = false;
-#endif
-    return new CRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy, authorizedOnly, keyPairInfo);
+    return new CRemoteFileServer(config, keyPairInfo);
 }
 
 
@@ -7739,7 +7786,7 @@ protected:
         StringBuffer infoStr;
         CPPUNIT_ASSERT(RFEnoerror == getDafileSvrInfo(ep, 10, infoStr));
 
-        CPPUNIT_ASSERT(RFEnoerror == setDafileSvrThrottleLimit(ep, ThrottleStd, DEFAULT_STDCMD_PARALLELREQUESTLIMIT+1, DEFAULT_STDCMD_THROTTLEDELAYMS+1, DEFAULT_STDCMD_THROTTLECPULIMIT+1, DEFAULT_STDCMD_THROTTLEQUEUELIMIT+1));
+        CPPUNIT_ASSERT(RFEnoerror == setDafileSvrThrottleLimit(ep, ThrottleStd, defaultStdCmdParallelRequestLimit+1, defaultStdCmdThrottleDelayMs+1, defaultStdCmdThrottleCpuLimit+1, defaultStdCmdThrottleQueueLimit+1));
     }
     void testDirectoryMonitoring()
     {

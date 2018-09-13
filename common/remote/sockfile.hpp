@@ -36,28 +36,29 @@ enum ThrottleClass
 };
 
 // RemoteFileServer throttling defaults
-#define DEFAULT_THREADLIMIT 100
-#define DEFAULT_THREADLIMITDELAYMS (60*1000)
-#define DEFAULT_ASYNCCOPYMAX 10
+static const unsigned defaultThreadLimit = 100;
+static const unsigned defaultThreadLimitDelayMs = 60*1000;
+static const unsigned defaultAsyncCopyMax = 10;
 
-#define DEFAULT_STDCMD_PARALLELREQUESTLIMIT 80
-#define DEFAULT_STDCMD_THROTTLEDELAYMS 1000
-#define DEFAULT_STDCMD_THROTTLECPULIMIT 85
-#define DEFAULT_STDCMD_THROTTLEQUEUELIMIT 1000
+static const unsigned defaultStdCmdParallelRequestLimit = 80;
+static const unsigned defaultStdCmdThrottleDelayMs = 1000;
+static const unsigned defaultStdCmdThrottleCpuLimit = 85;
+static const unsigned defaultStdCmdThrottleQueueLimit = 1000;
 
-#define DEFAULT_SLOWCMD_PARALLELREQUESTLIMIT 20
-#define DEFAULT_SLOWCMD_THROTTLEDELAYMS 5000
-#define DEFAULT_SLOWCMD_THROTTLECPULIMIT 75
-#define DEFAULT_SLOWCMD_THROTTLEQUEUELIMIT 1000
+static const unsigned defaultSlowCmdParallelRequestLimit  = 20;
+static const unsigned defaultSlowCmdThrottleDelayMs = 5000;
+static const unsigned defaultSlowCmdThrottleCpuLimit = 75;
+static const unsigned defaultSlowCmdThrottleQueueLimit = 1000;
 
-#define DEFAULT_AUTHORIZED_ONLY false
+static const unsigned defaultAuthorizedOnly = false;
+
 
 interface IRemoteFileServer : extends IInterface
 {
     virtual void run(DAFSConnectCfg connectMethod, SocketEndpoint &listenep, unsigned sslPort=0) = 0;
     virtual void stop() = 0;
     virtual unsigned idleTime() = 0; // in ms
-    virtual void setThrottle(ThrottleClass throttleClass, unsigned limit, unsigned delayMs=DEFAULT_STDCMD_THROTTLEDELAYMS, unsigned cpuThreshold=DEFAULT_STDCMD_THROTTLECPULIMIT, unsigned queueLimit=DEFAULT_STDCMD_THROTTLEQUEUELIMIT) = 0;
+    virtual void setThrottle(ThrottleClass throttleClass, unsigned limit, unsigned delayMs=defaultStdCmdThrottleDelayMs, unsigned cpuThreshold=defaultStdCmdThrottleCpuLimit, unsigned queueLimit=defaultStdCmdThrottleQueueLimit) = 0;
     virtual StringBuffer &getStats(StringBuffer &stats, bool reset) = 0;
 };
 
@@ -70,7 +71,7 @@ extern REMOTE_API IFile * createRemoteFile(SocketEndpoint &ep,const char * _file
 extern REMOTE_API unsigned getRemoteVersion(ISocket * _socket, StringBuffer &ver);
 extern REMOTE_API unsigned stopRemoteServer(ISocket * _socket);
 extern REMOTE_API const char *remoteServerVersionString();
-extern REMOTE_API IRemoteFileServer * createRemoteFileServer(unsigned maxThreads=DEFAULT_THREADLIMIT, unsigned maxThreadsDelayMs=DEFAULT_THREADLIMITDELAYMS, unsigned maxAsyncCopy=DEFAULT_ASYNCCOPYMAX, bool authorizedOnly=DEFAULT_AUTHORIZED_ONLY, IPropertyTree *keyPairInfo=nullptr);
+extern REMOTE_API IRemoteFileServer * createRemoteFileServer(IPropertyTree *config=nullptr, IPropertyTree *keyPairInfo=nullptr);
 extern REMOTE_API int setDafsTrace(ISocket * socket,byte flags);
 extern REMOTE_API int setDafsThrottleLimit(ISocket * socket, ThrottleClass throttleClass, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit, unsigned queueLimit, StringBuffer *errMsg=NULL);
 extern REMOTE_API bool enableDafsAuthentication(bool on);

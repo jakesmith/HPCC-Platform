@@ -3666,7 +3666,7 @@ void mergePTree(IPropertyTree *target, IPropertyTree *toMerge)
     }
 }
 
-void _synchronizePTree(IPropertyTree *target, IPropertyTree *source)
+void _synchronizePTree(IPropertyTree *target, IPropertyTree *source, bool keepTargetProperties)
 {
     Owned<IAttributeIterator> aiter = target->getAttributes();
     StringArray targetAttrs;
@@ -3694,9 +3694,12 @@ void _synchronizePTree(IPropertyTree *target, IPropertyTree *source)
             targetAttrs.zap(attr);
         }
     }
-    // remaining
-    ForEachItemIn (a, targetAttrs)
-        target->removeProp(targetAttrs.item(a));
+    if (!keepTargetProperties)
+    {
+        // remove remaining target attributes
+        ForEachItemIn (a, targetAttrs)
+            target->removeProp(targetAttrs.item(a));
+    }
     
     bool equal = true;
     MemoryBuffer srcMb;
@@ -3773,14 +3776,18 @@ void _synchronizePTree(IPropertyTree *target, IPropertyTree *source)
             if (sourceCompare)
             {
                 toProcess.zap(*sourceCompare);
-                _synchronizePTree(&e, sourceCompare);
+                _synchronizePTree(&e, sourceCompare, keepTargetProperties);
             }
             else
                 removeTreeList.append(e);
         }
     }
-    ForEachItemIn (rt, removeTreeList)
-        target->removeTree(&removeTreeList.item(rt));
+    if (!keepTargetProperties)
+    {
+        // remove remaining target properties
+        ForEachItemIn (rt, removeTreeList)
+            target->removeTree(&removeTreeList.item(rt));
+    }
 
     // add unprocessed source elements, not reference by name in target
     ForEachItemIn (s, toProcess)
@@ -3792,13 +3799,13 @@ void _synchronizePTree(IPropertyTree *target, IPropertyTree *source)
 
 // ensure target is equivalent to source whilst retaining elements already present in target.
 // presevers ordering of matching elements.
-void synchronizePTree(IPropertyTree *target, IPropertyTree *source)
+void synchronizePTree(IPropertyTree *target, IPropertyTree *source, bool keepTargetProperties)
 {
     const char *srcName = source->queryName();
     const char *tgtName = target->queryName();
     if (0 != strcmp(srcName, tgtName))
         throw MakeIPTException(PTreeExcpt_Unsupported, "Cannot synchronize if root nodes mismatch");
-    _synchronizePTree(target, source);
+    _synchronizePTree(target, source, keepTargetProperties);
 }
 
 IPropertyTree *ensurePTree(IPropertyTree *root, const char *xpath)
