@@ -2399,6 +2399,41 @@ jlib_decl const IProperties &queryEnvironmentConf()
 
 
 
+jlib_decl DAFSConnectCfg getDAFSConnectMode(const char *str)
+{
+    if (isEmptyString(str))
+        return SSLNone;
+
+    // checking for true | false for backward compatibility
+    if ( strieq(str, "SSLOnly") || strieq(str, "true") )
+        return SSLOnly;
+    else if ( strieq(str, "SSLFirst") )
+        return SSLFirst;
+    else if ( strieq(str, "UnsecureFirst") )
+        return UnsecureFirst;
+    // else SSLNone or false or ...
+
+    return SSLNone;
+}
+
+jlib_decl const char *getDAFSConnectModeString(DAFSConnectCfg mode)
+{
+    switch (mode)
+    {
+        case SSLNone:
+            return "SSLNone";
+        case SSLOnly:
+            return "SSLOnly";
+        case SSLFirst:
+            return "SSLFirst";
+        case UnsecureFirst:
+            return "UnsecureFirst";
+        default:
+            throwUnexpected();
+    }
+}
+
+
 static StringBuffer DAFSpassPhraseDec;//deprecated
 static CriticalSection DAFSpassPhraseCrit;
 //Deprecated, please use queryHPCCPKIKeyFiles() instead

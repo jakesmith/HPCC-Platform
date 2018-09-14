@@ -834,6 +834,10 @@
                     parallelRequestLimit="20"
                     throttleCPULimit="75"
                     throttleDelayMs="5000"
+                    port="7100"
+                    bindIP="192.168.9.108"
+                    sslPort="7101"
+                    sslMode="SSLNone"
                     version="1">
    <Instance computer="localhost"
              directory="${RUNTIME_PATH}/mydafilesrv"

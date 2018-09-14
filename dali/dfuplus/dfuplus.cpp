@@ -70,15 +70,25 @@ public:
             listenep.getUrlStr(eps);
 #endif
         enableDafsAuthentication(requireauthenticate);
-        server.setown(createRemoteFileServer());
+        Owned<IPropertyTree> config = createPTree();
+        config->setProp("@sslMode", getDAFSConnectModeString(securitySettings.queryDAFSConnectCfg()));
+        config->setPropInt("@port", listenep.port);
+        if (!listenep.isNull())
+        {
+            StringBuffer ipStr;
+            listenep.getIpText(ipStr);
+            config->setProp("@bindIP", ipStr);
+        }
+        server.setown(createRemoteFileServer(config));
         server->setThrottle(ThrottleStd, 0); // disable throttling
         server->setThrottle(ThrottleSlow, 0); // disable throttling
     }
 
     int run()
     {
-        try {
-            server->run(securitySettings.queryDAFSConnectCfg(), listenep);
+        try
+        {
+            server->run();
         }
         catch (IException *e) {
             EXCLOG(e,"dfuplus(dafilesrv)");

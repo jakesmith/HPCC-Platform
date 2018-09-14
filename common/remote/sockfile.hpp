@@ -55,7 +55,7 @@ static const unsigned defaultAuthorizedOnly = false;
 
 interface IRemoteFileServer : extends IInterface
 {
-    virtual void run(DAFSConnectCfg connectMethod, SocketEndpoint &listenep, unsigned sslPort=0) = 0;
+    virtual void run() = 0;
     virtual void stop() = 0;
     virtual unsigned idleTime() = 0; // in ms
     virtual void setThrottle(ThrottleClass throttleClass, unsigned limit, unsigned delayMs=defaultStdCmdThrottleDelayMs, unsigned cpuThreshold=defaultStdCmdThrottleCpuLimit, unsigned queueLimit=defaultStdCmdThrottleQueueLimit) = 0;

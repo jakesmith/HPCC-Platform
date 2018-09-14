@@ -374,6 +374,12 @@ extern jlib_decl bool getConfigurationDirectory(const IPropertyTree *dirtree, //
                                                 const char *instance, 
                                                 StringBuffer &dirout);
 
+
+enum DAFSConnectCfg { SSLNone = 0, SSLOnly, SSLFirst, UnsecureFirst };
+
+extern jlib_decl DAFSConnectCfg getDAFSConnectMode(const char *str);
+extern jlib_decl const char *getDAFSConnectModeString(DAFSConnectCfg mode);
+
 extern jlib_decl bool querySecuritySettings(DAFSConnectCfg *_connectMethod,
                                             unsigned short *_port,
                                             const char * *  _certificate,

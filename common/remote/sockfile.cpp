@@ -5311,7 +5311,10 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
     atomic_t globallasttick;
     unsigned targetActiveThreads;
     bool authorizedOnly = false;
-    Owned<IPropertyTree> keyPairInfo;
+    Owned<IPropertyTree> config, keyPairInfo;
+    DAFSConnectCfg sslMode = SSLNone;
+    unsigned port = DAFILESRV_PORT;
+    unsigned sslPort = SECURE_DAFILESRV_PORT;
 
     int getNextHandle()
     {
@@ -5479,9 +5482,13 @@ public:
 
     IMPLEMENT_IINTERFACE
 
-    CRemoteFileServer(IPropertyTree *config, IPropertyTree *_keyPairInfo)
-        : stdCmdThrottler("stdCmdThrotlter"), slowCmdThrottler("slowCmdThrotlter"), keyPairInfo(_keyPairInfo)
+    CRemoteFileServer(IPropertyTree *_config, IPropertyTree *_keyPairInfo)
+        : stdCmdThrottler("stdCmdThrotlter"), slowCmdThrottler("slowCmdThrotlter"), config(_config), keyPairInfo(_keyPairInfo)
     {
+        // NB: if no OOPENSSL, no authorization checks
+#ifndef _USE_OPENSSL
+        authorizedOnly = false;
+#endif
         unsigned maxThreads = defaultThreadLimit;
         unsigned maxThreadsDelayMs = defaultThreadLimitDelayMs;
         unsigned maxAsyncCopy = defaultAsyncCopyMax;
@@ -5489,48 +5496,42 @@ public:
         unsigned parallelRequestLimit = defaultStdCmdParallelRequestLimit;
         unsigned throttleDelayMs = defaultStdCmdThrottleDelayMs;
         unsigned throttleCPULimit = defaultStdCmdThrottleCpuLimit;
-        unsigned throttleQueueLimit = defaultStdCmdThrottleQueueLimit;
-
         unsigned parallelSlowRequestLimit = defaultSlowCmdParallelRequestLimit;
+        unsigned throttleQueueLimit = defaultStdCmdThrottleQueueLimit;
         unsigned throttleSlowDelayMs = defaultSlowCmdThrottleDelayMs;
         unsigned throttleSlowCPULimit = defaultSlowCmdThrottleCpuLimit;
         unsigned throttleSlowQueueLimit = defaultSlowCmdThrottleQueueLimit;
-
-        bool authorizedOnly = defaultAuthorizedOnly;
-
         if (config)
         {
-            maxThreads = config->getPropInt("@maxThreads", maxThreads);
-            maxThreadsDelayMs = config->getPropInt("@maxThreadsDelayMs", maxThreadsDelayMs);
-            maxAsyncCopy = config->getPropInt("@maxAsyncCopy", maxAsyncCopy);
+            sslMode = getDAFSConnectMode(config->queryProp("sslMode")); // defaults to SSLNone
+            port = config->getPropInt("@port", DAFILESRV_PORT);
+            sslPort = config->getPropInt("@sslPort", SECURE_DAFILESRV_PORT);
 
-            parallelRequestLimit = config->getPropInt("@parallelRequestLimit", parallelRequestLimit);
-            throttleDelayMs = config->getPropInt("@throttleDelayMs", throttleDelayMs);
-            throttleCPULimit = config->getPropInt("@throttleCPULimit", throttleCPULimit);
-            throttleQueueLimit = config->getPropInt("@throttleQueueLimit", throttleQueueLimit);
+            maxThreads = config->getPropInt("@maxThreads", defaultThreadLimit);
+            maxThreadsDelayMs = config->getPropInt("@maxThreadsDelayMs", defaultThreadLimitDelayMs);
+            maxAsyncCopy = config->getPropInt("@maxAsyncCopy", defaultAsyncCopyMax);
 
-            parallelSlowRequestLimit = config->getPropInt("@parallelSlowRequestLimit", parallelSlowRequestLimit);
-            throttleSlowDelayMs = config->getPropInt("@throttleSlowDelayMs", throttleSlowDelayMs);
-            throttleSlowCPULimit = config->getPropInt("@throttleSlowCPULimit", throttleSlowCPULimit);
-            throttleSlowQueueLimit = config->getPropInt("@throttleSlowQueueLimit", throttleSlowQueueLimit);
+            parallelRequestLimit = config->getPropInt("@parallelRequestLimit", defaultStdCmdParallelRequestLimit);
+            throttleDelayMs = config->getPropInt("@throttleDelayMs", defaultStdCmdThrottleDelayMs);
+            throttleCPULimit = config->getPropInt("@throttleCPULimit", defaultStdCmdThrottleCpuLimit);
+            throttleQueueLimit = config->getPropInt("@throttleQueueLimit", defaultStdCmdThrottleQueueLimit);
 
-            authorizedOnly = config->getPropBool("@authorizedOnly", authorizedOnly);
+            parallelSlowRequestLimit = config->getPropInt("@parallelSlowRequestLimit", defaultSlowCmdParallelRequestLimit);
+            throttleSlowDelayMs = config->getPropInt("@throttleSlowDelayMs", defaultSlowCmdThrottleDelayMs);
+            throttleSlowCPULimit = config->getPropInt("@throttleSlowCPULimit", defaultSlowCmdThrottleCpuLimit);
+            throttleSlowQueueLimit = config->getPropInt("@throttleSlowQueueLimit", defaultSlowCmdThrottleQueueLimit);
+
+            stdCmdThrottler.configure(parallelRequestLimit, throttleDelayMs, throttleCPULimit, throttleQueueLimit);
+            slowCmdThrottler.configure(parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit, throttleSlowQueueLimit);
         }
-
-        // NB: if no OOPENSSL, no authorization checks
-#ifndef _USE_OPENSSL
-        authorizedOnly = false;
-#endif
 
         asyncCommandManager.init(maxAsyncCopy);
 
         lasthandle = 0;
         selecthandler.setown(createSocketSelectHandler(NULL));
 
-        stdCmdThrottler.configure(parallelRequestLimit, throttleDelayMs, throttleCPULimit, throttleQueueLimit);
-        slowCmdThrottler.configure(parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit, throttleSlowQueueLimit);
-
-        PROGLOG("Parallel request limit = %d, throttleDelayMs = %d, throttleCPULimit = %d", parallelRequestLimit, throttleDelayMs, throttleCPULimit);
+        PROGLOG("Parallel [std] request limit = %u, throttleDelayMs = %u, throttleCPULimit = %u, throttleQueueLimit = %u", parallelRequestLimit, throttleDelayMs, throttleCPULimit, throttleQueueLimit);
+        PROGLOG("Parallel [slow] request limit = %u, throttleDelayMs = %u, throttleCPULimit = %u, throttleQueueLimit = %u", parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit, throttleSlowQueueLimit);
 
         unsigned targetMinThreads=maxThreads*20/100; // 20%
         if (0 == targetMinThreads) targetMinThreads = 1;
@@ -6984,36 +6985,29 @@ public:
         return new cCommandProcessor();
     }
 
-    void run(DAFSConnectCfg _connectMethod, SocketEndpoint &listenep, unsigned sslPort)
+    void run()
     {
-        SocketEndpoint sslep(listenep);
-        if (sslPort)
-            sslep.port = sslPort;
-        else
-            sslep.port = securitySettings.daFileSrvSSLPort;
         Owned<ISocket> acceptSocket, acceptSSLSocket;
 
-        if (_connectMethod != SSLOnly)
+        const char *bindIP = config->queryProp("@bindIP");
+
+        if (sslMode != SSLOnly)
         {
-            if (listenep.port == 0)
+            if (port == 0)
                 throw createDafsException(DAFSERR_serverinit_failed, "dafilesrv port not specified");
 
-            if (listenep.isNull())
-                acceptSocket.setown(ISocket::create(listenep.port));
+            if (isEmptyString(bindIP))
+                acceptSocket.setown(ISocket::create(port));
             else
-            {
-                StringBuffer ips;
-                listenep.getIpText(ips);
-                acceptSocket.setown(ISocket::create_ip(listenep.port,ips.str()));
-            }
+                acceptSocket.setown(ISocket::create_ip(port, bindIP));
         }
 
-        if (_connectMethod == SSLOnly || _connectMethod == SSLFirst || _connectMethod == UnsecureFirst)
+        if (sslMode == SSLOnly || sslMode == SSLFirst || sslMode == UnsecureFirst)
         {
-            if (sslep.port == 0)
+            if (sslPort == 0)
                 throw createDafsException(DAFSERR_serverinit_failed, "Secure dafilesrv port not specified");
 
-            if (_connectMethod == UnsecureFirst)
+            if (sslMode == UnsecureFirst)
             {
                 // don't fail, but warn - this allows for fast SSL client rejections
                 if (!securitySettings.certificate)
@@ -7043,22 +7037,18 @@ public:
                     throw createDafsException(DAFSERR_serverinit_failed, "SSL Key File not found in environment.conf");
             }
 
-            if (sslep.isNull())
-                acceptSSLSocket.setown(ISocket::create(sslep.port));
+            const char *bindIP = config->queryProp("@bindIP");
+            if (isEmptyString(bindIP))
+                acceptSSLSocket.setown(ISocket::create(sslPort));
             else
-            {
-                StringBuffer ips;
-                sslep.getIpText(ips);
-                acceptSSLSocket.setown(ISocket::create_ip(sslep.port,ips.str()));
-            }
+                acceptSSLSocket.setown(ISocket::create_ip(sslPort, bindIP));
         }
-
-        run(_connectMethod, acceptSocket.getClear(), acceptSSLSocket.getClear());
+        run(acceptSocket.getClear(), acceptSSLSocket.getClear());
     }
 
-    void run(DAFSConnectCfg _connectMethod, ISocket *regSocket, ISocket *secureSocket)
+    void run(ISocket *regSocket, ISocket *secureSocket)
     {
-        if (_connectMethod != SSLOnly)
+        if (sslMode != SSLOnly)
         {
             if (regSocket)
                 acceptsock.setown(regSocket);
@@ -7066,7 +7056,7 @@ public:
                 throw createDafsException(DAFSERR_serverinit_failed, "Invalid non-secure socket");
         }
 
-        if (_connectMethod == SSLOnly || _connectMethod == SSLFirst || _connectMethod == UnsecureFirst)
+        if (sslMode == SSLOnly || sslMode == SSLFirst || sslMode == UnsecureFirst)
         {
             if (secureSocket)
                 securesock.setown(secureSocket);
@@ -7082,9 +7072,9 @@ public:
             Owned<ISocket> sockSSL;
             bool sockavail = false;
             bool securesockavail = false;
-            if (_connectMethod == SSLNone)
+            if (sslMode == SSLNone)
                 sockavail = acceptsock->wait_read(1000*60*1)!=0;
-            else if (_connectMethod == SSLOnly)
+            else if (sslMode == SSLOnly)
                 securesockavail = securesock->wait_read(1000*60*1)!=0;
             else
             {
@@ -7152,7 +7142,7 @@ public:
                         if (!sockSSL||stopping)
                             break;
 
-                        if ( (_connectMethod == UnsecureFirst) && (!securitySettings.certificate || !securitySettings.privateKey) )
+                        if ( (sslMode == UnsecureFirst) && (!securitySettings.certificate || !securitySettings.privateKey) )
                         {
                             // for client secure_connect() to fail quickly ...
                             cleanupSocket(sockSSL);
@@ -7614,8 +7604,7 @@ protected:
         // IThreaded
             virtual void threadmain() override
             {
-                DAFSConnectCfg sslCfg = SSLNone;
-                server->run(sslCfg, socket, nullptr);
+                server->run(socket, nullptr);
             }
         };
         enableDafsAuthentication(false);

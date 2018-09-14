@@ -349,7 +349,6 @@ int main(int argc,char **argv)
     Owned<IFile> sentinelFile = createSentinelTarget();
     removeSentinelFile(sentinelFile);
 
-    SocketEndpoint listenep;
     unsigned sendbufsize = 0;
     unsigned recvbufsize = 0;
     int i = 1;
@@ -361,16 +360,27 @@ int main(int argc,char **argv)
     StringBuffer logDir;
     StringBuffer instanceName;
 
-    // Get SSL Settings
-    DAFSConnectCfg  connectMethod;
-    unsigned short  port;
-    unsigned short  sslport;
-    const char *    sslCertFile;
-    const char *    sslKeyFile;
-    queryDafsSecSettings(&connectMethod, &port, &sslport, &sslCertFile, &sslKeyFile, nullptr);
-
-    Owned<IPropertyTree> env = getHPCCEnvironment();
     Owned<IPropertyTree> config = createPTree();
+
+    // Keeping for backward compatibility, but dafilesrv's can be configured via environment.xml now
+    {
+        // Get SSL Settings and set into config
+        DAFSConnectCfg  connectMethod;
+        unsigned short  port;
+        unsigned short  sslPort;
+        const char *    sslCertFile;
+        const char *    sslKeyFile;
+        queryDafsSecSettings(&connectMethod, &port, &sslPort, &sslCertFile, &sslKeyFile, nullptr);
+        if (port)
+            config->setPropInt("@port", port);
+        if (sslPort)
+            config->setPropInt("@sslPort", sslPort);
+        config->setProp("@sslMode", getDAFSConnectModeString(connectMethod));
+    }
+
+
+    // NB: pick up settings from environment, environment sslMode, port, sslPort settings will take precedence
+    Owned<IPropertyTree> env = getHPCCEnvironment();
     IPropertyTree *keyPairInfo = nullptr;
     if (env)
     {
@@ -379,9 +389,8 @@ int main(int argc,char **argv)
             dafilesrvPath.appendf("[@name=\"%s\"]", instanceName.str());
         IPropertyTree *daFileSrv = env->queryPropTree(dafilesrvPath);
         if (daFileSrv)
-            synchronizePTree(config, daFileSrv);
-        if (daFileSrv)
         {
+            synchronizePTree(config, daFileSrv);
             // any overrides by Instance definitions?
             // NB: This won't work if netAddress is "." or if we start supporting hostnames there
             StringBuffer ipStr;
@@ -394,9 +403,36 @@ int main(int argc,char **argv)
         keyPairInfo = env->queryPropTree("EnvSettings/Keys");
     }
 
-    // these should really be in env, but currently they are not ...
-    listenep.port = port;
+    // apply defaults
+    if (!config->hasProp("@maxThreads"))
+        config->setPropInt("@maxThreads", defaultThreadLimit);
+    if (!config->hasProp("@maxThreadsDelayMs"))
+        config->setPropInt("@maxThreadsDelayMs", defaultThreadLimitDelayMs);
+    if (!config->hasProp("@maxAsyncCopy"))
+        config->setPropInt("@maxAsyncCopy", defaultAsyncCopyMax);
 
+    if (!config->hasProp("@parallelRequestLimit"))
+        config->setPropInt("@parallelRequestLimit", defaultStdCmdParallelRequestLimit);
+    if (!config->hasProp("@throttleDelayMs"))
+        config->setPropInt("@throttleDelayMs", defaultStdCmdThrottleDelayMs);
+    if (!config->hasProp("@throttleCPULimit"))
+        config->setPropInt("@throttleCPULimit", defaultStdCmdThrottleCpuLimit);
+    if (!config->hasProp("@throttleQueueLimit"))
+        config->setPropInt("@throttleQueueLimit", defaultStdCmdThrottleQueueLimit);
+
+    if (!config->hasProp("@parallelSlowRequestLimit"))
+        config->setPropInt("@parallelSlowRequestLimit", defaultSlowCmdParallelRequestLimit);
+    if (!config->hasProp("@throttleSlowDelayMs"))
+        config->setPropInt("@throttleSlowDelayMs", defaultSlowCmdThrottleDelayMs);
+    if (!config->hasProp("@throttleSlowCPULimit"))
+        config->setPropInt("@throttleSlowCPULimit", defaultSlowCmdThrottleCpuLimit);
+    if (!config->hasProp("@throttleSlowQueueLimit"))
+        config->setPropInt("@throttleSlowQueueLimit", defaultSlowCmdThrottleQueueLimit);
+
+    if (config->getPropBool("@authorizedOnly", defaultAuthorizedOnly))
+         config->setPropBool("@authorizedOnly", true);
+
+    // NB: command line options override config
     while (argc>i) {
         if (stricmp(argv[i],"-D")==0) {
             i++;
@@ -430,19 +466,24 @@ int main(int argc,char **argv)
         }
         else if ((argc>i+1)&&(stricmp(argv[i],"-p")==0)) {
             i++;
-            listenep.port = atoi(argv[i++]);
+            unsigned port = atoi(argv[i++]);
+            config->setPropInt("@port", port);
         }
         else if ((argc>i+1)&&(stricmp(argv[i],"-addr")==0)) {
             i++;
             if (strchr(argv[i],'.')||!isdigit(argv[i][0]))
-                listenep.set(argv[i], listenep.port);
+                config->setProp("@bindIP", argv[i]);
             else
-                listenep.port = atoi(argv[i]);
+            {
+                unsigned port = atoi(argv[i]);
+                config->setPropInt("@port", port);
+            }
             i++;
         }
         else if ((argc>i+1)&&(stricmp(argv[i],"-sslp")==0)) {
             i++;
-            sslport = atoi(argv[i++]);
+            unsigned sslPort = atoi(argv[i++]);
+            config->setPropInt("@sslPort", sslPort);
         }
         else if ((argc>i+1)&&(stricmp(argv[i],"-sbsize")==0)) {
             i++;
@@ -456,21 +497,23 @@ int main(int argc,char **argv)
             usage();
             exit(0);
         }
-        else if (stricmp(argv[i],"-LOCAL")==0) { 
+        else if (stricmp(argv[i],"-LOCAL")==0) {
             i++;
             locallisten = true;
         }
         else if (stricmp(argv[i],"-NOSSL")==0) { // overrides config setting
             i++;
+            DAFSConnectCfg connectMethod = getDAFSConnectMode(config->queryProp("@sslMode"));
             if (connectMethod == SSLOnly || connectMethod == SSLFirst || connectMethod == UnsecureFirst)
             {
                 PROGLOG("DaFileSrv SSL specified in config but overridden by -NOSSL in command line");
-                connectMethod = SSLNone;
+                config->setProp("@sslMode", getDAFSConnectModeString(SSLNone));
             }
         }
         else
             break;
     }
+
 
     if (0 == logDir.length())
     {
@@ -500,43 +543,44 @@ int main(int argc,char **argv)
         return 1;
     }
 #endif
-    if (argc > i) {
+    if (argc > i)
+    {
+        // NB: trailing arg. treated same as -addr
         if (strchr(argv[i],'.')||!isdigit(argv[i][0]))
-            listenep.set(argv[i], listenep.port);
+            config->setProp("@bindIP", argv[i]);
         else
-            listenep.port = atoi(argv[i]);
+        {
+            unsigned port = atoi(argv[i]);
+            config->setPropInt("@port", port);
+        }
         sendbufsize = (argc>i+1)?(atoi(argv[i+1])*1024):0;
         recvbufsize = (argc>i+2)?(atoi(argv[i+2])*1024):0;
     }
 
-    if ( (connectMethod == SSLNone) && (listenep.port == 0) )
+    DAFSConnectCfg connectMethod = getDAFSConnectMode(config->queryProp("@sslMode"));
+    unsigned port = config->getPropInt("@port");
+    unsigned sslPort = config->getPropInt("@sslPort");
+    const char *bindIP = config->queryProp("@bindIP");
+    if ( (connectMethod == SSLNone) && (port == 0) )
     {
         printf("\nError, port must not be 0\n");
         usage();
         exit(-1);
     }
-    else if ( (connectMethod == SSLOnly) && (sslport == 0) )
+    else if ( (connectMethod == SSLOnly) && (sslPort == 0) )
     {
         printf("\nError, secure port must not be 0\n");
         usage();
         exit(-1);
     }
-    else if ( ((connectMethod == SSLFirst) || (connectMethod == UnsecureFirst)) && ((listenep.port == 0) || (sslport == 0)) )
+    else if ( ((connectMethod == SSLFirst) || (connectMethod == UnsecureFirst)) && ((port == 0) || (sslPort == 0)) )
     {
         printf("\nError, both port and secure port must not be 0\n");
         usage();
         exit(-1);
     }
 
-    StringBuffer secMethod;
-    if (connectMethod == SSLNone)
-        secMethod.append("SSLNone");
-    else if (connectMethod == SSLOnly)
-        secMethod.append("SSLOnly");
-    else if (connectMethod == SSLFirst)
-        secMethod.append("SSLFirst");
-    else if (connectMethod == UnsecureFirst)
-        secMethod.append("UnsecureFirst");
+    const char *secMethod = config->queryProp("@sslMode");
 
     if (isdaemon) {
 #ifdef _WIN32
@@ -693,25 +737,29 @@ int main(int argc,char **argv)
     enableDafsAuthentication(requireauthenticate);
 
     StringBuffer eps;
-    if (listenep.isNull())
-        eps.append(listenep.port);
+    if (isEmptyString(bindIP))
+        eps.append(port);
     else
-        listenep.getUrlStr(eps);
+    {
+        SocketEndpoint ep(bindIP, port);
+        ep.getUrlStr(eps);
+    }
     if (connectMethod != SSLOnly)
         PROGLOG("Opening Dali File Server on %s", eps.str());
     if (connectMethod == SSLOnly || connectMethod == SSLFirst || connectMethod == UnsecureFirst)
     {
-        SocketEndpoint sslep(listenep);
-        sslep.port = sslport;
-        eps.kill();
-        if (sslep.isNull())
-            eps.append(sslep.port);
+        eps.clear();
+        if (isEmptyString(bindIP))
+            eps.append(sslPort);
         else
-            sslep.getUrlStr(eps);
+        {
+            SocketEndpoint sslEp(bindIP, sslPort);
+            sslEp.getUrlStr(eps);
+        }
         PROGLOG("Opening Dali File Server on SECURE %s", eps.str());
     }
 
-    PROGLOG("Dali File Server socket security model: %s", secMethod.str());
+    PROGLOG("Dali File Server socket security model: %s", secMethod);
 
     PROGLOG("Version: %s", verstring);
     PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
@@ -735,7 +783,7 @@ int main(int argc,char **argv)
     writeSentinelFile(sentinelFile);
     try
     {
-        server->run(connectMethod, listenep, sslport);
+        server->run();
     }
     catch (IException *e)
     {
