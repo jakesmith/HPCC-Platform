@@ -5311,7 +5311,7 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
     atomic_t globallasttick;
     unsigned targetActiveThreads;
     bool authorizedOnly = false;
-    Owned<IPropertyTree> config, keyPairInfo;
+    Linked<IPropertyTree> config, keyPairInfo;
     DAFSConnectCfg sslMode = SSLNone;
     unsigned port = DAFILESRV_PORT;
     unsigned sslPort = SECURE_DAFILESRV_PORT;

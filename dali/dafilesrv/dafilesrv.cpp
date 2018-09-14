@@ -582,17 +582,45 @@ int main(int argc,char **argv)
 
     const char *secMethod = config->queryProp("@sslMode");
 
+    enableDafsAuthentication(requireauthenticate);
+
+    StringBuffer eps;
+    if (isEmptyString(bindIP))
+        eps.append(port);
+    else
+    {
+        SocketEndpoint ep(bindIP, port);
+        ep.getUrlStr(eps);
+    }
+    if (connectMethod != SSLOnly)
+        PROGLOG("Opening Dali File Server on %s", eps.str());
+    if (connectMethod == SSLOnly || connectMethod == SSLFirst || connectMethod == UnsecureFirst)
+    {
+        eps.clear();
+        if (isEmptyString(bindIP))
+            eps.append(sslPort);
+        else
+        {
+            SocketEndpoint sslEp(bindIP, sslPort);
+            sslEp.getUrlStr(eps);
+        }
+        PROGLOG("Opening Dali File Server on SECURE %s", eps.str());
+    }
+
+    PROGLOG("Dali File Server socket security model: %s", secMethod);
+
+    const char * verstring = remoteServerVersionString();
+    PROGLOG("Version: %s", verstring);
+    PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
+
     if (isdaemon) {
 #ifdef _WIN32
         class cserv: public CService
         {
             bool stopped;
             bool started;
-            DAFSConnectCfg connectMethod;
             SocketEndpoint listenep;
-            bool requireauthenticate;
-            unsigned sslport;
-            StringBuffer secMethod;
+            Linked<IPropertyTree> config;
             
             class cpollthread: public Thread
             {
@@ -613,12 +641,7 @@ int main(int argc,char **argv)
 
         public:
 
-            cserv(DAFSConnectCfg _connectMethod, SocketEndpoint _listenep,
-                        unsigned _maxThreads, unsigned _maxThreadsDelayMs, unsigned _maxAsyncCopy,
-                        unsigned _parallelRequestLimit, unsigned _throttleDelayMs, unsigned _throttleCPULimit,
-                        unsigned _parallelSlowRequestLimit, unsigned _throttleSlowDelayMs, unsigned _throttleSlowCPULimit,
-                        unsigned _sslport, const char * _secMethod)
-            : connectMethod(_connectMethod), listenep(_listenep), pollthread(this), sslport(_sslport), secMethod(_secMethod)
+            cserv() : pollthread(this)
             {
                 stopped = false;
                 started = false;
@@ -676,35 +699,10 @@ int main(int argc,char **argv)
 
                 enableDafsAuthentication(requireauthenticate!=0);
 
-                StringBuffer eps;
-                if (listenep.isNull())
-                    eps.append(listenep.port);
-                else
-                    listenep.getUrlStr(eps);
-
-                if (connectMethod != SSLOnly)
-                    PROGLOG("Opening " DAFS_SERVICE_DISPLAY_NAME " on %s", eps.str());
-                if (connectMethod == SSLOnly || connectMethod == SSLFirst || connectMethod == UnsecureFirst)
-                {
-                    SocketEndpoint sslep(listenep);
-                    sslep.port = sslport;
-                    eps.kill();
-                    if (sslep.isNull())
-                        eps.append(sslep.port);
-                    else
-                        sslep.getUrlStr(eps);
-                    PROGLOG("Opening " DAFS_SERVICE_DISPLAY_NAME " on SECURE %s", eps.str());
-                }
-
-                PROGLOG("Dali File Server socket security model: %s", secMethod.str());
-
-                const char * verstring = remoteServerVersionString();
-                PROGLOG("Version: %s", verstring);
-                PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
                 PROGLOG(DAFS_SERVICE_DISPLAY_NAME " Running");
-                server.setown(createRemoteFileServer());
+                server.setown(createRemoteFileServer(config));
                 try {
-                    server->run(connectMethod, listenep, sslport);
+                    server->run();
                 }
                 catch (IException *e) {
                     EXCLOG(e,DAFS_SERVICE_NAME);
@@ -713,7 +711,7 @@ int main(int argc,char **argv)
                 PROGLOG(DAFS_SERVICE_DISPLAY_NAME " Stopped");
                 stopped = true;
             }
-        } service(connectMethod, listenep, sslport, secMethod);
+        } service(config);
         service.start();
         return 0;
 #else
@@ -732,37 +730,6 @@ int main(int argc,char **argv)
     write_pidfile(instanceName.str());
     PROGLOG("Dafilesrv starting - Build %s", BUILD_TAG);
 
-    const char * verstring = remoteServerVersionString();
-
-    enableDafsAuthentication(requireauthenticate);
-
-    StringBuffer eps;
-    if (isEmptyString(bindIP))
-        eps.append(port);
-    else
-    {
-        SocketEndpoint ep(bindIP, port);
-        ep.getUrlStr(eps);
-    }
-    if (connectMethod != SSLOnly)
-        PROGLOG("Opening Dali File Server on %s", eps.str());
-    if (connectMethod == SSLOnly || connectMethod == SSLFirst || connectMethod == UnsecureFirst)
-    {
-        eps.clear();
-        if (isEmptyString(bindIP))
-            eps.append(sslPort);
-        else
-        {
-            SocketEndpoint sslEp(bindIP, sslPort);
-            sslEp.getUrlStr(eps);
-        }
-        PROGLOG("Opening Dali File Server on SECURE %s", eps.str());
-    }
-
-    PROGLOG("Dali File Server socket security model: %s", secMethod);
-
-    PROGLOG("Version: %s", verstring);
-    PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
     server.setown(createRemoteFileServer(config, keyPairInfo));
     class CPerfHook : public CSimpleInterfaceOf<IPerfMonHook>
     {
