@@ -242,6 +242,11 @@ static ISecureSocket *createSecureSocket(ISocket *sock, SecureSocketType type)
     else
         return secureContextClient->createSecureSocket(sock, loglevel);
 }
+#else
+static ISecureSocket *createSecureSocket(ISocket *sock, SecureSocketType type)
+{
+    throwUnexpected();
+}
 #endif
 
 void clientSetRemoteFileTimeouts(unsigned maxconnecttime,unsigned maxreadtime)
@@ -4670,6 +4675,7 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
     class CThrottler;
     class CRemoteClientHandler : implements ISocketSelectNotify, public CInterface
     {
+        bool calledByRowService;
     public:
         CRemoteFileServer *parent;
         Owned<ISocket> socket;
@@ -4687,8 +4693,8 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
 
         IMPLEMENT_IINTERFACE;
 
-        CRemoteClientHandler(CRemoteFileServer *_parent,ISocket *_socket,IAuthenticatedUser *_user,atomic_t &_globallasttick)
-            : socket(_socket), user(_user), globallasttick(_globallasttick)
+        CRemoteClientHandler(CRemoteFileServer *_parent,ISocket *_socket,IAuthenticatedUser *_user,atomic_t &_globallasttick, bool _calledByRowService)
+            : socket(_socket), user(_user), globallasttick(_globallasttick), calledByRowService(_calledByRowService)
         {
             previdx = (unsigned)-1;
             StringBuffer peerBuf;
@@ -4747,6 +4753,7 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
                 e->Release();
             }
         }
+        bool isRowServiceClient() const { return calledByRowService; }
         bool notifySelected(ISocket *sock,unsigned selected)
         {
             if (TF_TRACE_FULL)
@@ -5292,6 +5299,9 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
     CriticalSection     sect;
     Owned<ISocket>      acceptsock;
     Owned<ISocket>      securesock;
+    Owned<ISocket>      rowServiceSock;
+    RowServiceCfg       rowServiceCfg = RowServiceCfg::rs_off;
+    bool dafilesrvRowServiceCmds = true; // should row service commands be processed on std. service port
     Owned<ISocketSelectHandler> selecthandler;
     Owned<IThreadPool>  threads;    // for commands
     bool stopping;
@@ -5302,7 +5312,6 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
     CClientStatsTable clientStatsTable;
     atomic_t globallasttick;
     unsigned targetActiveThreads;
-    bool authorizedOnly;
     Owned<IPropertyTree> keyPairInfo;
 
     int getNextHandle()
@@ -5467,12 +5476,24 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
         inMb.setLength(inPos);
         return compressMb.capacity() > replyLimit;
     }
+
+    void validateSSLSetup()
+    {
+        if (!securitySettings.certificate)
+            throw createDafsException(DAFSERR_serverinit_failed, "SSL Certificate information not found in environment.conf");
+        if (!checkFileExists(securitySettings.certificate))
+            throw createDafsException(DAFSERR_serverinit_failed, "SSL Certificate File not found in environment.conf");
+        if (!securitySettings.privateKey)
+            throw createDafsException(DAFSERR_serverinit_failed, "SSL Key information not found in environment.conf");
+        if (!checkFileExists(securitySettings.privateKey))
+            throw createDafsException(DAFSERR_serverinit_failed, "SSL Key File not found in environment.conf");
+    }
 public:
 
     IMPLEMENT_IINTERFACE
 
-    CRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy, bool _authorizedOnly, IPropertyTree *_keyPairInfo)
-        : asyncCommandManager(maxAsyncCopy), stdCmdThrottler("stdCmdThrotlter"), slowCmdThrottler("slowCmdThrotlter"), authorizedOnly(_authorizedOnly), keyPairInfo(_keyPairInfo)
+    CRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy, IPropertyTree *_keyPairInfo)
+        : asyncCommandManager(maxAsyncCopy), stdCmdThrottler("stdCmdThrotlter"), slowCmdThrottler("slowCmdThrotlter"), keyPairInfo(_keyPairInfo)
     {
         lasthandle = 0;
         selecthandler.setown(createSocketSelectHandler(NULL));
@@ -6286,6 +6307,8 @@ public:
             acceptsock->cancel_accept();
         if (securesock)
             securesock->cancel_accept();
+        if (rowServiceSock)
+            rowServiceSock->cancel_accept();
         reply.append((unsigned)RFEnoerror);
     }
 
@@ -6481,6 +6504,10 @@ public:
                     WARNLOG("Output compression not supported for format: %s", outputFmtStr);
             }
 
+            /* NB: unless client call is on dedicated service, allow non-authorized requests through, e.g. from engines talking to unsecured port
+             * In a secure setup, this service will be configured on a dedicated port, and the std. insecure dafilesrv will be unreachable.
+             */
+            bool authorizedOnly = rowServiceSock && client.isRowServiceClient();
 
             // In future this may be passed the request and build a chain of activities and return sink.
             outputActivity.setown(createOutputActivity(*requestTree, authorizedOnly, keyPairInfo));
@@ -6906,14 +6933,34 @@ public:
                 MAPCOMMAND(RFCgetinfo, cmdGetInfo);
                 MAPCOMMAND(RFCfirewall, cmdFirewall);
                 MAPCOMMANDCLIENT(RFCunlock, cmdUnlock, *client);
-                MAPCOMMANDCLIENT(RFCStreamRead, cmdStreamReadStd, *client);
-                MAPCOMMANDCLIENT(RFCStreamReadJSON, cmdStreamReadJSON, *client);
-                MAPCOMMANDCLIENTTESTSOCKET(RFCStreamReadTestSocket, cmdStreamReadTestSocket, *client);
                 MAPCOMMANDCLIENT(RFCcopysection, cmdCopySection, *client);
                 MAPCOMMANDCLIENTTHROTTLE(RFCtreecopy, cmdTreeCopy, *client, &slowCmdThrottler);
                 MAPCOMMANDCLIENTTHROTTLE(RFCtreecopytmp, cmdTreeCopyTmp, *client, &slowCmdThrottler);
                 MAPCOMMAND(RFCsetthrottle, cmdSetThrottle); // legacy version
                 MAPCOMMAND(RFCsetthrottle2, cmdSetThrottle2);
+                // row service commands
+                case RFCStreamRead:
+                {
+                    if (!dafilesrvRowServiceCmds && !client->isRowServiceClient())
+                        throw createDafsException(DAFSERR_cmdstream_unauthorized, "Unauthorized command");
+                    cmdStreamReadStd(msg, reply, *client);
+                    break;
+                }
+                case RFCStreamReadJSON:
+                {
+                    if (!dafilesrvRowServiceCmds && !client->isRowServiceClient())
+                        throw createDafsException(DAFSERR_cmdstream_unauthorized, "Unauthorized command");
+                    cmdStreamReadJSON(msg, reply, *client);
+                    break;
+                }
+                case RFCStreamReadTestSocket:
+                {
+                    testSocketFlag = true;
+                    if (!dafilesrvRowServiceCmds && !client->isRowServiceClient())
+                        throw createDafsException(DAFSERR_cmdstream_unauthorized, "Unauthorized command");
+                    cmdStreamReadTestSocket(msg, reply, *client);
+                    break;
+                }
             default:
                 formatException(reply, nullptr, cmd, false, RFSERR_InvalidCommand, client);
                 break;
@@ -6932,27 +6979,27 @@ public:
         return new cCommandProcessor();
     }
 
-    void run(DAFSConnectCfg _connectMethod, SocketEndpoint &listenep, unsigned sslPort)
+    virtual void run(DAFSConnectCfg _connectMethod, const SocketEndpoint &listenep, unsigned sslPort, const SocketEndpoint *rowServiceEp, RowServiceCfg _rowServiceCfg) override
     {
         SocketEndpoint sslep(listenep);
         if (sslPort)
             sslep.port = sslPort;
         else
             sslep.port = securitySettings.daFileSrvSSLPort;
-        Owned<ISocket> acceptSocket, acceptSSLSocket;
 
+        Owned<ISocket> acceptSock, secureSock, rowServiceSock;
         if (_connectMethod != SSLOnly)
         {
             if (listenep.port == 0)
                 throw createDafsException(DAFSERR_serverinit_failed, "dafilesrv port not specified");
 
             if (listenep.isNull())
-                acceptSocket.setown(ISocket::create(listenep.port));
+                acceptSock.setown(ISocket::create(listenep.port));
             else
             {
                 StringBuffer ips;
                 listenep.getIpText(ips);
-                acceptSocket.setown(ISocket::create_ip(listenep.port,ips.str()));
+                acceptSock.setown(ISocket::create_ip(listenep.port,ips.str()));
             }
         }
 
@@ -6980,45 +7027,60 @@ public:
                 }
             }
             else
-            {
-                if (!securitySettings.certificate)
-                    throw createDafsException(DAFSERR_serverinit_failed, "SSL Certificate information not found in environment.conf");
-                if (!checkFileExists(securitySettings.certificate))
-                    throw createDafsException(DAFSERR_serverinit_failed, "SSL Certificate File not found in environment.conf");
-                if (!securitySettings.privateKey)
-                    throw createDafsException(DAFSERR_serverinit_failed, "SSL Key information not found in environment.conf");
-                if (!checkFileExists(securitySettings.privateKey))
-                    throw createDafsException(DAFSERR_serverinit_failed, "SSL Key File not found in environment.conf");
-            }
+                validateSSLSetup();
 
             if (sslep.isNull())
-                acceptSSLSocket.setown(ISocket::create(sslep.port));
+                secureSock.setown(ISocket::create(sslep.port));
             else
             {
                 StringBuffer ips;
                 sslep.getIpText(ips);
-                acceptSSLSocket.setown(ISocket::create_ip(sslep.port,ips.str()));
+                secureSock.setown(ISocket::create_ip(sslep.port,ips.str()));
             }
         }
 
-        run(_connectMethod, acceptSocket.getClear(), acceptSSLSocket.getClear());
+        if (rowServiceEp)
+        {
+            if (rowServiceEp->isNull())
+                rowServiceSock.setown(ISocket::create(rowServiceEp->port));
+            else
+            {
+                StringBuffer ips;
+                rowServiceEp->getIpText(ips);
+                rowServiceSock.setown(ISocket::create_ip(rowServiceEp->port, ips.str()));
+            }
+
+#ifdef _USE_OPENSSL
+            if ((RowServiceCfg::rs_onssl == _rowServiceCfg) || (RowServiceCfg::rs_bothssl == _rowServiceCfg))
+                validateSSLSetup();
+#else
+            if (RowServiceCfg::rs_onssl == _rowServiceCfg)
+                _rowServiceCfg = rs_on;
+            else if (RowServiceCfg::rs_bothssl == _rowServiceCfg)
+                _rowServiceCfg = rs_both;
+#endif
+        }
+
+        run(_connectMethod, acceptSock.getClear(), secureSock.getClear(), _rowServiceCfg, rowServiceSock.getClear());
     }
 
-    void run(DAFSConnectCfg _connectMethod, ISocket *regSocket, ISocket *secureSocket)
+    void run(DAFSConnectCfg _connectMethod, ISocket *_acceptSock, ISocket *_secureSock, RowServiceCfg _rowServiceCfg, ISocket *_rowServiceSock)
     {
+        acceptsock.setown(_acceptSock);
+        securesock.setown(_secureSock);
+        rowServiceSock.setown(_rowServiceSock);
+        rowServiceCfg = _rowServiceCfg;
+        if ((RowServiceCfg::rs_on == rowServiceCfg) || (RowServiceCfg::rs_onssl == rowServiceCfg))
+            dafilesrvRowServiceCmds = false;
         if (_connectMethod != SSLOnly)
         {
-            if (regSocket)
-                acceptsock.setown(regSocket);
-            else
+            if (!acceptsock)
                 throw createDafsException(DAFSERR_serverinit_failed, "Invalid non-secure socket");
         }
 
         if (_connectMethod == SSLOnly || _connectMethod == SSLFirst || _connectMethod == UnsecureFirst)
         {
-            if (secureSocket)
-                securesock.setown(secureSocket);
-            else
+            if (!securesock)
                 throw createDafsException(DAFSERR_serverinit_failed, "Invalid secure socket");
         }
 
@@ -7028,32 +7090,41 @@ public:
         {
             Owned<ISocket> sock;
             Owned<ISocket> sockSSL;
+            Owned<ISocket> acceptedRSSock;
             bool sockavail = false;
             bool securesockavail = false;
-            if (_connectMethod == SSLNone)
+            bool rowServiceSockAvail = false;
+            if (_connectMethod == SSLNone && (nullptr == rowServiceSock.get()))
                 sockavail = acceptsock->wait_read(1000*60*1)!=0;
-            else if (_connectMethod == SSLOnly)
+            else if (_connectMethod == SSLOnly && (nullptr == rowServiceSock.get()))
                 securesockavail = securesock->wait_read(1000*60*1)!=0;
             else
             {
                 UnsignedArray readSocks;
                 UnsignedArray waitingSocks;
-                readSocks.append(acceptsock->OShandle());
-                readSocks.append(securesock->OShandle());
+                if (acceptsock)
+                    readSocks.append(acceptsock->OShandle());
+                if (securesock)
+                    readSocks.append(securesock->OShandle());
+                if (rowServiceSock)
+                    readSocks.append(rowServiceSock->OShandle());
                 int numReady = wait_read_multiple(readSocks, 1000*60*1, waitingSocks);
                 if (numReady > 0)
                 {
                     for (int idx = 0; idx < numReady; idx++)
                     {
-                        if (waitingSocks.item(idx) == acceptsock->OShandle())
+                        unsigned waitingSock = waitingSocks.item(idx);
+                        if (acceptsock && (waitingSock == acceptsock->OShandle()))
                             sockavail = true;
-                        else if (waitingSocks.item(idx) == securesock->OShandle())
+                        else if (securesock && (waitingSock == securesock->OShandle()))
                             securesockavail = true;
+                        else if (rowServiceSock && (waitingSock == rowServiceSock->OShandle()))
+                            rowServiceSockAvail = true;
                     }
                 }
             }
 #if 0
-            if (!sockavail && !securesockavail)
+            if (!sockavail && !securesockavail && !rowServiceSockAvail)
             {
                 JSocketStatistics stats;
                 getSocketStatistics(stats);
@@ -7066,7 +7137,7 @@ public:
             if (stopping)
                 break;
 
-            if (sockavail || securesockavail)
+            if (sockavail || securesockavail || rowServiceSockAvail)
             {
                 if (sockavail)
                 {
@@ -7075,13 +7146,6 @@ public:
                         sock.setown(acceptsock->accept(true));
                         if (!sock||stopping)
                             break;
-#ifdef _DEBUG
-                        SocketEndpoint eps;
-                        sock->getPeerEndpoint(eps);
-                        StringBuffer sb;
-                        eps.getUrlStr(sb);
-                        PROGLOG("Server accepting from %s", sb.str());
-#endif
                     }
                     catch (IException *e)
                     {
@@ -7109,22 +7173,11 @@ public:
                         }
                         else
                         {
-#ifdef _USE_OPENSSL
                             ssock.setown(createSecureSocket(sockSSL.getClear(), ServerSocket));
                             int status = ssock->secure_accept();
                             if (status < 0)
                                 throw createDafsException(DAFSERR_serveraccept_failed,"Failure to establish secure connection");
                             sockSSL.setown(ssock.getLink());
-#else
-                            throw createDafsException(DAFSERR_serveraccept_failed,"Failure to establish secure connection: OpenSSL disabled in build");
-#endif
-#ifdef _DEBUG
-                            SocketEndpoint eps;
-                            sockSSL->getPeerEndpoint(eps);
-                            StringBuffer sb;
-                            eps.getUrlStr(sb);
-                            PROGLOG("Server accepting SECURE from %s", sb.str());
-#endif
                         }
                     }
                     catch (IJSOCK_Exception *e)
@@ -7146,11 +7199,74 @@ public:
                     }
                 }
 
+                if (rowServiceSockAvail)
+                {
+                    Owned<ISecureSocket> ssock;
+                    try
+                    {
+                        acceptedRSSock.setown(rowServiceSock->accept(true));
+                        if (!acceptedRSSock||stopping)
+                            break;
+
+                        if ((rs_onssl == rowServiceCfg) || (rs_bothssl == rowServiceCfg)) // NB: will be disabled if !_USE_OPENSLL
+                        {
+                            ssock.setown(createSecureSocket(acceptedRSSock.getClear(), ServerSocket));
+                            int status = ssock->secure_accept();
+                            if (status < 0)
+                                throw createDafsException(DAFSERR_serveraccept_failed,"Failure to establish SSL row service connection");
+                            acceptedRSSock.setown(ssock.getLink());
+                        }
+                    }
+                    catch (IJSOCK_Exception *e)
+                    {
+                        // accept failed ...
+                        EXCLOG(e,"CRemoteFileServer (row service)");
+                        e->Release();
+                        break;
+                    }
+                    catch (IException *e) // IDAFS_Exception also ...
+                    {
+                        EXCLOG(e,"CRemoteFileServer1 (row service)");
+                        e->Release();
+                        cleanupSocket(acceptedRSSock);
+                        sockSSL.clear();
+                        cleanupSocket(ssock);
+                        ssock.clear();
+                        rowServiceSockAvail = false;
+                    }
+                }
+
+                SocketEndpoint eps;
+                StringBuffer sb;
                 if (sockavail)
-                    runClient(sock.getClear());
+                {
+#ifdef _DEBUG
+                    sock->getPeerEndpoint(eps);
+                    eps.getUrlStr(sb);
+                    PROGLOG("Server accepting from %s", sb.str());
+#endif
+                    runClient(sock.getClear(), false);
+                }
 
                 if (securesockavail)
-                    runClient(sockSSL.getClear());
+                {
+#ifdef _DEBUG
+                    sockSSL->getPeerEndpoint(eps);
+                    eps.getUrlStr(sb.clear());
+                    PROGLOG("Server accepting SECURE from %s", sb.str());
+#endif
+                    runClient(sockSSL.getClear(), false);
+                }
+
+                if (rowServiceSockAvail)
+                {
+#ifdef _DEBUG
+                    acceptedRSSock->getPeerEndpoint(eps);
+                    eps.getUrlStr(sb.clear());
+                    PROGLOG("Server accepting row service socket from %s", sb.str());
+#endif
+                    runClient(acceptedRSSock.getClear(), true);
+                }
             }
             else
                 checkTimeout();
@@ -7243,7 +7359,7 @@ public:
         return false;
     }
 
-    void runClient(ISocket *sock)
+    void runClient(ISocket *sock, bool rowService) // rowService used to distinguish client calls
     {
         cCommandProcessor::cCommandProcessorParams params;
         IAuthenticatedUser *user=NULL;
@@ -7269,7 +7385,7 @@ public:
             }
             return;
         }
-        params.client = new CRemoteClientHandler(this,sock,user,globallasttick);
+        params.client = new CRemoteClientHandler(this, sock, user, globallasttick, rowService);
         {
             CriticalBlock block(sect);
             clients.append(*LINK(params.client));
@@ -7436,17 +7552,13 @@ public:
 };
 
 
-IRemoteFileServer * createRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy, bool authorizedOnly, IPropertyTree *keyPairInfo)
+IRemoteFileServer * createRemoteFileServer(unsigned maxThreads, unsigned maxThreadsDelayMs, unsigned maxAsyncCopy, IPropertyTree *keyPairInfo)
 {
 #if SIMULATE_PACKETLOSS
     errorSimulationOn = false;
 #endif
 
-// NB: if no OOPENSSL, no authorization checks
-#ifndef _USE_OPENSSL
-    authorizedOnly = false;
-#endif
-    return new CRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy, authorizedOnly, keyPairInfo);
+    return new CRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy, keyPairInfo);
 }
 
 
@@ -7568,7 +7680,7 @@ protected:
             virtual void threadmain() override
             {
                 DAFSConnectCfg sslCfg = SSLNone;
-                server->run(sslCfg, socket, nullptr);
+                server->run(sslCfg, socket, nullptr, RowServiceCfg::rs_off, nullptr);
             }
         };
         enableDafsAuthentication(false);
