@@ -5300,8 +5300,10 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
     Owned<ISocket>      acceptsock;
     Owned<ISocket>      securesock;
     Owned<ISocket>      rowServiceSock;
-    RowServiceCfg       rowServiceCfg = RowServiceCfg::rs_off;
-    bool dafilesrvRowServiceCmds = true; // should row service commands be processed on std. service port
+
+    bool rowServiceOnStdPort = true; // should row service commands be processed on std. service port
+    bool rowServiceSSL = false;
+
     Owned<ISocketSelectHandler> selecthandler;
     Owned<IThreadPool>  threads;    // for commands
     bool stopping;
@@ -6895,7 +6897,7 @@ public:
 
     void checkAuthorizedStreamCommand(CRemoteClientHandler &client)
     {
-        if (!dafilesrvRowServiceCmds && !client.isRowServiceClient())
+        if (!rowServiceOnStdPort && !client.isRowServiceClient())
             throw createDafsException(DAFSERR_cmdstream_unauthorized, "Unauthorized command");
     }
 
@@ -6982,7 +6984,7 @@ public:
         return new cCommandProcessor();
     }
 
-    virtual void run(DAFSConnectCfg _connectMethod, const SocketEndpoint &listenep, unsigned sslPort, const SocketEndpoint *rowServiceEp, RowServiceCfg _rowServiceCfg) override
+    virtual void run(DAFSConnectCfg _connectMethod, const SocketEndpoint &listenep, unsigned sslPort, const SocketEndpoint *rowServiceEp, bool _rowServiceSSL, bool _rowServiceOnStdPort) override
     {
         SocketEndpoint sslep(listenep);
         if (sslPort)
@@ -7044,6 +7046,9 @@ public:
 
         if (rowServiceEp)
         {
+            rowServiceSSL = _rowServiceSSL;
+            rowServiceOnStdPort = _rowServiceOnStdPort;
+
             if (rowServiceEp->isNull())
                 rowServiceSock.setown(ISocket::create(rowServiceEp->port));
             else
@@ -7054,27 +7059,21 @@ public:
             }
 
 #ifdef _USE_OPENSSL
-            if ((RowServiceCfg::rs_onssl == _rowServiceCfg) || (RowServiceCfg::rs_bothssl == _rowServiceCfg))
+            if (rowServiceSSL)
                 validateSSLSetup();
 #else
-            if (RowServiceCfg::rs_onssl == _rowServiceCfg)
-                _rowServiceCfg = rs_on;
-            else if (RowServiceCfg::rs_bothssl == _rowServiceCfg)
-                _rowServiceCfg = rs_both;
+            rowServiceSSL = false;
 #endif
         }
 
-        run(_connectMethod, acceptSock.getClear(), secureSock.getClear(), _rowServiceCfg, rowServiceSock.getClear());
+        run(_connectMethod, acceptSock.getClear(), secureSock.getClear(), rowServiceSock.getClear());
     }
 
-    void run(DAFSConnectCfg _connectMethod, ISocket *_acceptSock, ISocket *_secureSock, RowServiceCfg _rowServiceCfg, ISocket *_rowServiceSock)
+    void run(DAFSConnectCfg _connectMethod, ISocket *_acceptSock, ISocket *_secureSock, ISocket *_rowServiceSock)
     {
         acceptsock.setown(_acceptSock);
         securesock.setown(_secureSock);
         rowServiceSock.setown(_rowServiceSock);
-        rowServiceCfg = _rowServiceCfg;
-        if ((RowServiceCfg::rs_on == rowServiceCfg) || (RowServiceCfg::rs_onssl == rowServiceCfg))
-            dafilesrvRowServiceCmds = false;
         if (_connectMethod != SSLOnly)
         {
             if (!acceptsock)
@@ -7211,7 +7210,7 @@ public:
                         if (!acceptedRSSock||stopping)
                             break;
 
-                        if ((rs_onssl == rowServiceCfg) || (rs_bothssl == rowServiceCfg)) // NB: will be disabled if !_USE_OPENSLL
+                        if (rowServiceSSL) // NB: will be disabled if !_USE_OPENSLL
                         {
                             ssock.setown(createSecureSocket(acceptedRSSock.getClear(), ServerSocket));
                             int status = ssock->secure_accept();
@@ -7685,7 +7684,7 @@ protected:
             virtual void threadmain() override
             {
                 DAFSConnectCfg sslCfg = SSLNone;
-                server->run(sslCfg, socket, nullptr, RowServiceCfg::rs_off, nullptr);
+                server->run(sslCfg, socket, nullptr, nullptr);
             }
         };
         enableDafsAuthentication(false);

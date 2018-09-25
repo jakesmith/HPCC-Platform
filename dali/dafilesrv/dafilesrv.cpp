@@ -32,8 +32,9 @@
 #pragma warning (disable : 4355)
 #endif
 
-static const bool defaultRowServiceSSL = false;
-static const char *defaultRowServiceConfiguration = "off";
+static const bool defaultRowServiceOnStdPort = true;
+static const bool defaultDedicatedRowServiceSSL = false;
+
 
 
 #include "remoteerr.hpp"
@@ -383,8 +384,10 @@ int main(int argc,char **argv)
     unsigned throttleSlowDelayMs = DEFAULT_SLOWCMD_THROTTLEDELAYMS;
     unsigned throttleSlowCPULimit = DEFAULT_SLOWCMD_THROTTLECPULIMIT;
     unsigned throttleSlowQueueLimit = DEFAULT_SLOWCMD_THROTTLEQUEUELIMIT;
-    const char *rowServiceConfiguration = defaultRowServiceConfiguration;
-    unsigned rowServicePort = DEFAULT_ROWSERVICE_PORT;
+
+    unsigned dedicatedRowServicePort = DEFAULT_ROWSERVICE_PORT;
+    bool dedicatedRowServiceSSL = defaultDedicatedRowServiceSSL;
+    bool rowServiceOnStdPort = defaultRowServiceOnStdPort;
 
     Owned<IPropertyTree> env = getHPCCEnvironment();
     IPropertyTree *keyPairInfo = nullptr;
@@ -412,19 +415,37 @@ int main(int argc,char **argv)
             throttleSlowCPULimit = daFileSrv->getPropInt("@throttleSlowCPULimit", DEFAULT_SLOWCMD_THROTTLECPULIMIT);
             throttleSlowQueueLimit = daFileSrv->getPropInt("@throttleSlowQueueLimit", DEFAULT_SLOWCMD_THROTTLEQUEUELIMIT);
 
-            const char *_rowServiceConfiguration = daFileSrv->queryProp("@rowServiceConfiguration");
-            if (!isEmptyString(_rowServiceConfiguration))
-                rowServiceConfiguration = _rowServiceConfiguration;
-            rowServicePort = daFileSrv->getPropInt("@rowServicePort", DEFAULT_ROWSERVICE_PORT);
+            dedicatedRowServicePort = daFileSrv->getPropInt("@rowServicePort", DEFAULT_ROWSERVICE_PORT);
+            dedicatedRowServiceSSL = daFileSrv->getPropBool("@rowServiceSSL", defaultDedicatedRowServiceSSL);
+            rowServiceOnStdPort = daFileSrv->getPropBool("@rowServiceOnStdPort", defaultRowServiceOnStdPort);
 
             // any overrides by Instance definitions?
             // NB: This won't work if netAddress is "." or if we start supporting hostnames there
             StringBuffer ipStr;
             queryHostIP().getIpText(ipStr);
             VStringBuffer daFileSrvPath("Instance[@netAddress=\"%s\"]", ipStr.str());
-            IPropertyTree *dafileSrvInstance = daFileSrv->queryPropTree(daFileSrvPath);
-            if (dafileSrvInstance)
+            IPropertyTree *_dafileSrvInstance = daFileSrv->queryPropTree(daFileSrvPath);
+            if (_dafileSrvInstance)
             {
+                Owned<IPropertyTree> dafileSrvInstance;
+
+                // check if there's a DaFileSrvGroup
+                const char *groupName = daFileSrv->queryProp("@group");
+                if (!isEmptyString(groupName))
+                {
+                    VStringBuffer dafilesrvGroupPath("Software/DafilesrvGroup[@name=\"%s\"]", groupName);
+                    IPropertyTree *daFileSrvGroup = env->queryPropTree(dafilesrvGroupPath);
+                    if (daFileSrvGroup)
+                    {
+                        // create a copy of the instance settings and merge in any from group info.
+                        dafileSrvInstance.setown(createPTreeFromIPT(_dafileSrvInstance));
+
+                        // any group settings override defaults
+                        synchronizePTree(dafileSrvInstance, daFileSrvGroup, false);
+
+                        _dafileSrvInstance = dafileSrvInstance;
+                    }
+                }
                 maxThreads = dafileSrvInstance->getPropInt("@maxThreads", maxThreads);
                 maxThreadsDelayMs = dafileSrvInstance->getPropInt("@maxThreadsDelayMs", maxThreadsDelayMs);
                 maxAsyncCopy = dafileSrvInstance->getPropInt("@maxAsyncCopy", maxAsyncCopy);
@@ -439,26 +460,17 @@ int main(int argc,char **argv)
                 throttleSlowCPULimit = dafileSrvInstance->getPropInt("@throttleSlowCPULimit", throttleSlowCPULimit);
                 throttleSlowQueueLimit = dafileSrvInstance->getPropInt("@throttleSlowQueueLimit", throttleSlowQueueLimit);
 
-                const char *_rowServiceConfiguration = dafileSrvInstance->queryProp("@rowServiceConfiguration");
-                if (!isEmptyString(_rowServiceConfiguration))
-                    rowServiceConfiguration = _rowServiceConfiguration;
-                rowServicePort = dafileSrvInstance->getPropInt("@rowServicePort", rowServicePort);
+                dedicatedRowServicePort = dafileSrvInstance->getPropInt("@rowServicePort", dedicatedRowServicePort);
+                dedicatedRowServiceSSL = daFileSrv->getPropBool("@rowServiceSSL", dedicatedRowServiceSSL);
+                rowServiceOnStdPort = daFileSrv->getPropBool("@rowServiceOnStdPort", rowServiceOnStdPort);
             }
         }
         keyPairInfo = env->queryPropTree("EnvSettings/Keys");
     }
-    enum RowServiceCfg rowServiceCfg = rs_off;
-    if (rowServicePort)
+    if (dedicatedRowServicePort)
     {
-        if (streq("on", rowServiceConfiguration))
-            rowServiceCfg = rs_on;
-        else if (streq("both", rowServiceConfiguration))
-            rowServiceCfg = rs_both;
 #ifdef _USE_OPENSSL
-        else if (streq("onssl", rowServiceConfiguration))
-            rowServiceCfg = rs_onssl;
-        else if (streq("bothssl", rowServiceConfiguration))
-            rowServiceCfg = rs_bothssl;
+        dedicatedRowServiceSSL = false;
 #endif
     }
 
@@ -628,8 +640,9 @@ int main(int argc,char **argv)
             StringBuffer secMethod;
             Linked<IPropertyTree> keyPairInfo;
             StringAttr rowServiceConfiguration;
-            enum RowServiceCfg rowServiceCfg;
-            unsigned rowServicePort;
+            unsigned dedicatedRowServicePort;
+            bool dedicatedRowServiceSSL;
+            bool rowServiceOnStdPort;
             
             class cpollthread: public Thread
             {
@@ -657,14 +670,14 @@ int main(int argc,char **argv)
                         unsigned _sslport, const char * _secMethod,
                         IPropertyTree *_keyPairInfo,
                         const char *_rowServiceConfiguration,
-                        RowServiceCfg _rowServiceCfg, unsigned _rowServicePort)
+                        unsigned _dedicatedRowServicePort, bool _dedicatedRowServiceSSL, bool _rowServiceOnStdPort)
             : connectMethod(_connectMethod), listenep(_listenep), pollthread(this),
                   maxThreads(_maxThreads), maxThreadsDelayMs(_maxThreadsDelayMs), maxAsyncCopy(_maxAsyncCopy),
                   parallelRequestLimit(_parallelRequestLimit), throttleDelayMs(_throttleDelayMs), throttleCPULimit(_throttleCPULimit),
                   parallelSlowRequestLimit(_parallelSlowRequestLimit), throttleSlowDelayMs(_throttleSlowDelayMs), throttleSlowCPULimit(_throttleSlowCPULimit),
                   sslport(_sslport), secMethod(_secMethod),
                   keyPairInfo(_keyPairInfo),
-                  rowServiceConfiguration(_rowServiceConfiguration), rowServiceCfg(_rowServiceCfg), rowServicePort(_rowServicePort)
+                  rowServiceConfiguration(_rowServiceConfiguration), dedicatedRowServicePort(_dedicatedRowServicePort), dedicatedRowServiceSSL(_dedicatedRowServiceSSL), rowServiceOnStdPort(_rowServiceOnStdPort)
             {
                 stopped = false;
                 started = false;
@@ -747,19 +760,19 @@ int main(int argc,char **argv)
                 const char * verstring = remoteServerVersionString();
                 PROGLOG("Version: %s", verstring);
                 PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
-                if (rs_off != rowServiceCfg)
-                    PROGLOG("Row service(%s) port = %u", rowServiceConfiguration, rowServicePort);
+                if (dedicatedRowServicePort)
+                    PROGLOG("Row service(%s) port = %u", rowServiceConfiguration, dedicatedRowServicePort);
                 PROGLOG(DAFS_SERVICE_DISPLAY_NAME " Running");
                 server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy, keyPairInfo));
                 server->setThrottle(ThrottleStd, parallelRequestLimit, throttleDelayMs, throttleCPULimit);
                 server->setThrottle(ThrottleSlow, parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit);
                 try
                 {
-                    if (rs_off != rowServiceCfg)
+                    if (dedicatedRowServicePort)
                     {
                         SocketEndpoint rowServiceEp(listenep); // copy listenep, incase bound by -addr
-                        rowServiceEp.port = rowServicePort;
-                        server->run(connectMethod, listenep, sslport, &rowServiceEp, rowServiceCfg);
+                        rowServiceEp.port = dedicatedRowServicePort;
+                        server->run(connectMethod, listenep, sslport, &rowServiceEp, dedicatedRowServiceSSL, rowServiceOnStdPort);
                     }
                     else
                         server->run(connectMethod, listenep, sslport);
@@ -775,7 +788,7 @@ int main(int argc,char **argv)
                 maxThreads, maxThreadsDelayMs, maxAsyncCopy,
                 parallelRequestLimit, throttleDelayMs, throttleCPULimit,
                 parallelSlowRequestLimit, throttleSlowDelayMs, throttleSlowCPULimit, sslport, secMethod,
-                keyPairInfo, rowServiceConfiguration, rowServiceCfg, rowServicePort);
+                keyPairInfo, rowServiceConfiguration, dedicatedRowServicePort, dedicatedRowServiceSSL, rowServiceOnStdPort);
         service.start();
         return 0;
 #else
@@ -822,8 +835,8 @@ int main(int argc,char **argv)
 
     PROGLOG("Version: %s", verstring);
     PROGLOG("Authentication:%s required",requireauthenticate?"":" not");
-    if (rs_off != rowServiceCfg)
-        PROGLOG("Row service(%s) port = %u", rowServiceConfiguration, rowServicePort);
+    if (dedicatedRowServicePort)
+        PROGLOG("Row service port = %u", dedicatedRowServicePort);
 
     server.setown(createRemoteFileServer(maxThreads, maxThreadsDelayMs, maxAsyncCopy, keyPairInfo));
     server->setThrottle(ThrottleStd, parallelRequestLimit, throttleDelayMs, throttleCPULimit);
@@ -847,11 +860,11 @@ int main(int argc,char **argv)
     writeSentinelFile(sentinelFile);
     try
     {
-        if (rs_off != rowServiceCfg)
+        if (dedicatedRowServicePort)
         {
             SocketEndpoint rowServiceEp(listenep); // copy listenep, incase bound by -addr
-            rowServiceEp.port = rowServicePort;
-            server->run(connectMethod, listenep, sslport, &rowServiceEp, rowServiceCfg);
+            rowServiceEp.port = dedicatedRowServicePort;
+            server->run(connectMethod, listenep, sslport, &rowServiceEp, dedicatedRowServiceSSL, rowServiceOnStdPort);
         }
         else
             server->run(connectMethod, listenep, sslport);
