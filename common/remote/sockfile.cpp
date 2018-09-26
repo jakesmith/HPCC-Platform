@@ -6893,6 +6893,12 @@ public:
         }
     }
 
+    void checkAuthorizedStreamCommand(CRemoteClientHandler &client)
+    {
+        if (!dafilesrvRowServiceCmds && !client.isRowServiceClient())
+            throw createDafsException(DAFSERR_cmdstream_unauthorized, "Unauthorized command");
+    }
+
     bool processCommand(RemoteFileCommandType cmd, MemoryBuffer & msg, MemoryBuffer & reply, CRemoteClientHandler *client, CThrottler *throttler)
     {
         Owned<CClientStats> stats = clientStatsTable.getClientReference(cmd, client->queryPeerName());
@@ -6941,23 +6947,20 @@ public:
                 // row service commands
                 case RFCStreamRead:
                 {
-                    if (!dafilesrvRowServiceCmds && !client->isRowServiceClient())
-                        throw createDafsException(DAFSERR_cmdstream_unauthorized, "Unauthorized command");
+                    checkAuthorizedStreamCommand(*client);
                     cmdStreamReadStd(msg, reply, *client);
                     break;
                 }
                 case RFCStreamReadJSON:
                 {
-                    if (!dafilesrvRowServiceCmds && !client->isRowServiceClient())
-                        throw createDafsException(DAFSERR_cmdstream_unauthorized, "Unauthorized command");
+                    checkAuthorizedStreamCommand(*client);
                     cmdStreamReadJSON(msg, reply, *client);
                     break;
                 }
                 case RFCStreamReadTestSocket:
                 {
                     testSocketFlag = true;
-                    if (!dafilesrvRowServiceCmds && !client->isRowServiceClient())
-                        throw createDafsException(DAFSERR_cmdstream_unauthorized, "Unauthorized command");
+                    checkAuthorizedStreamCommand(*client);
                     cmdStreamReadTestSocket(msg, reply, *client);
                     break;
                 }
@@ -7236,14 +7239,16 @@ public:
                     }
                 }
 
+#ifdef _DEBUG
                 SocketEndpoint eps;
-                StringBuffer sb;
+                StringBuffer peerURL;
+#endif
                 if (sockavail)
                 {
 #ifdef _DEBUG
                     sock->getPeerEndpoint(eps);
-                    eps.getUrlStr(sb);
-                    PROGLOG("Server accepting from %s", sb.str());
+                    eps.getUrlStr(peerURL);
+                    PROGLOG("Server accepting from %s", peerURL.str());
 #endif
                     runClient(sock.getClear(), false);
                 }
@@ -7252,8 +7257,8 @@ public:
                 {
 #ifdef _DEBUG
                     sockSSL->getPeerEndpoint(eps);
-                    eps.getUrlStr(sb.clear());
-                    PROGLOG("Server accepting SECURE from %s", sb.str());
+                    eps.getUrlStr(peerURL.clear());
+                    PROGLOG("Server accepting SECURE from %s", peerURL.str());
 #endif
                     runClient(sockSSL.getClear(), false);
                 }
@@ -7262,8 +7267,8 @@ public:
                 {
 #ifdef _DEBUG
                     acceptedRSSock->getPeerEndpoint(eps);
-                    eps.getUrlStr(sb.clear());
-                    PROGLOG("Server accepting row service socket from %s", sb.str());
+                    eps.getUrlStr(peerURL.clear());
+                    PROGLOG("Server accepting row service socket from %s", peerURL.str());
 #endif
                     runClient(acceptedRSSock.getClear(), true);
                 }
