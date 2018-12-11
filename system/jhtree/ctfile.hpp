@@ -225,7 +225,7 @@ public:
     CJHTreeNode();
     virtual void load(CKeyHdr *keyHdr, const void *rawData, offset_t pos, bool needCopy);
     ~CJHTreeNode();
-    size32_t getMemSize() { return expandedSize; }
+    size32_t getMemSize() const { return expandedSize; }
 
 // reading methods
     offset_t prevNodeFpos() const;

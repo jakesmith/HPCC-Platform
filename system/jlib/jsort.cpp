@@ -580,7 +580,12 @@ public:
 #undef RECURSE
 #undef VECTOR
 
-static void qsortvecstable(void ** const rows, size32_t n, const ICompare & compare, void *** index)
+void qsortvecstable(void *** index, size32_t n, const ICompare & compare)
+{
+    doqsortvecstable(index, n, compare);
+}
+
+void qsortvecstable(void ** const rows, size32_t n, const ICompare & compare, void *** index)
 {
     for(unsigned i=0; i<n; ++i)
         index[i] = rows+i;

@@ -47,6 +47,8 @@
 #include <alloca.h>
 #endif
 
+#include <algorithm>
+
 #include "hlzw.h"
 
 #include "jmutex.hpp"
@@ -578,9 +580,23 @@ public:
     offset_t pos;
 
     CKeyIdAndPos(unsigned __int64 _keyId, offset_t _pos) { keyId = _keyId; pos = _pos; }
+    CKeyIdAndPos(const CKeyIdAndPos &other) { keyId = other.keyId; pos = other.pos; }
+    CKeyIdAndPos& operator=(const CKeyIdAndPos &other) { keyId = other.keyId; pos = other.pos; return *this; }
 
-    bool operator==(const CKeyIdAndPos &other) { return keyId == other.keyId && pos == other.pos; }
+    bool operator==(const CKeyIdAndPos &other) const { return keyId == other.keyId && pos == other.pos; }
+    unsigned getHash() const
+    {
+        return hashc((const unsigned char *)this, sizeof(CKeyIdAndPos), 0);
+    }
 };
+
+
+#define NEWNODECACHE
+
+
+#define FIXED_NODE_OVERHEAD (sizeof(CJHTreeNode))
+
+#ifndef NEWNODECACHE
 
 class CNodeMapping : public HTMapping<CJHTreeNode, CKeyIdAndPos>
 {
@@ -590,7 +606,6 @@ public:
     CJHTreeNode &query() { return queryElement(); }
 };
 typedef OwningSimpleHashTableOf<CNodeMapping, CKeyIdAndPos> CNodeTable;
-#define FIXED_NODE_OVERHEAD (sizeof(CJHTreeNode))
 class CNodeMRUCache : public CMRUCacheOf<CKeyIdAndPos, CJHTreeNode, CNodeMapping, CNodeTable>
 {
     size32_t sizeInMem, memLimit;
@@ -638,11 +653,12 @@ class CNodeCache : public CInterface
 {
 private:
     mutable CriticalSection lock;
+    mutable CriticalSection preloadLock, leafLock, nodeLock, blobLock;
     CNodeMRUCache nodeCache;
     CNodeMRUCache leafCache;
     CNodeMRUCache blobCache;
     CNodeMRUCache preloadCache;
-    bool cacheNodes; 
+    bool cacheNodes;
     bool cacheLeaves;
     bool cacheBlobs;
     bool preloadNodes;
@@ -661,7 +677,7 @@ public:
 
     bool isPreloaded(int keyID, offset_t pos);
 
-    inline bool getNodeCachePreload() 
+    inline bool getNodeCachePreload()
     {
         return preloadNodes;
     }
@@ -684,14 +700,14 @@ public:
     {
         CriticalBlock block(lock);
         unsigned oldV = leafCache.setMemLimit(newSize);
-        cacheLeaves = (newSize != 0); 
+        cacheLeaves = (newSize != 0);
         return oldV;
     }
     inline size32_t setBlobCacheMem(size32_t newSize)
     {
         CriticalBlock block(lock);
         unsigned oldV = blobCache.setMemLimit(newSize);
-        cacheBlobs = (newSize != 0); 
+        cacheBlobs = (newSize != 0);
         return oldV;
     }
     void clear()
@@ -703,6 +719,452 @@ public:
     }
 };
 
+#else
+
+enum NodeType:unsigned { nt_leaf, nt_node, nt_blob, nt_preload, nt_max };
+class CNodeCache : public CInterface
+{
+    mutable CriticalSection lock;
+    mutable CriticalSection nodeLock;
+    bool cacheNodes; 
+    bool cacheLeaves;
+    bool cacheBlobs;
+    bool preloadNodes;
+
+    unsigned clearPercentage = 10;
+
+    struct HTEntry
+    {
+        HTEntry(const HTEntry &other) : key(other.key)
+        {
+            hash = other.hash;
+            nodeType = other.nodeType;
+            node = other.node;
+            next = prev = nullptr;
+        }
+        HTEntry& operator=(const HTEntry &other)
+        {
+            key = other.key;
+            hash = other.hash;
+            nodeType = other.nodeType;
+            node = other.node;
+#ifdef _DEBUG
+            next = prev = nullptr;
+#endif
+            return *this;
+        }
+        CKeyIdAndPos key;
+        unsigned hash;
+        NodeType nodeType;
+        CJHTreeNode *node; // NB: if null, HT element is empty
+        HTEntry *next;
+        HTEntry *prev;
+    };
+    HTEntry *table = nullptr;
+    std::array<HTEntry *, NodeType::nt_max> mru, lru;
+    std::array<size32_t, NodeType::nt_max> sizeLimit;
+    std::array<std::atomic<size32_t>, NodeType::nt_max> totalSize;
+
+    unsigned htn = 0;
+    unsigned n = 0;
+    struct MemCb : implements IMemCallback
+    {
+        virtual void *allocate(size_t sz) override
+        {
+            return malloc(sz);
+        }
+        virtual void release(void *ptr) override
+        {
+            free(ptr);
+        }
+    } defaultMemCb;
+    IMemCallback *memCallback = &defaultMemCb;
+
+    void expand()
+    {
+        htn += htn;
+        HTEntry *newTable = (HTEntry *)memCallback->allocate(((memsize_t)htn)*sizeof(HTEntry));
+        // could check capacity and see if higher pow2
+        memset(newTable, 0, sizeof(HTEntry)*htn);
+        HTEntry *newTableEnd = newTable+htn;
+
+        // walk table, by walking lru's of each node type
+        for (unsigned t=0; t<NodeType::nt_max; t++)
+        {
+            HTEntry *cur = mru[t];
+            if (cur)
+            {
+                unsigned curs = 1;
+                // mru
+                unsigned i = cur->key.getHash() & (htn - 1);
+                HTEntry *newCur = newTable+i;
+                while (newCur->node)
+                {
+                    newCur++;
+                    if (newCur==newTableEnd)
+                        newCur = newTable;
+                }
+                HTEntry *lastNew = newCur;
+                *lastNew = *cur;
+                mru[t] = lastNew;
+                cur = cur->next;
+
+                while (cur)
+                {
+                    ++curs;
+                    i = cur->key.getHash() & (htn - 1);
+                    newCur = newTable+i;
+                    while (newCur->node)
+                    {
+                        newCur++;
+                        if (newCur==newTableEnd)
+                            newCur = newTable;
+                    }
+                    *newCur = *cur;
+                    newCur->prev = lastNew;
+                    lastNew->next = newCur;
+                    lastNew = newCur;
+                    cur = cur->next;
+                }
+                lru[t] = lastNew;
+            }
+        }
+        memCallback->release(table);
+        table = newTable;
+    }
+    // returns position of match OR empty pos. to use if not found
+    inline unsigned findPos(const CKeyIdAndPos &key, unsigned h)
+    {
+        unsigned i = h & (htn - 1);
+        while (true)
+        {
+            HTEntry *ht = table+i;
+            if (nullptr == ht->node) // IOW - HT[i] is empty, irrelevant what key/rest members are
+                return i;
+            if ((ht->hash==h) && (key == ht->key)) // NB: not really necessary to store hash and check it, but if key comparison was expensive, a quick check on hash 1st is a win
+                return i;
+            if (++i==htn)
+                i = 0;
+        }
+    }
+    // same as above, except returns NotFound if no match
+    inline unsigned findMatch(const CKeyIdAndPos &key, unsigned h)
+    {
+        unsigned i = h & (htn - 1);
+        while (true)
+        {
+            HTEntry *ht = table+i;
+            if (nullptr == ht->node) // IOW - table[i] is empty, irrelevant what key/rest members are
+                return NotFound;
+            if ((ht->hash==h) && (key == ht->key)) // NB: not really necessary to store hash and check it, but if key comparison was expensive, a quick check on hash 1st is a win
+                return i;
+            if (++i==htn)
+                i = 0;
+        }
+    }
+    void removeMRUEntry(HTEntry *ht)
+    {
+        HTEntry *prev = ht->prev;
+        HTEntry *next = ht->next;
+        if (prev)
+        {
+            prev->next = next;
+            if (lru[ht->nodeType] == ht)
+                lru[ht->nodeType] = prev;
+        }
+        else
+            mru[ht->nodeType] = next;
+        if (next)
+        {
+            next->prev = prev;
+            if (mru[ht->nodeType] == ht)
+                mru[ht->nodeType] = next;
+        }
+    }
+    void removeEntry(HTEntry *ht)
+    {
+        removeMRUEntry(ht);
+        ::Release(ht->node);
+        ht->node = nullptr;
+#ifdef _DEBUG
+        // JCSMORE - not strictly necessary
+        ht->prev = nullptr;
+        ht->next = nullptr;
+#endif
+        --n;
+    }
+    void add(const CKeyIdAndPos &key, CJHTreeNode *node, NodeType nodeType, bool promoteIfAlreadyPresent=true)
+    {
+        unsigned h = key.getHash();
+        unsigned e = findPos(key, h);
+        HTEntry *ht = table+e;
+        if (ht->node)
+        {
+            dbgassertex(ht->nodeType == nodeType);
+            if (promoteIfAlreadyPresent)
+                promote(ht);
+        }
+        else
+            addNew(ht, h, key, node, nodeType);
+    }
+    CJHTreeNode *query(const CKeyIdAndPos &key, HTEntry * &ht, bool doPromote=true)
+    {
+        unsigned h = key.getHash();
+        unsigned e = findMatch(key, h);
+        if (NotFound == e)
+            return nullptr;
+        ht = table+e;
+        if (doPromote)
+            promote(ht);
+        return ht->node;
+    }
+    CJHTreeNode *get(CKeyIdAndPos key, HTEntry * &ht, bool doPromote=true)
+    {
+        return LINK(query(key, ht, doPromote));
+    }
+    CJHTreeNode *getOrAdd(const CKeyIdAndPos &key, CJHTreeNode *node, NodeType nodeType, bool doPromote=true)
+    {
+        unsigned h = key.getHash();
+        unsigned e = findPos(key, h);
+        HTEntry *ht = table+e;
+        if (ht->node)
+        {
+            if (doPromote)
+                promote(ht);
+            return LINK(ht->node);
+        }
+        else
+        {
+            addNew(ht, h, key, node, nodeType);
+            return nullptr;
+        }
+    }
+    bool remove(const CKeyIdAndPos &key) // NB: not thread safe, need to protect if calling MT
+    {
+        unsigned h = key.getHash();
+        unsigned e = findMatch(key, h);
+        if (NotFound == e)
+            return false;
+        HTEntry *ht = table+e;
+        removeEntry(ht);
+        return true;
+    }
+    void promote(HTEntry *ht)
+    {
+        if (nullptr == ht->prev) // already at top
+            return;
+        NodeType nodeType = ht->nodeType;
+        removeMRUEntry(ht); // NB: remains in table, meaning it is still thread safe to read from table during a promote
+        HTEntry *oldMRU = mru[nodeType];
+        ht->prev = nullptr;
+        ht->next = oldMRU;
+        mru[nodeType] = ht;
+        oldMRU->prev = ht;
+    }
+    unsigned countFromLRU(HTEntry *cur)
+    {
+        unsigned c=0;
+        HTEntry *startCur = cur;
+        std::vector<HTEntry *> seen;
+        while (cur)
+        {
+            ++c;
+            if (std::find(seen.begin(), seen.end(), cur) != seen.end())
+            {
+                throw makeStringExceptionV(0, "countFromLRU - Circular!!! seen cur before, c=%u", c);
+            }
+            seen.push_back(cur);
+            cur = cur->prev;
+            if (startCur == cur)
+                throw makeStringExceptionV(0, "countFromLRU - Circular!!! in countFromMRU, c=%u", c);
+        }
+        return c;
+    }
+    unsigned countFromMRU(HTEntry *cur)
+    {
+        unsigned c=0;
+        HTEntry *startCur = cur;
+        std::vector<HTEntry *> seen;
+        while (cur)
+        {
+            ++c;
+            if (std::find(seen.begin(), seen.end(), cur) != seen.end())
+            {
+                throw makeStringExceptionV(0, "countFromMRU - Circular!!! seen cur before, c=%u", c);
+            }
+            seen.push_back(cur);
+            cur = cur->next;
+            if (startCur == cur)
+                throw makeStringExceptionV(0, "countFromMRU - Circular!!! in countFromMRU, c=%u", c);
+        }
+        return c;
+    }
+
+#define CHEAPREMOVE
+    void reduce(NodeType nodeType, unsigned percent) // NB: not thread safe, need to protect if calling MT
+    {
+        size32_t curSize = totalSize[nodeType];
+        size32_t targetSize = totalSize[nodeType]/100*(100-percent);
+        HTEntry *cur = lru[nodeType];
+        if (cur)
+        {
+            unsigned numRemoved = 0;
+            while (true)
+            {
+                curSize -= (FIXED_NODE_OVERHEAD+cur->node->getMemSize());
+                HTEntry *prev = cur->prev;
+
+#ifdef CHEAPREMOVE
+                ::Release(cur->node);
+                cur->node = nullptr;
+#else
+                removeEntry(cur);
+#endif
+                ++numRemoved;
+                cur = prev;
+                if (!cur)
+                    break;
+                // IOW has origSize been reduced by clearPercentage?
+                if (curSize <= targetSize)
+                    break;
+            }
+#ifdef CHEAPREMOVE
+            lru[nodeType] = cur;
+            if (cur)
+                cur->next = nullptr;
+            else
+                mru[nodeType] = nullptr;
+#endif
+
+            totalSize[nodeType] = curSize;
+            n -= numRemoved;
+        }
+    }
+    void addNew(HTEntry *ht, unsigned h, const CKeyIdAndPos &key, CJHTreeNode *node, NodeType nodeType) // Called by add() if necessary. NB: not thread safe, need to protect if calling MT
+    {
+        if (n >= ((htn * 3) / 4)) // if over 75% full
+        {
+            expand();
+            // re-find empty slot
+            unsigned i = h & (htn - 1);
+            while (true)
+            {
+                ht = &table[i];
+                if (nullptr == ht->node)
+                    break;
+                if (++i==htn)
+                    i = 0;
+            }
+        }
+        ht->prev = nullptr;
+        ht->node = LINK(node);
+        ht->hash = h; // NB: not strictly needed, other than to make a shortcut to match on lookup (but if key is cheap to compare may be no point)
+        ht->nodeType = nodeType;
+        ht->key = key;
+        HTEntry *&mruNT = mru[nodeType];
+        if (mruNT)
+        {
+            ht->next = mruNT;
+            mruNT->prev = ht;
+        }
+        else
+            ht->next = nullptr;
+
+        mruNT = ht;
+        if (!lru[nodeType])
+            lru[nodeType] = ht;
+        n++;
+    }
+    void updateStats(IContextLogger *ctx, NodeType nodeType);
+    void updateStatsAdd(CJHTreeNode *node, IContextLogger *ctx, NodeType nodeType);
+public:
+    CNodeCache(size32_t maxNodeMem, size32_t maxLeafMem, size32_t maxBlobMem)
+    {
+        htn = 8;
+        n = 0;
+        table = (HTEntry *)memCallback->allocate(((memsize_t)htn)*sizeof(HTEntry));
+        // could check capacity and see if higher pow2
+        memset(table, 0, sizeof(HTEntry)*htn);
+
+        for (unsigned t=0; t<NodeType::nt_max; t++)
+        {
+            mru[t] = nullptr;
+            lru[t] = nullptr;
+            totalSize[t] = 0;
+            sizeLimit[t] = 0;
+        }
+        sizeLimit[nt_leaf] = maxLeafMem;
+        sizeLimit[nt_node] = maxNodeMem;
+        sizeLimit[nt_blob] = maxBlobMem;
+
+        cacheNodes = maxNodeMem != 0;
+        cacheLeaves = maxLeafMem != 0;
+        cacheBlobs = maxBlobMem != 0;
+        preloadNodes = false;
+        // note that each index caches the last blob it unpacked so that sequential blobfetches are still ok
+    }
+    void kill()
+    {
+        HTEntry *cur = table;
+        HTEntry *endTable = table+htn;
+        while (cur != endTable)
+        {
+            ::Release(cur->node);
+            cur++;
+        }
+        memset(table, 0, sizeof(HTEntry)*htn);
+        n = 0;
+        for (unsigned t=0; t<NodeType::nt_max; t++)
+        {
+            totalSize[t] = 0;
+            mru[t] = nullptr;
+            lru[t] = nullptr;
+        }
+    }
+    CJHTreeNode *getNode(INodeLoader *key, int keyID, offset_t pos, IContextLogger *ctx, bool isTLK);
+    void preload(CJHTreeNode *node, int keyID, offset_t pos, IContextLogger *ctx);
+
+    bool isPreloaded(int keyID, offset_t pos);
+
+    inline bool getNodeCachePreload() 
+    {
+        return preloadNodes;
+    }
+    inline bool setNodeCachePreload(bool _preload)
+    {
+        bool oldPreloadNodes = preloadNodes;
+        preloadNodes = _preload;
+        return oldPreloadNodes;
+    }
+    inline size32_t setNodeCacheMem(size32_t newSize)
+    {
+        CriticalBlock block(lock);
+        unsigned oldV = sizeLimit[nt_node];
+        cacheNodes = (newSize != 0);
+        sizeLimit[nt_node] = newSize;
+        return oldV;
+    }
+    inline size32_t setLeafCacheMem(size32_t newSize)
+    {
+        CriticalBlock block(lock);
+        unsigned oldV = sizeLimit[nt_leaf];
+        cacheLeaves = (newSize != 0);
+        sizeLimit[nt_leaf] = newSize;
+        return oldV;
+    }
+    inline size32_t setBlobCacheMem(size32_t newSize)
+    {
+        CriticalBlock block(lock);
+        unsigned oldV = sizeLimit[nt_blob];
+        cacheBlobs = (newSize != 0);
+        sizeLimit[nt_blob] = newSize;
+        return oldV;
+    }
+};
+
+#endif
+
+
 static inline CNodeCache *queryNodeCache()
 {
     if (nodeCache) return nodeCache; // avoid crit
@@ -713,7 +1175,7 @@ static inline CNodeCache *queryNodeCache()
 
 void clearNodeCache()
 {
-    queryNodeCache()->clear();
+    queryNodeCache()->kill();
 }
 
 
@@ -2298,13 +2760,14 @@ extern jhtree_decl size32_t setBlobCacheMem(size32_t cacheSize)
 // CNodeCache impl.
 ///////////////////////////////////////////////////////////////////////////////
 
+#ifndef NEWNODECACHE
 CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IContextLogger *ctx, bool isTLK)
 {
     // MORE - could probably be improved - I think having the cache template separate is not helping us here
     // Also one cache per key would surely be faster, and could still use a global total
     if (!pos)
         return NULL;
-    { 
+    {
         // It's a shame that we don't know the type before we read it. But probably not that big a deal
         CriticalBlock block(lock);
         CKeyIdAndPos key(iD, pos);
@@ -2438,6 +2901,171 @@ bool CNodeCache::isPreloaded(int iD, offset_t pos)
     CKeyIdAndPos key(iD, pos);
     return NULL != preloadCache.query(key);
 }
+
+#else
+
+NodeType getNodeType(CJHTreeNode *node, bool isTLK)
+{
+    if (node->isLeaf() && !isTLK) // leaves in TLK are cached as if they were nodes
+        return nt_leaf;
+    else if (node->isBlob())
+        return nt_blob;
+    else
+        return nt_node;
+}
+
+void CNodeCache::updateStats(IContextLogger *ctx, NodeType nodeType)
+{
+    switch (nodeType)
+    {
+        case nt_leaf:
+            if (!cacheLeaves)
+                return;
+            if (ctx) ctx->noteStatistic(StNumLeafCacheHits, 1);
+            leafCacheHits++;
+            break;
+        case nt_node:
+            if (!cacheNodes)
+                return;
+            if (ctx) ctx->noteStatistic(StNumNodeCacheHits, 1);
+            nodeCacheHits++;
+            break;
+        case nt_blob:
+            if (!cacheBlobs)
+                return;
+            if (ctx) ctx->noteStatistic(StNumBlobCacheHits, 1);
+            blobCacheHits++;
+            break;
+        case nt_preload:
+            // NB: no need to check preloadNodes, wouldn't be here unless a preloaded node came from cache, i.e. preloadNodes was on
+            if (ctx) ctx->noteStatistic(StNumPreloadCacheHits, 1);
+            preloadCacheHits++;
+            break;
+        default:
+            throwUnexpected();
+    }
+}
+
+void CNodeCache::updateStatsAdd(CJHTreeNode *node, IContextLogger *ctx, NodeType nodeType)
+{
+    switch (nodeType)
+    {
+        case nt_leaf:
+        {
+            if (ctx) ctx->noteStatistic(StNumLeafCacheAdds, 1);
+            leafCacheAdds++;
+            break;
+        }
+        case nt_node:
+        {
+            if (ctx) ctx->noteStatistic(StNumNodeCacheAdds, 1);
+            nodeCacheAdds++;
+            break;
+        }
+        case nt_blob:
+        {
+            if (ctx) ctx->noteStatistic(StNumBlobCacheAdds, 1);
+            blobCacheAdds++;
+            break;
+        }
+        default:
+            throwUnexpected();
+    }
+}
+
+CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IContextLogger *ctx, bool isTLK)
+{
+    // MORE - could probably be improved - I think having the cache template separate is not helping us here
+    // Also one cache per key would surely be faster, and could still use a global total
+    if (!pos)
+        return nullptr;
+    {
+        // It's a shame that we don't know the type before we read it. But probably not that big a deal
+        CKeyIdAndPos key(iD, pos);
+
+        CJHTreeNode *cacheNode;
+
+        NodeType nodeType;
+
+        {
+            CriticalBlock block(nodeLock); // protect against writers
+            HTEntry *ht;
+            cacheNode = get(key, ht);
+            if (cacheNode)
+                nodeType = ht->nodeType;
+        }
+
+        if (cacheNode)
+        {
+            cacheHits++;
+            if (!preloadNodes)
+                nodeType = getNodeType(cacheNode, isTLK);
+            updateStats(ctx, nodeType);
+            return cacheNode;
+        }
+        // else - cache miss
+
+        Owned<CJHTreeNode> node = keyIndex->loadNode(pos);  // NOTE - don't want cache locked while we load!
+        cacheAdds++;
+        nodeType = getNodeType(node, isTLK);
+
+        {
+            CriticalBlock block(nodeLock);
+
+            // JCSMORE - getOrAdd recalculated hash, could avoid/use hash calculated on prev. get (above), but not sure worth it
+
+            cacheNode = getOrAdd(key, node, nodeType); // check if added to cache while we were reading, if not add (NB: getOrNode links 'node')
+        }
+
+        if (cacheNode) // not added
+        {
+            updateStats(ctx, nodeType);
+            return cacheNode;
+        }
+        updateStatsAdd(node, ctx, nodeType);
+        totalSize[nodeType] += (FIXED_NODE_OVERHEAD+node->getMemSize());
+
+        if (totalSize[nodeType] > sizeLimit[nodeType])
+        {
+            CriticalBlock block(nodeLock);
+            if (totalSize[nodeType] > sizeLimit[nodeType]) // check again now in crit to avoid possible multiple reduce() calls
+                reduce(nodeType, clearPercentage);
+        }
+
+        return node.getClear();
+    }
+}
+
+void CNodeCache::preload(CJHTreeNode *node, int iD, offset_t pos, IContextLogger *ctx)
+{
+    assertex(pos);
+    assertex(preloadNodes);
+    NodeType nodeType = getNodeType(node, false);
+    CKeyIdAndPos key(iD, pos);
+    CJHTreeNode *cacheNode;
+    {
+        CriticalBlock block(nodeLock);
+        cacheNode = getOrAdd(key, node, nt_preload);
+    }
+    if (!cacheNode)
+    {
+        cacheAdds++;
+        if (ctx) ctx->noteStatistic(StNumPreloadCacheAdds, 1);
+        preloadCacheAdds++;
+    }
+}
+
+bool CNodeCache::isPreloaded(int iD, offset_t pos)
+{
+    CKeyIdAndPos key(iD, pos);
+    CriticalBlock block(nodeLock);
+    HTEntry *dummy;
+    return nullptr != query(key, dummy);
+}
+
+#endif
+
+
 
 RelaxedAtomic<unsigned> cacheAdds;
 RelaxedAtomic<unsigned> cacheHits;
