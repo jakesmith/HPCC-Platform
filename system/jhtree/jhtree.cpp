@@ -896,11 +896,7 @@ class CNodeCache : public CInterface, implements IHTTableCallback
                 promote(ht);
             return ht->node;
         }
-        CJHTreeNode *get(CKeyIdAndPos key, HTEntry * &ht, bool doPromote=true)
-        {
-            return LINK(query(key, ht, doPromote));
-        }
-        CJHTreeNode *getOrAdd(const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type, bool doPromote=true)
+        CJHTreeNode *queryOrAdd(const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type, bool doPromote=true)
         {
             unsigned h = key.getHash();
             unsigned e = findPos(key, h);
@@ -909,7 +905,7 @@ class CNodeCache : public CInterface, implements IHTTableCallback
             {
                 if (doPromote)
                     promote(ht);
-                return LINK(ht->node);
+                return ht->node;
             }
             else
             {
@@ -995,42 +991,21 @@ class CNodeCache : public CInterface, implements IHTTableCallback
             if (cb)
                 cb->elementAdded(key, node, type);
         }
-        static HTTable *create(unsigned elements, unsigned numTypes) // numTypes only relevant for MRU/LRU
+        HTTable *createExpanded()
         {
-            // NB: have to be careful don't break alignment
-            size32_t sz = sizeof(HTTable)+((memsize_t)elements)*sizeof(HTEntry);
-            size32_t numTypesSz = numTypes * sizeof(HTEntry *);
-
-            size32_t totalSz = sz+numTypesSz*2;
-            HTTable *ret;
-            if (memCb)
-                ret = (HTTable *)memCb->allocate(totalSz);
-            else
-                ret = malloc(totalSz);
-            memset(ret, 0, sz+numTypesSz*2);
-            const byte *extraStart = ((byte *)ret) + sizeof(HTTable);
-            ret->mru = (HTEntry *)extraStart;
-            ret->lru = (HTEntry *)(extraStart + numTypesSz);
-            ret->table = (HTEntry *)(extraStart + (numTypesSz * 2));
-            ret->htn = elements;
-            ret->numTypes = numTypes;
-            return ret;
-        }
-        static HTTable *createExpanded(const HTTable *other)
-        {
-            unsigned newHtn = other->size() * 2;
-            HTTable *newTable = HTTable::create(newHtn, other->getNumTypes());
-            newTable->setCallback(other->cb);
-            newTable->setMemCallback(other->memCb);
-            newTable->n = other->n;
+            unsigned newHtn = size() * 2;
+            HTTable *newTable = new (newHtn, numTypes) HTTable;
+            newTable->setCallback(cb);
+            newTable->setMemCallback(memCb);
+            newTable->n = n;
 
             HTEntry *newTableStart = &newTable->queryFirst();
             HTEntry *newTableEnd = &newTable->queryLast();
 
             // walk table, by walking lru's of each node type
-            for (unsigned t=0; t<other->getNumTypes(); t++)
+            for (unsigned t=0; t<numTypes; t++)
             {
-                HTEntry *cur = other->mru[t];
+                HTEntry *cur = mru[t];
                 if (cur)
                 {
                     unsigned curs = 1;
@@ -1070,10 +1045,38 @@ class CNodeCache : public CInterface, implements IHTTableCallback
             }
             return newTable;
         }
-        static void destroy(HTTable *table)
+        static void *operator new(std::size_t htTableSz, unsigned elements, unsigned numTypes, IMemCallback *memCb=nullptr) // numTypes only relevant for MRU/LRU
         {
+            // NB: have to be careful don't break alignment
+            size32_t sz = htTableSz+((memsize_t)elements)*sizeof(HTEntry);
+            size32_t numTypesSz = numTypes * sizeof(HTEntry *);
+
+            size32_t totalSz = sz+numTypesSz*2;
+            HTTable *ret;
             if (memCb)
-                memCb->release(table);
+                ret = (HTTable *)memCb->allocate(totalSz);
+            else
+                ret = (HTTable *)malloc(totalSz);
+            memset(ret, 0, sz+numTypesSz*2);
+            const byte *extraStart = ((byte *)ret) + htTableSz;
+            ret->mru = (HTEntry **)extraStart;
+            ret->lru = (HTEntry **)(extraStart + numTypesSz);
+            ret->table = (HTEntry *)(extraStart + (numTypesSz * 2));
+            ret->htn = elements;
+            ret->numTypes = numTypes;
+            ret->memCb = memCb;
+            return ret;
+        }
+        static void operator delete(void *ptr)
+        {
+            if (ptr)
+            {
+                HTTable *htTable = (HTTable *)ptr;
+                if (htTable->memCb)
+                    htTable->memCb->release(ptr);
+                else
+                    free(ptr);
+            }
         }
     } *table = nullptr;
 
@@ -1085,7 +1088,7 @@ class CNodeCache : public CInterface, implements IHTTableCallback
 public:
     CNodeCache(size32_t maxNodeMem, size32_t maxLeafMem, size32_t maxBlobMem)
     {
-        table = HTTable::create(8, NodeType::nt_max); // size must be power of 2
+        table = new (8, NodeType::nt_max) HTTable; // size must be power of 2
         table->setCallback(this);
 
         for (unsigned t=0; t<NodeType::nt_max; t++)
@@ -1155,27 +1158,8 @@ public:
 // IHTTableCallback impl.
     virtual void elementAdded(const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type) override
     {
+        ::Link(node); // means table owns
         totalSize[type] += (FIXED_NODE_OVERHEAD+node->getMemSize());
-
-        if (totalSize[type] > sizeLimit[type])
-        {
-            CriticalBlock block(nodeLock);
-            if (totalSize[type] > sizeLimit[type]) // check again now in crit to avoid possible multiple reduce() calls
-            {
-                size32_t targetSize = totalSize[type]/100*(100-clearPercentage);
-                auto func = [&this, &type, &targetSize]() { return this->reduceUntilFunc(type, targetSize); };
-                table->reduceUntil(type, func); // NB: expected to cause elementRemoved() to be called indirectly
-            }
-        }
-        HTTable *newTable = nullptr;
-        if (table->full())
-        {
-            CriticalBlock block(nodeLock);
-            HTTable *newTable = HTTable::createExpanded(table);
-            std::swap(table, newTable);
-        }
-        if (newTable)
-            HTTable::destroy(newTable); // now old
     }
     virtual void elementRemoved(const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type) override
     {
@@ -3005,16 +2989,16 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         // It's a shame that we don't know the type before we read it. But probably not that big a deal
         CKeyIdAndPos key(iD, pos);
 
-        CJHTreeNode *cacheNode;
+        Linked<CJHTreeNode> cacheNode;
 
         NodeType nodeType;
 
         {
             CriticalBlock block(nodeLock); // protect against writers
             HTEntry *ht;
-            cacheNode = table->get(key, ht);
+            cacheNode.set(table->query(key, ht));
             if (cacheNode)
-                nodeType = ht->nodeType;
+                nodeType = (NodeType)ht->type;
         }
 
         if (cacheNode)
@@ -3023,7 +3007,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
             if (!preloadNodes)
                 nodeType = getNodeType(cacheNode, isTLK);
             updateStats(ctx, nodeType);
-            return cacheNode;
+            return cacheNode.getClear();
         }
         // else - cache miss
 
@@ -3032,20 +3016,40 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         nodeType = getNodeType(node, isTLK);
 
         {
+            HTTable *newTable = nullptr;
+
             CriticalBlock block(nodeLock);
 
             // JCSMORE - getOrAdd recalculated hash, could avoid/use hash calculated on prev. get (above), but not sure worth it
 
-            cacheNode = table->getOrAdd(key, node, nodeType); // check if added to cache while we were reading, if not add (NB: getOrNode links 'node')
+            cacheNode.set(table->queryOrAdd(key, node, nodeType)); // check if added to cache while we were reading, if not add (NB: getOrNode links 'node')
+
+            // not worth giving up CS for checks that need to regain if need to reduce() or expand()
+            if (!cacheNode) // new 'node' added. NB: table IHTTableCallback::elementAdded will be called
+            {
+                if (totalSize[nodeType] > sizeLimit[nodeType])
+                {
+                    size32_t targetSize = totalSize[nodeType]/100*(100-clearPercentage);
+                    auto func = [this, &nodeType, &targetSize]() { return this->reduceUntilFunc(nodeType, targetSize); };
+                    table->reduceUntil(nodeType, func);
+                }
+                if (table->full())
+                {
+                    newTable = table->createExpanded();
+                    std::swap(table, newTable);
+                }
+            }
+            if (newTable) // now old
+                delete newTable;
         }
 
         if (cacheNode) // not added
         {
             updateStats(ctx, nodeType);
-            return cacheNode;
+            return cacheNode.getClear();
         }
-        // else - if getOrAdd return null, it means added. NB: table IHTTableCallback::elementAdded will be called
-        updateStatsAdd(node, ctx, nodeType);
+        else
+            updateStatsAdd(node, ctx, nodeType);
 
         return node.getClear();
     }
@@ -3060,7 +3064,7 @@ void CNodeCache::preload(CJHTreeNode *node, int iD, offset_t pos, IContextLogger
     CJHTreeNode *cacheNode;
     {
         CriticalBlock block(nodeLock);
-        cacheNode = getOrAdd(key, node, nt_preload);
+        cacheNode = table->queryOrAdd(key, node, nt_preload);
     }
     if (!cacheNode)
     {
@@ -3075,7 +3079,7 @@ bool CNodeCache::isPreloaded(int iD, offset_t pos)
     CKeyIdAndPos key(iD, pos);
     CriticalBlock block(nodeLock);
     HTEntry *dummy;
-    return nullptr != query(key, dummy);
+    return nullptr != table->query(key, dummy);
 }
 
 #endif
