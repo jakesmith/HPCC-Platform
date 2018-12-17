@@ -506,3 +506,411 @@ extern jlib_decl void releaseAtoms()
     delete globalAtomTable;
     globalAtomTable = NULL;
 }
+
+
+interface IHTTableCallback
+{
+    virtual void elementAdded(const KEY &key, VALUE *value, unsigned type) = 0;
+    virtual void elementRemoved(const KEY &key, VALUE *value, unsigned type) = 0;
+};
+
+enum NodeType:unsigned { nt_leaf, nt_node, nt_blob, nt_preload, nt_max };
+
+
+template <class KEY, class VALUE>
+class CMRUHashTable : public CInterface
+{
+    unsigned clearPercentage = 10;
+
+    struct HTEntry
+    {
+        HTEntry(const HTEntry &other) : key(other.key)
+        {
+            hash = other.hash;
+            type = other.type;
+            value = other.value;
+            next = prev = nullptr;
+        }
+        HTEntry& operator=(const HTEntry &other)
+        {
+            key = other.key;
+            hash = other.hash;
+            type = other.type;
+            value = other.value;
+#ifdef _DEBUG
+            next = prev = nullptr;
+#endif
+            return *this;
+        }
+        KEY key;
+        unsigned hash;
+        unsigned type;
+        VALUE *value; // NB: if null, HT element is empty
+        HTEntry *next;
+        HTEntry *prev;
+    };
+
+    struct HTTable // NB: must not contain virtuals
+    {
+        // these could be calculated dynamically, but better to configure them at creation (see HTTable::create())
+        HTEntry *table = nullptr;
+        HTEntry **mru = nullptr;
+        HTEntry **lru = nullptr;
+
+        unsigned numTypes = 0;
+        IHTTableCallback *cb = nullptr;
+        unsigned htn = 0;
+        unsigned n = 0;
+
+        void setCallback(IHTTableCallback *_cb) { cb = _cb; }
+        inline unsigned elements() const { return n; }
+        inline unsigned size() const { return htn; }
+        inline HTEntry &queryFirst() { return table[0]; }
+        inline HTEntry &queryLast() { return table[htn-1]; }
+        inline unsigned getNumTypes() const { return numTypes; }
+        inline bool full() const
+        {
+            return (n >= ((htn * 3) / 4)); // over 75% full.
+        }
+        void clean()
+        {
+            memset(mru, 0, numTypes * sizeof(HTEntry *));
+            memset(lru, 0, numTypes * sizeof(HTEntry *));
+            memset(table, 0, sizeof(HTEntry)*htn);
+            n = 0;
+        }
+        void kill()
+        {
+            HTEntry *cur = &queryFirst();;
+            HTEntry *endTable = &queryLast();
+            while (cur != endTable)
+            {
+                ::Release(cur->value);
+                cur++;
+            }
+            clean(); // not strictly necessary
+            for (unsigned t=0; t<numTypes; t++)
+            {
+                mru[t] = nullptr;
+                lru[t] = nullptr;
+            }
+        }
+        void addNew(HTEntry *ht, unsigned h, const KEY &key, VALUE *value, unsigned type) // Called by add() if necessary. NB: not thread safe, need to protect if calling MT
+        {
+            dbgassertex(!full()); // Should not happen, it is the responsibility of the callback to expand and replace the HT if getting full
+
+            ht->prev = nullptr;
+            ht->value = value;
+            ht->hash = h; // NB: not strictly needed, other than to make a shortcut to match on lookup (but if key is cheap to compare may be no point)
+            ht->type = type;
+            ht->key = key;
+            HTEntry *&mruNT = mru[type];
+            if (mruNT)
+            {
+                ht->next = mruNT;
+                mruNT->prev = ht;
+            }
+            else
+                ht->next = nullptr;
+
+            mruNT = ht;
+            if (!lru[type])
+                lru[type] = ht;
+            n++;
+        }
+        HTTable *createExpanded()
+        {
+            unsigned newHtn = size() * 2;
+            HTTable *newTable = new (newHtn, numTypes) HTTable;
+            newTable->setCallback(cb);
+            newTable->setMemCallback(memCb);
+            newTable->n = n;
+
+            HTEntry *newTableStart = &newTable->queryFirst();
+            HTEntry *newTableEnd = &newTable->queryLast();
+
+            // walk table, by walking lru's of each value type
+            for (unsigned t=0; t<numTypes; t++)
+            {
+                HTEntry *cur = mru[t];
+                if (cur)
+                {
+                    unsigned curs = 1;
+                    // mru
+                    unsigned i = cur->key.getHash() & (newHtn - 1);
+                    HTEntry *newCur = newTableStart+i;
+                    while (newCur->value)
+                    {
+                        newCur++;
+                        if (newCur==newTableEnd)
+                            newCur = newTableStart;
+                    }
+                    HTEntry *lastNew = newCur;
+                    *lastNew = *cur;
+                    mru[t] = lastNew;
+                    cur = cur->next;
+
+                    while (cur)
+                    {
+                        ++curs;
+                        i = cur->key.getHash() & (newHtn - 1);
+                        newCur = newTableStart+i;
+                        while (newCur->value)
+                        {
+                            newCur++;
+                            if (newCur==newTableEnd)
+                                newCur = newTableStart;
+                        }
+                        *newCur = *cur;
+                        newCur->prev = lastNew;
+                        lastNew->next = newCur;
+                        lastNew = newCur;
+                        cur = cur->next;
+                    }
+                    lru[t] = lastNew;
+                }
+            }
+            return newTable;
+        }
+        // returns position of match OR empty pos. to use if not found
+        inline unsigned findPos(const KEY &key, unsigned h)
+        {
+            unsigned i = h & (htn - 1);
+            while (true)
+            {
+                HTEntry *ht = table+i;
+                if (nullptr == ht->value) // IOW - HT[i] is empty, irrelevant what key/rest members are
+                    return i;
+                if ((ht->hash==h) && (key == ht->key)) // NB: not really necessary to store hash and check it, but if key comparison was expensive, a quick check on hash 1st is a win
+                    return i;
+                if (++i==htn)
+                    i = 0;
+            }
+        }
+        // same as above, except returns NotFound if no match
+        inline unsigned findMatch(const KEY &key, unsigned h)
+        {
+            unsigned i = h & (htn - 1);
+            while (true)
+            {
+                HTEntry *ht = table+i;
+                if (nullptr == ht->value) // IOW - table[i] is empty, irrelevant what key/rest members are
+                    return NotFound;
+                if ((ht->hash==h) && (key == ht->key)) // NB: not really necessary to store hash and check it, but if key comparison was expensive, a quick check on hash 1st is a win
+                    return i;
+                if (++i==htn)
+                    i = 0;
+            }
+        }
+        void removeMRUEntry(HTEntry *ht)
+        {
+            HTEntry *prev = ht->prev;
+            HTEntry *next = ht->next;
+            if (prev)
+            {
+                prev->next = next;
+                if (lru[ht->type] == ht)
+                    lru[ht->type] = prev;
+            }
+            else
+                mru[ht->type] = next;
+            if (next)
+            {
+                next->prev = prev;
+                if (mru[ht->type] == ht)
+                    mru[ht->type] = next;
+            }
+        }
+        void removeEntry(HTEntry *ht)
+        {
+            removeMRUEntry(ht);
+            ht->value = nullptr;
+            --n;
+        }
+        bool add(const KEY &key, VALUE *value, unsigned type, bool promoteIfAlreadyPresent=true)
+        {
+            unsigned h = key.getHash();
+            unsigned e = findPos(key, h);
+            HTEntry *ht = table+e;
+            if (ht->value)
+            {
+                dbgassertex(ht->type == type);
+                if (promoteIfAlreadyPresent)
+                    promote(ht);
+                return false;
+            }
+            else
+            {
+                addNew(ht, h, key, value, type);
+                return true;
+            }
+        }
+        VALUE *query(const KEY &key, HTEntry * &ht, bool doPromote=true)
+        {
+            unsigned h = key.getHash();
+            unsigned e = findMatch(key, h);
+            if (NotFound == e)
+                return nullptr;
+            ht = table+e;
+            if (doPromote)
+                promote(ht);
+            return ht->value;
+        }
+        VALUE *queryOrAdd(const KEY &key, VALUE *value, unsigned type, bool doPromote=true)
+        {
+            unsigned h = key.getHash();
+            unsigned e = findPos(key, h);
+            HTEntry *ht = table+e;
+            if (ht->value)
+            {
+                if (doPromote)
+                    promote(ht);
+                return ht->value;
+            }
+            else
+            {
+                addNew(ht, h, key, value, type);
+                return nullptr;
+            }
+        }
+        bool remove(const KEY &key) // NB: not thread safe, need to protect if calling MT
+        {
+            unsigned h = key.getHash();
+            unsigned e = findMatch(key, h);
+            if (NotFound == e)
+                return false;
+            HTEntry *ht = table+e;
+            removeEntry(ht);
+            return true;
+        }
+        void promote(HTEntry *ht)
+        {
+            if (nullptr == ht->prev) // already at top
+                return;
+            unsigned type = ht->type;
+            removeMRUEntry(ht); // NB: remains in table, meaning it is still thread safe to read from table during a promote
+            HTEntry *oldMRU = mru[type];
+            ht->prev = nullptr;
+            ht->next = oldMRU;
+            mru[type] = ht;
+            oldMRU->prev = ht;
+        }
+        void reduceUntil(unsigned type, std::function<bool()> untilFunc) // NB: not thread safe, need to protect if calling MT
+        {
+            HTEntry *cur = lru[type];
+            if (cur)
+            {
+                unsigned numRemoved = 0;
+                while (true)
+                {
+                    HTEntry *prev = cur->prev;
+
+                    cur->value = nullptr;
+
+                    ++numRemoved;
+                    cur = prev;
+                    if (!cur)
+                        break;
+                    // IOW has origSize been reduced by clearPercentage?
+                    if (untilFunc())
+                        break;
+                }
+                lru[type] = cur;
+                if (cur)
+                    cur->next = nullptr;
+                else
+                    mru[type] = nullptr;
+
+                n -= numRemoved;
+            }
+        }
+        static HTTable *create(unsigned elements, unsigned numTypes, std::function<void *(size_t)> allocFunc=nullptr) // numTypes only relevant for MRU/LRU
+        {
+            // NB: have to be careful don't break alignment
+            size32_t sz = sizeof(HTTable)+((memsize_t)elements)*sizeof(HTEntry);
+            size32_t numTypesSz = numTypes * sizeof(HTEntry *);
+
+            size32_t totalSz = sz+numTypesSz*2;
+            HTTable *ret;
+            if (allocFunc)
+                ret = (HTTable *)allocFunc(totalSz);
+            else
+                ret = (HTTable *)malloc(totalSz);
+            memset(ret, 0, sz+numTypesSz*2);
+            const byte *extraStart = ((byte *)ret) + sizeof(HTTable);
+            ret->mru = (HTEntry **)extraStart;
+            ret->lru = (HTEntry **)(extraStart + numTypesSz);
+            ret->table = (HTEntry *)(extraStart + (numTypesSz * 2));
+            ret->htn = elements;
+            ret->numTypes = numTypes;
+            ret->memCb = memCb;
+            return ret;
+        }
+        static void destroy(HTTable *ptr, std::function<void(void *)> freeFunc=nullptr)
+        {
+            if (ptr)
+            {
+                HTTable *htTable = (HTTable *)ptr;
+                if (freeFunc)
+                    freeFunc(ptr);
+                else
+                    free(ptr);
+            }
+        }
+    } *table = nullptr;
+
+    void add(const KEY &key, VALUE *value, unsigned type, bool promoteIfAlreadyPresent=true)
+    {
+        table->add(key, value, type, promoteIfAlreadyPresent);
+    }
+    VALUE *query(const KEY &key, HTEntry * &ht, bool doPromote=true)
+    {
+        return table->query(key, ht, doPromote);
+    }
+    VALUE *queryOrAdd(const KEY &key, VALUE *value, unsigned type, bool doPromote=true)
+    {
+        return table->queryOrAdd(key, value, type, doPromote);
+    }
+    bool remove(const KEY &key) // NB: not thread safe, need to protect if calling MT
+    {
+        return table->remove(key);
+    }
+    void promote(HTEntry *ht)
+    {
+        table->promote(ht);
+    }
+    void reduceUntil(unsigned type, std::function<bool()> untilFunc) // NB: not thread safe, need to protect if calling MT
+    {
+        table->reduceUntil(type, untilFunc);
+    }
+
+    std::vector<size32_t> sizeLimit;
+    std::vector<size32_t> totalSize;
+
+public:
+    CMRUHashTable()
+    {
+        table = new (8, NodeType::nt_max) HTTable; // size must be power of 2
+        table->setCallback(this);
+        for (unsigned t=0; t<NodeType::nt_max; t++)
+        {
+            totalSize.push_back(0);
+            sizeLimit.push_back(0);
+        }
+        sizeLimit[nt_leaf] = 0x10000;
+        sizeLimit[nt_node] = 0x10000;
+        sizeLimit[nt_blob] = 0x10000;
+
+    }
+    void kill()
+    {
+        for (unsigned t=0; t<NodeType::nt_max; t++)
+            totalSize[t] = 0;
+        table->kill();
+    }
+    bool reduceUntilFunc(unsigned type, size32_t targetSize)
+    {
+        return totalSize[type] <= targetSize;
+    }
+};
+
