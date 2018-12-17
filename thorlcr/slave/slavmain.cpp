@@ -103,6 +103,7 @@ void disableThorSlaveAsDaliClient()
 class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, implements IExceptionHandler
 {
     const unsigned defaultMaxCachedKJManagers = 1000;
+    const unsigned defaultMaxCachedFetchContexts = 100;
     const unsigned defaultKeyLookupMaxProcessThreads = 16;
 
     unsigned uniqueId = 0;
@@ -112,11 +113,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     unsigned numCached = 0;
     CJobBase *currentJob = nullptr;
     unsigned maxCachedKJManagers = defaultMaxCachedKJManagers;
+    unsigned maxCachedFetchContexts = defaultMaxCachedFetchContexts;
     unsigned keyLookupMaxProcessThreads = defaultKeyLookupMaxProcessThreads;
 
     class CLookupKey
     {
-    protected:
         unsigned hashv;
 
         void calcHash()
@@ -154,19 +155,28 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             return tracing.append(fname);
         }
     };
-    struct FetchKey
+    class CFetchKey
     {
+        unsigned hashv;
+
+        void calcHash()
+        {
+            unsigned h = hashvalue(id, partNo);
+            hashv = hashvalue(which, h);
+        }
+    public:
         activity_id id;
         unsigned partNo;
         unsigned which;
-        FetchKey(MemoryBuffer &mb)
+        CFetchKey(MemoryBuffer &mb)
         {
             mb.read(id);
             mb.read(partNo);
             mb.read(which);
+            calcHash();
         }
-
-        bool operator==(FetchKey const &other) const { return id==other.id && partNo==other.partNo && which==other.which; }
+        unsigned queryHash() const { return hashv; }
+        bool operator==(CFetchKey const &other) const { return id==other.id && partNo==other.partNo && which==other.which; }
         const char *getTracing(StringBuffer &tracing) const
         {
             return tracing.appendf("actId=%u, partNo=%u, which=%u", id, partNo, which);
@@ -411,16 +421,16 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     };
     class CFetchContext : public CContext
     {
-        FetchKey key;
+        CFetchKey key;
         unsigned handle = 0;
         Owned<const IDynamicTransform> translator;
         Owned<ISourceRowPrefetcher> prefetcher;
-        std::atomic<ISerialStream *> ioStream{nullptr};
-        Owned<ISerialStream> ownedIoStream;
-        CriticalSection crit;
+        Owned<ISerialStream> ioStream;
+        CThorContiguousRowBuffer prefetchSource;
+        bool initialized = false;
 
     public:
-        CFetchContext(CKJService &_service, CActivityContext *_activityCtx, const FetchKey &_key) : CContext(_service, _activityCtx), key(_key)
+        CFetchContext(CKJService &_service, CActivityContext *_activityCtx, const CFetchKey &_key) : CContext(_service, _activityCtx), key(_key)
         {
             handle = service.getUniqId();
             expectedFormat.set(activityCtx->queryHelper()->queryDiskRecordSize());
@@ -428,20 +438,17 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         }
         const void *queryFindParam() const { return &key; } // for SimpleHashTableOf
         unsigned queryHandle() const { return handle; }
-        const FetchKey &queryKey() const { return key; }
-        ISerialStream &queryStream()
+        const CFetchKey &queryKey() const { return key; }
+        CThorContiguousRowBuffer &queryPrefetchSource()
         {
-            if (!ioStream)
+            if (!initialized)
             {
-                CriticalBlock b(crit);
-                if (!ioStream) // check again now in crit
-                {
-                    Owned<IFileIO> iFileIO = activityCtx->getFetchFileIO(key.partNo);
-                    ownedIoStream.setown(createFileSerialStream(iFileIO, 0, (offset_t)-1, 0));
-                    ioStream = ownedIoStream;
-                }
+                initialized = true;
+                Owned<IFileIO> iFileIO = activityCtx->getFetchFileIO(key.partNo);
+                ioStream.setown(createFileSerialStream(iFileIO, 0, (offset_t)-1, 0));
+                prefetchSource.setStream(ioStream);
             }
-            return *ioStream;
+            return prefetchSource;
         }
     };
     class CKMContainer : public CInterface
@@ -493,6 +500,30 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         }
         unsigned queryHash() const { return key.queryHash(); }
         const CLookupKey &queryKey() const { return key; }
+    };
+    class CFCKeyEntry : public CInterface
+    {
+        CFetchKey key;
+        CIArrayOf<CFetchContext> fetchContexts;
+    public:
+        CFCKeyEntry(const CFetchKey &_key) : key(_key)
+        {
+        }
+        inline CFetchContext *pop()
+        {
+            return &fetchContexts.popGet();
+        }
+        inline void push(CFetchContext *fc)
+        {
+            fetchContexts.append(*fc);
+        }
+        inline unsigned count() { return fetchContexts.ordinality(); }
+        bool remove(CFetchContext *fc)
+        {
+            return fetchContexts.zap(*fc);
+        }
+        unsigned queryHash() const { return key.queryHash(); }
+        const CFetchKey &queryKey() const { return key; }
     };
     class CLookupRequest : public CSimpleInterface
     {
@@ -813,12 +844,12 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     };
     class CFetchLookupRequest : public CLookupRequest
     {
-        CFetchContext *fetchContext = nullptr;
+        CKJService &service;
+        Linked<CFetchContext> fetchContext;
         const unsigned defaultMaxFetchLookupReplySz = 0x100000;
         const IDynamicTransform *translator = nullptr;
         ISourceRowPrefetcher *prefetcher = nullptr;
-        CThorContiguousRowBuffer prefetchSource;
-        bool prefetchSourceInitialized = false;
+        CThorContiguousRowBuffer &prefetchSource;
 
         void processRow(const void *row, CFetchLookupResult &reply)
         {
@@ -864,9 +895,10 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             reply.addRow(fetchReplyBuilder.finalizeRowClear(fetchReplySz));
         }
     public:
-        CFetchLookupRequest(CFetchContext *_fetchContext, rank_t _sender, mptag_t _replyTag)
+        CFetchLookupRequest(CKJService &_service, CFetchContext *_fetchContext, rank_t _sender, mptag_t _replyTag)
             : CLookupRequest(_fetchContext->queryActivityCtx(), _sender, _replyTag),
-              fetchContext(_fetchContext)
+              fetchContext(_fetchContext), prefetchSource(fetchContext->queryPrefetchSource()),
+              service(_service)
         {
             allocator = activityCtx->queryFetchInputAllocator();
             deserializer = activityCtx->queryFetchInputDeserializer();
@@ -876,11 +908,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         }
         virtual void process(bool &abortSoon) override
         {
-            if (!prefetchSourceInitialized)
-            {
-                prefetchSourceInitialized = true;
-                prefetchSource.setStream(&fetchContext->queryStream());
-            }
             Owned<IException> exception;
             try
             {
@@ -919,6 +946,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                         fetchLookupResult.clear();
                     }
                 }
+                service.addToFetchContextCache(fetchContext.getClear());
             }
             catch (IException *e)
             {
@@ -928,15 +956,15 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 replyError(exception);
         }
     };
-    template <class ET>
-    class CLookupHT : public SuperHashTableOf<ET, CLookupKey>
+    template <class ET, class F>
+    class CKJHT : public SuperHashTableOf<ET, F>
     {
-        typedef SuperHashTableOf<ET, CLookupKey> PARENT;
+        typedef SuperHashTableOf<ET, F> PARENT;
     public:
-        CLookupHT() : PARENT() { }
-        ~CLookupHT() { PARENT::_releaseAll(); }
+        CKJHT() : PARENT() { }
+        ~CKJHT() { PARENT::_releaseAll(); }
 
-        inline ET *find(const CLookupKey &fp) const                                   \
+        inline ET *find(const F &fp) const                                   \
         {
             return PARENT::find(&fp);
         }
@@ -949,7 +977,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         }
         virtual unsigned getHashFromFindParam(const void *_fp) const override
         {
-            const CLookupKey *fp = static_cast<const CLookupKey *>(_fp);
+            const F *fp = static_cast<const F *>(_fp);
             return fp->queryHash();
         }
         virtual const void *getFindParam(const void *_et) const override
@@ -960,25 +988,26 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         virtual bool matchesFindParam(const void *_et, const void *_fp, unsigned fphash __attribute__((unused))) const override
         {
             const ET *et = static_cast<const ET *>(_et);
-            const CLookupKey *fp = static_cast<const CLookupKey *>(_fp);
+            const F *fp = static_cast<const F *>(_fp);
             return et->queryKey() == *fp;
         }
     };
-    template <class ET>
-    class CLookupHTOwned : public CLookupHT<ET>
+    template <class ET, class F>
+    class CKJHTOwned : public CKJHT<ET, F>
     {
-        typedef CLookupHT<ET> PARENT;
+        typedef CKJHT<ET, F> PARENT;
     public:
-        CLookupHTOwned() : PARENT() { }
-        ~CLookupHTOwned() { PARENT::_releaseAll(); }
+        CKJHTOwned() : PARENT() { }
+        ~CKJHTOwned() { PARENT::_releaseAll(); }
         virtual void onRemove(void *_et) override
         {
             ET *et = static_cast<ET *>(_et);
             et->Release();
         }
     };
-    typedef CLookupHT<CKeyLookupContext> CKeyLookupContextHT;
-    typedef CLookupHTOwned<CKMKeyEntry> CKMContextHT;
+    typedef CKJHT<CKeyLookupContext, CLookupKey> CKeyLookupContextHT;
+    typedef CKJHTOwned<CKMKeyEntry, CLookupKey> CKMContextHT;
+    typedef CKJHTOwned<CFCKeyEntry, CFetchKey> CFetchContextHT;
 
     class CRemoteLookupProcessor : public CSimpleInterfaceOf<IPooledThread>
     {
@@ -1024,9 +1053,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     CKeyLookupContextHT keyLookupContextsHT; // non-owning HT of CLookupContexts
     CKMContextHT cachedKMs; // NB: HT by {actId, fname, crc} links IKeyManager's within containers
     OwningSimpleHashTableOf<CKMContainer, unsigned> cachedKMsByHandle; // HT by { handle }, links IKeyManager's within containers.
-    OwningSimpleHashTableOf<CFetchContext, FetchKey> fetchContextsHT;
-    std::unordered_map<unsigned, CFetchContext *> fetchContextsByHandleHT;
+    OwningSimpleHashTableOf<CFetchContext, unsigned> cachedFetchContextsByHandle; // HT by { handle }
+    OwningSimpleHashTableOf<CFetchContext, CFetchKey> fetchContextsHT;
+    CFetchContextHT cachedFetchContexts;
     CICopyArrayOf<CKMContainer> cachedKMsMRU;
+    CICopyArrayOf<CFetchContext> cachedFCsMRU;
     CriticalSection kMCrit, lCCrit;
     Owned<IThreadPool> processorPool;
 
@@ -1068,13 +1099,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         }
         if (created)
             *created = true;
-        activity_id id = key.id; // JCSMORE annoying, needed because IMPLEMENT_SUPERHASHTABLEOF_REF_FIND doesn't define const (should look at)
-        Linked<CActivityContext> activityCtx = activityContextsHT.find(id);
-        if (!activityCtx)
-        {
-            activityCtx.setown(createActivityContext(job, key.id, createCtxMb));
-            activityContextsHT.replace(*activityCtx); // NB: does not link/take ownership
-        }
+        Owned<CActivityContext> activityCtx = ensureActivityContext(job, key.id, createCtxMb);
         keyLookupContext = createLookupContext(activityCtx, key);
         keyLookupContextsHT.replace(*keyLookupContext); // NB: does not link/take ownership
         return keyLookupContext;
@@ -1100,41 +1125,52 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         if (!keyLookupContext->IsShared())
             keyLookupContextsHT.removeExact(keyLookupContext);
     }
-    CFetchContext *ensureFetchContext(CJobBase &job, FetchKey &key, MemoryBuffer &createCtxMb)
-    {
-        CriticalBlock b(lCCrit);
-        CFetchContext *fetchContext = fetchContextsHT.find(key);
-        if (fetchContext)
-            return LINK(fetchContext);
-        activity_id id = key.id; // JCSMORE annoying, needed because IMPLEMENT_SUPERHASHTABLEOF_REF_FIND doesn't define const (should look at)
-        Linked<CActivityContext> activityCtx = activityContextsHT.find(id);
-        if (!activityCtx)
-        {
-            activityCtx.setown(createActivityContext(job, id, createCtxMb));
-            activityContextsHT.replace(*activityCtx); // NB: does not link/take ownership
-        }
-        fetchContext = new CFetchContext(*this, activityCtx, key);
-        fetchContextsHT.replace(*fetchContext);
-        fetchContextsByHandleHT.insert({fetchContext->queryHandle(), fetchContext});
-        return LINK(fetchContext);
-    }
     CFetchContext *getFetchContext(unsigned handle)
     {
+        CriticalBlock b(kMCrit);
+        Linked<CFetchContext> fetchContext = cachedFetchContextsByHandle.find(handle);
+        if (fetchContext)
+        {
+            verifyex(cachedFetchContextsByHandle.removeExact(fetchContext));
+            CFCKeyEntry *fce = cachedFetchContexts.find(fetchContext->queryKey());
+            assertex(fce);
+            verifyex(fce->remove(fetchContext));
+            if (0 == fce->count())
+                verifyex(cachedFetchContexts.removeExact(fce));
+            verifyex(cachedFCsMRU.zap(*fetchContext));
+            --numCached;
+        }
+        return fetchContext.getClear();
+    }
+    CFetchContext *getCachedFetchContext(const CFetchKey &key)
+    {
         CriticalBlock b(lCCrit);
-        auto it = fetchContextsByHandleHT.find(handle);
-        if (it == fetchContextsByHandleHT.end())
+        CFCKeyEntry *fce = cachedFetchContexts.find(key);
+        if (!fce)
             return nullptr;
-        return LINK(it->second);
+        CFetchContext *fetchContext = fce->pop();
+        if (0 == fce->count())
+            verifyex(cachedFetchContexts.removeExact(fce));
+        verifyex(cachedFetchContextsByHandle.removeExact(fetchContext));
+        verifyex(cachedFCsMRU.zap(*fetchContext));
+        --numCached;
+        return fetchContext;
+    }
+    CFetchContext *ensureFetchContext(CJobBase &job, CFetchKey &key, MemoryBuffer &createCtxMb) // gets a unused (cached) CFetchContext based on context key, or create a new one.
+    {
+        CFetchContext *fetchContext = getCachedFetchContext(key);
+        if (!fetchContext)
+        {
+            Owned<CActivityContext> activityCtx = ensureActivityContext(job, key.id, createCtxMb);
+            fetchContext = new CFetchContext(*this, activityCtx, key);
+        }
+        return fetchContext;
     }
     bool removeFetchContext(unsigned handle)
     {
-        CriticalBlock b(lCCrit);
-        auto it = fetchContextsByHandleHT.find(handle);
-        if (it == fetchContextsByHandleHT.end())
+        Owned<CFetchContext> fetchContext = getFetchContext(handle);
+        if (!fetchContext)
             return false;
-        CFetchContext *fetchContext = it->second;
-        it = fetchContextsByHandleHT.erase(it);
-        verifyex(fetchContextsHT.removeExact(fetchContext));
         return true;
     }
     CKMContainer *getKeyManager(unsigned handle)
@@ -1168,7 +1204,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         --numCached;
         return kmc;
     }
-    CKMContainer *ensureKeyManager(CKeyLookupContext *keyLookupContext)
+    CKMContainer *ensureKeyManager(CKeyLookupContext *keyLookupContext) // gets a unused (cached) CKM based on context key, or create a new one.
     {
         CKMContainer *kmc = getCachedKeyManager(keyLookupContext->queryKey());
         if (!kmc)
@@ -1194,8 +1230,15 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     void clearAll()
     {
         if (cachedKMsMRU.ordinality())
+        {
             WARNLOG("KJService: clearing %u key manager context(s), that were not closed cleanly", cachedKMsMRU.ordinality());
-        cachedKMsMRU.kill();
+            cachedKMsMRU.kill();
+        }
+        if (cachedFCsMRU.ordinality())
+        {
+            WARNLOG("KJService: clearing %u fetch context(s), that were not closed cleanly", cachedFCsMRU.ordinality());
+            cachedFCsMRU.kill();
+        }
         cachedKMsByHandle.kill();
         cachedKMs.kill();
         activityContextsHT.kill();
@@ -1238,6 +1281,25 @@ public:
         kme->push(kmc); // JCSMORE cap. to some max #
         cachedKMsByHandle.replace(*LINK(kmc));
         cachedKMsMRU.append(*kmc);
+        ++numCached;
+    }
+    void addToFetchContextCache(CFetchContext *fc)
+    {
+        CriticalBlock b(lCCrit);
+        if (numCached == maxCachedFetchContexts)
+        {
+            CFetchContext &oldest = cachedFCsMRU.item(0);
+            verifyex(removeFetchContext(oldest.queryHandle())); // also removes from cachedFCsMRU
+        }
+        CFCKeyEntry *fce = cachedFetchContexts.find(fc->queryKey());
+        if (!fce)
+        {
+            fce = new CFCKeyEntry(fc->queryKey());
+            cachedFetchContexts.replace(*fce);
+        }
+        fce->push(fc); // JCSMORE cap. to some max #
+        cachedFetchContextsByHandle.replace(*LINK(fc));
+        cachedFCsMRU.append(*fc);
         ++numCached;
     }
     void abort()
@@ -1356,13 +1418,13 @@ public:
                         msg.append(res);
                         replyAttempt = true;
                         if (!queryNodeComm().send(msg, sender, replyTag, LONGTIMEOUT))
-                            throw MakeStringException(0, "kjs_close: Failed to reply to lookup request");
+                            throw MakeStringException(0, "kjs_keyclose: Failed to reply to lookup request");
                         msg.clear();
                         break;
                     }
                     case kjs_fetchopen:
                     {
-                        FetchKey key(msg); // key by {actid, partNo, which}, to keep each context (from each client handler) alive.
+                        CFetchKey key(msg); // key by {actid, partNo, which}, to keep each context (from each client handler) alive.
 
                         size32_t createCtxSz;
                         msg.read(createCtxSz);
@@ -1405,7 +1467,7 @@ public:
                             fetchContext->setTranslation(translationMode, publishedFormat, publishedFormatCrc, projectedFormat);
                         }
 
-                        Owned<CFetchLookupRequest> lookupRequest = new CFetchLookupRequest(fetchContext, sender, replyTag);
+                        Owned<CFetchLookupRequest> lookupRequest = new CFetchLookupRequest(*this, fetchContext, sender, replyTag);
 
                         size32_t requestSz;
                         msg.read(requestSz);
@@ -1437,7 +1499,7 @@ public:
                         }
 
                         CActivityContext *activityCtx = fetchContext->queryActivityCtx();
-                        Owned<CFetchLookupRequest> lookupRequest = new CFetchLookupRequest(fetchContext, sender, replyTag);
+                        Owned<CFetchLookupRequest> lookupRequest = new CFetchLookupRequest(*this, fetchContext, sender, replyTag);
 
                         size32_t requestSz;
                         msg.read(requestSz);

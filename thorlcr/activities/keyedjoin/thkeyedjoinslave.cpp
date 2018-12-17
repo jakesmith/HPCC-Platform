@@ -2146,6 +2146,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     /* NB: each remote fetch handler corresponds to a unique remote fetch context
                      * which maintains the open file stream and state.
                      * 'which' represents uniqueness by combining my rank +current handleCount for this target.
+                     * Also note, that ht_remotekeylookup does not require a similar differentiation, because
+                     * each key lookup client handler corresponds to it's own key manager.
                      */
                     assertex(handlerCount<(2^16));
                     assertex(queryJobChannel().queryMyRank()<(2^16));
