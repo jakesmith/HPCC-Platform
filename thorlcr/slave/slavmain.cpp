@@ -158,17 +158,18 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     {
         activity_id id;
         unsigned partNo;
-        unsigned slave;
-        FetchKey(MemoryBuffer &mb, unsigned _slave) : slave(_slave)
+        unsigned which;
+        FetchKey(MemoryBuffer &mb)
         {
             mb.read(id);
             mb.read(partNo);
+            mb.read(which);
         }
 
-        bool operator==(FetchKey const &other) const { return id==other.id && partNo==other.partNo && slave==other.slave; }
+        bool operator==(FetchKey const &other) const { return id==other.id && partNo==other.partNo && which==other.which; }
         const char *getTracing(StringBuffer &tracing) const
         {
-            return tracing.appendf("actId=%u, partNo=%u, slave=%u", id, partNo, slave);
+            return tracing.appendf("actId=%u, partNo=%u, which=%u", id, partNo, which);
         }
     };
     class CActivityContext : public CInterface
@@ -414,9 +415,9 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         unsigned handle = 0;
         Owned<const IDynamicTransform> translator;
         Owned<ISourceRowPrefetcher> prefetcher;
-        Owned<ISerialStream> ioStream;
-        CThorContiguousRowBuffer prefetchSource;
-        bool initialized = false;
+        std::atomic<ISerialStream *> ioStream{nullptr};
+        Owned<ISerialStream> ownedIoStream;
+        CriticalSection crit;
 
     public:
         CFetchContext(CKJService &_service, CActivityContext *_activityCtx, const FetchKey &_key) : CContext(_service, _activityCtx), key(_key)
@@ -428,16 +429,19 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         const void *queryFindParam() const { return &key; } // for SimpleHashTableOf
         unsigned queryHandle() const { return handle; }
         const FetchKey &queryKey() const { return key; }
-        CThorContiguousRowBuffer &queryPrefetchSource()
+        ISerialStream &queryStream()
         {
-            if (!initialized)
+            if (!ioStream)
             {
-                initialized = true;
-                Owned<IFileIO> iFileIO = activityCtx->getFetchFileIO(key.partNo);
-                ioStream.setown(createFileSerialStream(iFileIO, 0, (offset_t)-1, 0));
-                prefetchSource.setStream(ioStream);
+                CriticalBlock b(crit);
+                if (!ioStream) // check again now in crit
+                {
+                    Owned<IFileIO> iFileIO = activityCtx->getFetchFileIO(key.partNo);
+                    ownedIoStream.setown(createFileSerialStream(iFileIO, 0, (offset_t)-1, 0));
+                    ioStream = ownedIoStream;
+                }
             }
-            return prefetchSource;
+            return *ioStream;
         }
     };
     class CKMContainer : public CInterface
@@ -813,7 +817,8 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         const unsigned defaultMaxFetchLookupReplySz = 0x100000;
         const IDynamicTransform *translator = nullptr;
         ISourceRowPrefetcher *prefetcher = nullptr;
-        CThorContiguousRowBuffer &prefetchSource;
+        CThorContiguousRowBuffer prefetchSource;
+        bool prefetchSourceInitialized = false;
 
         void processRow(const void *row, CFetchLookupResult &reply)
         {
@@ -861,7 +866,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     public:
         CFetchLookupRequest(CFetchContext *_fetchContext, rank_t _sender, mptag_t _replyTag)
             : CLookupRequest(_fetchContext->queryActivityCtx(), _sender, _replyTag),
-              fetchContext(_fetchContext), prefetchSource(fetchContext->queryPrefetchSource())
+              fetchContext(_fetchContext)
         {
             allocator = activityCtx->queryFetchInputAllocator();
             deserializer = activityCtx->queryFetchInputDeserializer();
@@ -871,6 +876,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         }
         virtual void process(bool &abortSoon) override
         {
+            if (!prefetchSourceInitialized)
+            {
+                prefetchSourceInitialized = true;
+                prefetchSource.setStream(&fetchContext->queryStream());
+            }
             Owned<IException> exception;
             try
             {
@@ -1352,7 +1362,7 @@ public:
                     }
                     case kjs_fetchopen:
                     {
-                        FetchKey key(msg, (unsigned)sender); // key by {actid, partNo, sender}, to keep each context (from each slave) alive.
+                        FetchKey key(msg); // key by {actid, partNo, which}, to keep each context (from each client handler) alive.
 
                         size32_t createCtxSz;
                         msg.read(createCtxSz);

@@ -1277,6 +1277,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         typedef CRemoteLookupHandler PARENT;
 
         CThorExpandingRowArray replyRows;
+        unsigned which = 0; // set by constructor
         byte flags = 0;
 
         void initRead(CMessageBuffer &msg, unsigned selected, unsigned partNo, unsigned copy)
@@ -1289,7 +1290,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 msg.append(handle);
             else
             {
-                msg.append(activity.queryId()).append(partNo); // fetch key
+                msg.append(activity.queryId()).append(partNo).append(which); // fetch key
 
                 // serialize onCreate context
                 DelayedSizeMarker sizeMark(msg);
@@ -1347,8 +1348,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             msg.clear();
         }
     public:
-        CFetchRemoteLookupHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave)
-            : PARENT(_activity, _activity.fetchInputMetaRowIf, _lookupSlave), replyRows(_activity, _activity.fetchOutputMetaRowIf)
+        CFetchRemoteLookupHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave, unsigned _which)
+            : PARENT(_activity, _activity.fetchInputMetaRowIf, _lookupSlave), replyRows(_activity, _activity.fetchOutputMetaRowIf), which(_which)
         {
             limiter = &activity.fetchThreadLimiter;
             allParts = &activity.allDataParts;
@@ -2141,9 +2142,19 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     lookupHandler->setBatchSize(keyLookupQueuedBatchSize);
                     break;
                 case ht_remotefetch:
-                    lookupHandler = new CFetchRemoteLookupHandler(*this, slave+1);
+                {
+                    /* NB: each remote fetch handler corresponds to a unique remote fetch context
+                     * which maintains the open file stream and state.
+                     * 'which' represents uniqueness by combining my rank +current handleCount for this target.
+                     */
+                    assertex(handlerCount<(2^16));
+                    assertex(queryJobChannel().queryMyRank()<(2^16));
+                    unsigned which = queryJobChannel().queryMyRank() | handlerCount<<16;
+
+                    lookupHandler = new CFetchRemoteLookupHandler(*this, slave+1, which);
                     lookupHandler->setBatchSize(fetchLookupQueuedBatchSize);
                     break;
+                }
                 case ht_localfetch:
                     lookupHandler = new CFetchLocalLookupHandler(*this);
                     lookupHandler->setBatchSize(fetchLookupQueuedBatchSize);
