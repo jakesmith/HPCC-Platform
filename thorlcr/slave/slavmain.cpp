@@ -103,14 +103,15 @@ void disableThorSlaveAsDaliClient()
 class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, implements IExceptionHandler
 {
     const unsigned defaultMaxCachedKJManagers = 1000;
-    const unsigned defaultMaxCachedFetchContexts = 100;
+    const unsigned defaultMaxCachedFetchContexts = 1000;
     const unsigned defaultKeyLookupMaxProcessThreads = 16;
 
     unsigned uniqueId = 0;
     CThreadedPersistent threaded;
     mptag_t keyLookupMpTag = TAG_NULL;
     bool aborted = false;
-    unsigned numCached = 0;
+    unsigned numKMCached = 0;
+    unsigned numFCCached = 0;
     CJobBase *currentJob = nullptr;
     unsigned maxCachedKJManagers = defaultMaxCachedKJManagers;
     unsigned maxCachedFetchContexts = defaultMaxCachedFetchContexts;
@@ -161,25 +162,22 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
 
         void calcHash()
         {
-            unsigned h = hashvalue(id, partNo);
-            hashv = hashvalue(which, h);
+            hashv = hashvalue(id, partNo);
         }
     public:
         activity_id id;
         unsigned partNo;
-        unsigned which;
         CFetchKey(MemoryBuffer &mb)
         {
             mb.read(id);
             mb.read(partNo);
-            mb.read(which);
             calcHash();
         }
         unsigned queryHash() const { return hashv; }
-        bool operator==(CFetchKey const &other) const { return id==other.id && partNo==other.partNo && which==other.which; }
+        bool operator==(CFetchKey const &other) const { return id==other.id && partNo==other.partNo; }
         const char *getTracing(StringBuffer &tracing) const
         {
-            return tracing.appendf("actId=%u, partNo=%u, which=%u", id, partNo, which);
+            return tracing.appendf("actId=%u, partNo=%u", id, partNo);
         }
     };
     class CActivityContext : public CInterface
@@ -801,7 +799,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                     }
                     lookupResult.clear();
                 }
-                service.addToKeyManagerCache(kmc.getClear());
             }
             catch (IException *e)
             {
@@ -946,7 +943,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                         fetchLookupResult.clear();
                     }
                 }
-                service.addToFetchContextCache(fetchContext.getClear());
             }
             catch (IException *e)
             {
@@ -1052,10 +1048,9 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     SimpleHashTableOf<CActivityContext, unsigned> activityContextsHT;
     CKeyLookupContextHT keyLookupContextsHT; // non-owning HT of CLookupContexts
     CKMContextHT cachedKMs; // NB: HT by {actId, fname, crc} links IKeyManager's within containers
-    OwningSimpleHashTableOf<CKMContainer, unsigned> cachedKMsByHandle; // HT by { handle }, links IKeyManager's within containers.
-    OwningSimpleHashTableOf<CFetchContext, unsigned> cachedFetchContextsByHandle; // HT by { handle }
-    OwningSimpleHashTableOf<CFetchContext, CFetchKey> fetchContextsHT;
     CFetchContextHT cachedFetchContexts;
+    std::unordered_map<unsigned, Linked<CKMContainer>> activeKManagersByHandle;
+    std::unordered_map<unsigned, Linked<CFetchContext>> activeFetchContextsByHandle;
     CICopyArrayOf<CKMContainer> cachedKMsMRU;
     CICopyArrayOf<CFetchContext> cachedFCsMRU;
     CriticalSection kMCrit, lCCrit;
@@ -1125,22 +1120,13 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         if (!keyLookupContext->IsShared())
             keyLookupContextsHT.removeExact(keyLookupContext);
     }
-    CFetchContext *getFetchContext(unsigned handle)
+    CFetchContext *getActiveFetchContext(unsigned handle)
     {
-        CriticalBlock b(kMCrit);
-        Linked<CFetchContext> fetchContext = cachedFetchContextsByHandle.find(handle);
-        if (fetchContext)
-        {
-            verifyex(cachedFetchContextsByHandle.removeExact(fetchContext));
-            CFCKeyEntry *fce = cachedFetchContexts.find(fetchContext->queryKey());
-            assertex(fce);
-            verifyex(fce->remove(fetchContext));
-            if (0 == fce->count())
-                verifyex(cachedFetchContexts.removeExact(fce));
-            verifyex(cachedFCsMRU.zap(*fetchContext));
-            --numCached;
-        }
-        return fetchContext.getClear();
+        CriticalBlock b(lCCrit);
+        auto it = activeFetchContextsByHandle.find(handle);
+        if (it == activeFetchContextsByHandle.end())
+            return nullptr;
+        return it->second.getLink();
     }
     CFetchContext *getCachedFetchContext(const CFetchKey &key)
     {
@@ -1151,12 +1137,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         CFetchContext *fetchContext = fce->pop();
         if (0 == fce->count())
             verifyex(cachedFetchContexts.removeExact(fce));
-        verifyex(cachedFetchContextsByHandle.removeExact(fetchContext));
         verifyex(cachedFCsMRU.zap(*fetchContext));
-        --numCached;
+        --numFCCached;
         return fetchContext;
     }
-    CFetchContext *ensureFetchContext(CJobBase &job, CFetchKey &key, MemoryBuffer &createCtxMb) // gets a unused (cached) CFetchContext based on context key, or create a new one.
+    CFetchContext *createActiveFetchContext(CJobBase &job, CFetchKey &key, MemoryBuffer &createCtxMb) // gets a unused (cached) CFetchContext based on context key, or create a new one.
     {
         CFetchContext *fetchContext = getCachedFetchContext(key);
         if (!fetchContext)
@@ -1164,31 +1149,26 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             Owned<CActivityContext> activityCtx = ensureActivityContext(job, key.id, createCtxMb);
             fetchContext = new CFetchContext(*this, activityCtx, key);
         }
+        activeFetchContextsByHandle.insert({fetchContext->queryHandle(), fetchContext});
         return fetchContext;
     }
-    bool removeFetchContext(unsigned handle)
+    bool removeActiveFetchContext(unsigned handle)
     {
-        Owned<CFetchContext> fetchContext = getFetchContext(handle);
-        if (!fetchContext)
+        auto it = activeFetchContextsByHandle.find(handle);
+        if (it == activeFetchContextsByHandle.end())
             return false;
+        Linked<CFetchContext> fetchContext = it->second;
+        activeFetchContextsByHandle.erase(it);
+        addToFetchContextCache(fetchContext.getClear());
         return true;
     }
-    CKMContainer *getKeyManager(unsigned handle)
+    CKMContainer *getActiveKeyManager(unsigned handle)
     {
         CriticalBlock b(kMCrit);
-        Linked<CKMContainer> kmc = cachedKMsByHandle.find(handle);
-        if (kmc)
-        {
-            verifyex(cachedKMsByHandle.removeExact(kmc));
-            CKMKeyEntry *kme = cachedKMs.find(kmc->queryCtx().queryKey());
-            assertex(kme);
-            verifyex(kme->remove(kmc));
-            if (0 == kme->count())
-                verifyex(cachedKMs.removeExact(kme));
-            verifyex(cachedKMsMRU.zap(*kmc));
-            --numCached;
-        }
-        return kmc.getClear();
+        auto it = activeKManagersByHandle.find(handle);
+        if (it == activeKManagersByHandle.end())
+            return nullptr;
+        return it->second.getLink();
     }
     CKMContainer *getCachedKeyManager(const CLookupKey &key)
     {
@@ -1199,12 +1179,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         CKMContainer *kmc = kme->pop();
         if (0 == kme->count())
             verifyex(cachedKMs.removeExact(kme));
-        verifyex(cachedKMsByHandle.removeExact(kmc));
         verifyex(cachedKMsMRU.zap(*kmc));
-        --numCached;
+        --numKMCached;
         return kmc;
     }
-    CKMContainer *ensureKeyManager(CKeyLookupContext *keyLookupContext) // gets a unused (cached) CKM based on context key, or create a new one.
+    CKMContainer *createActiveKeyManager(CKeyLookupContext *keyLookupContext) // gets a unused (cached) CKM based on context key, or create a new one.
     {
         CKMContainer *kmc = getCachedKeyManager(keyLookupContext->queryKey());
         if (!kmc)
@@ -1213,13 +1192,17 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             // The container creates new IKeyManager and unique handle
             kmc = new CKMContainer(*this, keyLookupContext);
         }
+        activeKManagersByHandle.insert({kmc->queryHandle(), kmc});
         return kmc;
     }
-    bool removeKeyManager(unsigned handle)
+    bool removeActiveKeyManager(unsigned handle)
     {
-        Owned<CKMContainer> kmc = getKeyManager(handle);
-        if (!kmc)
+        auto it = activeKManagersByHandle.find(handle);
+        if (it == activeKManagersByHandle.end())
             return false;
+        Linked<CKMContainer> kmc = it->second;
+        activeKManagersByHandle.erase(it);
+        addToKeyManagerCache(kmc.getClear());
         return true;
     }
     unsigned getUniqId()
@@ -1229,23 +1212,29 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     }
     void clearAll()
     {
-        if (cachedKMsMRU.ordinality())
+        if (activeKManagersByHandle.size())
         {
-            WARNLOG("KJService: clearing %u key manager context(s), that were not closed cleanly", cachedKMsMRU.ordinality());
-            cachedKMsMRU.kill();
+            WARNLOG("KJService: clearing active %lu key manager container(s), that were not closed cleanly", activeKManagersByHandle.size());
+            activeKManagersByHandle.clear();
         }
-        if (cachedFCsMRU.ordinality())
+        if (activeFetchContextsByHandle.size())
         {
-            WARNLOG("KJService: clearing %u fetch context(s), that were not closed cleanly", cachedFCsMRU.ordinality());
-            cachedFCsMRU.kill();
+            WARNLOG("KJService: clearing %lu fetch context(s), that were not closed cleanly", activeFetchContextsByHandle.size());
+            activeFetchContextsByHandle.clear();
         }
-        cachedKMsByHandle.kill();
+        /*
+         * JCSMORE
+         *
+         * 1) look at converting other tables over to std::unordered_map
+         * 2) Test speed before these change
+         */
         cachedKMs.kill();
+        cachedFetchContexts.kill();
         activityContextsHT.kill();
         keyLookupContextsHT.kill();
-        fetchContextsHT.kill();
         currentJob = nullptr;
-        numCached = 0;
+        numKMCached = 0;
+        numFCCached = 0;
     }
     void setupProcessorPool()
     {
@@ -1267,10 +1256,16 @@ public:
     void addToKeyManagerCache(CKMContainer *kmc)
     {
         CriticalBlock b(kMCrit);
-        if (numCached == maxCachedKJManagers)
+        if (numKMCached == maxCachedKJManagers)
         {
             CKMContainer &oldest = cachedKMsMRU.item(0);
-            verifyex(removeKeyManager(oldest.queryHandle())); // also removes from cachedKMsMRU
+            CKMKeyEntry *kme = cachedKMs.find(oldest.queryCtx().queryKey());
+            assertex(kme);
+            verifyex(kme->remove(kmc));
+            if (0 == kme->count())
+                verifyex(cachedKMs.removeExact(kme));
+            verifyex(cachedKMsMRU.zap(oldest));
+            --numKMCached;
         }
         CKMKeyEntry *kme = cachedKMs.find(kmc->queryCtx().queryKey());
         if (!kme)
@@ -1278,18 +1273,23 @@ public:
             kme = new CKMKeyEntry(kmc->queryCtx().queryKey());
             cachedKMs.replace(*kme);
         }
-        kme->push(kmc); // JCSMORE cap. to some max #
-        cachedKMsByHandle.replace(*LINK(kmc));
+        kme->push(kmc); // takes ownership. JCSMORE cap. to some max #
         cachedKMsMRU.append(*kmc);
-        ++numCached;
+        ++numKMCached;
     }
     void addToFetchContextCache(CFetchContext *fc)
     {
         CriticalBlock b(lCCrit);
-        if (numCached == maxCachedFetchContexts)
+        if (numFCCached == maxCachedFetchContexts)
         {
             CFetchContext &oldest = cachedFCsMRU.item(0);
-            verifyex(removeFetchContext(oldest.queryHandle())); // also removes from cachedFCsMRU
+            CFCKeyEntry *fce = cachedFetchContexts.find(oldest.queryKey());
+            assertex(fce);
+            verifyex(fce->remove(&oldest));
+            if (0 == fce->count())
+                verifyex(cachedFetchContexts.removeExact(fce));
+            verifyex(cachedFCsMRU.zap(oldest));
+            --numFCCached;
         }
         CFCKeyEntry *fce = cachedFetchContexts.find(fc->queryKey());
         if (!fce)
@@ -1297,10 +1297,9 @@ public:
             fce = new CFCKeyEntry(fc->queryKey());
             cachedFetchContexts.replace(*fce);
         }
-        fce->push(fc); // JCSMORE cap. to some max #
-        cachedFetchContextsByHandle.replace(*LINK(fc));
+        fce->push(fc); // takes ownership. JCSMORE cap. to some max #
         cachedFCsMRU.append(*fc);
-        ++numCached;
+        ++numFCCached;
     }
     void abort()
     {
@@ -1382,7 +1381,7 @@ public:
                             if (created) // translation for the key context will already have been setup and do not want to free existing
                                 keyLookupContext->setTranslation(translationMode, publishedFormat, publishedFormatCrc, projectedFormat);
                         }
-                        Owned<CKMContainer> kmc = ensureKeyManager(keyLookupContext); // owns keyLookupContext
+                        Owned<CKMContainer> kmc = createActiveKeyManager(keyLookupContext); // owns keyLookupContext
                         processKeyLookupRequest(msg, kmc, sender, replyTag);
                         break;
                     }
@@ -1392,7 +1391,7 @@ public:
                         msg.read(handle);
                         dbgassertex(handle);
 
-                        Owned<CKMContainer> kmc = getKeyManager(handle);
+                        Owned<CKMContainer> kmc = getActiveKeyManager(handle);
                         if (!kmc) // if closed/not known, alternative is to send just handle and send challenge response if unknown
                         {
                             msg.clear();
@@ -1412,7 +1411,7 @@ public:
                     {
                         unsigned handle;
                         msg.read(handle);
-                        bool res = removeKeyManager(handle);
+                        bool res = removeActiveKeyManager(handle);
                         msg.clear();
                         msg.append(errorCode);
                         msg.append(res);
@@ -1424,13 +1423,13 @@ public:
                     }
                     case kjs_fetchopen:
                     {
-                        CFetchKey key(msg); // key by {actid, partNo, which}, to keep each context (from each client handler) alive.
+                        CFetchKey key(msg); // key by {actid, partNo}
 
                         size32_t createCtxSz;
                         msg.read(createCtxSz);
                         MemoryBuffer createCtxMb;
                         createCtxMb.setBuffer(createCtxSz, (void *)msg.readDirect(createCtxSz)); // NB: read only
-                        Owned<CFetchContext> fetchContext = ensureFetchContext(*currentJob, key, createCtxMb);
+                        Owned<CFetchContext> fetchContext = createActiveFetchContext(*currentJob, key, createCtxMb);
                         CActivityContext *activityCtx = fetchContext->queryActivityCtx();
 
                         /* NB: clients will send it on their first request, but might already have from others
@@ -1484,7 +1483,7 @@ public:
                         msg.read(handle);
                         dbgassertex(handle);
 
-                        Owned<CFetchContext> fetchContext = getFetchContext(handle);
+                        Owned<CFetchContext> fetchContext = getActiveFetchContext(handle);
                         if (!fetchContext) // if closed/not known, alternative is to send just handle and send challenge response if unknown
                         {
                             msg.clear();
@@ -1514,7 +1513,7 @@ public:
                     {
                         unsigned handle;
                         msg.read(handle);
-                        bool res = removeFetchContext(handle);
+                        bool res = removeActiveFetchContext(handle);
                         msg.clear();
                         msg.append(errorCode);
                         msg.append(res);
@@ -1568,6 +1567,7 @@ public:
          */
         currentJob = &job;
         maxCachedKJManagers = job.getOptUInt("keyedJoinMaxKJMs", defaultMaxCachedKJManagers);
+        maxCachedFetchContexts = job.getOptUInt("keyedJoinMaxFetchContexts", defaultMaxCachedFetchContexts);
         unsigned newKeyLookupMaxProcessThreads = job.getOptUInt("keyedJoinMaxProcessors", defaultKeyLookupMaxProcessThreads);
         if (newKeyLookupMaxProcessThreads != keyLookupMaxProcessThreads)
         {

@@ -422,6 +422,13 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         unsigned blocked = 0; // number of callers blocked due to exceeding max+leeway.
         Semaphore sem;
         CriticalSection crit;
+        bool enabled = true;
+
+        void unblock()
+        {
+            sem.signal(blocked);
+            blocked = 0;
+        }
     public:
         CLimiter()
         {
@@ -438,6 +445,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             {
                 CriticalBlock b(crit);
+                if (!enabled)
+                    return false;
                 if (count++ < max+leeway)
                     return false;
                 ++blocked;
@@ -448,6 +457,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         {
             {
                 CriticalBlock b(crit);
+                if (!enabled)
+                    return false;
                 if (count < max+leeway)
                 {
                     ++count;
@@ -465,16 +476,30 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         void dec()
         {
             CriticalBlock b(crit);
+            if (!enabled)
+                return;
             --count;
             if (blocked && (count < max))
-            {
-                sem.signal(blocked);
-                blocked = 0;
-            }
+                unblock();
         }
         void block()
         {
             sem.wait();
+        }
+        void disable()
+        {
+            CriticalBlock b(crit);
+            enabled = false;
+            if (blocked)
+                unblock();
+        }
+        void reset()
+        {
+            CriticalBlock b(crit);
+            enabled = true;
+            if (blocked)
+                unblock();
+            count = 0;
         }
     };
     // There is 1 of these per part, but # running is limited
@@ -1277,7 +1302,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
         typedef CRemoteLookupHandler PARENT;
 
         CThorExpandingRowArray replyRows;
-        unsigned which = 0; // set by constructor
         byte flags = 0;
 
         void initRead(CMessageBuffer &msg, unsigned selected, unsigned partNo, unsigned copy)
@@ -1290,7 +1314,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 msg.append(handle);
             else
             {
-                msg.append(activity.queryId()).append(partNo).append(which); // fetch key
+                msg.append(activity.queryId()).append(partNo); // fetch key
 
                 // serialize onCreate context
                 DelayedSizeMarker sizeMark(msg);
@@ -1348,8 +1372,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             msg.clear();
         }
     public:
-        CFetchRemoteLookupHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave, unsigned _which)
-            : PARENT(_activity, _activity.fetchInputMetaRowIf, _lookupSlave), replyRows(_activity, _activity.fetchOutputMetaRowIf), which(_which)
+        CFetchRemoteLookupHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave)
+            : PARENT(_activity, _activity.fetchInputMetaRowIf, _lookupSlave), replyRows(_activity, _activity.fetchOutputMetaRowIf)
         {
             limiter = &activity.fetchThreadLimiter;
             allParts = &activity.allDataParts;
@@ -1988,10 +2012,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                 }
                 lhsRow.setown(inputStream->nextRow());
                 if (!lhsRow)
-                {
-                    stopReadAhead();
                     break;
-                }
             }
             Linked<CJoinGroup> jg;
             if (helper->leftCanMatch(lhsRow))
@@ -2044,6 +2065,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
             }
         }
         while (!endOfInput);
+        stopReadAhead();
     }
     const void *doDenormTransform(RtlDynamicRowBuilder &target, CJoinGroup &group)
     {
@@ -2143,17 +2165,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor
                     break;
                 case ht_remotefetch:
                 {
-                    /* NB: each remote fetch handler corresponds to a unique remote fetch context
-                     * which maintains the open file stream and state.
-                     * 'which' represents uniqueness by combining my rank +current handleCount for this target.
-                     * Also note, that ht_remotekeylookup does not require a similar differentiation, because
-                     * each key lookup client handler corresponds to it's own key manager.
-                     */
-                    assertex(handlerCount<(2^16));
-                    assertex(queryJobChannel().queryMyRank()<(2^16));
-                    unsigned which = queryJobChannel().queryMyRank() | handlerCount<<16;
-
-                    lookupHandler = new CFetchRemoteLookupHandler(*this, slave+1, which);
+                    lookupHandler = new CFetchRemoteLookupHandler(*this, slave+1);
                     lookupHandler->setBatchSize(fetchLookupQueuedBatchSize);
                     break;
                 }
@@ -2497,6 +2509,8 @@ public:
         currentAdded = 0;
         eos = false;
         endOfInput = false;
+        lookupThreadLimiter.reset();
+        fetchThreadLimiter.reset();
         keyLookupHandlers.init();
         fetchLookupHandlers.init();
         readAheadThread.start();
@@ -2651,6 +2665,12 @@ public:
     virtual void stop() override
     {
         endOfInput = true; // signals to readAhead which is reading input, that is should stop asap.
+
+        // could be blocked in readAhead(), because CJoinGroup's are no longer being processed
+        pendingKeyLookupLimiter.disable();
+        doneListLimiter.disable();
+
+
         readAheadThread.join();
         keyLookupHandlers.stop();
         fetchLookupHandlers.stop();
@@ -2672,6 +2692,8 @@ public:
     // IJoinProcessor
     virtual void onComplete(CJoinGroup *joinGroup) override
     {
+        if (endOfInput) // once actiivty stopped.
+            return;
         bool doneListMaxHit = false;
         // moves complete CJoinGroup's from pending list to done list
         {
