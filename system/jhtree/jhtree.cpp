@@ -721,14 +721,8 @@ public:
 
 #else
 
-interface IHTTableCallback
-{
-    virtual void elementAdded(const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type) = 0;
-    virtual void elementRemoved(const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type) = 0;
-};
-
 enum NodeType:unsigned { nt_leaf, nt_node, nt_blob, nt_preload, nt_max };
-class CNodeCache : public CInterface, implements IHTTableCallback
+class CNodeCache : public CInterface
 {
     mutable CriticalSection lock;
     mutable CriticalSection nodeLock;
@@ -737,349 +731,7 @@ class CNodeCache : public CInterface, implements IHTTableCallback
     bool cacheBlobs;
     bool preloadNodes;
 
-    unsigned clearPercentage = 10;
-
-    struct HTEntry
-    {
-        HTEntry(const HTEntry &other) : key(other.key)
-        {
-            hash = other.hash;
-            type = other.type;
-            node = other.node;
-            next = prev = nullptr;
-        }
-        HTEntry& operator=(const HTEntry &other)
-        {
-            key = other.key;
-            hash = other.hash;
-            type = other.type;
-            node = other.node;
-#ifdef _DEBUG
-            next = prev = nullptr;
-#endif
-            return *this;
-        }
-        CKeyIdAndPos key;
-        unsigned hash;
-        unsigned type;
-        CJHTreeNode *node; // NB: if null, HT element is empty
-        HTEntry *next;
-        HTEntry *prev;
-    };
-
-    struct HTTable // NB: must not contain virtuals
-    {
-        // these could be calculated dynamically, but better to configure them at creation (see HTTable::create())
-        HTEntry *table = nullptr;
-        HTEntry **mru = nullptr;
-        HTEntry **lru = nullptr;
-
-        unsigned numTypes = 0;
-        IHTTableCallback *cb = nullptr;
-        IMemCallback *memCb = nullptr;
-        unsigned htn = 0;
-        unsigned n = 0;
-
-        void setCallback(IHTTableCallback *_cb) { cb = _cb; }
-        void setMemCallback(IMemCallback *_memCb) { memCb = _memCb; }
-        inline unsigned elements() const { return n; }
-        inline unsigned size() const { return htn; }
-        inline HTEntry &queryFirst() { return table[0]; }
-        inline HTEntry &queryLast() { return table[htn-1]; }
-        inline unsigned getNumTypes() const { return numTypes; }
-        inline bool full() const
-        {
-            return (n >= ((htn * 3) / 4)); // over 75% full.
-        }
-        void clean()
-        {
-            memset(mru, 0, numTypes * sizeof(HTEntry *));
-            memset(lru, 0, numTypes * sizeof(HTEntry *));
-            memset(table, 0, sizeof(HTEntry)*htn);
-            n = 0;
-        }
-        void kill()
-        {
-            HTEntry *cur = &queryFirst();;
-            HTEntry *endTable = &queryLast();
-            while (cur != endTable)
-            {
-                ::Release(cur->node);
-                cur++;
-            }
-            clean(); // not strictly necessary
-            for (unsigned t=0; t<numTypes; t++)
-            {
-                mru[t] = nullptr;
-                lru[t] = nullptr;
-            }
-        }
-        // returns position of match OR empty pos. to use if not found
-        inline unsigned findPos(const CKeyIdAndPos &key, unsigned h)
-        {
-            unsigned i = h & (htn - 1);
-            while (true)
-            {
-                HTEntry *ht = table+i;
-                if (nullptr == ht->node) // IOW - HT[i] is empty, irrelevant what key/rest members are
-                    return i;
-                if ((ht->hash==h) && (key == ht->key)) // NB: not really necessary to store hash and check it, but if key comparison was expensive, a quick check on hash 1st is a win
-                    return i;
-                if (++i==htn)
-                    i = 0;
-            }
-        }
-        // same as above, except returns NotFound if no match
-        inline unsigned findMatch(const CKeyIdAndPos &key, unsigned h)
-        {
-            unsigned i = h & (htn - 1);
-            while (true)
-            {
-                HTEntry *ht = table+i;
-                if (nullptr == ht->node) // IOW - table[i] is empty, irrelevant what key/rest members are
-                    return NotFound;
-                if ((ht->hash==h) && (key == ht->key)) // NB: not really necessary to store hash and check it, but if key comparison was expensive, a quick check on hash 1st is a win
-                    return i;
-                if (++i==htn)
-                    i = 0;
-            }
-        }
-        void removeMRUEntry(HTEntry *ht)
-        {
-            HTEntry *prev = ht->prev;
-            HTEntry *next = ht->next;
-            if (prev)
-            {
-                prev->next = next;
-                if (lru[ht->type] == ht)
-                    lru[ht->type] = prev;
-            }
-            else
-                mru[ht->type] = next;
-            if (next)
-            {
-                next->prev = prev;
-                if (mru[ht->type] == ht)
-                    mru[ht->type] = next;
-            }
-        }
-        void removeEntry(HTEntry *ht)
-        {
-            removeMRUEntry(ht);
-            if (cb)
-                cb->elementRemoved(ht->key, ht->node, ht->type);
-            ht->node = nullptr;
-            --n;
-        }
-        void add(const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type, bool promoteIfAlreadyPresent=true)
-        {
-            unsigned h = key.getHash();
-            unsigned e = findPos(key, h);
-            HTEntry *ht = table+e;
-            if (ht->node)
-            {
-                dbgassertex(ht->type == type);
-                if (promoteIfAlreadyPresent)
-                    promote(ht);
-            }
-            else
-                addNew(ht, h, key, node, type);
-        }
-        CJHTreeNode *query(const CKeyIdAndPos &key, HTEntry * &ht, bool doPromote=true)
-        {
-            unsigned h = key.getHash();
-            unsigned e = findMatch(key, h);
-            if (NotFound == e)
-                return nullptr;
-            ht = table+e;
-            if (doPromote)
-                promote(ht);
-            return ht->node;
-        }
-        CJHTreeNode *queryOrAdd(const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type, bool doPromote=true)
-        {
-            unsigned h = key.getHash();
-            unsigned e = findPos(key, h);
-            HTEntry *ht = table+e;
-            if (ht->node)
-            {
-                if (doPromote)
-                    promote(ht);
-                return ht->node;
-            }
-            else
-            {
-                addNew(ht, h, key, node, type);
-                return nullptr;
-            }
-        }
-        bool remove(const CKeyIdAndPos &key) // NB: not thread safe, need to protect if calling MT
-        {
-            unsigned h = key.getHash();
-            unsigned e = findMatch(key, h);
-            if (NotFound == e)
-                return false;
-            HTEntry *ht = table+e;
-            removeEntry(ht);
-            return true;
-        }
-        void promote(HTEntry *ht)
-        {
-            if (nullptr == ht->prev) // already at top
-                return;
-            unsigned type = ht->type;
-            removeMRUEntry(ht); // NB: remains in table, meaning it is still thread safe to read from table during a promote
-            HTEntry *oldMRU = mru[type];
-            ht->prev = nullptr;
-            ht->next = oldMRU;
-            mru[type] = ht;
-            oldMRU->prev = ht;
-        }
-        void reduceUntil(unsigned type, std::function<bool()> untilFunc) // NB: not thread safe, need to protect if calling MT
-        {
-            HTEntry *cur = lru[type];
-            if (cur)
-            {
-                unsigned numRemoved = 0;
-                while (true)
-                {
-                    HTEntry *prev = cur->prev;
-
-                    if (cb)
-                        cb->elementRemoved(cur->key, cur->node, type);
-                    cur->node = nullptr;
-
-                    ++numRemoved;
-                    cur = prev;
-                    if (!cur)
-                        break;
-                    // IOW has origSize been reduced by clearPercentage?
-                    if (untilFunc())
-                        break;
-                }
-                lru[type] = cur;
-                if (cur)
-                    cur->next = nullptr;
-                else
-                    mru[type] = nullptr;
-
-                n -= numRemoved;
-            }
-        }
-        void addNew(HTEntry *ht, unsigned h, const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type) // Called by add() if necessary. NB: not thread safe, need to protect if calling MT
-        {
-            dbgassertex(!full()); // Should not happen, it is the responsibility of the callback to expand and replace the HT if getting full
-
-            ht->prev = nullptr;
-            ht->node = LINK(node);
-            ht->hash = h; // NB: not strictly needed, other than to make a shortcut to match on lookup (but if key is cheap to compare may be no point)
-            ht->type = type;
-            ht->key = key;
-            HTEntry *&mruNT = mru[type];
-            if (mruNT)
-            {
-                ht->next = mruNT;
-                mruNT->prev = ht;
-            }
-            else
-                ht->next = nullptr;
-
-            mruNT = ht;
-            if (!lru[type])
-                lru[type] = ht;
-            n++;
-            if (cb)
-                cb->elementAdded(key, node, type);
-        }
-        HTTable *createExpanded()
-        {
-            unsigned newHtn = size() * 2;
-            HTTable *newTable = new (newHtn, numTypes) HTTable;
-            newTable->setCallback(cb);
-            newTable->setMemCallback(memCb);
-            newTable->n = n;
-
-            HTEntry *newTableStart = &newTable->queryFirst();
-            HTEntry *newTableEnd = &newTable->queryLast();
-
-            // walk table, by walking lru's of each node type
-            for (unsigned t=0; t<numTypes; t++)
-            {
-                HTEntry *cur = mru[t];
-                if (cur)
-                {
-                    unsigned curs = 1;
-                    // mru
-                    unsigned i = cur->key.getHash() & (newHtn - 1);
-                    HTEntry *newCur = newTableStart+i;
-                    while (newCur->node)
-                    {
-                        newCur++;
-                        if (newCur==newTableEnd)
-                            newCur = newTableStart;
-                    }
-                    HTEntry *lastNew = newCur;
-                    *lastNew = *cur;
-                    mru[t] = lastNew;
-                    cur = cur->next;
-
-                    while (cur)
-                    {
-                        ++curs;
-                        i = cur->key.getHash() & (newHtn - 1);
-                        newCur = newTableStart+i;
-                        while (newCur->node)
-                        {
-                            newCur++;
-                            if (newCur==newTableEnd)
-                                newCur = newTableStart;
-                        }
-                        *newCur = *cur;
-                        newCur->prev = lastNew;
-                        lastNew->next = newCur;
-                        lastNew = newCur;
-                        cur = cur->next;
-                    }
-                    lru[t] = lastNew;
-                }
-            }
-            return newTable;
-        }
-        static void *operator new(std::size_t htTableSz, unsigned elements, unsigned numTypes, IMemCallback *memCb=nullptr) // numTypes only relevant for MRU/LRU
-        {
-            // NB: have to be careful don't break alignment
-            size32_t sz = htTableSz+((memsize_t)elements)*sizeof(HTEntry);
-            size32_t numTypesSz = numTypes * sizeof(HTEntry *);
-
-            size32_t totalSz = sz+numTypesSz*2;
-            HTTable *ret;
-            if (memCb)
-                ret = (HTTable *)memCb->allocate(totalSz);
-            else
-                ret = (HTTable *)malloc(totalSz);
-            memset(ret, 0, sz+numTypesSz*2);
-            const byte *extraStart = ((byte *)ret) + htTableSz;
-            ret->mru = (HTEntry **)extraStart;
-            ret->lru = (HTEntry **)(extraStart + numTypesSz);
-            ret->table = (HTEntry *)(extraStart + (numTypesSz * 2));
-            ret->htn = elements;
-            ret->numTypes = numTypes;
-            ret->memCb = memCb;
-            return ret;
-        }
-        static void operator delete(void *ptr)
-        {
-            if (ptr)
-            {
-                HTTable *htTable = (HTTable *)ptr;
-                if (htTable->memCb)
-                    htTable->memCb->release(ptr);
-                else
-                    free(ptr);
-            }
-        }
-    } *table = nullptr;
-
+    Owned<CMRUHashTable<CKeyIdAndPos, CJHTreeNode>> mruCache;
     std::vector<size32_t> sizeLimit;
     std::vector<size32_t> totalSize;
 
@@ -1088,8 +740,7 @@ class CNodeCache : public CInterface, implements IHTTableCallback
 public:
     CNodeCache(size32_t maxNodeMem, size32_t maxLeafMem, size32_t maxBlobMem)
     {
-        table = new (8, NodeType::nt_max) HTTable; // size must be power of 2
-        table->setCallback(this);
+        mruCache.setown(createTypedMRUCache<CKeyIdAndPos, CJHTreeNode>());
 
         for (unsigned t=0; t<NodeType::nt_max; t++)
         {
@@ -1110,7 +761,7 @@ public:
     {
         for (unsigned t=0; t<NodeType::nt_max; t++)
             totalSize[t] = 0;
-        table->kill();
+        mruCache->kill();
     }
     CJHTreeNode *getNode(INodeLoader *key, int keyID, offset_t pos, IContextLogger *ctx, bool isTLK);
     void preload(CJHTreeNode *node, int keyID, offset_t pos, IContextLogger *ctx);
@@ -1150,21 +801,6 @@ public:
         cacheBlobs = (newSize != 0);
         sizeLimit[nt_blob] = newSize;
         return oldV;
-    }
-    bool reduceUntilFunc(unsigned type, size32_t targetSize)
-    {
-        return totalSize[type] <= targetSize;
-    }
-// IHTTableCallback impl.
-    virtual void elementAdded(const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type) override
-    {
-        ::Link(node); // means table owns
-        totalSize[type] += (FIXED_NODE_OVERHEAD+node->getMemSize());
-    }
-    virtual void elementRemoved(const CKeyIdAndPos &key, CJHTreeNode *node, unsigned type) override
-    {
-        totalSize[type] -= (FIXED_NODE_OVERHEAD+node->getMemSize());
-        ::Release(node);
     }
 };
 
@@ -2995,10 +2631,10 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
 
         {
             CriticalBlock block(nodeLock); // protect against writers
-            HTEntry *ht;
-            cacheNode.set(table->query(key, ht));
+            unsigned type;
+            cacheNode.set(mruCache->query(key, &type));
             if (cacheNode)
-                nodeType = (NodeType)ht->type;
+                nodeType = (NodeType)type;
         }
 
         if (cacheNode)
@@ -3016,31 +2652,31 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         nodeType = getNodeType(node, isTLK);
 
         {
-            HTTable *newTable = nullptr;
+            void *oldTableMemory = nullptr;
 
             CriticalBlock block(nodeLock);
 
             // JCSMORE - getOrAdd recalculated hash, could avoid/use hash calculated on prev. get (above), but not sure worth it
 
-            cacheNode.set(table->queryOrAdd(key, node, nodeType)); // check if added to cache while we were reading, if not add (NB: getOrNode links 'node')
+            cacheNode.set(mruCache->queryOrAdd(key, node, nodeType)); // check if added to cache while we were reading, if not add (NB: getOrNode links 'node')
 
             // not worth giving up CS for checks that need to regain if need to reduce() or expand()
-            if (!cacheNode) // new 'node' added. NB: table IHTTableCallback::elementAdded will be called
+            if (!cacheNode) // new 'node' added.
             {
-                if (totalSize[nodeType] > sizeLimit[nodeType])
+                node->Link(); // JCSMORE table owns
+                totalSize[nodeType] += (FIXED_NODE_OVERHEAD+node->getMemSize());
+
+                while (totalSize[nodeType] > sizeLimit[nodeType])
                 {
-                    size32_t targetSize = totalSize[nodeType]/100*(100-clearPercentage);
-                    auto func = [this, &nodeType, &targetSize]() { return this->reduceUntilFunc(nodeType, targetSize); };
-                    table->reduceUntil(nodeType, func);
+                    Owned<CJHTreeNode> toRemove = mruCache->removeLRU(nodeType);
+                    totalSize[nodeType] -= (FIXED_NODE_OVERHEAD+toRemove->getMemSize());
+                    dbgassertex(toRemove.get());
                 }
-                if (table->full())
-                {
-                    newTable = table->createExpanded();
-                    std::swap(table, newTable);
-                }
+                if (mruCache->full())
+                    mruCache->expand();
             }
-            if (newTable) // now old
-                delete newTable;
+            if (oldTableMemory) // now old, free outside of crit
+                free(oldTableMemory); // NB: custom alloc/dealloc can be passed into to createTypedMRUCache(), this free() call should match
         }
 
         if (cacheNode) // not added
@@ -3064,7 +2700,7 @@ void CNodeCache::preload(CJHTreeNode *node, int iD, offset_t pos, IContextLogger
     CJHTreeNode *cacheNode;
     {
         CriticalBlock block(nodeLock);
-        cacheNode = table->queryOrAdd(key, node, nt_preload);
+        cacheNode = mruCache->queryOrAdd(key, node, nt_preload);
     }
     if (!cacheNode)
     {
@@ -3078,8 +2714,7 @@ bool CNodeCache::isPreloaded(int iD, offset_t pos)
 {
     CKeyIdAndPos key(iD, pos);
     CriticalBlock block(nodeLock);
-    HTEntry *dummy;
-    return nullptr != table->query(key, dummy);
+    return nullptr != mruCache->query(key);
 }
 
 #endif
