@@ -721,7 +721,7 @@ public:
 
 #else
 
-enum NodeType:unsigned { nt_leaf, nt_node, nt_blob, nt_preload, nt_max };
+enum NodeType:unsigned { nt_null=0, nt_leaf, nt_node, nt_blob, nt_preload, nt_max };
 class CNodeCache : public CInterface
 {
     mutable CriticalSection lock;
@@ -731,16 +731,28 @@ class CNodeCache : public CInterface
     bool cacheBlobs;
     bool preloadNodes;
 
-    Owned<CMRUHashTable<CKeyIdAndPos, CJHTreeNode>> mruCache;
+    Owned<CMRUHashTable<CKeyIdAndPos, Owned<CJHTreeNode>>> mruCache;
     std::vector<size32_t> sizeLimit;
     std::vector<size32_t> totalSize;
 
     void updateStats(IContextLogger *ctx, NodeType nodeType);
     void updateStatsAdd(CJHTreeNode *node, IContextLogger *ctx, NodeType nodeType);
+
+    // callback for mruCache. Called when new node added
+    void checkLimit(const Owned<CJHTreeNode> &value, unsigned type, unsigned count)
+    {
+        totalSize[type] += (FIXED_NODE_OVERHEAD+value->getMemSize());
+        while (totalSize[type] > sizeLimit[type])
+        {
+            Owned<CJHTreeNode> toRemove = mruCache->removeLRU(type);
+            totalSize[type] -= (FIXED_NODE_OVERHEAD+toRemove->getMemSize());
+            dbgassertex(toRemove.get());
+        }
+    }
 public:
     CNodeCache(size32_t maxNodeMem, size32_t maxLeafMem, size32_t maxBlobMem)
     {
-        mruCache.setown(createTypedMRUCache<CKeyIdAndPos, CJHTreeNode>());
+        mruCache.setown(createTypedMRUCache<CKeyIdAndPos, Owned<CJHTreeNode>>(8, NodeType::nt_max));
 
         for (unsigned t=0; t<NodeType::nt_max; t++)
         {
@@ -750,6 +762,9 @@ public:
         sizeLimit[nt_leaf] = maxLeafMem;
         sizeLimit[nt_node] = maxNodeMem;
         sizeLimit[nt_blob] = maxBlobMem;
+
+        auto f = [this](const Owned<CJHTreeNode> &value, unsigned type, unsigned count) { this->checkLimit(value, type, count); };
+        mruCache->setTypeLimiterCallback(f);
 
         cacheNodes = maxNodeMem != 0;
         cacheLeaves = maxLeafMem != 0;
@@ -2625,20 +2640,18 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         // It's a shame that we don't know the type before we read it. But probably not that big a deal
         CKeyIdAndPos key(iD, pos);
 
-        Linked<CJHTreeNode> cacheNode;
-
+        Owned<CJHTreeNode> cacheNode;
         NodeType nodeType;
+        unsigned type;
 
         {
             CriticalBlock block(nodeLock); // protect against writers
-            unsigned type;
-            cacheNode.set(mruCache->query(key, &type));
-            if (cacheNode)
-                nodeType = (NodeType)type;
+            mruCache->query(key, cacheNode, &type);
         }
 
         if (cacheNode)
         {
+            nodeType = (NodeType)type;
             cacheHits++;
             if (!preloadNodes)
                 nodeType = getNodeType(cacheNode, isTLK);
@@ -2654,26 +2667,19 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         {
             void *oldTableMemory = nullptr;
 
-            CriticalBlock block(nodeLock);
-
-            // JCSMORE - getOrAdd recalculated hash, could avoid/use hash calculated on prev. get (above), but not sure worth it
-
-            cacheNode.set(mruCache->queryOrAdd(key, node, nodeType)); // check if added to cache while we were reading, if not add (NB: getOrNode links 'node')
-
-            // not worth giving up CS for checks that need to regain if need to reduce() or expand()
-            if (!cacheNode) // new 'node' added.
             {
-                node->Link(); // JCSMORE table owns
-                totalSize[nodeType] += (FIXED_NODE_OVERHEAD+node->getMemSize());
+                CriticalBlock block(nodeLock);
 
-                while (totalSize[nodeType] > sizeLimit[nodeType])
+                // JCSMORE - queryOrAdd recalculated hash, could avoid/use hash calculated on prev. get (above), but not sure worth it
+                if (mruCache->queryOrAdd(key, cacheNode, node, nodeType)) // check if added to cache while we were reading, if not add (NB: queryOrNode links 'node')
                 {
-                    Owned<CJHTreeNode> toRemove = mruCache->removeLRU(nodeType);
-                    totalSize[nodeType] -= (FIXED_NODE_OVERHEAD+toRemove->getMemSize());
-                    dbgassertex(toRemove.get());
+                    // not worth giving up CS for checks that need to regain if need to expand()
+
+                    // NB: new node added, mruCache will call limiterFunction to check and impose type limits
+
+                    if (mruCache->full())
+                        oldTableMemory = mruCache->expand();
                 }
-                if (mruCache->full())
-                    mruCache->expand();
             }
             if (oldTableMemory) // now old, free outside of crit
                 free(oldTableMemory); // NB: custom alloc/dealloc can be passed into to createTypedMRUCache(), this free() call should match
@@ -2697,10 +2703,10 @@ void CNodeCache::preload(CJHTreeNode *node, int iD, offset_t pos, IContextLogger
     assertex(preloadNodes);
     NodeType nodeType = getNodeType(node, false);
     CKeyIdAndPos key(iD, pos);
-    CJHTreeNode *cacheNode;
+    Owned<CJHTreeNode> cacheNode;
     {
         CriticalBlock block(nodeLock);
-        cacheNode = mruCache->queryOrAdd(key, node, nt_preload);
+        mruCache->queryOrAdd(key, cacheNode, node, nt_preload);
     }
     if (!cacheNode)
     {
@@ -2714,7 +2720,7 @@ bool CNodeCache::isPreloaded(int iD, offset_t pos)
 {
     CKeyIdAndPos key(iD, pos);
     CriticalBlock block(nodeLock);
-    return nullptr != mruCache->query(key);
+    return mruCache->exists(key);
 }
 
 #endif

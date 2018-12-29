@@ -3350,6 +3350,13 @@ void usage(const char *error=NULL)
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
+static void checkLimit(const unsigned &value, unsigned type, unsigned count)
+{
+
+}
+
+#include "jhash.hpp"
+
 int main(int argc, char* argv[])
 {   
     ReleaseAtomBlock rABlock;
@@ -3358,6 +3365,17 @@ int main(int argc, char* argv[])
     EnableSEHtoExceptionMapping();
 
     try {
+
+#if 1
+        {
+            Owned<CMRUHashTable<unsigned, unsigned>> myMru = createTypedMRUCache<unsigned, unsigned>();
+            myMru->setTypeLimiterCallback(checkLimit);
+
+
+            return 0;
+        }
+#endif
+
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
         StringBuffer lf;

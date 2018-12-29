@@ -21,6 +21,7 @@
 #include <ctype.h>
 #include <stdio.h>
 
+#include "jexcept.hpp"
 #include "jhash.hpp"
 #include "jmutex.hpp"
 
@@ -402,6 +403,34 @@ void ObservedHashTable::onRemove(void * et)
 {
     static_cast<IMapping *>(et)->removeObserver(*this);
 }
+
+
+// ============ CMRUHashTable template
+
+template <class KEY, class VALUE>
+const VALUE &CMRUHashTable<KEY, VALUE>::HTTable::removeLRU(unsigned type) // NB: not thread safe, need to protect if calling MT
+{
+    HTEntry *cur = lru[type];
+    if (!cur)
+        throw makeStringException(0, "CMRUHashTable::removeLRU() - table empty");
+
+    const VALUE &ret = cur->value;
+    cur->value.~VALUE();
+    memset(&cur->value, 0, sizeof(VALUE));
+    --typeCount[type];
+    --n;
+
+    HTEntry *prev = cur->prev;
+    cur = prev;
+    lru[type] = cur;
+    if (cur)
+        cur->next = nullptr;
+    else
+        mru[type] = nullptr;
+    return ret;
+}
+
+//
 
 //===========================================================================
 
