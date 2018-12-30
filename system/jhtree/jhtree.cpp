@@ -731,7 +731,15 @@ class CNodeCache : public CInterface
     bool cacheBlobs;
     bool preloadNodes;
 
-    Owned<CMRUHashTable<CKeyIdAndPos, Owned<CJHTreeNode>>> mruCache;
+    struct CKeyHasher
+    {
+        std::size_t operator() (const CKeyIdAndPos &key) const
+        {
+            return key.getHash();
+        }
+    };
+
+    Owned<CMRUHashTable<CKeyIdAndPos, Owned<CJHTreeNode>, CKeyHasher>> mruCache;
     std::vector<size32_t> sizeLimit;
     std::vector<size32_t> totalSize;
 
@@ -752,7 +760,7 @@ class CNodeCache : public CInterface
 public:
     CNodeCache(size32_t maxNodeMem, size32_t maxLeafMem, size32_t maxBlobMem)
     {
-        mruCache.setown(createTypedMRUCache<CKeyIdAndPos, Owned<CJHTreeNode>>(8, NodeType::nt_max));
+        mruCache.setown(createTypedMRUCache<CKeyIdAndPos, Owned<CJHTreeNode>, CKeyHasher>(8, NodeType::nt_max));
 
         for (unsigned t=0; t<NodeType::nt_max; t++)
         {

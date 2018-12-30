@@ -599,7 +599,10 @@ public:
 
 };
 
-template <class KEY, class VALUE>
+// JCSMORE
+void throwMRUException();
+
+template <class KEY, class VALUE, class HASHER = std::hash<KEY>>
 class CMRUHashTable : public CInterface
 {
     std::function<void *(size_t)> allocFunc=nullptr;
@@ -639,6 +642,7 @@ class CMRUHashTable : public CInterface
         HTEntry **mru = nullptr;
         HTEntry **lru = nullptr;
         unsigned *typeCount = nullptr;
+        HASHER hasher;
 
         unsigned numTypes = 0;
         unsigned htn = 0;
@@ -721,7 +725,7 @@ class CMRUHashTable : public CInterface
                 if (cur)
                 {
                     // mru
-                    unsigned i = cur->key.getHash() & (newHtn - 1);
+                    unsigned i = hasher(cur->key) & (newHtn - 1);
                     HTEntry *newCur = newTableStart+i;
                     while (!isEmpty(newCur))
                     {
@@ -736,7 +740,7 @@ class CMRUHashTable : public CInterface
 
                     while (cur)
                     {
-                        i = cur->key.getHash() & (newHtn - 1);
+                        i = hasher(cur->key) & (newHtn - 1);
                         newCur = newTableStart+i;
                         while (!isEmpty(newCur))
                         {
@@ -813,7 +817,7 @@ class CMRUHashTable : public CInterface
         }
         bool add(const KEY &key, const VALUE &value, unsigned type, bool promoteIfAlreadyPresent=true)
         {
-            unsigned h = key.getHash();
+            unsigned h = hasher(key);
             unsigned e = findPos(key, h);
             HTEntry *ht = table+e;
             if (!isEmpty(ht))
@@ -831,13 +835,13 @@ class CMRUHashTable : public CInterface
         }
         bool exists(const KEY &key) const
         {
-            unsigned h = key.getHash();
+            unsigned h = hasher(key);
             unsigned e = findMatch(key, h);
             return NotFound != e;
         }
         bool query(const KEY &key, VALUE &res, unsigned *type=nullptr, bool doPromote=true)
         {
-            unsigned h = key.getHash();
+            unsigned h = hasher(key);
             unsigned e = findMatch(key, h);
             if (NotFound == e)
                 return false;
@@ -852,7 +856,7 @@ class CMRUHashTable : public CInterface
         }
         bool queryOrAdd(const KEY &key, VALUE &res, const VALUE &value, unsigned type, bool doPromote=true) // NB: returns false if new item added
         {
-            unsigned h = key.getHash();
+            unsigned h = hasher(key);
             unsigned e = findPos(key, h);
             HTEntry *ht = table+e;
             if (!isEmpty(ht))
@@ -870,7 +874,7 @@ class CMRUHashTable : public CInterface
         }
         bool remove(const KEY &key) // NB: not thread safe, need to protect if calling MT
         {
-            unsigned h = key.getHash();
+            unsigned h = hasher(key);
             unsigned e = findMatch(key, h);
             if (NotFound == e)
                 return false;
@@ -890,7 +894,27 @@ class CMRUHashTable : public CInterface
             mru[type] = ht;
             oldMRU->prev = ht;
         }
-        const VALUE &removeLRU(unsigned type);
+        const VALUE &removeLRU(unsigned type)
+        {
+            HTEntry *cur = lru[type];
+            if (!cur)
+                throwMRUException();
+
+            const VALUE &ret = cur->value;
+            cur->value.~VALUE();
+            memset(&cur->value, 0, sizeof(VALUE));
+            --typeCount[type];
+            --n;
+
+            HTEntry *prev = cur->prev;
+            cur = prev;
+            lru[type] = cur;
+            if (cur)
+                cur->next = nullptr;
+            else
+                mru[type] = nullptr;
+            return ret;
+        }
     } *table = nullptr;
 
     typedef std::function<void (const VALUE &, unsigned, unsigned)> callbackFuncType;
@@ -1011,10 +1035,10 @@ public:
 };
 
 
-template <class KEY, class VALUE>
-CMRUHashTable<KEY, VALUE> *createTypedMRUCache(size_t initialSize=8, size_t types=1, std::function<void *(size_t)> allocFunc=nullptr, std::function<void (void *)> deallocFunc=nullptr)
+template <class KEY, class VALUE, class HASHER = std::hash<KEY>>
+CMRUHashTable<KEY, VALUE, HASHER> *createTypedMRUCache(size_t initialSize=8, size_t types=1, std::function<void *(size_t)> allocFunc=nullptr, std::function<void (void *)> deallocFunc=nullptr)
 {
-    return new CMRUHashTable<KEY, VALUE>(initialSize, types, allocFunc, deallocFunc);
+    return new CMRUHashTable<KEY, VALUE, HASHER>(initialSize, types, allocFunc, deallocFunc);
 }
 
 

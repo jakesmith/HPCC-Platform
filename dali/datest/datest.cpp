@@ -3367,12 +3367,24 @@ int main(int argc, char* argv[])
     try {
 
 #if 1
+        try
         {
-            Owned<CMRUHashTable<unsigned, unsigned>> myMru = createTypedMRUCache<unsigned, unsigned>();
+            Owned<CMRUHashTable<unsigned, unsigned>> myMru;// = createTypedMRUCache<unsigned, unsigned>();
             myMru->setTypeLimiterCallback(checkLimit);
 
+            for (unsigned i=1; i<=100; i++)
+            {
+                unsigned existingValue;
+                unsigned newValue = i+1000;
+                if (myMru->queryOrAdd(i, existingValue, newValue, 0))
+                    throwUnexpected();
+            }
 
             return 0;
+        }
+        catch (IException *e)
+        {
+            EXCLOG(e, nullptr);
         }
 #endif
 
