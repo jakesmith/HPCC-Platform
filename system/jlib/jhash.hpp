@@ -670,22 +670,30 @@ class CMRUHashTable : public CInterface
             memset(typeCount, 0, numTypes * sizeof(unsigned));
             memset(table, 0, sizeof(HTEntry)*htn);
         }
-        void kill()
+        void kill(bool doClean=true)
         {
-            HTEntry *cur = &queryFirst();;
-            HTEntry *endTable = &queryLast();
-            while (cur != endTable)
-            {
-                cur->value.~VALUE();
-                cur++;
-            }
-            clean(); // not strictly necessary
-            n = 0;
+            // walk table, by walking lru's of each value type
             for (unsigned t=0; t<numTypes; t++)
             {
-                mru[t] = nullptr;
-                lru[t] = nullptr;
-                typeCount[t] = 0;
+                HTEntry *cur = mru[t];
+                while (true)
+                {
+                    if (!cur)
+                        break;
+                    cur->value.~VALUE();
+                    cur = cur->next;
+                }
+            }
+            if (doClean)
+            {
+                clean(); // not strictly necessary
+                n = 0;
+                for (unsigned t=0; t<numTypes; t++)
+                {
+                    mru[t] = nullptr;
+                    lru[t] = nullptr;
+                    typeCount[t] = 0;
+                }
             }
         }
         void addNew(HTEntry *ht, unsigned h, const KEY &key, const VALUE &value, unsigned type) // Called by add() if necessary. NB: not thread safe, need to protect if calling MT
@@ -986,14 +994,8 @@ public:
         }
         if (table->full())
         {
-            void *oldTableMemory = expand();
-            if (oldTableMemory)
-            {
-                if (deallocFunc)
-                    deallocFunc(oldTableMemory);
-                else
-                    free(oldTableMemory);
-            }
+            void *oldTable = expand();
+            destroyTable(oldTable);
         }
     }
     void add(const KEY &key, const VALUE &value, unsigned type, bool promoteIfAlreadyPresent=true)
@@ -1043,6 +1045,15 @@ public:
     void setTypeLimiterCallback(callbackFuncType limiterFunc)
     {
         limiterFunction = limiterFunc;
+    }
+    void destroyTable(void *_table) // to be used after expand() returns old table
+    {
+        HTTable *table = (HTTable *)_table;
+        table->kill(false);
+        if (deallocFunc)
+            deallocFunc(_table);
+        else
+            free(_table);
     }
 };
 

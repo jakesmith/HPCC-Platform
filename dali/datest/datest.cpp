@@ -3350,7 +3350,7 @@ void usage(const char *error=NULL)
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
-static void checkLimit(CMRUHashTable<unsigned, unsigned> *mru, const unsigned &value, unsigned type, unsigned count)
+static void checkLimit(CMRUHashTable<unsigned, Owned<IPropertyTree>> *mru, const Owned<IPropertyTree> &value, unsigned type, unsigned count)
 {
 }
 
@@ -3368,22 +3368,30 @@ int main(int argc, char* argv[])
 #if 1
         try
         {
-            Owned<CMRUHashTable<unsigned, unsigned>> myMru = createTypedMRUCache<unsigned, unsigned>();
-            auto f = [myMru](const unsigned &value, unsigned type, unsigned limit) { checkLimit(myMru, value, type, limit); };
+            Owned<CMRUHashTable<unsigned, Owned<IPropertyTree>>> myMru = createTypedMRUCache<unsigned, Owned<IPropertyTree>>();
+            auto f = [myMru](const Owned<IPropertyTree> &value, unsigned type, unsigned limit) { checkLimit(myMru, value, type, limit); };
             myMru->setTypeLimiterCallback(f);
 
-            for (unsigned i=1; i<=100; i++)
+            unsigned elems=8;
+            for (unsigned i=1; i<=elems; i++)
             {
-                unsigned existingValue;
+                Owned<IPropertyTree> existingValue;
                 unsigned newValue = i+1000;
-                if (myMru->queryOrAdd(i, existingValue, newValue, 0))
+                StringBuffer vs;
+                vs.append(newValue);
+                Owned<IPropertyTree> t = createPTree(vs);
+                if (myMru->queryOrAdd(i, existingValue, t, 0))
                     throwUnexpected();
+                t.clear();
             }
 
-            for (unsigned i=1; i<=100; i++)
+            for (unsigned i=1; i<=elems; i++)
             {
-                unsigned v = myMru->removeLRU(0);
-                PROGLOG("v = %u", v);
+                myMru->removeLRU(0);
+//                Owned<IPropertyTree> v = myMru->removeLRU(0);
+//                StringBuffer str;
+//                toXML(v, str);
+//                PROGLOG("str = %s", str.str());
             }
 
             return 0;
