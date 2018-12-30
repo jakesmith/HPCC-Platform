@@ -2673,24 +2673,10 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
         nodeType = getNodeType(node, isTLK);
 
         {
-            void *oldTableMemory = nullptr;
+            CriticalBlock block(nodeLock);
 
-            {
-                CriticalBlock block(nodeLock);
-
-                // JCSMORE - queryOrAdd recalculated hash, could avoid/use hash calculated on prev. get (above), but not sure worth it
-                if (mruCache->queryOrAdd(key, cacheNode, node, nodeType)) // check if added to cache while we were reading, if not add (NB: queryOrNode links 'node')
-                {
-                    // not worth giving up CS for checks that need to regain if need to expand()
-
-                    // NB: new node added, mruCache will call limiterFunction to check and impose type limits
-
-                    if (mruCache->full())
-                        oldTableMemory = mruCache->expand();
-                }
-            }
-            if (oldTableMemory) // now old, free outside of crit
-                free(oldTableMemory); // NB: custom alloc/dealloc can be passed into to createTypedMRUCache(), this free() call should match
+            // JCSMORE - queryOrAdd recalculated hash, could avoid/use hash calculated on prev. get (above), but not sure worth it
+            mruCache->queryOrAdd(key, cacheNode, node, nodeType); // check if added to cache while we were reading, if not add (NB: queryOrNode links 'node')
         }
 
         if (cacheNode) // not added

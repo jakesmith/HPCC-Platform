@@ -735,7 +735,7 @@ class CMRUHashTable : public CInterface
                     }
                     HTEntry *lastNew = newCur;
                     *lastNew = *cur;
-                    mru[t] = lastNew;
+                    newTable->mru[t] = lastNew;
                     cur = cur->next;
 
                     while (cur)
@@ -754,9 +754,10 @@ class CMRUHashTable : public CInterface
                         lastNew = newCur;
                         cur = cur->next;
                     }
-                    lru[t] = lastNew;
+                    newTable->lru[t] = lastNew;
                 }
             }
+            newTable->n = n;
             return newTable;
         }
         // returns position of match OR empty pos. to use if not found
@@ -894,13 +895,13 @@ class CMRUHashTable : public CInterface
             mru[type] = ht;
             oldMRU->prev = ht;
         }
-        const VALUE &removeLRU(unsigned type)
+        const VALUE removeLRU(unsigned type)
         {
             HTEntry *cur = lru[type];
             if (!cur)
                 throwMRUException();
 
-            const VALUE &ret = cur->value;
+            const VALUE ret = cur->value;
             cur->value.~VALUE();
             memset(&cur->value, 0, sizeof(VALUE));
             --typeCount[type];
@@ -983,6 +984,17 @@ public:
             while (limitExceeded(type))
                 removeLRU(type);
         }
+        if (table->full())
+        {
+            void *oldTableMemory = expand();
+            if (oldTableMemory)
+            {
+                if (deallocFunc)
+                    deallocFunc(oldTableMemory);
+                else
+                    free(oldTableMemory);
+            }
+        }
     }
     void add(const KEY &key, const VALUE &value, unsigned type, bool promoteIfAlreadyPresent=true)
     {
@@ -1014,7 +1026,7 @@ public:
     {
         table->promote(ht);
     }
-    const VALUE &removeLRU(unsigned type)
+    const VALUE removeLRU(unsigned type)
     {
         return table->removeLRU(type);
     }

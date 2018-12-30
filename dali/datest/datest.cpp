@@ -3350,9 +3350,8 @@ void usage(const char *error=NULL)
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
-static void checkLimit(const unsigned &value, unsigned type, unsigned count)
+static void checkLimit(CMRUHashTable<unsigned, unsigned> *mru, const unsigned &value, unsigned type, unsigned count)
 {
-
 }
 
 #include "jhash.hpp"
@@ -3369,8 +3368,9 @@ int main(int argc, char* argv[])
 #if 1
         try
         {
-            Owned<CMRUHashTable<unsigned, unsigned>> myMru;// = createTypedMRUCache<unsigned, unsigned>();
-            myMru->setTypeLimiterCallback(checkLimit);
+            Owned<CMRUHashTable<unsigned, unsigned>> myMru = createTypedMRUCache<unsigned, unsigned>();
+            auto f = [myMru](const unsigned &value, unsigned type, unsigned limit) { checkLimit(myMru, value, type, limit); };
+            myMru->setTypeLimiterCallback(f);
 
             for (unsigned i=1; i<=100; i++)
             {
@@ -3378,6 +3378,12 @@ int main(int argc, char* argv[])
                 unsigned newValue = i+1000;
                 if (myMru->queryOrAdd(i, existingValue, newValue, 0))
                     throwUnexpected();
+            }
+
+            for (unsigned i=1; i<=100; i++)
+            {
+                unsigned v = myMru->removeLRU(0);
+                PROGLOG("v = %u", v);
             }
 
             return 0;
