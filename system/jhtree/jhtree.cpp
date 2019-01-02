@@ -749,6 +749,7 @@ class CNodeCache : public CInterface
     // callback for mruCache. Called when new node added
     void checkLimit(const Owned<CJHTreeNode> &value, unsigned type, unsigned count)
     {
+#if 0
         totalSize[type] += (FIXED_NODE_OVERHEAD+value->getMemSize());
         while (totalSize[type] > sizeLimit[type])
         {
@@ -756,6 +757,7 @@ class CNodeCache : public CInterface
             totalSize[type] -= (FIXED_NODE_OVERHEAD+toRemove->getMemSize());
             dbgassertex(toRemove.get());
         }
+#endif
     }
 public:
     CNodeCache(size32_t maxNodeMem, size32_t maxLeafMem, size32_t maxBlobMem)
@@ -2654,7 +2656,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
 
         {
             CriticalBlock block(nodeLock); // protect against writers
-            mruCache->query(key, cacheNode, &type);
+//            mruCache->query(key, cacheNode, &type);
         }
 
         if (cacheNode)
@@ -2676,7 +2678,7 @@ CJHTreeNode *CNodeCache::getNode(INodeLoader *keyIndex, int iD, offset_t pos, IC
             CriticalBlock block(nodeLock);
 
             // JCSMORE - queryOrAdd recalculated hash, could avoid/use hash calculated on prev. get (above), but not sure worth it
-            mruCache->queryOrAdd(key, cacheNode, node, nodeType); // check if added to cache while we were reading, if not add (NB: queryOrNode links 'node')
+//            mruCache->queryOrAdd(key, cacheNode, node, nodeType); // check if added to cache while we were reading, if not add (NB: queryOrNode links 'node')
         }
 
         if (cacheNode) // not added
@@ -2700,7 +2702,7 @@ void CNodeCache::preload(CJHTreeNode *node, int iD, offset_t pos, IContextLogger
     Owned<CJHTreeNode> cacheNode;
     {
         CriticalBlock block(nodeLock);
-        mruCache->queryOrAdd(key, cacheNode, node, nt_preload);
+//        mruCache->queryOrAdd(key, cacheNode, node, nt_preload);
     }
     if (!cacheNode)
     {
@@ -2714,7 +2716,8 @@ bool CNodeCache::isPreloaded(int iD, offset_t pos)
 {
     CKeyIdAndPos key(iD, pos);
     CriticalBlock block(nodeLock);
-    return mruCache->exists(key);
+//    return mruCache->exists(key);
+    return false;
 }
 
 #endif

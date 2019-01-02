@@ -623,9 +623,6 @@ class CMRUHashTable : public CInterface
             hash = other.hash;
             type = other.type;
             value = other.value;
-#ifdef _DEBUG
-            next = prev = nullptr;
-#endif
             return *this;
         }
         KEY key;
@@ -685,15 +682,18 @@ class CMRUHashTable : public CInterface
             memset(mru, 0, numTypes * sizeof(HTEntry *));
             memset(lru, 0, numTypes * sizeof(HTEntry *));
             memset(typeCount, 0, numTypes * sizeof(unsigned));
-            memset(table, 0, sizeof(HTEntry)*htn); // 0xff to comply with isEmpty()
+            memset(table, 0, sizeof(HTEntry)*htn);
             HTEntry *cur = table;
             HTEntry *tableEnd = table+htn;
+            unsigned c = 0;
             do
             {
+                ++c;
                 setEmpty(cur);
                 cur++;
             }
             while (cur != tableEnd);
+            printf("cleaned c=%u\n", c);
         }
         void kill(bool doClean=true)
         {
@@ -743,46 +743,157 @@ class CMRUHashTable : public CInterface
             HTEntry *newTableStart = &newTable->queryFirst();
             HTEntry *newTableEnd = &newTable->queryLast();
 
+            unsigned empties = 0;
+            for (HTEntry *cur=newTableStart; cur!=newTableEnd; cur++)
+            {
+                if (isEmpty(cur))
+                    empties++;
+            }
+            printf("n=%u, htn=%u, newHtn=%u, empties=%u\n", n, htn, newHtn, empties);
+            HTEntry *cur = mru[0];
+            unsigned fulls = 0;
+            while (cur)
+            {
+                assertex(!isEmpty(cur));
+                ++fulls;
+                if (fulls >= htn)
+                {
+                    printf("SHOULD NEVER HAPPEN!\n");
+                    break;
+                }
+                cur = cur->next;
+            }
+            printf("fulls=%u\n", fulls);
+            if (n != fulls)
+                printf("makes no sense! n=%u, fulls=%u\n", n, fulls);
+
+
             // walk table, by walking lru's of each value type
             for (unsigned t=0; t<numTypes; t++)
             {
                 HTEntry *cur = mru[t];
+                unsigned c = 0;
                 if (cur)
                 {
                     // mru
                     unsigned i = hasher(cur->key) & (newHtn - 1);
                     HTEntry *newCur = newTableStart+i;
+                    HTEntry *ss = newCur;
                     while (!isEmpty(newCur))
                     {
                         newCur++;
                         if (newCur==newTableEnd)
+                        {
+                            printf("looped1\n");
                             newCur = newTableStart;
+                            if (newCur == ss)
+                            {
+                                printf("processed = %u\n", c);
+                                while (true);
+                                throwMRUException();
+                            }
+                        }
                     }
+                    c = 1;
+                    *newCur = *cur;
+                    newCur->prev = nullptr;
                     HTEntry *lastNew = newCur;
-                    *lastNew = *cur;
                     newTable->mru[t] = lastNew;
                     cur = cur->next;
 
                     while (cur)
                     {
+                        assertex(!isEmpty(cur));
+                        if (c == typeCount[t])
+                        {
+                            printf("WTF - processed = %u\n", c);
+                            while (true);
+                            throwMRUException();
+                        }
+
                         i = hasher(cur->key) & (newHtn - 1);
                         newCur = newTableStart+i;
+                        HTEntry *ss = newCur;
                         while (!isEmpty(newCur))
                         {
                             newCur++;
                             if (newCur==newTableEnd)
+                            {
+                                printf("looped2\n");
                                 newCur = newTableStart;
+                                if (newCur == ss)
+                                {
+                                    printf("processed = %u\n", c);
+                                    while (true);
+                                    throwMRUException();
+                                }
+                            }
                         }
+                        ++c;
                         *newCur = *cur;
                         newCur->prev = lastNew;
+                        newCur->next = nullptr;
+                        if (newCur == lastNew)
+                            printf("[newCur == lastNew] - c=%u\n", c);
                         lastNew->next = newCur;
                         lastNew = newCur;
+
+                        if (cur->key != newCur->key)
+                            printf("ARGGGG!!, %u steps in oldCur=%p, oldCur->flag=%u, oldCur->key=%u, newCur=%p, newCur->flag=%u, newCur->key=%u\n", c, cur, cur->flag, cur->key, newCur, newCur->flag, newCur->key);
+                        if (newCur->prev == newCur)
+                            printf("[newCur->prev == newCur] - c=%u\n", c);
+
                         cur = cur->next;
                     }
+//                    lastNew->next = nullptr;
                     newTable->lru[t] = lastNew;
                 }
+                newTable->typeCount[t] = typeCount[t];
+                printf("c=%u\n", c);
             }
             newTable->n = n;
+
+            fulls = 0;
+            cur = newTable->mru[0];
+            while (cur)
+            {
+                assertex(!isEmpty(cur));
+                ++fulls;
+                if (fulls >= htn)
+                {
+                    printf("AFTER: SHOULD NEVER HAPPEN!\n");
+                    break;
+                }
+                cur = cur->next;
+            }
+            if (n != fulls)
+            {
+                printf("AFTER: makes no sense! n=%u, fulls=%u\n", n, fulls);
+                HTEntry *oldCur = mru[0];
+                HTEntry *newCur = newTable->mru[0];
+                unsigned i=0;
+                while (oldCur)
+                {
+                    if (!newCur)
+                    {
+                        printf("BLAH!\n");
+                        break;
+                    }
+                    if (oldCur->key != newCur->key)
+                    {
+                        printf("problem, %u steps in oldCur=%p, oldCur->flag=%u, oldCur->key=%u, newCur=%p, newCur->flag=%u, newCur->key=%u\n", i, oldCur, oldCur->flag, oldCur->key, newCur, newCur->flag, newCur->key);
+                        printf("old prev key = %u, oldCur->prev=%p\n", oldCur->prev->key, oldCur->prev);
+                        printf("old next key = %u, oldCur->next=%p\n", oldCur->next->key, oldCur->next);
+                        printf("new prev key = %u, newCur->prev=%p\n", newCur->prev->key, newCur->prev);
+                        printf("new next key = %u, newCur->next=%p\n", newCur->next->key, newCur->next);
+                    }
+                    ++i;
+                    oldCur = oldCur->next;
+                    newCur = newCur->next;
+                }
+            }
+
+
             return newTable;
         }
         // returns position of match OR empty pos. to use if not found
@@ -1020,10 +1131,11 @@ public:
             destroyTable(oldTable);
         }
     }
-    void add(const KEY &key, const VALUE &value, unsigned type, bool promoteIfAlreadyPresent=true)
+    bool add(const KEY &key, const VALUE &value, unsigned type, bool promoteIfAlreadyPresent=true)
     {
-        table->add(key, value, type, promoteIfAlreadyPresent);
+        bool res = table->add(key, value, type, promoteIfAlreadyPresent);
         enforceLimit(type, value);
+        return res;
     }
     bool exists(const KEY &key) const
     {

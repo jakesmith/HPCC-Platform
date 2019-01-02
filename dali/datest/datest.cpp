@@ -3387,7 +3387,7 @@ int main(int argc, char* argv[])
 
                 unsigned maxVal;
             } totals;
-            totals.maxVal = hardLimit*10;
+            totals.maxVal = hardLimit*100;
 
 
             class CMRUWork : public CAsyncFor
@@ -3417,7 +3417,11 @@ int main(int argc, char* argv[])
                             bool res;
                             {
                                 CriticalBlock b(totals.crit);
-                                res = mru.queryOrAdd(v, existingValue, t, 0);
+                                //res = mru.queryOrAdd(v, existingValue, t, 0);
+                                if (mru.query(v, existingValue))
+                                    res = false;
+                                else
+                                    res = mru.add(v, t, 0);
                             }
                             if (res)
                                 cacheHitsOnAdd++;
