@@ -3350,8 +3350,13 @@ void usage(const char *error=NULL)
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
+static unsigned hardLimit = 10000;
 static void checkLimit(CMRUHashTable<unsigned, Owned<IPropertyTree>> *mru, const Owned<IPropertyTree> &value, unsigned type, unsigned count)
 {
+    if (count > hardLimit)
+    {
+        mru->removeLRU(type);
+    }
 }
 
 #include "jhash.hpp"
@@ -3372,27 +3377,80 @@ int main(int argc, char* argv[])
             auto f = [myMru](const Owned<IPropertyTree> &value, unsigned type, unsigned limit) { checkLimit(myMru, value, type, limit); };
             myMru->setTypeLimiterCallback(f);
 
-            unsigned elems=8;
-            for (unsigned i=1; i<=elems; i++)
+            struct Totals
             {
-                Owned<IPropertyTree> existingValue;
-                unsigned newValue = i+1000;
-                StringBuffer vs;
-                vs.append(newValue);
-                Owned<IPropertyTree> t = createPTree(vs);
-                if (myMru->queryOrAdd(i, existingValue, t, 0))
-                    throwUnexpected();
-                t.clear();
-            }
+                std::atomic<unsigned> cacheHits{0};
+                std::atomic<unsigned> cacheHitsOnAdd{0};
+                std::atomic<unsigned> cacheAdds{0};
 
-            for (unsigned i=1; i<=elems; i++)
+                CriticalSection crit;
+
+                unsigned maxVal;
+            } totals;
+            totals.maxVal = hardLimit*10;
+
+
+            class CMRUWork : public CAsyncFor
             {
-                myMru->removeLRU(0);
-//                Owned<IPropertyTree> v = myMru->removeLRU(0);
-//                StringBuffer str;
-//                toXML(v, str);
-//                PROGLOG("str = %s", str.str());
-            }
+                unsigned cacheHits = 0;
+                unsigned cacheHitsOnAdd = 0;
+                unsigned cacheAdds = 0;
+                CMRUHashTable<unsigned, Owned<IPropertyTree>> &mru;
+                unsigned mode;
+                Totals &totals;
+            public:
+                CMRUWork(CMRUHashTable<unsigned, Owned<IPropertyTree>> &_mru, Totals &_totals) : mru(_mru), totals(_totals)
+                {
+                }
+                virtual void Do(unsigned idx) override
+                {
+                    mode = idx % 2;
+                    if (0 == mode) // queryOrAdd
+                    {
+                        for (unsigned i=0; i<totals.maxVal; i++)
+                        {
+                            unsigned v = hashvalue(i, 0) % totals.maxVal;
+                            VStringBuffer vs("%u", v);
+                            Owned<IPropertyTree> t = createPTree(vs);
+                            Owned<IPropertyTree> existingValue;
+
+                            bool res;
+                            {
+                                CriticalBlock b(totals.crit);
+                                res = mru.queryOrAdd(v, existingValue, t, 0);
+                            }
+                            if (res)
+                                cacheHitsOnAdd++;
+                            else
+                                cacheAdds++;
+                        }
+                    }
+                    else if (1 == mode) // query
+                    {
+                        for (unsigned i=0; i<totals.maxVal; i++)
+                        {
+                            unsigned v = hashvalue(i, 0) % totals.maxVal;
+                            Owned<IPropertyTree> existingValue;
+
+                            bool res;
+                            {
+                                CriticalBlock b(totals.crit);
+                                res = mru.query(v, existingValue);
+                            }
+                            if (res)
+                                cacheHits++;
+                        }
+                    }
+                    else
+                        throwUnexpected();
+                    totals.cacheHits += cacheHits;
+                    totals.cacheHitsOnAdd += cacheHitsOnAdd;
+                    totals.cacheAdds += cacheAdds;
+                }
+            } asyncFor(*myMru, totals);
+            asyncFor.For(10, 10, true);
+
+            PROGLOG("\ncacheHits = %u\ncacheHitsOnAdd = %u\ncacheAdds = %u", totals.cacheHits.load(), totals.cacheHitsOnAdd.load(), totals.cacheAdds.load());
 
             return 0;
         }

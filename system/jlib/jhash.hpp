@@ -630,19 +630,35 @@ class CMRUHashTable : public CInterface
         }
         KEY key;
         unsigned hash;
-        unsigned type; // NB: 0 reserved to mean HT element is empty
+        unsigned type;
         VALUE value;
-        HTEntry *next;
+        union
+        {
+            HTEntry *next; // NB: ptr&1 (that cannot be an a valid pointer) denotes empty
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+            struct
+            {
+                byte flag;
+                byte padding[sizeof(HTEntry *)-1];
+            };
+#else
+            struct
+            {
+                byte padding[sizeof(HTEntry *)-1];
+                byte flag;
+            };
+#endif
+        };
         HTEntry *prev;
     };
-    struct HTTable // NB: must not contain virtuals
+    struct HTTable
     {
         // these could be calculated dynamically, but better to configure them at creation (see HTTable::create())
         HTEntry *table = nullptr;
         HTEntry **mru = nullptr;
         HTEntry **lru = nullptr;
         unsigned *typeCount = nullptr;
-        HASHER hasher;
+        HASHER hasher; // NB: must not contain virtuals
 
         unsigned numTypes = 0;
         unsigned htn = 0;
@@ -652,23 +668,32 @@ class CMRUHashTable : public CInterface
         unsigned size() const { return htn; }
         unsigned queryTypeCount(unsigned type) const { return typeCount[type]; }
         HTEntry &queryFirst() { return table[0]; }
-        HTEntry &queryLast() { return table[htn-1]; }
+        HTEntry &queryLast() { return table[htn]; }
         unsigned queryNumTypes() const { return numTypes; }
-        bool isEmpty(HTEntry *entry) const { return 0 == entry->type; }
         void setEmpty(HTEntry *entry)
         {
-            entry->type = 0;
+            entry->flag = 0xff;
         }
+        bool isEmpty(HTEntry *entry) const { return entry->flag == 0xff; }
         bool full() const
         {
             return (n >= ((htn * 3) / 4)); // over 75% full.
         }
         void clean()
         {
+            n = 0;
             memset(mru, 0, numTypes * sizeof(HTEntry *));
             memset(lru, 0, numTypes * sizeof(HTEntry *));
             memset(typeCount, 0, numTypes * sizeof(unsigned));
-            memset(table, 0, sizeof(HTEntry)*htn);
+            memset(table, 0, sizeof(HTEntry)*htn); // 0xff to comply with isEmpty()
+            HTEntry *cur = table;
+            HTEntry *tableEnd = table+htn;
+            do
+            {
+                setEmpty(cur);
+                cur++;
+            }
+            while (cur != tableEnd);
         }
         void kill(bool doClean=true)
         {
@@ -685,16 +710,7 @@ class CMRUHashTable : public CInterface
                 }
             }
             if (doClean)
-            {
-                clean(); // not strictly necessary
-                n = 0;
-                for (unsigned t=0; t<numTypes; t++)
-                {
-                    mru[t] = nullptr;
-                    lru[t] = nullptr;
-                    typeCount[t] = 0;
-                }
-            }
+                clean();
         }
         void addNew(HTEntry *ht, unsigned h, const KEY &key, const VALUE &value, unsigned type) // Called by add() if necessary. NB: not thread safe, need to protect if calling MT
         {
@@ -717,6 +733,7 @@ class CMRUHashTable : public CInterface
                 lru[type] = ht;
             typeCount[type]++;
             n++;
+            dbgassertex(!isEmpty(ht)); // sanity check we haven't create an element which is deemed 'empty'
         }
         HTTable *createExpanded(std::function<void *(size_t)> allocFunc)
         {
@@ -912,6 +929,7 @@ class CMRUHashTable : public CInterface
             const VALUE ret = cur->value;
             cur->value.~VALUE();
             memset(&cur->value, 0, sizeof(VALUE));
+            setEmpty(cur);
             --typeCount[type];
             --n;
 
@@ -937,17 +955,20 @@ public:
         assertex((size > 0) && (0 == (size & (size-1))));
 
         // NB: have to be careful don't break alignment
-        size32_t sz = sizeof(HTTable)+((memsize_t)size)*sizeof(HTEntry);
+        size32_t tableSz = ((memsize_t)size)*sizeof(HTEntry);
         size32_t numTypesSz = types * sizeof(HTEntry *);
         size32_t typeCountSz = types * sizeof(unsigned);
 
-        size32_t totalSz = sz+numTypesSz*2+typeCountSz;
+        size32_t extraSz = numTypesSz*2+typeCountSz; // mru, lru and typeCount arrays
+        size32_t totalSz = sizeof(HTTable)+extraSz+tableSz;
         HTTable *ret;
         if (allocFunc)
             ret = (HTTable *)allocFunc(totalSz);
         else
             ret = (HTTable *)malloc(totalSz);
-        memset(ret, 0, totalSz);
+
+        memset(ret, 0, sizeof(HTTable));
+
         const byte *extraStart = ((byte *)ret) + sizeof(HTTable);
         ret->mru = (HTEntry **)extraStart;
         ret->lru = (HTEntry **)(extraStart + numTypesSz);
@@ -955,6 +976,7 @@ public:
         ret->table = (HTEntry *)(extraStart + (numTypesSz * 2) + typeCountSz);
         ret->htn = size;
         ret->numTypes = types;
+        ret->clean();
         return ret;
     }
     CMRUHashTable(size_t initialSize=8, size_t types=1, std::function<void *(size_t)> _allocFunc=nullptr, std::function<void (void *)> _deallocFunc=nullptr)
