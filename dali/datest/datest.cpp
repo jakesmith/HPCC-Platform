@@ -3417,11 +3417,14 @@ int main(int argc, char* argv[])
                             bool res;
                             {
                                 CriticalBlock b(totals.crit);
-                                //res = mru.queryOrAdd(v, existingValue, t, 0);
+#if 0
+                                res = mru.queryOrAdd(v, existingValue, t, 0);
+#else
                                 if (mru.query(v, existingValue))
                                     res = false;
                                 else
                                     res = mru.add(v, t, 0);
+#endif
                             }
                             if (res)
                                 cacheHitsOnAdd++;
