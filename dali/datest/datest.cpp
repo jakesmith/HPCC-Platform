@@ -3349,7 +3349,7 @@ void usage(const char *error=NULL)
 
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
-
+#include "jqueue.tpp"
 
 template <class KEY, class VALUE, class HASHER = std::hash<KEY>>
 class CMRUHashTable2 : public CInterface
@@ -3373,6 +3373,14 @@ class CMRUHashTable2 : public CInterface
         unsigned type;
         VALUE value;
         MRUNode *mruNode;
+
+        void consume(HTEntry &other)
+        {
+            key = other.key;
+            hash = other.hash;
+            type = other.type;
+            std::swap(value, other.value);
+        }
     };
     struct MRUNode
     {
@@ -3386,9 +3394,12 @@ class CMRUHashTable2 : public CInterface
         HTEntry *table = nullptr;
         MRUNode **mru = nullptr;
         MRUNode **lru = nullptr;
+        MRUNode *mruNodeTable;
+        QueueOf<MRUNode, false> freeMRUNodes;
         unsigned *typeCount = nullptr;
-        HASHER hasher; // NB: must not contain virtuals
+        HASHER hasher;
 
+        unsigned mruNextFree = 0;
         unsigned numTypes = 0;
         unsigned htn = 0;
         unsigned n = 0;
@@ -3398,19 +3409,23 @@ class CMRUHashTable2 : public CInterface
             htn = size;
             numTypes = types;
 
-            const byte *auxMem = ((byte *)this) + sizeof(HTTable);
-            size32_t mruLruSz = types * sizeof(MRUNode *);
-            size32_t typeCountSz = types * sizeof(unsigned);
+            byte *auxMem = ((byte *)this) + sizeof(HTTable);
+            size32_t mruLruSz = numTypes * sizeof(MRUNode *);
+            size32_t mruNodeTableSz = ((memsize_t)htn) * sizeof(MRUNode);
+            size32_t typeCountSz = numTypes * sizeof(unsigned);
+            size32_t tableSz = ((memsize_t)htn)*sizeof(HTEntry);
+            size32_t extraSz = mruLruSz*2+mruNodeTableSz+typeCountSz;
+            memset(auxMem, 0, extraSz);
 
             mru = (MRUNode **)auxMem;
             auxMem += mruLruSz;
             lru = (MRUNode **)auxMem;
             auxMem += mruLruSz;
+            mruNodeTable = (MRUNode *)auxMem;
+            auxMem += mruNodeTableSz;
             typeCount = (unsigned *)auxMem;
             auxMem += typeCountSz;
             table = (HTEntry *)auxMem;
-
-            clean();
         }
 
         unsigned elements() const { return n; }
@@ -3431,31 +3446,29 @@ class CMRUHashTable2 : public CInterface
         void clean()
         {
             n = 0;
-            memset(mru, 0, numTypes * sizeof(MRUNode *));
-            memset(lru, 0, numTypes * sizeof(MRUNode *));
-            memset(typeCount, 0, numTypes * sizeof(unsigned));
-            memset(table, 0, sizeof(HTEntry)*htn);
-            HTEntry *cur = table;
-            HTEntry *tableEnd = table+htn;
-            do
-            {
-                setEmpty(cur);
-                cur++;
-            }
-            while (cur != tableEnd);
+            byte *auxMem = ((byte *)this) + sizeof(HTTable);
+            size32_t mruLruSz = numTypes * sizeof(MRUNode *);
+            size32_t mruNodeTableSz = ((memsize_t)htn) * sizeof(MRUNode);
+            size32_t typeCountSz = numTypes * sizeof(unsigned);
+            size32_t tableSz = ((memsize_t)htn)*sizeof(HTEntry);
+            size32_t extraSz = mruLruSz*2+mruNodeTableSz+typeCountSz;
+            memset(auxMem, 0, extraSz);
         }
-        void kill(bool doClean=true)
+        void kill(bool releaseElements=true, bool doClean=true)
         {
-            // walk table, by walking lru's of each value type
-            for (unsigned t=0; t<numTypes; t++)
+            if (releaseElements)
             {
-                MRUNode *cur = mru[t];
-                while (true)
+                // walk table, by walking lru's of each value type
+                for (unsigned t=0; t<numTypes; t++)
                 {
-                    if (!cur)
-                        break;
-                    cur->entry->value.~VALUE();
-                    cur = cur->next;
+                    MRUNode *cur = mru[t];
+                    while (true)
+                    {
+                        if (!cur)
+                            break;
+                        cur->entry->value.~VALUE();
+                        cur = cur->next;
+                    }
                 }
             }
             if (doClean)
@@ -3463,7 +3476,10 @@ class CMRUHashTable2 : public CInterface
         }
         MRUNode *getFreeMRUNode()
         {
-            return nullptr;
+            if (freeMRUNodes.ordinality())
+                return freeMRUNodes.dequeue();
+            dbgassertex(mruNextFree < htn);
+            return &mruNodeTable[mruNextFree++];
         }
         void addNew(HTEntry *ht, unsigned h, const KEY &key, const VALUE &value, unsigned type) // Called by add() if necessary. NB: not thread safe, need to protect if calling MT
         {
@@ -3472,6 +3488,7 @@ class CMRUHashTable2 : public CInterface
             ht->type = type;
             ht->key = key;
             MRUNode *mruNode = getFreeMRUNode();
+            mruNode->entry = ht;
             MRUNode *&mruNT = mru[type];
             if (mruNT)
             {
@@ -3505,7 +3522,7 @@ class CMRUHashTable2 : public CInterface
                 {
                     // mru
                     HTEntry *cur = curNode->entry;
-                    unsigned i = hasher(cur->key) & (newHtn - 1);
+                    unsigned i = cur->hash & (newHtn - 1);
                     HTEntry *newCur = newTableStart+i;
                     while (!isEmpty(newCur))
                     {
@@ -3513,14 +3530,18 @@ class CMRUHashTable2 : public CInterface
                         if (newCur==newTableEnd)
                             newCur = newTableStart;
                     }
-                    *newCur = *cur;
-                    curNode->entry = newCur; // reset MRU node entry to new node
+                    newCur->consume(*cur);
+                    MRUNode *newNode = newTable->getFreeMRUNode();
+                    newCur->mruNode = newNode;
+                    MRUNode *lastNew = newNode;
+                    newTable->mru[t] = newNode;
+                    newNode->entry = newCur;
                     curNode = curNode->next;
 
                     while (curNode)
                     {
                         cur = curNode->entry;
-                        i = hasher(cur->key) & (newHtn - 1);
+                        i = cur->hash & (newHtn - 1);
                         newCur = newTableStart+i;
                         while (!isEmpty(newCur))
                         {
@@ -3528,13 +3549,17 @@ class CMRUHashTable2 : public CInterface
                             if (newCur==newTableEnd)
                                 newCur = newTableStart;
                         }
-                        *newCur = *cur;
-                        curNode->entry = newCur; // reset MRU node entry to new node
+                        newCur->consume(*cur);
+                        newNode = newTable->getFreeMRUNode();
+                        newCur->mruNode = newNode;
+                        newNode->entry = newCur;
+                        newNode->prev = lastNew;
+                        lastNew->next = newNode;
+                        lastNew = newNode;
                         curNode = curNode->next;
                     }
 
-                    newTable->mru[t] = mru[t];
-                    newTable->lru[t] = lru[t];
+                    newTable->lru[t] = lastNew;
                     newTable->typeCount[t] = typeCount[t];
                 }
             }
@@ -3590,12 +3615,17 @@ class CMRUHashTable2 : public CInterface
                 if (mru[ht->type] == mruNode)
                     mru[ht->type] = next;
             }
+            freeMRUNodes.enqueue(mruNode);
         }
         void removeEntry(HTEntry *ht)
         {
             removeMRUEntry(ht);
             --typeCount[ht->type];
             --n;
+
+            ht->value.~VALUE();
+            memset(&ht->value, 0, sizeof(VALUE));
+
             setEmpty(ht);
         }
         bool add(const KEY &key, const VALUE &value, unsigned type, bool promoteIfAlreadyPresent=true)
@@ -3616,16 +3646,19 @@ class CMRUHashTable2 : public CInterface
                 return true;
             }
         }
-        bool exists(const KEY &key) const
+        unsigned find(const KEY &key) const
         {
             unsigned h = hasher(key);
             unsigned e = findMatch(key, h);
-            return NotFound != e;
+            return e;
+        }
+        bool exists(const KEY &key) const
+        {
+            return NotFound != find(key);
         }
         bool query(const KEY &key, VALUE &res, unsigned *type=nullptr, bool doPromote=true)
         {
-            unsigned h = hasher(key);
-            unsigned e = findMatch(key, h);
+            unsigned e = find(key);
             if (NotFound == e)
                 return false;
             HTEntry *ht = table+e;
@@ -3657,8 +3690,7 @@ class CMRUHashTable2 : public CInterface
         }
         bool remove(const KEY &key)
         {
-            unsigned h = hasher(key);
-            unsigned e = findMatch(key, h);
+            unsigned e = find(key);
             if (NotFound == e)
                 return false;
             HTEntry *ht = table+e;
@@ -3689,18 +3721,21 @@ class CMRUHashTable2 : public CInterface
         }
         const VALUE removeLRU(unsigned type)
         {
-            MRUNode *cur = lru[type];
-            if (!cur)
+            MRUNode *lruNode = lru[type];
+            if (!lruNode)
                 throwMRUException();
 
-            MRUNode *prev = cur->prev;
+            MRUNode *prev = lruNode->prev;
 
-            const VALUE ret = cur->entry->value; // NB: copy
-            cur->entry->value.~VALUE();
-            memset(&cur->entry->value, 0, sizeof(VALUE));
-            setEmpty(cur->entry);
+            HTEntry *&htEntry = lruNode->entry;
+            const VALUE ret = htEntry->value; // NB: copy to return
+            htEntry->value.~VALUE();
+            memset(&htEntry->value, 0, sizeof(VALUE));
+            setEmpty(htEntry);
             --typeCount[type];
             --n;
+
+            freeMRUNodes.enqueue(lruNode);
 
             lru[type] = prev;
             if (prev)
@@ -3724,9 +3759,10 @@ public:
         // NB: have to be careful don't break alignment
         size32_t tableSz = ((memsize_t)size)*sizeof(HTEntry);
         size32_t mruLruSz = types * sizeof(HTEntry *);
+        size32_t mruNodeTableSz = ((memsize_t)size) * sizeof(MRUNode);
         size32_t typeCountSz = types * sizeof(unsigned);
 
-        size32_t extraSz = mruLruSz*2+typeCountSz; // mru, lru and typeCount arrays
+        size32_t extraSz = mruLruSz*2+mruNodeTableSz+typeCountSz;
         size32_t totalSz = sizeof(HTTable)+extraSz+tableSz;
         void *mem;
         if (allocFunc)
@@ -3747,6 +3783,7 @@ public:
     {
         if (table)
         {
+            destroyTable(table, true);
             if (deallocFunc)
                 deallocFunc(table);
             else
@@ -3773,7 +3810,7 @@ public:
         if (table->full())
         {
             void *oldTable = expand();
-            destroyTable(oldTable);
+            destroyTable(oldTable, false); // false means don't iterate to release elements, because expand() has consumed them.
         }
     }
     bool add(const KEY &key, const VALUE &value, unsigned type, bool promoteIfAlreadyPresent=true)
@@ -3825,10 +3862,10 @@ public:
     {
         limiterFunction = limiterFunc;
     }
-    void destroyTable(void *_table) // to be used after expand() returns old table
+    void destroyTable(void *_table, bool releaeElements) // to be used after expand() returns old table
     {
         HTTable *table = (HTTable *)_table;
-        table->kill(false);
+        table->kill(releaeElements, false);
         if (deallocFunc)
             deallocFunc(_table);
         else
@@ -3837,6 +3874,7 @@ public:
 };
 
 
+//static unsigned hardLimit = 10000;
 static unsigned hardLimit = 10000;
 static void checkLimit(CMRUHashTable2<unsigned, Owned<IPropertyTree>> *mru, const Owned<IPropertyTree> &value, unsigned type, unsigned count)
 {
