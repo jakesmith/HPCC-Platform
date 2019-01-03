@@ -44,6 +44,9 @@ using namespace wsdfuaccess;
 using namespace dafsstream;
 
 
+#include <thread>
+#include <iostream>
+
 #define DEFAULT_TEST "RANDTEST"
 static const char *whichTest = DEFAULT_TEST;
 static StringArray testParams;
@@ -3414,7 +3417,7 @@ class CMRUHashTable2 : public CInterface
             size32_t mruNodeTableSz = ((memsize_t)htn) * sizeof(MRUNode);
             size32_t typeCountSz = numTypes * sizeof(unsigned);
             size32_t tableSz = ((memsize_t)htn)*sizeof(HTEntry);
-            size32_t extraSz = mruLruSz*2+mruNodeTableSz+typeCountSz;
+            size32_t extraSz = mruLruSz*2+mruNodeTableSz+typeCountSz+tableSz;
             memset(auxMem, 0, extraSz);
 
             mru = (MRUNode **)auxMem;
@@ -3451,7 +3454,7 @@ class CMRUHashTable2 : public CInterface
             size32_t mruNodeTableSz = ((memsize_t)htn) * sizeof(MRUNode);
             size32_t typeCountSz = numTypes * sizeof(unsigned);
             size32_t tableSz = ((memsize_t)htn)*sizeof(HTEntry);
-            size32_t extraSz = mruLruSz*2+mruNodeTableSz+typeCountSz;
+            size32_t extraSz = mruLruSz*2+mruNodeTableSz+typeCountSz+tableSz;
             memset(auxMem, 0, extraSz);
         }
         void kill(bool releaseElements=true, bool doClean=true)
@@ -3761,9 +3764,8 @@ public:
         size32_t mruLruSz = types * sizeof(HTEntry *);
         size32_t mruNodeTableSz = ((memsize_t)size) * sizeof(MRUNode);
         size32_t typeCountSz = types * sizeof(unsigned);
-
-        size32_t extraSz = mruLruSz*2+mruNodeTableSz+typeCountSz;
-        size32_t totalSz = sizeof(HTTable)+extraSz+tableSz;
+        size32_t extraSz = mruLruSz*2+mruNodeTableSz+typeCountSz+tableSz;
+        size32_t totalSz = sizeof(HTTable)+extraSz;
         void *mem;
         if (allocFunc)
             mem = allocFunc(totalSz);
@@ -3874,8 +3876,9 @@ public:
 };
 
 
-//static unsigned hardLimit = 10000;
 static unsigned hardLimit = 10000;
+static unsigned totalValues = hardLimit * 1000;
+static unsigned totalThreads = 32;
 static void checkLimit(CMRUHashTable2<unsigned, Owned<IPropertyTree>> *mru, const Owned<IPropertyTree> &value, unsigned type, unsigned count)
 {
     if (count > hardLimit)
@@ -3911,9 +3914,93 @@ int main(int argc, char* argv[])
 
                 unsigned maxVal;
             } totals;
-            totals.maxVal = hardLimit*100;
 
+            totalThreads = std::thread::hardware_concurrency();
+            if (argc>1)
+                totalThreads = atoi(argv[1]);
+            totals.maxVal = totalValues/totalThreads;
+            PROGLOG("Running with totalThreads=%u, totalValues=%u, values per thread=%u, hardLimit=%u", totalThreads, totalValues, totalValues/totalThreads, hardLimit);
 
+            // A mutex ensures orderly access to std::cout from multiple threads.
+            std::vector<std::thread> threads(totalThreads);
+            for (unsigned i = 0; i < totalThreads; ++i)
+            {
+                auto f = [&myMru, i, &totals]
+                {
+                    unsigned cacheHits = 0;
+                    unsigned cacheHitsOnAdd = 0;
+                    unsigned cacheAdds = 0;
+
+//                    PROGLOG("Thread #%u: on CPU %u", i, sched_getcpu());
+
+                    byte mode = i % 2;
+                    if (0 == mode) // queryOrAdd
+                    {
+                        for (unsigned i=0; i<totals.maxVal; i++)
+                        {
+                            unsigned v = hashvalue(i, 0) % totals.maxVal;
+                            VStringBuffer vs("%u", v);
+                            Owned<IPropertyTree> t = createPTree(vs);
+                            Owned<IPropertyTree> existingValue;
+
+                            bool res;
+                            {
+                                CriticalBlock b(totals.crit);
+#if 0
+                                res = myMru->queryOrAdd(v, existingValue, t, 0);
+#else
+                                if (myMru->query(v, existingValue))
+                                    res = false;
+                                else
+                                    res = myMru->add(v, t, 0);
+#endif
+                            }
+                            if (res)
+                                cacheHitsOnAdd++;
+                            else
+                                cacheAdds++;
+                        }
+                    }
+                    else if (1 == mode) // query
+                    {
+                        for (unsigned i=0; i<totals.maxVal; i++)
+                        {
+                            unsigned v = hashvalue(i, 0) % totals.maxVal;
+                            Owned<IPropertyTree> existingValue;
+
+                            bool res;
+                            {
+                                CriticalBlock b(totals.crit);
+                                res = myMru->query(v, existingValue);
+                            }
+                            if (res)
+                                cacheHits++;
+                        }
+                    }
+                    else
+                        throwUnexpected();
+                    totals.cacheHits += cacheHits;
+                    totals.cacheHitsOnAdd += cacheHitsOnAdd;
+                    totals.cacheAdds += cacheAdds;
+
+//                    PROGLOG("Thread #%u: finished on CPU %u", i, sched_getcpu());
+
+                };
+                threads[i] = std::thread(f);
+
+                cpu_set_t cpuset;
+                CPU_ZERO(&cpuset);
+                CPU_SET(i, &cpuset);
+                int rc = pthread_setaffinity_np(threads[i].native_handle(),
+                                                sizeof(cpu_set_t), &cpuset);
+                if (rc != 0)
+                  PROGLOG("Error calling pthread_setaffinity_np: %u", rc);
+            }
+
+            for (auto &t : threads)
+                t.join();
+
+#if 0
             class CMRUWork : public CAsyncFor
             {
                 unsigned cacheHits = 0;
@@ -3981,6 +4068,7 @@ int main(int argc, char* argv[])
             } asyncFor(*myMru, totals);
             asyncFor.For(10, 10, true);
 
+#endif
             PROGLOG("\ncacheHits = %u\ncacheHitsOnAdd = %u\ncacheAdds = %u", totals.cacheHits.load(), totals.cacheHitsOnAdd.load(), totals.cacheAdds.load());
 
             return 0;
