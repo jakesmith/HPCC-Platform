@@ -3350,8 +3350,495 @@ void usage(const char *error=NULL)
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
+
+template <class KEY, class VALUE, class HASHER = std::hash<KEY>>
+class CMRUHashTable2 : public CInterface
+{
+    std::function<void *(size_t)> allocFunc=nullptr;
+    std::function<void (void *)> deallocFunc=nullptr;
+
+    struct MRUNode;
+    struct HTEntry
+    {
+        HTEntry& operator=(const HTEntry &other)
+        {
+            key = other.key;
+            hash = other.hash;
+            type = other.type;
+            value = other.value;
+            return *this;
+        }
+        KEY key;
+        unsigned hash;
+        unsigned type;
+        VALUE value;
+        MRUNode *mruNode;
+    };
+    struct MRUNode
+    {
+        HTEntry *entry;
+        MRUNode *next;
+        MRUNode *prev;
+    };
+    struct HTTable
+    {
+        // these could be calculated dynamically, but better to configure them at creation (see HTTable::create())
+        HTEntry *table = nullptr;
+        MRUNode **mru = nullptr;
+        MRUNode **lru = nullptr;
+        unsigned *typeCount = nullptr;
+        HASHER hasher; // NB: must not contain virtuals
+
+        unsigned numTypes = 0;
+        unsigned htn = 0;
+        unsigned n = 0;
+
+        HTTable(size_t size, unsigned types)
+        {
+            htn = size;
+            numTypes = types;
+
+            const byte *auxMem = ((byte *)this) + sizeof(HTTable);
+            size32_t mruLruSz = types * sizeof(MRUNode *);
+            size32_t typeCountSz = types * sizeof(unsigned);
+
+            mru = (MRUNode **)auxMem;
+            auxMem += mruLruSz;
+            lru = (MRUNode **)auxMem;
+            auxMem += mruLruSz;
+            typeCount = (unsigned *)auxMem;
+            auxMem += typeCountSz;
+            table = (HTEntry *)auxMem;
+
+            clean();
+        }
+
+        unsigned elements() const { return n; }
+        unsigned size() const { return htn; }
+        unsigned queryTypeCount(unsigned type) const { return typeCount[type]; }
+        HTEntry &queryFirst() { return table[0]; }
+        HTEntry &queryLast() { return table[htn]; }
+        unsigned queryNumTypes() const { return numTypes; }
+        void setEmpty(HTEntry *entry)
+        {
+            entry->mruNode = nullptr;
+        }
+        bool isEmpty(HTEntry *entry) const { return nullptr == entry->mruNode; }
+        bool full() const
+        {
+            return (n >= ((htn * 3) / 4)); // over 75% full.
+        }
+        void clean()
+        {
+            n = 0;
+            memset(mru, 0, numTypes * sizeof(MRUNode *));
+            memset(lru, 0, numTypes * sizeof(MRUNode *));
+            memset(typeCount, 0, numTypes * sizeof(unsigned));
+            memset(table, 0, sizeof(HTEntry)*htn);
+            HTEntry *cur = table;
+            HTEntry *tableEnd = table+htn;
+            do
+            {
+                setEmpty(cur);
+                cur++;
+            }
+            while (cur != tableEnd);
+        }
+        void kill(bool doClean=true)
+        {
+            // walk table, by walking lru's of each value type
+            for (unsigned t=0; t<numTypes; t++)
+            {
+                MRUNode *cur = mru[t];
+                while (true)
+                {
+                    if (!cur)
+                        break;
+                    cur->entry->value.~VALUE();
+                    cur = cur->next;
+                }
+            }
+            if (doClean)
+                clean();
+        }
+        MRUNode *getFreeMRUNode()
+        {
+            return nullptr;
+        }
+        void addNew(HTEntry *ht, unsigned h, const KEY &key, const VALUE &value, unsigned type) // Called by add() if necessary. NB: not thread safe, need to protect if calling MT
+        {
+            ht->value = value;
+            ht->hash = h; // NB: not strictly needed, other than to make a shortcut to match on lookup (but if key is cheap to compare may be no point)
+            ht->type = type;
+            ht->key = key;
+            MRUNode *mruNode = getFreeMRUNode();
+            MRUNode *&mruNT = mru[type];
+            if (mruNT)
+            {
+                mruNode->next = mruNT;
+                mruNT->prev = mruNode;
+            }
+            else
+                mruNode->next = nullptr;
+
+            ht->mruNode = mruNode;
+            mruNT = mruNode;
+            if (!lru[type]) // head
+                lru[type] = mruNode;
+            typeCount[type]++;
+            n++;
+            dbgassertex(!isEmpty(ht)); // sanity check we haven't create an element which is deemed 'empty'
+        }
+        HTTable *createExpanded(std::function<void *(size_t)> allocFunc)
+        {
+            unsigned newHtn = size() * 2;
+            HTTable *newTable = CMRUHashTable2::createNewTable(newHtn, numTypes, allocFunc);
+
+            HTEntry *newTableStart = &newTable->queryFirst();
+            HTEntry *newTableEnd = &newTable->queryLast();
+
+            // walk table, by walking lru's of each value type
+            for (unsigned t=0; t<numTypes; t++)
+            {
+                MRUNode *curNode = mru[t];
+                if (curNode)
+                {
+                    // mru
+                    HTEntry *cur = curNode->entry;
+                    unsigned i = hasher(cur->key) & (newHtn - 1);
+                    HTEntry *newCur = newTableStart+i;
+                    while (!isEmpty(newCur))
+                    {
+                        newCur++;
+                        if (newCur==newTableEnd)
+                            newCur = newTableStart;
+                    }
+                    *newCur = *cur;
+                    curNode->entry = newCur; // reset MRU node entry to new node
+                    curNode = curNode->next;
+
+                    while (curNode)
+                    {
+                        cur = curNode->entry;
+                        i = hasher(cur->key) & (newHtn - 1);
+                        newCur = newTableStart+i;
+                        while (!isEmpty(newCur))
+                        {
+                            newCur++;
+                            if (newCur==newTableEnd)
+                                newCur = newTableStart;
+                        }
+                        *newCur = *cur;
+                        curNode->entry = newCur; // reset MRU node entry to new node
+                        curNode = curNode->next;
+                    }
+
+                    newTable->mru[t] = mru[t];
+                    newTable->lru[t] = lru[t];
+                    newTable->typeCount[t] = typeCount[t];
+                }
+            }
+            newTable->n = n;
+            return newTable;
+        }
+        // returns position of match OR empty pos. to use if not found
+        unsigned findPos(const KEY &key, unsigned h) const
+        {
+            unsigned i = h & (htn - 1);
+            while (true)
+            {
+                HTEntry *ht = table+i;
+                if (isEmpty(ht))
+                    return i;
+                if ((ht->hash==h) && (key == ht->key)) // NB: not really necessary to store hash and check it, but if key comparison was expensive, a quick check on hash 1st is a win
+                    return i;
+                if (++i==htn)
+                    i = 0;
+            }
+        }
+        // same as above, except returns NotFound if no match
+        unsigned findMatch(const KEY &key, unsigned h) const
+        {
+            unsigned i = h & (htn - 1);
+            while (true)
+            {
+                HTEntry *ht = table+i;
+                if (isEmpty(ht))
+                    return NotFound;
+                if ((ht->hash==h) && (key == ht->key)) // NB: not really necessary to store hash and check it, but if key comparison was expensive, a quick check on hash 1st is a win
+                    return i;
+                if (++i==htn)
+                    i = 0;
+            }
+        }
+        void removeMRUEntry(HTEntry *ht)
+        {
+            MRUNode *mruNode = ht->mruNode;
+            MRUNode *prev = mruNode->prev;
+            MRUNode *next = mruNode->next;
+            if (prev)
+            {
+                prev->next = next;
+                if (lru[ht->type] == mruNode)
+                    lru[ht->type] = prev;
+            }
+            else
+                mru[ht->type] = next;
+            if (next)
+            {
+                next->prev = prev;
+                if (mru[ht->type] == mruNode)
+                    mru[ht->type] = next;
+            }
+        }
+        void removeEntry(HTEntry *ht)
+        {
+            removeMRUEntry(ht);
+            --typeCount[ht->type];
+            --n;
+            setEmpty(ht);
+        }
+        bool add(const KEY &key, const VALUE &value, unsigned type, bool promoteIfAlreadyPresent=true)
+        {
+            unsigned h = hasher(key);
+            unsigned e = findPos(key, h);
+            HTEntry *ht = table+e;
+            if (!isEmpty(ht))
+            {
+                dbgassertex(ht->type == type);
+                if (promoteIfAlreadyPresent)
+                    promote(ht);
+                return false;
+            }
+            else
+            {
+                addNew(ht, h, key, value, type);
+                return true;
+            }
+        }
+        bool exists(const KEY &key) const
+        {
+            unsigned h = hasher(key);
+            unsigned e = findMatch(key, h);
+            return NotFound != e;
+        }
+        bool query(const KEY &key, VALUE &res, unsigned *type=nullptr, bool doPromote=true)
+        {
+            unsigned h = hasher(key);
+            unsigned e = findMatch(key, h);
+            if (NotFound == e)
+                return false;
+            HTEntry *ht = table+e;
+            if (type)
+                *type = ht->type;
+            ht = table+e;
+            if (doPromote)
+                promote(ht);
+            res = ht->value;
+            return true;
+        }
+        bool queryOrAdd(const KEY &key, VALUE &res, const VALUE &value, unsigned type, bool doPromote=true) // NB: returns false if new item added
+        {
+            unsigned h = hasher(key);
+            unsigned e = findPos(key, h);
+            HTEntry *ht = table+e;
+            if (!isEmpty(ht))
+            {
+                if (doPromote)
+                    promote(ht);
+                res = ht->value;
+                return true;
+            }
+            else
+            {
+                addNew(ht, h, key, value, type);
+                return false;
+            }
+        }
+        bool remove(const KEY &key)
+        {
+            unsigned h = hasher(key);
+            unsigned e = findMatch(key, h);
+            if (NotFound == e)
+                return false;
+            HTEntry *ht = table+e;
+            removeEntry(ht);
+            return true;
+        }
+        void promote(HTEntry *ht)
+        {
+            MRUNode *mruNode = ht->mruNode;
+            MRUNode *prev = mruNode->prev;
+            if (nullptr == prev) // already at top
+                return;
+            unsigned type = ht->type;
+            MRUNode *next = mruNode->next;
+
+            prev->next = next;
+            if (next)
+                next->prev = prev;
+
+            if (lru[type] == mruNode)
+                lru[type] = prev;
+
+            mruNode->prev = nullptr;
+            MRUNode *oldMRU = mru[type];
+            mruNode->next = oldMRU;
+            mru[type] = mruNode;
+            oldMRU->prev = mruNode;
+        }
+        const VALUE removeLRU(unsigned type)
+        {
+            MRUNode *cur = lru[type];
+            if (!cur)
+                throwMRUException();
+
+            MRUNode *prev = cur->prev;
+
+            const VALUE ret = cur->entry->value; // NB: copy
+            cur->entry->value.~VALUE();
+            memset(&cur->entry->value, 0, sizeof(VALUE));
+            setEmpty(cur->entry);
+            --typeCount[type];
+            --n;
+
+            lru[type] = prev;
+            if (prev)
+                prev->next = nullptr;
+            else
+                mru[type] = nullptr;
+            return ret;
+        }
+    } *table = nullptr;
+
+    typedef std::function<void (const VALUE &, unsigned, unsigned)> callbackFuncType;
+    std::vector<unsigned> typeLimit;
+    callbackFuncType limiterFunction = nullptr;
+
+public:
+    static HTTable *createNewTable(size_t size=8, size_t types=1, std::function<void *(size_t)> allocFunc=nullptr)
+    {
+        // check that it's a power of 2
+        assertex((size > 0) && (0 == (size & (size-1))));
+
+        // NB: have to be careful don't break alignment
+        size32_t tableSz = ((memsize_t)size)*sizeof(HTEntry);
+        size32_t mruLruSz = types * sizeof(HTEntry *);
+        size32_t typeCountSz = types * sizeof(unsigned);
+
+        size32_t extraSz = mruLruSz*2+typeCountSz; // mru, lru and typeCount arrays
+        size32_t totalSz = sizeof(HTTable)+extraSz+tableSz;
+        void *mem;
+        if (allocFunc)
+            mem = allocFunc(totalSz);
+        else
+            mem = malloc(totalSz);
+        return new (mem) HTTable(size, types);
+    }
+    CMRUHashTable2(size_t initialSize=8, size_t types=1, std::function<void *(size_t)> _allocFunc=nullptr, std::function<void (void *)> _deallocFunc=nullptr)
+    {
+        allocFunc = _allocFunc;
+        deallocFunc = _deallocFunc;
+        table = createNewTable(initialSize, types, allocFunc);
+        for (unsigned t=0; t<types; t++)
+            typeLimit.push_back((unsigned)-1); // i.e. unbound
+    }
+    ~CMRUHashTable2()
+    {
+        if (table)
+        {
+            if (deallocFunc)
+                deallocFunc(table);
+            else
+                free(table);
+        }
+    }
+    void kill() { table->kill(); }
+    size_t size() const { return table->size(); }
+    size_t elements() const { return table->elements(); }
+    bool full() const { return table->full(); }
+    bool limitExceeded(unsigned type) const
+    {
+        return table->queryTypeCount(type) > typeLimit[type];
+    }
+    void enforceLimit(unsigned type, const VALUE &value)
+    {
+        if (limiterFunction != nullptr)
+            limiterFunction(value, type, table->queryTypeCount(type));
+        else
+        {
+            while (limitExceeded(type))
+                removeLRU(type);
+        }
+        if (table->full())
+        {
+            void *oldTable = expand();
+            destroyTable(oldTable);
+        }
+    }
+    bool add(const KEY &key, const VALUE &value, unsigned type, bool promoteIfAlreadyPresent=true)
+    {
+        bool res = table->add(key, value, type, promoteIfAlreadyPresent);
+        enforceLimit(type, value);
+        return res;
+    }
+    bool exists(const KEY &key) const
+    {
+        return table->exists(key);
+    }
+    bool query(const  KEY &key, VALUE &res, unsigned *type=nullptr, bool doPromote=true)
+    {
+        return table->query(key, res, type, doPromote);
+    }
+    bool queryOrAdd(const KEY &key, VALUE &res, const VALUE &value, unsigned type, bool doPromote=true) // NB: returns false if new item added
+    {
+        if (!table->queryOrAdd(key, res, value, type, doPromote))
+        {
+            enforceLimit(type, value);
+            return false;
+        }
+        return true;
+    }
+    bool remove(const KEY &key)
+    {
+        return table->remove(key);
+    }
+    void promote(HTEntry *ht)
+    {
+        table->promote(ht);
+    }
+    const VALUE removeLRU(unsigned type)
+    {
+        return table->removeLRU(type);
+    }
+    void *expand()
+    {
+        HTTable *newTable = table->createExpanded(allocFunc);
+        std::swap(table, newTable);
+        return newTable; // now old memory
+    }
+    void setTypeLimit(unsigned type, size_t limit)
+    {
+        typeLimit[type] = limit;
+    }
+    void setTypeLimiterCallback(callbackFuncType limiterFunc)
+    {
+        limiterFunction = limiterFunc;
+    }
+    void destroyTable(void *_table) // to be used after expand() returns old table
+    {
+        HTTable *table = (HTTable *)_table;
+        table->kill(false);
+        if (deallocFunc)
+            deallocFunc(_table);
+        else
+            free(_table);
+    }
+};
+
+
 static unsigned hardLimit = 10000;
-static void checkLimit(CMRUHashTable<unsigned, Owned<IPropertyTree>> *mru, const Owned<IPropertyTree> &value, unsigned type, unsigned count)
+static void checkLimit(CMRUHashTable2<unsigned, Owned<IPropertyTree>> *mru, const Owned<IPropertyTree> &value, unsigned type, unsigned count)
 {
     if (count > hardLimit)
     {
@@ -3359,10 +3846,9 @@ static void checkLimit(CMRUHashTable<unsigned, Owned<IPropertyTree>> *mru, const
     }
 }
 
-#include "jhash.hpp"
 
 int main(int argc, char* argv[])
-{   
+{
     ReleaseAtomBlock rABlock;
     InitModuleObjects();
 
@@ -3373,7 +3859,7 @@ int main(int argc, char* argv[])
 #if 1
         try
         {
-            Owned<CMRUHashTable<unsigned, Owned<IPropertyTree>>> myMru = createTypedMRUCache<unsigned, Owned<IPropertyTree>>();
+            Owned<CMRUHashTable2<unsigned, Owned<IPropertyTree>>> myMru = new CMRUHashTable2<unsigned, Owned<IPropertyTree>>();
             auto f = [myMru](const Owned<IPropertyTree> &value, unsigned type, unsigned limit) { checkLimit(myMru, value, type, limit); };
             myMru->setTypeLimiterCallback(f);
 
@@ -3395,11 +3881,11 @@ int main(int argc, char* argv[])
                 unsigned cacheHits = 0;
                 unsigned cacheHitsOnAdd = 0;
                 unsigned cacheAdds = 0;
-                CMRUHashTable<unsigned, Owned<IPropertyTree>> &mru;
+                CMRUHashTable2<unsigned, Owned<IPropertyTree>> &mru;
                 unsigned mode;
                 Totals &totals;
             public:
-                CMRUWork(CMRUHashTable<unsigned, Owned<IPropertyTree>> &_mru, Totals &_totals) : mru(_mru), totals(_totals)
+                CMRUWork(CMRUHashTable2<unsigned, Owned<IPropertyTree>> &_mru, Totals &_totals) : mru(_mru), totals(_totals)
                 {
                 }
                 virtual void Do(unsigned idx) override

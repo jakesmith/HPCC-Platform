@@ -661,6 +661,26 @@ class CMRUHashTable : public CInterface
         unsigned htn = 0;
         unsigned n = 0;
 
+        HTTable(size_t size, unsigned types)
+        {
+            htn = size;
+            numTypes = types;
+
+            const byte *auxMem = ((byte *)this) + sizeof(HTTable);
+            size32_t mruLruSz = types * sizeof(HTEntry *);
+            size32_t typeCountSz = types * sizeof(unsigned);
+
+            mru = (HTEntry **)auxMem;
+            auxMem += mruLruSz;
+            lru = (HTEntry **)auxMem;
+            auxMem += mruLruSz;
+            typeCount = (unsigned *)auxMem;
+            auxMem += typeCountSz;
+            table = (HTEntry *)auxMem;
+
+            clean();
+        }
+
         unsigned elements() const { return n; }
         unsigned size() const { return htn; }
         unsigned queryTypeCount(unsigned type) const { return typeCount[type]; }
@@ -749,7 +769,6 @@ class CMRUHashTable : public CInterface
                     // mru
                     unsigned i = hasher(cur->key) & (newHtn - 1);
                     HTEntry *newCur = newTableStart+i;
-                    HTEntry *ss = newCur;
                     while (!isEmpty(newCur))
                     {
                         newCur++;
@@ -766,7 +785,6 @@ class CMRUHashTable : public CInterface
                     {
                         i = hasher(cur->key) & (newHtn - 1);
                         newCur = newTableStart+i;
-                        HTEntry *ss = newCur;
                         while (!isEmpty(newCur))
                         {
                             newCur++;
@@ -900,7 +918,7 @@ class CMRUHashTable : public CInterface
                 return false;
             }
         }
-        bool remove(const KEY &key) // NB: not thread safe, need to protect if calling MT
+        bool remove(const KEY &key)
         {
             unsigned h = hasher(key);
             unsigned e = findMatch(key, h);
@@ -915,7 +933,7 @@ class CMRUHashTable : public CInterface
             if (nullptr == ht->prev) // already at top
                 return;
             unsigned type = ht->type;
-            removeMRUEntry(ht); // NB: remains in table, meaning it is still thread safe to read from table during a promote
+            removeMRUEntry(ht);
             HTEntry *oldMRU = mru[type];
             ht->prev = nullptr;
             ht->next = oldMRU;
@@ -958,28 +976,17 @@ public:
 
         // NB: have to be careful don't break alignment
         size32_t tableSz = ((memsize_t)size)*sizeof(HTEntry);
-        size32_t numTypesSz = types * sizeof(HTEntry *);
+        size32_t mruLruSz = types * sizeof(HTEntry *);
         size32_t typeCountSz = types * sizeof(unsigned);
 
-        size32_t extraSz = numTypesSz*2+typeCountSz; // mru, lru and typeCount arrays
+        size32_t extraSz = mruLruSz*2+typeCountSz; // mru, lru and typeCount arrays
         size32_t totalSz = sizeof(HTTable)+extraSz+tableSz;
-        HTTable *ret;
+        void *mem;
         if (allocFunc)
-            ret = (HTTable *)allocFunc(totalSz);
+            mem = allocFunc(totalSz);
         else
-            ret = (HTTable *)malloc(totalSz);
-
-        memset(ret, 0, sizeof(HTTable));
-
-        const byte *extraStart = ((byte *)ret) + sizeof(HTTable);
-        ret->mru = (HTEntry **)extraStart;
-        ret->lru = (HTEntry **)(extraStart + numTypesSz);
-        ret->typeCount = (unsigned *)(extraStart + (numTypesSz * 2));
-        ret->table = (HTEntry *)(extraStart + (numTypesSz * 2) + typeCountSz);
-        ret->htn = size;
-        ret->numTypes = types;
-        ret->clean();
-        return ret;
+            mem = malloc(totalSz);
+        return new (mem) HTTable(size, types);
     }
     CMRUHashTable(size_t initialSize=8, size_t types=1, std::function<void *(size_t)> _allocFunc=nullptr, std::function<void (void *)> _deallocFunc=nullptr)
     {
