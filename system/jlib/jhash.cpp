@@ -404,11 +404,6 @@ void ObservedHashTable::onRemove(void * et)
     static_cast<IMapping *>(et)->removeObserver(*this);
 }
 
-//
-void throwMRUException()
-{
-    throw makeStringException(0, "CMRUHashTable::removeLRU() - table empty");
-}
 //===========================================================================
 
 static CriticalSection atomCrit;

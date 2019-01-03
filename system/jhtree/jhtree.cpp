@@ -64,6 +64,8 @@
 #include "rtlrecord.hpp"
 #include "rtldynfield.hpp"
 
+#include "jmrutable.tpp"
+
 static std::atomic<CKeyStore *> keyStore(nullptr);
 static unsigned defaultKeyIndexLimit = 200;
 static CNodeCache *nodeCache = NULL;
@@ -762,7 +764,7 @@ class CNodeCache : public CInterface
 public:
     CNodeCache(size32_t maxNodeMem, size32_t maxLeafMem, size32_t maxBlobMem)
     {
-        mruCache.setown(createTypedMRUCache<CKeyIdAndPos, Owned<CJHTreeNode>, CKeyHasher>(8, NodeType::nt_max));
+        mruCache.setown(new CMRUHashTable<CKeyIdAndPos, Owned<CJHTreeNode>, CKeyHasher>(8, NodeType::nt_max));
 
         for (unsigned t=0; t<NodeType::nt_max; t++)
         {

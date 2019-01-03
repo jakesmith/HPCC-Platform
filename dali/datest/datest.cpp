@@ -3352,8 +3352,13 @@ void usage(const char *error=NULL)
 
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
-#include "jqueue.tpp"
 
+static unsigned hardLimit = 10000;
+static unsigned totalValues = hardLimit * 1000;
+static unsigned totalThreads = 32;
+
+
+#if 0
 template <class KEY, class VALUE, class HASHER = std::hash<KEY>>
 class CMRUHashTable2 : public CInterface
 {
@@ -3875,10 +3880,6 @@ public:
     }
 };
 
-
-static unsigned hardLimit = 10000;
-static unsigned totalValues = hardLimit * 1000;
-static unsigned totalThreads = 32;
 static void checkLimit(CMRUHashTable2<unsigned, Owned<IPropertyTree>> *mru, const Owned<IPropertyTree> &value, unsigned type, unsigned count)
 {
     if (count > hardLimit)
@@ -3886,6 +3887,20 @@ static void checkLimit(CMRUHashTable2<unsigned, Owned<IPropertyTree>> *mru, cons
         mru->removeLRU(type);
     }
 }
+
+#else
+
+#include "jmrutable.tpp"
+
+static void checkLimit(CMRUHashTable<unsigned, Owned<IPropertyTree>> *mru, const Owned<IPropertyTree> &value, unsigned type, unsigned count)
+{
+    if (count > hardLimit)
+    {
+        mru->removeLRU(type);
+    }
+}
+
+#endif
 
 
 int main(int argc, char* argv[])
@@ -3900,7 +3915,7 @@ int main(int argc, char* argv[])
 #if 1
         try
         {
-            Owned<CMRUHashTable2<unsigned, Owned<IPropertyTree>>> myMru = new CMRUHashTable2<unsigned, Owned<IPropertyTree>>();
+            Owned<CMRUHashTable<unsigned, Owned<IPropertyTree>>> myMru = new CMRUHashTable<unsigned, Owned<IPropertyTree>>();
             auto f = [myMru](const Owned<IPropertyTree> &value, unsigned type, unsigned limit) { checkLimit(myMru, value, type, limit); };
             myMru->setTypeLimiterCallback(f);
 
