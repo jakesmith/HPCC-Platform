@@ -48,6 +48,7 @@ using namespace dafsstream;
 
 #include <thread>
 #include <iostream>
+#include <mutex>
 
 #include "tbb/concurrent_hash_map.h"
 #include "tbb/concurrent_queue.h"
@@ -3388,6 +3389,7 @@ class CTBBMRU
 
     std::atomic<int> active{0};
 
+    std::mutex mutex;
 
 
     void checkLimit(const VALUE &value)
@@ -3395,28 +3397,12 @@ class CTBBMRU
         ++count;
         if (count > hardLimit)
         {
-            over++;
-            while (true)
+            std::unique_lock<std::mutex> lock(mutex, std::defer_lock);
+            while (!lock.try_lock())
             {
-                int expectedState=0;
-                if (active.compare_exchange_weak(expectedState, -1)) // deleting active
-                    break;
+                // do some deletes
             }
-            int expectedState=-1;
-            assertex(active.compare_exchange_strong(expectedState, 0)); // deleting inactive
-        }
-    }
-    inline void enterActive()
-    {
-        while (true)
-        {
-            int curActive=active;
-            while (likely(curActive>=0))
-            {
-                if (active.compare_exchange_weak(curActive, curActive+1)) // block deleting
-                    return;
-                // NB: failed changed has placed new value in curActive, loop around and test >=0 and retry, if <0 then loads new active
-            }
+            lock.unlock();
         }
     }
     void promote()
@@ -3426,27 +3412,27 @@ class CTBBMRU
 public:
     bool query(const KEY &key, VALUE &res, unsigned *type=nullptr)
     {
-        enterActive();
+        std::unique_lock<std::mutex> lock(mutex);
         auto it = table.find(key);
         if (it == table.end())
         {
-            --active;
+            lock.unlock();
             return false;
         }
         promote();
         res = it->second.first; // copies
         if (type)
             *type = it->second.second;
-        --active;
+        lock.unlock();
         return true;
     }
     bool add(const KEY &key, const VALUE &value, unsigned type)
     {
         auto p = std::make_pair(key, std::make_pair(value, type));
-        enterActive();
+        std::unique_lock<std::mutex> lock(mutex);
         auto r = table.insert(p);
         bool added = r.second;
-        --active;
+        lock.unlock();
         if (added)
             checkLimit(value);
         return r.second;
