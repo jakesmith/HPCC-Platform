@@ -3417,12 +3417,7 @@ int main(int argc, char* argv[])
 
         try
         {
-#if 1
             Owned<CMRUHashTable<unsigned, Owned<IPropertyTree>>> myMru = new CMRUHashTable<unsigned, Owned<IPropertyTree>>();
-#endif
-#if 1
-            CTBBMRU<unsigned, CTBBMRUValue> *myMru2 = new CTBBMRU<unsigned, CTBBMRUValue>();
-#endif
             auto f = [myMru](const Owned<IPropertyTree> &value, unsigned type, unsigned limit) { checkLimit(myMru, value, type, limit); };
             myMru->setTypeLimiterCallback(f);
 
@@ -3451,7 +3446,7 @@ int main(int argc, char* argv[])
             std::vector<std::thread> threads(totalThreads);
             for (unsigned i = 0; i < totalThreads; ++i)
             {
-                auto f = [&myMru, &myMru2, i, &totals]
+                auto f = [&myMru, i, &totals]
                 {
                     unsigned cacheHits = 0;
                     unsigned cacheHitsOnAdd = 0;
@@ -3466,9 +3461,7 @@ int main(int argc, char* argv[])
                         {
                             unsigned k = hashvalue(i, 0) % totals.maxVal;
                             VStringBuffer vs("%u", k);
-                            CTBBMRUValue t;
-                            t.value.setown(createPTree(vs));
-                            t.type = 0;
+                            Owned<IPropertyTree> t = createPTree(vs);
                             Owned<IPropertyTree> existingValue;
 
                             bool res;
@@ -3481,13 +3474,11 @@ int main(int argc, char* argv[])
                                     cacheHits++;
                                 else
                                 {
-                                    if (myMru->add(k, t.value, 0))
+                                    if (myMru->add(k, t, 0))
                                         cacheAdds++;
                                     else
                                         cacheHitsOnAdd++;
                                 }
-
-                                myMru2->add(k, t);
 #endif
                             }
                         }
@@ -3503,9 +3494,6 @@ int main(int argc, char* argv[])
                             {
                                 CriticalBlock b(totals.crit);
                                 res = myMru->query(k, existingValue);
-
-                                CTBBMRUValue t;
-                                myMru2->query(k, t);
                             }
                             if (res)
                                 cacheHits++;
@@ -3535,6 +3523,95 @@ int main(int argc, char* argv[])
                 t.join();
 
             PROGLOG("\ncacheHits = %u\ncacheHitsOnAdd = %u\ncacheAdds = %u", totals.cacheHits.load(), totals.cacheHitsOnAdd.load(), totals.cacheAdds.load());
+
+            threads.clear();
+            totals.cacheHits = 0 ;
+            totals.cacheHitsOnAdd = 0;
+            totals.cacheAdds = 0;
+
+            CTBBMRU<unsigned, CTBBMRUValue> *myMru2 = new CTBBMRU<unsigned, CTBBMRUValue>();
+            for (unsigned i = 0; i < totalThreads; ++i)
+            {
+                auto f = [&myMru2, i, &totals]
+                {
+                    unsigned cacheHits = 0;
+                    unsigned cacheHitsOnAdd = 0;
+                    unsigned cacheAdds = 0;
+
+//                    PROGLOG("Thread #%u: on CPU %u", i, sched_getcpu());
+
+                    byte mode = i % 2;
+                    if (0 == mode) // queryOrAdd
+                    {
+                        for (unsigned i=0; i<totals.maxVal; i++)
+                        {
+                            unsigned k = hashvalue(i, 0) % totals.maxVal;
+                            VStringBuffer vs("%u", k);
+                            CTBBMRUValue t;
+                            t.value.setown(createPTree(vs));
+                            t.type = 0;
+                            Owned<IPropertyTree> existingValue;
+
+                            bool res;
+                            {
+                                CriticalBlock b(totals.crit);
+#if 0
+                                res = myMru->queryOrAdd(k, existingValue, t, 0);
+#else
+                                if (myMru2->query(k, t))
+                                    cacheHits++;
+                                else
+                                {
+                                    if (myMru2->add(k, t))
+                                        cacheAdds++;
+                                    else
+                                        cacheHitsOnAdd++;
+                                }
+#endif
+                            }
+                        }
+                    }
+                    else if (1 == mode) // query
+                    {
+                        for (unsigned i=0; i<totals.maxVal; i++)
+                        {
+                            unsigned k = hashvalue(i, 0) % totals.maxVal;
+                            Owned<IPropertyTree> existingValue;
+
+                            bool res;
+                            {
+                                CriticalBlock b(totals.crit);
+                                CTBBMRUValue t;
+                                res = myMru2->query(k, t);
+                            }
+                            if (res)
+                                cacheHits++;
+                        }
+                    }
+                    else
+                        throwUnexpected();
+                    totals.cacheHits += cacheHits;
+                    totals.cacheHitsOnAdd += cacheHitsOnAdd;
+                    totals.cacheAdds += cacheAdds;
+
+//                    PROGLOG("Thread #%u: finished on CPU %u", i, sched_getcpu());
+
+                };
+                threads[i] = std::thread(f);
+
+                cpu_set_t cpuset;
+                CPU_ZERO(&cpuset);
+                CPU_SET(i, &cpuset);
+                int rc = pthread_setaffinity_np(threads[i].native_handle(),
+                                                sizeof(cpu_set_t), &cpuset);
+                if (rc != 0)
+                  PROGLOG("Error calling pthread_setaffinity_np: %u", rc);
+            }
+
+            for (auto &t : threads)
+                t.join();
+
+            PROGLOG("TBB MRU\n\ncacheHits = %u\ncacheHitsOnAdd = %u\ncacheAdds = %u", totals.cacheHits.load(), totals.cacheHitsOnAdd.load(), totals.cacheAdds.load());
 
             return 0;
         }
