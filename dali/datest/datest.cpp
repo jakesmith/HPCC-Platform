@@ -3368,6 +3368,7 @@ static unsigned totalThreads = 32;
 
 
 #include "jmrutable.tpp"
+#include <tuple>
 
 static void checkLimit(CMRUHashTable<unsigned, Owned<IPropertyTree>> *mru, const Owned<IPropertyTree> &value, unsigned type, unsigned count)
 {
@@ -3377,7 +3378,7 @@ static void checkLimit(CMRUHashTable<unsigned, Owned<IPropertyTree>> *mru, const
     }
 }
 
-#if 1
+#if 0
 template <class KEY, class VALUE, class LIMITER, class HASHER=std::hash<KEY>, class EQUAL=std::equal_to<KEY>>
 class CTBBMRU
 {
@@ -3439,24 +3440,26 @@ public:
     }
 };
 #else
-template <class KEY, class VALUE, class LIMITER, class ALLOCATOR=tbb::tbb_allocator<std::pair<KEY, std::pair<VALUE, unsigned>>>>
+//template <class KEY, class VALUE, class LIMITER, unsigned types, class ALLOCATOR=tbb::tbb_allocator<std::pair<KEY, std::pair<VALUE, unsigned>>>>
+template <class KEY, class VALUE, class LIMITER, unsigned types>
 class CTBBMRU
 {
-    typedef typename tbb::concurrent_hash_map<KEY, std::pair<VALUE, unsigned>, tbb::tbb_hash_compare<KEY>, ALLOCATOR> TBBMAP;
+    struct QueueItem
+    {
+        KEY key;
+        bool valid;
+    };
+//    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>, ALLOCATOR> TBBMAP;
+    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>> TBBMAP;
 
     TBBMAP table;
 
-    struct MRUNode
-    {
-        KEY value;
-        MRUNode *next;
-        MRUNode *prev;
-    };
-    typename tbb::concurrent_queue<KEY> mru;
+    typename tbb::concurrent_queue<QueueItem *> mru;
 
-    std::atomic<unsigned> count{0};
-    std::atomic<unsigned> over{0};
     LIMITER limiter;
+    std::array<std::atomic<unsigned>, types> counts;
+    std::atomic<unsigned> inactiveQueueItems{0};
+    const unsigned maxInactiveQueueItems = 100;
 
 
 public:
@@ -3465,19 +3468,36 @@ public:
         typename TBBMAP::accessor a;
         if (!table.find(a, key))
             return false;
-        res = a->second.first; // NB: copy of value
+        auto &rhs = a->second;
+        res = std::get<1>(rhs); // NB: copy of value
+
+        std::get<3>(rhs)->active = false;
+        inactiveQueueItems++;
+        QueueItem *q = new QueueItem(key);
+        mru.push(q);
+
         if (type)
-            *type = a->second.second;
+            *type = std::get<2>(rhs);
         return true;
+    }
+    void cleanupQueue()
+    {
+        return;
     }
     bool add(const KEY &key, const VALUE &value, unsigned type)
     {
         typename TBBMAP::accessor a;
         bool res = table.insert(a, key);
-        a->second = std::make_pair(value, type);
+        QueueItem *q = new QueueItem(key);
+        a->second = std::make_tuple(value, type, q);
         if (res)
         {
-            if (limiter(value, type)) // perhaps want other criteria/specs. of what to do returned from function, but for now true means reduce by 10%
+            unsigned c = ++counts[type];
+            mru.push(q);
+            if (inactiveQueueItems > maxInactiveQueueItems)
+                cleanupQueue();
+
+            if (limiter(value, type, c)) // perhaps want other criteria/specs. of what to do returned from function, but for now true means reduce by 10%
             {
                 removeLRU();
             }
@@ -3486,6 +3506,8 @@ public:
     }
     void removeLRU()
     {
+        std::pair<KEY, bool> key;
+        bool res = mru.try_pop(key);
     }
 };
 #endif
@@ -3625,17 +3647,15 @@ int main(int argc, char* argv[])
 
             struct CMRULimiter
             {
-                std::atomic<unsigned> count{0};
-                bool operator() (const Owned<IPropertyTree> &newValue, unsigned type)
+                bool operator() (const Owned<IPropertyTree> &newValue, unsigned type, unsigned count)
                 {
-                    ++count;
                     if (count > hardLimit)
                         return true;
                     return false;
                 }
             };
 
-            typedef CTBBMRU<unsigned, Owned<IPropertyTree>, CMRULimiter> MRUTableType;
+            typedef CTBBMRU<unsigned, Owned<IPropertyTree>, CMRULimiter, 4> MRUTableType;
 
             MRUTableType *myMru2 = new MRUTableType();
 
