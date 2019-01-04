@@ -50,6 +50,8 @@ using namespace dafsstream;
 #include <iostream>
 
 #include "tbb/concurrent_hash_map.h"
+#include "tbb/concurrent_queue.h"
+#include "tbb/concurrent_unordered_map.h"
 
 
 #define DEFAULT_TEST "RANDTEST"
@@ -3359,8 +3361,7 @@ struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
 static unsigned hardLimit = 10000;
-//static unsigned totalValues = hardLimit * 1000;
-static unsigned totalValues = 20000;
+static unsigned totalValues = 10000000;
 static unsigned totalThreads = 32;
 
 
@@ -3376,62 +3377,133 @@ static void checkLimit(CMRUHashTable<unsigned, Owned<IPropertyTree>> *mru, const
 }
 
 #if 1
-template <class KEY, class VALUE>
+template <class KEY, class VALUE, class LIMITER, class HASHER=std::hash<KEY>, class EQUAL=std::equal_to<KEY>>
 class CTBBMRU
 {
-    typedef tbb::concurrent_unordered_map<KEY, VALUE> TBBMAP;
+    typedef tbb::concurrent_unordered_map<KEY, std::pair<VALUE, unsigned>, HASHER, EQUAL> TBBMAP;
 
     TBBMAP table;
+    std::atomic<unsigned> count{0};
+    std::atomic<unsigned> over{0};
 
-public:
-    bool query(const KEY &key, VALUE &res)
+    std::atomic<int> active{0};
+
+
+
+    void checkLimit(const VALUE &value)
     {
-        TBBMAP::iterator it = table.find(key);
+        ++count;
+        if (count > hardLimit)
+        {
+            over++;
+            while (true)
+            {
+                int expectedState=0;
+                if (active.compare_exchange_weak(expectedState, -1)) // deleting active
+                    break;
+            }
+            int expectedState=-1;
+            assertex(active.compare_exchange_strong(expectedState, 0)); // deleting inactive
+        }
+    }
+    inline void enterActive()
+    {
+        while (true)
+        {
+            int curActive=active;
+            while (likely(curActive>=0))
+            {
+                if (active.compare_exchange_weak(curActive, curActive+1)) // block deleting
+                    return;
+                // NB: failed changed has placed new value in curActive, loop around and test >=0 and retry, if <0 then loads new active
+            }
+        }
+    }
+    void promote()
+    {
+
+    }
+public:
+    bool query(const KEY &key, VALUE &res, unsigned *type=nullptr)
+    {
+        enterActive();
+        auto it = table.find(key);
         if (it == table.end())
+        {
+            --active;
             return false;
-        res = it->second;
+        }
+        promote();
+        res = it->second.first; // copies
+        if (type)
+            *type = it->second.second;
+        --active;
         return true;
     }
-    bool add(const KEY &key, const VALUE &value)
+    bool add(const KEY &key, const VALUE &value, unsigned type)
     {
-        TBBMAP::iterator it = hashTable.find(key);
-        if (it == table.end())
-            return false;
-        return table.insert(it, makepair(key, value));
+        auto p = std::make_pair(key, std::make_pair(value, type));
+        enterActive();
+        auto r = table.insert(p);
+        bool added = r.second;
+        --active;
+        if (added)
+            checkLimit(value);
+        return r.second;
     }
 };
 #else
-template <class KEY, class VALUE>
+template <class KEY, class VALUE, class LIMITER, class ALLOCATOR=tbb::tbb_allocator<std::pair<KEY, std::pair<VALUE, unsigned>>>>
 class CTBBMRU
 {
-    typedef tbb::concurrent_hash_map<KEY, VALUE> TBBMAP;
+    typedef typename tbb::concurrent_hash_map<KEY, std::pair<VALUE, unsigned>, tbb::tbb_hash_compare<KEY>, ALLOCATOR> TBBMAP;
 
     TBBMAP table;
 
+    struct MRUNode
+    {
+        KEY value;
+        MRUNode *next;
+        MRUNode *prev;
+    };
+    typename tbb::concurrent_queue<KEY> mru;
+
+    std::atomic<unsigned> count{0};
+    std::atomic<unsigned> over{0};
+    LIMITER limiter;
+
+
 public:
-    bool query(const KEY &key, VALUE &res)
+    bool query(const KEY &key, VALUE &res, unsigned *type=nullptr)
     {
         typename TBBMAP::accessor a;
         if (!table.find(a, key))
             return false;
-        res = a->second;
+        res = a->second.first; // NB: copy of value
+        if (type)
+            *type = a->second.second;
         return true;
     }
-    bool add(const KEY &key, const VALUE &value)
+    bool add(const KEY &key, const VALUE &value, unsigned type)
     {
         typename TBBMAP::accessor a;
         bool res = table.insert(a, key);
-        a->second = value;
+        a->second = std::make_pair(value, type);
+        if (res)
+        {
+            if (limiter(value, type)) // perhaps want other criteria/specs. of what to do returned from function, but for now true means reduce by 10%
+            {
+                removeLRU();
+            }
+        }
         return res;
+    }
+    void removeLRU()
+    {
     }
 };
 #endif
 
-struct CTBBMRUValue
-{
-    Owned<IPropertyTree> value;
-    unsigned type;
-};
 
 int main(int argc, char* argv[])
 {
@@ -3465,6 +3537,12 @@ int main(int argc, char* argv[])
                 unsigned _totalThreads = atoi(argv[1]);
                 if (_totalThreads)
                     totalThreads = _totalThreads;
+                if (argc>2)
+                {
+                    unsigned _totalValues = atoi(argv[2]);
+                    if (_totalValues)
+                        totalValues = _totalValues;
+                }
             }
             totals.maxVal = totalValues/totalThreads;
             PROGLOG("Running with totalThreads=%u, totalValues=%u, values per thread=%u, hardLimit=%u", totalThreads, totalValues, totalValues/totalThreads, hardLimit);
@@ -3558,7 +3636,23 @@ int main(int argc, char* argv[])
             totals.cacheAdds = 0;
 
             PROGLOG("TBB MRU totalThreads = %u", totalThreads);
-            CTBBMRU<unsigned, CTBBMRUValue> *myMru2 = new CTBBMRU<unsigned, CTBBMRUValue>();
+
+            struct CMRULimiter
+            {
+                std::atomic<unsigned> count{0};
+                bool operator() (const Owned<IPropertyTree> &newValue, unsigned type)
+                {
+                    ++count;
+                    if (count > hardLimit)
+                        return true;
+                    return false;
+                }
+            };
+
+            typedef CTBBMRU<unsigned, Owned<IPropertyTree>, CMRULimiter> MRUTableType;
+
+            MRUTableType *myMru2 = new MRUTableType();
+
 
             timer.reset();
             for (unsigned i = 0; i < totalThreads; ++i)
@@ -3577,24 +3671,18 @@ int main(int argc, char* argv[])
                         for (unsigned i=0; i<totals.maxVal; i++)
                         {
                             unsigned k = hashvalue(i, 0) % totals.maxVal;
-//                            Owned<IPropertyTree> existingValue;
 
-                            bool res;
+                            Owned<IPropertyTree> t;
+                            if (myMru2->query(k, t))
+                                cacheHits++;
+                            else
                             {
-//                                CriticalBlock b(totals.crit);
-                                CTBBMRUValue t;
-                                if (myMru2->query(k, t))
-                                    cacheHits++;
+                                VStringBuffer vs("%u", k);
+                                t.setown(createPTree(vs));
+                                if (myMru2->add(k, t, 0))
+                                    cacheAdds++;
                                 else
-                                {
-                                    VStringBuffer vs("%u", k);
-                                    t.value.setown(createPTree(vs));
-                                    t.type = 0;
-                                    if (myMru2->add(k, t))
-                                        cacheAdds++;
-                                    else
-                                        cacheHitsOnAdd++;
-                                }
+                                    cacheHitsOnAdd++;
                             }
                         }
                     }
@@ -3605,13 +3693,8 @@ int main(int argc, char* argv[])
                             unsigned k = hashvalue(i, 0) % totals.maxVal;
                             Owned<IPropertyTree> existingValue;
 
-                            bool res;
-                            {
-  //                              CriticalBlock b(totals.crit);
-                                CTBBMRUValue t;
-                                res = myMru2->query(k, t);
-                            }
-                            if (res)
+                            Owned<IPropertyTree> t;
+                            if (myMru2->query(k, t))
                                 cacheHits++;
                         }
                     }
