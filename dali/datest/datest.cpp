@@ -3369,6 +3369,7 @@ static unsigned totalThreads = 32;
 
 #include "jmrutable.tpp"
 #include <tuple>
+#include <functional>
 
 static void checkLimit(CMRUHashTable<unsigned, Owned<IPropertyTree>> *mru, const Owned<IPropertyTree> &value, unsigned type, unsigned count)
 {
@@ -3450,10 +3451,10 @@ class CTBBMRU
         {
         }
         KEY key;
-        bool valid;
+        std::atomic<bool> active{true};
     };
 //    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>, ALLOCATOR> TBBMAP;
-    typedef typename tbb::concurrent_hash_map<KEY, std::pair<VALUE, unsigned>, tbb::tbb_hash_compare<KEY>> TBBMAP;
+    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>> TBBMAP;
 
     TBBMAP table;
 
@@ -3472,17 +3473,18 @@ public:
         if (!table.find(a, key))
             return false;
         auto &rhs = a->second;
-//        res = std::get<1>(rhs); // NB: copy of value
-        res = rhs.first;
 
-//        std::get<3>(rhs)->active = false;
+        unsigned t;
+        QueueItem *q;
+        std::tie(res, t, q) = rhs;
+
+        q->active = false;
         inactiveQueueItems++;
-        QueueItem *q = new QueueItem(key);
+        q = new QueueItem(key);
         mru.push(q);
 
         if (type)
-//            *type = std::get<2>(rhs);
-            *type = rhs.second;
+            *type = t;
         return true;
     }
     void cleanupQueue()
@@ -3494,8 +3496,7 @@ public:
         typename TBBMAP::accessor a;
         bool res = table.insert(a, key);
         QueueItem *q = new QueueItem(key);
-//        a->second = std::make_tuple(value, type, q);
-        a->second = std::make_pair(value, type);
+        a->second = std::make_tuple(value, type, q);
         if (res)
         {
             unsigned c = ++counts[type];
@@ -3513,7 +3514,24 @@ public:
     void removeLRU()
     {
         QueueItem *q;
-        bool res = mru.try_pop(q);
+        while (true)
+        {
+            if (!mru.try_pop(q))
+                break;
+            if (q->active)
+            {
+                typename TBBMAP::accessor a;
+                if (table.find(a, q->key))
+                {
+                    table.erase(a);
+                    delete q;
+                    break;
+                }
+                delete q;
+            }
+            else
+                --inactiveQueueItems;
+        }
     }
 };
 #endif
