@@ -3360,7 +3360,7 @@ struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 static unsigned hardLimit = 10000;
 //static unsigned totalValues = hardLimit * 1000;
-static unsigned totalValues = 1000;
+static unsigned totalValues = 20000;
 static unsigned totalThreads = 32;
 
 
@@ -3375,17 +3375,43 @@ static void checkLimit(CMRUHashTable<unsigned, Owned<IPropertyTree>> *mru, const
     }
 }
 
+#if 1
 template <class KEY, class VALUE>
 class CTBBMRU
 {
-//    typedef tbb::concurrent_hash_map<KEY, VALUE> TBBMAP;
+    typedef tbb::concurrent_unordered_map<KEY, VALUE> TBBMAP;
 
-    typename tbb::concurrent_hash_map<KEY, VALUE> table;
+    TBBMAP table;
 
 public:
     bool query(const KEY &key, VALUE &res)
     {
-        typename tbb::concurrent_hash_map<KEY, VALUE>::accessor a;
+        TBBMAP::iterator it = table.find(key);
+        if (it == table.end())
+            return false;
+        res = it->second;
+        return true;
+    }
+    bool add(const KEY &key, const VALUE &value)
+    {
+        TBBMAP::iterator it = hashTable.find(key);
+        if (it == table.end())
+            return false;
+        return table.insert(it, makepair(key, value));
+    }
+};
+#else
+template <class KEY, class VALUE>
+class CTBBMRU
+{
+    typedef tbb::concurrent_hash_map<KEY, VALUE> TBBMAP;
+
+    TBBMAP table;
+
+public:
+    bool query(const KEY &key, VALUE &res)
+    {
+        typename TBBMAP::accessor a;
         if (!table.find(a, key))
             return false;
         res = a->second;
@@ -3393,12 +3419,13 @@ public:
     }
     bool add(const KEY &key, const VALUE &value)
     {
-        typename tbb::concurrent_hash_map<KEY, VALUE>::accessor a;
+        typename TBBMAP::accessor a;
         bool res = table.insert(a, key);
         a->second = value;
         return res;
     }
 };
+#endif
 
 struct CTBBMRUValue
 {
@@ -3442,8 +3469,9 @@ int main(int argc, char* argv[])
             totals.maxVal = totalValues/totalThreads;
             PROGLOG("Running with totalThreads=%u, totalValues=%u, values per thread=%u, hardLimit=%u", totalThreads, totalValues, totalValues/totalThreads, hardLimit);
 
-            // A mutex ensures orderly access to std::cout from multiple threads.
             std::vector<std::thread> threads(totalThreads);
+
+            CCycleTimer timer;
             for (unsigned i = 0; i < totalThreads; ++i)
             {
                 auto f = [&myMru, i, &totals]
@@ -3460,8 +3488,6 @@ int main(int argc, char* argv[])
                         for (unsigned i=0; i<totals.maxVal; i++)
                         {
                             unsigned k = hashvalue(i, 0) % totals.maxVal;
-                            VStringBuffer vs("%u", k);
-                            Owned<IPropertyTree> t = createPTree(vs);
                             Owned<IPropertyTree> existingValue;
 
                             bool res;
@@ -3474,6 +3500,8 @@ int main(int argc, char* argv[])
                                     cacheHits++;
                                 else
                                 {
+                                    VStringBuffer vs("%u", k);
+                                    Owned<IPropertyTree> t = createPTree(vs);
                                     if (myMru->add(k, t, 0))
                                         cacheAdds++;
                                     else
@@ -3521,15 +3549,18 @@ int main(int argc, char* argv[])
 
             for (auto &t : threads)
                 t.join();
+            unsigned ms = timer.elapsedMs();
 
-            PROGLOG("\ncacheHits = %u\ncacheHitsOnAdd = %u\ncacheAdds = %u", totals.cacheHits.load(), totals.cacheHitsOnAdd.load(), totals.cacheAdds.load());
+            PROGLOG("\nTime=%u (ms)\ncacheHits = %u\ncacheHitsOnAdd = %u\ncacheAdds = %u", ms, totals.cacheHits.load(), totals.cacheHitsOnAdd.load(), totals.cacheAdds.load());
 
-            threads.clear();
             totals.cacheHits = 0 ;
             totals.cacheHitsOnAdd = 0;
             totals.cacheAdds = 0;
 
+            PROGLOG("TBB MRU totalThreads = %u", totalThreads);
             CTBBMRU<unsigned, CTBBMRUValue> *myMru2 = new CTBBMRU<unsigned, CTBBMRUValue>();
+
+            timer.reset();
             for (unsigned i = 0; i < totalThreads; ++i)
             {
                 auto f = [&myMru2, i, &totals]
@@ -3546,28 +3577,24 @@ int main(int argc, char* argv[])
                         for (unsigned i=0; i<totals.maxVal; i++)
                         {
                             unsigned k = hashvalue(i, 0) % totals.maxVal;
-                            VStringBuffer vs("%u", k);
-                            CTBBMRUValue t;
-                            t.value.setown(createPTree(vs));
-                            t.type = 0;
-                            Owned<IPropertyTree> existingValue;
+//                            Owned<IPropertyTree> existingValue;
 
                             bool res;
                             {
-                                CriticalBlock b(totals.crit);
-#if 0
-                                res = myMru->queryOrAdd(k, existingValue, t, 0);
-#else
+//                                CriticalBlock b(totals.crit);
+                                CTBBMRUValue t;
                                 if (myMru2->query(k, t))
                                     cacheHits++;
                                 else
                                 {
+                                    VStringBuffer vs("%u", k);
+                                    t.value.setown(createPTree(vs));
+                                    t.type = 0;
                                     if (myMru2->add(k, t))
                                         cacheAdds++;
                                     else
                                         cacheHitsOnAdd++;
                                 }
-#endif
                             }
                         }
                     }
@@ -3580,7 +3607,7 @@ int main(int argc, char* argv[])
 
                             bool res;
                             {
-                                CriticalBlock b(totals.crit);
+  //                              CriticalBlock b(totals.crit);
                                 CTBBMRUValue t;
                                 res = myMru2->query(k, t);
                             }
@@ -3610,8 +3637,9 @@ int main(int argc, char* argv[])
 
             for (auto &t : threads)
                 t.join();
+            ms = timer.elapsedMs();
 
-            PROGLOG("TBB MRU\n\ncacheHits = %u\ncacheHitsOnAdd = %u\ncacheAdds = %u", totals.cacheHits.load(), totals.cacheHitsOnAdd.load(), totals.cacheAdds.load());
+            PROGLOG("TBB MRU\nTime=%u (ms)\ncacheHits = %u\ncacheHitsOnAdd = %u\ncacheAdds = %u", ms, totals.cacheHits.load(), totals.cacheHitsOnAdd.load(), totals.cacheAdds.load());
 
             return 0;
         }
