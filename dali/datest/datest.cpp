@@ -3446,11 +3446,14 @@ class CTBBMRU
 {
     struct QueueItem
     {
+        QueueItem(const KEY &_key) : key(_key)
+        {
+        }
         KEY key;
         bool valid;
     };
 //    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>, ALLOCATOR> TBBMAP;
-    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>> TBBMAP;
+    typedef typename tbb::concurrent_hash_map<KEY, std::pair<VALUE, unsigned>, tbb::tbb_hash_compare<KEY>> TBBMAP;
 
     TBBMAP table;
 
@@ -3469,15 +3472,17 @@ public:
         if (!table.find(a, key))
             return false;
         auto &rhs = a->second;
-        res = std::get<1>(rhs); // NB: copy of value
+//        res = std::get<1>(rhs); // NB: copy of value
+        res = rhs.first;
 
-        std::get<3>(rhs)->active = false;
+//        std::get<3>(rhs)->active = false;
         inactiveQueueItems++;
         QueueItem *q = new QueueItem(key);
         mru.push(q);
 
         if (type)
-            *type = std::get<2>(rhs);
+//            *type = std::get<2>(rhs);
+            *type = rhs.second;
         return true;
     }
     void cleanupQueue()
@@ -3489,7 +3494,8 @@ public:
         typename TBBMAP::accessor a;
         bool res = table.insert(a, key);
         QueueItem *q = new QueueItem(key);
-        a->second = std::make_tuple(value, type, q);
+//        a->second = std::make_tuple(value, type, q);
+        a->second = std::make_pair(value, type);
         if (res)
         {
             unsigned c = ++counts[type];
@@ -3506,8 +3512,8 @@ public:
     }
     void removeLRU()
     {
-        std::pair<KEY, bool> key;
-        bool res = mru.try_pop(key);
+        QueueItem *q;
+        bool res = mru.try_pop(q);
     }
 };
 #endif
