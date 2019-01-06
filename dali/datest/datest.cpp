@@ -3462,7 +3462,6 @@ class CTBBMRU
 
     std::atomic<QueueItem *> head{nullptr};
     std::atomic<QueueItem *> tail{nullptr};
-    QueueItem dummyHeadTail;
 //    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>, ALLOCATOR> TBBMAP;
     typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>> TBBMAP;
 
@@ -3486,15 +3485,11 @@ class CTBBMRU
             QueueItem *curTail = tail;
             if (curTail->next.compare_exchange_strong(expected, q)) // old tail now points to new tail (q)
             {
-                q->prev = tail;
+                q->prev = tail.load();
 
                 // NB: this thread is now the only thread that can change 'tail'
                 if (tail.compare_exchange_strong(curTail, q))
-                {
-                    if (&dummyHeadTail == head)
-                        head = q;
                     break;
-                }
                 else
                     throwUnexpected();
             }
@@ -3503,8 +3498,7 @@ class CTBBMRU
     }
     void cleanSomeHoles()
     {
-        // NB: only 1 thread at time doing this
-        bool expected = true;
+        // NB: only 1 thread at a time doing this OR removeLRU()
         if (pendingRemoveLRU) // removeLRU() deferred because cleaning, do now
         {
             removeLRU();
@@ -3530,11 +3524,11 @@ class CTBBMRU
     }
     void removeLRU()
     {
-        // NB: only 1 thread at time doing this OR cleaningSomeHoles()
+        // NB: only 1 thread at a time doing this OR cleaningSomeHoles()
         while (true)
         {
             QueueItem *oldHead = head;
-            QueueItem *newHead = head->next;
+            QueueItem *newHead = head.load()->next;
             if (!newHead)
                 break;
             if (newHead->prev.compare_exchange_strong(oldHead, nullptr))
@@ -3565,7 +3559,7 @@ public:
     CTBBMRU()
     {
         head = new QueueItem();
-        tail = head;
+        tail = head.load();
     }
     bool query(const KEY &key, VALUE &res, unsigned *type=nullptr)
     {
