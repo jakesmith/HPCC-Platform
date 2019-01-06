@@ -3450,23 +3450,123 @@ class CTBBMRU
         QueueItem(const KEY &_key) : key(_key)
         {
         }
+        QueueItem() // for initial head and tail only
+        {
+
+        }
         KEY key;
         std::atomic<bool> active{true};
+        std::atomic<QueueItem *> next{nullptr};
+        std::atomic<QueueItem *> prev{nullptr};
     };
+
+    std::atomic<QueueItem *> head{nullptr};
+    std::atomic<QueueItem *> tail{nullptr};
+    QueueItem dummyHeadTail;
 //    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>, ALLOCATOR> TBBMAP;
     typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>> TBBMAP;
 
     TBBMAP table;
 
-    typename tbb::concurrent_queue<QueueItem *> mru;
+    typename tbb::concurrent_queue<QueueItem *> holes;
 
     LIMITER limiter;
     std::array<std::atomic<unsigned>, types> counts;
     std::atomic<unsigned> inactiveQueueItems{0};
     const unsigned maxInactiveQueueItems = 100;
+    std::atomic<bool> cleaningHoles{false};
+    std::atomic<bool> pendingRemoveLRU{false};
 
+
+    void pushToTail(QueueItem *q)
+    {
+        while (true)
+        {
+            QueueItem *expected = nullptr;
+            QueueItem *curTail = tail;
+            if (curTail->next.compare_exchange_strong(expected, q)) // old tail now points to new tail (q)
+            {
+                q->prev = tail;
+
+                // NB: this thread is now the only thread that can change 'tail'
+                if (tail.compare_exchange_strong(curTail, q))
+                {
+                    if (&dummyHeadTail == head)
+                        head = q;
+                    break;
+                }
+                else
+                    throwUnexpected();
+            }
+            // else - someone beat this thread, and changed tail->next
+        }
+    }
+    void cleanSomeHoles()
+    {
+        // NB: only 1 thread at time doing this
+        bool expected = true;
+        if (pendingRemoveLRU) // removeLRU() deferred because cleaning, do now
+        {
+            removeLRU();
+            pendingRemoveLRU = false;
+        }
+        while (true)
+        {
+            QueueItem *q;
+            if (holes.try_pop(q))
+            {
+                QueueItem *next = q->next; // will never be null, because q will never be tail
+                QueueItem *prev = q->prev;
+                next->prev = prev;
+                if (prev)
+                    prev->next = next;
+                else
+                    head = prev;
+                delete q; // NB: could be old head
+            }
+        }
+        bool expected=true;
+        assertex(cleaningHoles.compare_exchange_strong(expected, false));
+    }
+    void removeLRU()
+    {
+        // NB: only 1 thread at time doing this OR cleaningSomeHoles()
+        while (true)
+        {
+            QueueItem *oldHead = head;
+            QueueItem *newHead = head->next;
+            if (!newHead)
+                break;
+            if (newHead->prev.compare_exchange_strong(oldHead, nullptr))
+            {
+                if (head.compare_exchange_strong(oldHead, newHead))
+                {
+                    if (oldHead->active)
+                    {
+                        typename TBBMAP::accessor a;
+                        if (table.find(a, oldHead->key))
+                        {
+                            table.erase(a);
+                            delete oldHead;
+                            break;
+                        }
+                    }
+                    else
+                        --inactiveQueueItems;
+                    delete oldHead;
+                }
+            }
+            else
+                throwUnexpected();
+        }
+    }
 
 public:
+    CTBBMRU()
+    {
+        head = new QueueItem();
+        tail = head;
+    }
     bool query(const KEY &key, VALUE &res, unsigned *type=nullptr)
     {
         typename TBBMAP::accessor a;
@@ -3477,61 +3577,44 @@ public:
         unsigned t;
         QueueItem *q;
         std::tie(res, t, q) = rhs;
+        if (nullptr != q->next) // 1st check if not last already
+        {
+            q->active = false;
+            holes.push(q);
+            if (++inactiveQueueItems > maxInactiveQueueItems)
+            {
+                bool expected=false;
+                if (cleaningHoles.compare_exchange_strong(expected, true))
+                    cleanSomeHoles();
+            }
 
-        q->active = false;
-        inactiveQueueItems++;
-        q = new QueueItem(key);
-        mru.push(q);
-
+            q = new QueueItem(key);
+            pushToTail(q);
+        }
         if (type)
             *type = t;
         return true;
-    }
-    void cleanupQueue()
-    {
-        return;
     }
     bool add(const KEY &key, const VALUE &value, unsigned type)
     {
         typename TBBMAP::accessor a;
         bool res = table.insert(a, key);
-        QueueItem *q = new QueueItem(key);
-        a->second = std::make_tuple(value, type, q);
         if (res)
         {
+            QueueItem *q = new QueueItem(key);
+            pushToTail(q);
+            a->second = std::make_tuple(value, type, q);
             unsigned c = ++counts[type];
-            mru.push(q);
-            if (inactiveQueueItems > maxInactiveQueueItems)
-                cleanupQueue();
-
             if (limiter(value, type, c)) // perhaps want other criteria/specs. of what to do returned from function, but for now true means reduce by 10%
             {
-                removeLRU();
+                bool expected = false;
+                if (cleaningHoles.compare_exchange_strong(expected, true))
+                    removeLRU();
+                else
+                    pendingRemoveLRU = true; // over capacity, another add()/or query() will
             }
         }
         return res;
-    }
-    void removeLRU()
-    {
-        QueueItem *q;
-        while (true)
-        {
-            if (!mru.try_pop(q))
-                break;
-            if (q->active)
-            {
-                typename TBBMAP::accessor a;
-                if (table.find(a, q->key))
-                {
-                    table.erase(a);
-                    delete q;
-                    break;
-                }
-                delete q;
-            }
-            else
-                --inactiveQueueItems;
-        }
     }
 };
 #endif
