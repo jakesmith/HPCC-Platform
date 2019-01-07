@@ -130,20 +130,6 @@ inline unsigned getCompMethod(unsigned flags)
     return compMethod;
 }
 
-inline unsigned getCompMethod(const StringBuffer compStr)
-{
-    unsigned compMethod = COMPRESS_METHOD_LZW;
-    if (compStr.length())
-    {
-        if (0 == stricmp("FLZ", compStr.str()))
-            compMethod = COMPRESS_METHOD_FASTLZ;
-        else if (0 == stricmp("LZ4", compStr.str()))
-            compMethod = COMPRESS_METHOD_LZ4;
-    }
-    else // default is LZ4
-        compMethod = COMPRESS_METHOD_LZ4;
-    return compMethod;
-}
 
 interface IExtRowStream: extends IRowStream
 {
@@ -633,6 +619,7 @@ extern THORHELPER_API void setAutoAffinity(unsigned curProcess, unsigned process
 extern THORHELPER_API void bindMemoryToLocalNodes();
 
 extern THORHELPER_API IOutputMetaData *getDaliLayoutInfo(IPropertyTree const &props);
+extern THORHELPER_API bool getDaliLayoutInfo(MemoryBuffer &layoutBin, IPropertyTree const &props);
 
 /* Returns a dynamic translator (as 1st parameter) given a generated expected format, the published format and the desired projectedFormat,
  * providing translation mode and crc's allow translation. Returns true if translator created.

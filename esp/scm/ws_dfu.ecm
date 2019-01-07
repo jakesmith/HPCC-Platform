@@ -833,6 +833,72 @@ ESPresponse [exceptions_inline, nil_remove] EraseHistoryResponse
     ESParray<ESPStruct History, Origin> History;
 };
 
+
+ESPrequest DFULookupFileRequest
+{
+    string Name;                        // the logical file name
+    string Cluster;                     // needed only if on >1 Cluster and want to disambiguate
+    string RequestId;                   // optional 
+    int ExpirySeconds(60);              // how long the retrieved meta info is valid for, to access physical files (in dafilesrv) 
+};
+
+
+ESPresponse [exceptions_inline] DFULookupFileResponse
+{
+    /* MetaInfoBlob contains everything, inc. signature.
+     * We want like this (and not as separate EspStruct) access methods,
+     * because:
+     * a) it is more efficient for the factoried object to decode the bare bones meta info.
+     * b) the object can efficiently be serialized and passed to others (e.g. thormaster to slaves, to dafilesrv)
+     */
+    string MetaInfoBlob; // represents 1 distribute file (not supers)
+};
+
+ESPenum FileType : string
+{
+    Flat("Flat"),
+    Index("Index"),
+    Xml("Xml"),
+    Csv("Csv"),
+};
+
+ESPrequest DFUCreateFileRequest
+{
+    string Name;                        // the logical file name
+    string Cluster;                     // needed only if on >1 Cluster and want to disambiguate
+    ESPenum FileType Type;
+    string RecDef;
+    string RequestId;                   // optional 
+    int ExpirySeconds(60);              // how long the retrieved meta info is valid for, to access physical files (in dafilesrv) 
+};
+
+
+ESPresponse [exceptions_inline] DFUCreateFileResponse
+{
+    /* MetaInfoBlob contains everything, inc. signature.
+     * We want like this (and not as separate EspStruct) access methods,
+     * because:
+     * a) it is more efficient for the factoried object to decode the bare bones meta info.
+     * b) the object can efficiently be serialized and passed to others (e.g. thormaster to slaves, to dafilesrv)
+     */
+    string MetaInfoBlob; // represents 1 distribute file (not supers)
+    string FileId;
+};
+
+ESPrequest [nil_remove] DFUPublishFileRequest
+{
+    string FileId;
+    bool Overwrite;
+    binary FileDescriptorBlob;
+};
+
+ESPresponse [exceptions_inline, nil_remove] DFUPublishFileResponse
+{
+};
+
+
+
+
 ESPStruct DFUFileAccessRequestBase
 {
     string Name;
@@ -951,6 +1017,10 @@ ESPservice [
     ESPmethod [auth_feature("DfuAccess:READ"), min_var("1.39")] DFUFileAccess(DFUFileAccessRequest, DFUFileAccessResponse);
     ESPmethod [auth_feature("DfuAccess:FULL"), min_var("1.39")] DFUFileCreate(DFUFileCreateRequest, DFUFileCreateResponse);
     ESPmethod [auth_feature("DfuAccess:FULL"), min_var("1.39")] DFUFilePublish(DFUFilePublishRequest, DFUFilePublishResponse);
+
+    ESPmethod [auth_feature("DfuAccess:READ"), min_var("1.39")] DFULookupFile(DFULookupFileRequest, DFULookupFileResponse);
+    ESPmethod [auth_feature("DfuAccess:FULL"), min_var("1.39")] DFUCreateFile(DFUCreateFileRequest, DFUCreateFileResponse);
+    ESPmethod [auth_feature("DfuAccess:FULL"), min_var("1.39")] DFUPublishFile(DFUPublishFileRequest, DFUPublishFileResponse);
 };
 
 SCMexportdef(WSDFU);

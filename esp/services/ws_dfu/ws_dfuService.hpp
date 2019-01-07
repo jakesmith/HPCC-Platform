@@ -171,6 +171,9 @@ public:
     virtual bool onDFUFileAccess(IEspContext &context, IEspDFUFileAccessRequest &req, IEspDFUFileAccessResponse &resp);
     virtual bool onDFUFileCreate(IEspContext &context, IEspDFUFileCreateRequest &req, IEspDFUFileCreateResponse &resp);
     virtual bool onDFUFilePublish(IEspContext &context, IEspDFUFilePublishRequest &req, IEspDFUFilePublishResponse &resp);
+    virtual bool onDFULookupFile(IEspContext &context, IEspDFULookupFileRequest &req, IEspDFULookupFileResponse &resp);
+    virtual bool onDFUCreateFile(IEspContext &context, IEspDFUCreateFileRequest &req, IEspDFUCreateFileResponse &resp);
+    virtual bool onDFUPublishFile(IEspContext &context, IEspDFUPublishFileRequest &req, IEspDFUPublishFileResponse &resp);
 
 private:
     const char* getPrefixFromLogicalName(const char* logicalName, StringBuffer& prefix);
@@ -238,8 +241,9 @@ private:
         unsigned __int64 fieldMask, StringArray &fieldNames);
     void parseFieldMask(unsigned __int64 fieldMask, unsigned &fieldCount, IntArray &fieldIndexArray);
     void getFilePartsInfo(IEspContext &context, IFileDescriptor *fdesc, unsigned numParts, bool forFileCreate, IEspDFUFileAccessInfo &accessInfo);
-    void getFileDafilesrvConfiguration(StringBuffer &keyPairName, unsigned &port, bool &secure, IDistributedFile &file);
-    void getFileDafilesrvConfiguration(StringBuffer &keyPairName, unsigned &retPort, bool &retSecure, const char *cluster);
+    void getFileDafilesrvConfiguration(StringBuffer &keyPairName, unsigned &port, bool &secure, const char *fileName, IFileDescriptor &fileDesc);
+    void getFileDafilesrvConfiguration(StringBuffer &keyPairName, unsigned &retPort, bool &retSecure, const char *group);
+    StringBuffer &getDFUFileMeta(StringBuffer &metaInfoBlob, IFileDescriptor *fileDesc, const char *fileName, const char *requestId, const char *accessType, unsigned expirySecs, IUserDescriptor *userDesc);
     void getFileMeta(StringBuffer &metaInfo, StringBuffer &expiryTime, const char *fileName, IFileDescriptor *fDesc, IUserDescriptor *user, const char *jobID, const char *keyPairName, IConstDFUFileAccessRequestBase &req);
     void getFileAccess(IEspContext &context, IUserDescriptor *udesc, SecAccessFlags accessType, IConstDFUFileAccessRequestBase &req, IEspDFUFileAccessInfo &accessInfo);
     IGroup *getDFUFileIGroup(const char *clusterName, ClusterType clusterType, const char *clusterTypeEx, StringArray &locations, StringBuffer &groupName);

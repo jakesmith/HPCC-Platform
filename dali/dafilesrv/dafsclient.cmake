@@ -1,5 +1,5 @@
 ################################################################################
-#    HPCC SYSTEMS software Copyright (C) 2012 HPCC Systems®.
+#    HPCC SYSTEMS software Copyright (C) 2019 HPCC Systems®.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -15,41 +15,46 @@
 ################################################################################
 
 
-# Component: environment 
+# Component: dafsclient 
 #####################################################
 # Description:
 # ------------
-#    Cmake Input File for environment
+#    Cmake Input File for dafsclient
 #####################################################
 
-project( environment ) 
+project( dafsclient ) 
 
 set (    SRCS 
-         dalienv.cpp 
-         environment.cpp 
+         dafsclient.cpp
     )
 
-set (    INCLUDES
-         dalienv.hpp 
-         environment.hpp 
-    )
-
-include_directories ( 
-         ${HPCC_SOURCE_DIR}/system/mp 
+include_directories (
          ${HPCC_SOURCE_DIR}/system/include 
-         ${HPCC_SOURCE_DIR}/dali/base 
-         ${HPCC_SOURCE_DIR}/dali/dafsclient 
-         ${HPCC_SOURCE_DIR}/system/jlib
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl
+         ${HPCC_SOURCE_DIR}/system/security/securesocket
+         ${HPCC_SOURCE_DIR}/system/security/cryptohelper
+         ${HPCC_SOURCE_DIR}/testing/unittests
+         ${HPCC_SOURCE_DIR}/rtl/include
          ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/common/remote
+         ${HPCC_SOURCE_DIR}/dali/base 
     )
 
-ADD_DEFINITIONS( -D_USRDLL -DENVIRONMENT_EXPORTS )
-HPCC_ADD_LIBRARY( environment SHARED ${SRCS} ${INCLUDES} )
-install ( TARGETS environment RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
-target_link_libraries ( environment 
-         jlib 
-         mp 
-         dalibase 
-         dafsclient
+ADD_DEFINITIONS( -D_USRDLL -DREMOTE_EXPORTS )
+
+HPCC_ADD_LIBRARY( dafsclient SHARED ${SRCS}  )
+install ( TARGETS dafsclient RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
+
+target_link_libraries ( dafsclient 
+    eclrtl
+    jlib
+    dalibase
+    ${CPPUNIT_LIBRARIES}
     )
 
+IF (USE_OPENSSL)
+    target_link_libraries ( dafsclient 
+    	securesocket
+    )
+ENDIF()

@@ -31,7 +31,6 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../../common/remote 
          ./../../system/mp 
          ./../base 
          ./../../system/include 
@@ -50,7 +49,6 @@ target_link_libraries ( dfuwu
          jlib
          mp 
          hrpc 
-         remote 
          dalibase 
     )
 

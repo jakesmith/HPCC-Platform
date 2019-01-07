@@ -18,10 +18,10 @@
 #ifndef RMTSPAWN_HPP
 #define RMTSPAWN_HPP
 
-#ifdef REMOTE_EXPORTS
-#define REMOTE_API DECL_EXPORT
+#ifdef DAFSCLIENT_EXPORTS
+#define DAFSCLIENT_API DECL_EXPORT
 #else
-#define REMOTE_API DECL_IMPORT
+#define DAFSCLIENT_API DECL_IMPORT
 #endif
 
 #define SLAVE_LISTEN_FOR_MASTER_TIMEOUT             5 * 60 * 1000           // 2 minutes
@@ -38,15 +38,15 @@ enum SpawnKind
 
 interface IAbortRequestCallback;
 
-extern REMOTE_API ISocket * spawnRemoteChild(SpawnKind kind, const char * exe, const SocketEndpoint & remoteEP, unsigned version, const char *logdir, IAbortRequestCallback * abort = NULL, const char *extra=NULL);
-extern REMOTE_API void setRemoteSpawnSSH(
+extern DAFSCLIENT_API ISocket * spawnRemoteChild(SpawnKind kind, const char * exe, const SocketEndpoint & remoteEP, unsigned version, const char *logdir, IAbortRequestCallback * abort = NULL, const char *extra=NULL);
+extern DAFSCLIENT_API void setRemoteSpawnSSH(
                 const char *identfilename,
                 const char *username, // if NULL then disable SSH
                 const char *passwordenc,
                 unsigned timeout,
                 unsigned retries,
                 const char *exeprefix);
-extern REMOTE_API void getRemoteSpawnSSH(
+extern DAFSCLIENT_API void getRemoteSpawnSSH(
                 StringAttr &identfilename,
                 StringAttr &username, // if isEmpty then disable SSH
                 StringAttr &passwordenc,
@@ -54,7 +54,7 @@ extern REMOTE_API void getRemoteSpawnSSH(
                 unsigned &retries,
                 StringAttr &exeprefix);
 
-class REMOTE_API CRemoteParentInfo
+class DAFSCLIENT_API CRemoteParentInfo
 {
 public:
     CRemoteParentInfo();
@@ -73,7 +73,7 @@ public:
 };
 
 
-class REMOTE_API CRemoteSlave
+class DAFSCLIENT_API CRemoteSlave
 {
 public:
     CRemoteSlave(const char * name, unsigned _tag, unsigned _version, bool _stayAlive);
@@ -92,10 +92,10 @@ protected:
 };
 
 
-//extern REMOTE_API void checkForRemoteAbort(ICommunicator * communicator, mptag_t tag);
-//extern REMOTE_API void sendRemoteAbort(INode * node, mptag_t tag);
-extern REMOTE_API void checkForRemoteAbort(ISocket * socket);
-extern REMOTE_API bool sendRemoteAbort(ISocket * socket);
+//extern DAFSCLIENT_API void checkForRemoteAbort(ICommunicator * communicator, mptag_t tag);
+//extern DAFSCLIENT_API void sendRemoteAbort(INode * node, mptag_t tag);
+extern DAFSCLIENT_API void checkForRemoteAbort(ISocket * socket);
+extern DAFSCLIENT_API bool sendRemoteAbort(ISocket * socket);
 
 
 #endif

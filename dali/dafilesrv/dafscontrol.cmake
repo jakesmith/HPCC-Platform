@@ -30,13 +30,13 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../../system/hrpc 
-         ./../../common/remote 
-         ./../../system/mp 
-         ./../../system/include 
-         ./../../dali/base 
-         ./../../system/jlib 
-         ./../../common/environment 
+         ${HPCC_SOURCE_DIR}/system/hrpc 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/common/environment 
     )
 
 HPCC_ADD_EXECUTABLE ( dafscontrol ${SRCS} )
@@ -46,7 +46,7 @@ target_link_libraries ( dafscontrol
          jlib
          mp 
          hrpc 
-         remote 
+         dafsclient 
          dalibase 
          environment 
     )

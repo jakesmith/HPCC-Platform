@@ -34,6 +34,7 @@ include_directories (
          ${HPCC_SOURCE_DIR}/system/jlib
          ${HPCC_SOURCE_DIR}/system/include
          ${HPCC_SOURCE_DIR}/rtl/include
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
     )

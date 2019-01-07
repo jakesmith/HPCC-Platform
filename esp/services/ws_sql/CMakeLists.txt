@@ -81,9 +81,9 @@ if(WSSQL_SERVICE)
         ${HPCC_SOURCE_DIR}/system/security/LdapSecurity
         ${HPCC_SOURCE_DIR}/system/mp
         ${HPCC_SOURCE_DIR}/dali/dfu
-        ${HPCC_SOURCE_DIR}/dali/base/
+        ${HPCC_SOURCE_DIR}/dali/base
+        ${HPCC_SOURCE_DIR}/dali/dafsclient
         ${HPCC_SOURCE_DIR}/common/workunit
-        ${HPCC_SOURCE_DIR}/common/remote
         ${HPCC_SOURCE_DIR}/common/environment
         ${HPCC_SOURCE_DIR}/common/wuwebview
         ${HPCC_SOURCE_DIR}/common/fileview2

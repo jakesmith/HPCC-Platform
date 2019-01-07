@@ -27,14 +27,6 @@
 #define REMOTE_API DECL_IMPORT
 #endif
 
-
-enum ThrottleClass
-{
-    ThrottleStd,
-    ThrottleSlow,
-    ThrottleClassMax
-};
-
 // RemoteFileServer throttling defaults
 #define DEFAULT_THREADLIMIT 100
 #define DEFAULT_THREADLIMITDELAYMS (60*1000)
@@ -78,64 +70,9 @@ interface IRemoteRowServer : extends IInterface
     virtual StringBuffer &getStats(StringBuffer &stats, bool reset) = 0;
 };
 
-#define FILESRV_VERSION 24 // don't forget VERSTRING in sockfile.cpp
-
-interface IKeyManager;
-interface IDelayedFile;
-
-extern REMOTE_API IFile * createRemoteFile(SocketEndpoint &ep,const char * _filename);
-extern REMOTE_API unsigned getRemoteVersion(ISocket * _socket, StringBuffer &ver);
-extern REMOTE_API unsigned stopRemoteServer(ISocket * _socket);
 extern REMOTE_API const char *remoteServerVersionString();
 extern REMOTE_API IRemoteFileServer * createRemoteFileServer(unsigned maxThreads=DEFAULT_THREADLIMIT, unsigned maxThreadsDelayMs=DEFAULT_THREADLIMITDELAYMS, unsigned maxAsyncCopy=DEFAULT_ASYNCCOPYMAX, IPropertyTree *keyPairInfo=nullptr);
-extern REMOTE_API int setDafsTrace(ISocket * socket,byte flags);
-extern REMOTE_API int setDafsThrottleLimit(ISocket * socket, ThrottleClass throttleClass, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit, unsigned queueLimit, StringBuffer *errMsg=NULL);
 extern REMOTE_API bool enableDafsAuthentication(bool on);
-extern REMOTE_API void remoteExtractBlobElements(const SocketEndpoint &ep, const char * prefix, const char * filename, ExtractedBlobArray & extracted);
-extern REMOTE_API int getDafsInfo(ISocket * socket, unsigned level, StringBuffer &retstr);
-extern REMOTE_API void setDafsEndpointPort(SocketEndpoint &ep);
-extern REMOTE_API void setDafsLocalMountRedirect(const IpAddress &ip,const char *dir,const char *mountdir);
-extern REMOTE_API ISocket *connectDafs(SocketEndpoint &ep, unsigned timeoutms); // NOTE: might alter ep.port if configured for multiple ports ...
-extern REMOTE_API ISocket *checkSocketSecure(ISocket *socket);
 
-
-extern REMOTE_API void setRemoteOutputCompressionDefault(const char *type);
-extern REMOTE_API const char *queryOutputCompressionDefault();
-
-interface IOutputMetaData;
-class RowFilter;
-interface IRemoteFileIO : extends IFileIO
-{
-    virtual void addVirtualFieldMapping(const char *fieldName, const char *fieldValue) = 0;
-    virtual void ensureAvailable() = 0;
-};
-extern REMOTE_API IRemoteFileIO *createRemoteFilteredFile(SocketEndpoint &ep, const char * filename, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, bool compressed, bool grouped, unsigned __int64 chooseNLimit);
-
-interface IIndexLookup;
-extern REMOTE_API IIndexLookup *createRemoteFilteredKey(SocketEndpoint &ep, const char * filename, unsigned crc, IOutputMetaData *actual, IOutputMetaData *projected, const RowFilter &fieldFilters, unsigned __int64 chooseNLimit);
-
-
-// client only
-extern void clientSetDaliServixSocketCaching(bool set);
-extern void clientDisconnectRemoteFile(IFile *file);
-extern void clientDisconnectRemoteIoOnExit(IFileIO *fileio,bool set);
-
-extern bool clientResetFilename(IFile *file, const char *newname); // returns false if not remote
-
-extern bool clientAsyncCopyFileSection(const char *uuid,    // from genUUID - must be same for subsequent calls
-                        IFile *from,                        // expected to be remote
-                        RemoteFilename &to,
-                        offset_t toofs,                     // (offset_t)-1 created file and copies to start
-                        offset_t fromofs,
-                        offset_t size,                      // (offset_t)-1 for all file
-                        ICopyFileProgress *progress,
-                        unsigned timeout                    // 0 to start, non-zero to wait
-                        ); // returns true when done
-
-extern void clientSetRemoteFileTimeouts(unsigned maxconnecttime,unsigned maxreadtime);
-extern void clientAddSocketToCache(SocketEndpoint &ep,ISocket *socket);
-
-typedef unsigned char RemoteFileCommandType;
-extern REMOTE_API RemoteFileCommandType queryRemoteStreamCmd(); // used by testsocket only
 
 #endif

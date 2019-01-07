@@ -26,7 +26,6 @@
 #include "jptree.hpp"
 #include "jlzw.hpp"
 #include "dafdesc.hpp"
-#include "rmtfile.hpp"
 #include "dautils.hpp"
 #include "dasds.hpp"
 
@@ -1214,6 +1213,13 @@ class CFileDescriptor:  public CFileDescriptorBase, implements ISuperFileDescrip
         return NULL;
     }
 
+    IClusterInfo *queryClusterByNum(unsigned c)
+    {
+        if (c >= clusters.ordinality())
+            return nullptr;
+        return &clusters.item(c);
+    }
+
     void replaceClusterDir(unsigned partno,unsigned copy, StringBuffer &path)
     {
         // assumes default dir matches one of clusters
@@ -2136,6 +2142,18 @@ ISuperFileDescriptor *createSuperFileDescriptor(IPropertyTree *tree)
 IFileDescriptor *createFileDescriptor()
 {
     return new CFileDescriptor(NULL,NULL,0);
+}
+
+static const unsigned DAFS_OSwindows = 1;
+static const unsigned DAFS_OSlinux = 2;
+static const unsigned DAFS_OSsolaris = 3;
+unsigned getDaliServixOs(SocketEndpoint &ep)
+{
+    return 0;
+}
+unsigned getDaliServixPort()
+{
+    return 0;
 }
 
 static IFileDescriptor *_createExternalFileDescriptor(const char *_logicalname, bool lookup)

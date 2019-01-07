@@ -27,6 +27,8 @@
 #include "dafdesc.hpp"
 #include "rtlkey.hpp"
 #include "eclhelper.hpp" // tmp for IHThor..Arg interfaces.
+#include "remote.hpp"
+#include "dafsclient.hpp"
 
 #include "thbufdef.hpp"
 #include "thormisc.hpp"
@@ -363,37 +365,90 @@ void CDiskWriteSlaveActivityBase::open()
     if (diskHelperBase->getFlags() & TDXtemporary)
         twFlags |= TW_Temporary;
 
-    Owned<IFileIO> partOutputIO = createMultipleWrite(this, *partDesc, diskRowMinSz, twFlags, compress, ecomp, this, &abortSoon, (external&&!query) ? &tempExternalName : NULL);
+    if (!wantRaw() && (0 == (diskHelperBase->getFlags() & TDWextend)))
+    {
+        IOutputMetaData *expectedFormat = diskHelperBase->queryDiskRecordSize();
+        IOutputMetaData *actualFormat = expectedFormat;
+        bool canSerializeTypeInfo = actualFormat->queryTypeInfo()->canSerialize();
 
-    {
-        CriticalBlock block(statsCs);
-        outputIO.setown(partOutputIO.getClear());
-    }
+        if (canSerializeTypeInfo)
+        {
+            RemoteFilename rfn;
+            partDesc->getFilename(0, rfn);
+            StringBuffer localPath;
+            if (isRemoteReadCandidate(*this, rfn, localPath))
+            {
+                // Open a stream from remote file, having passed actual, expected, projected, and filters to it
+                SocketEndpoint ep(rfn.queryEndpoint());
+                setDafsEndpointPort(ep);
 
-    if (compress)
-    {
-        ActPrintLog("Performing compression on output file: %s", fName.get());
-        // NB: block compressed output has implicit crc of 0, no need to calculate in row  writer.
-        calcFileCrc = false;
+                size32_t recordSize = 0;
+                unsigned compMethod = 0; // none
+                if (compress)
+                {
+                    compMethod = COMPRESS_METHOD_LZW;
+                    // rowdif used if recordSize > 0, else fallback to compMethod
+                    if (!ecomp)
+                    {
+                        if (twFlags & TW_Temporary)
+                        {
+                            // if temp file then can use newer compressor
+                            StringBuffer compType;
+                            getOpt(THOROPT_COMPRESS_SPILL_TYPE, compType);
+                            compMethod = translateToCompMethod(compType);
+                        }
+                        // force
+                        if (getOptBool(THOROPT_COMP_FORCELZW, false))
+                        {
+                            recordSize = 0; // by default if fixed length (recordSize set), row diff compression is used. This forces compMethod.
+                            compMethod = COMPRESS_METHOD_LZW;
+                        }
+                        else if (getOptBool(THOROPT_COMP_FORCEFLZ, false))
+                            compMethod = COMPRESS_METHOD_FASTLZ;
+                        else if (getOptBool(THOROPT_COMP_FORCELZ4, false))
+                            compMethod = COMPRESS_METHOD_LZ4;
+                    }
+                }
+                out.setown(createRemoteFlatFileWriter(ep, localPath, actualFormat, compMethod, grouped));
+            }
+        }
     }
-    Owned<IFileIOStream> stream;
-    if (wantRaw())
+    if (!out)
     {
-        outraw.setown(createBufferedIOStream(outputIO));
-        stream.set(outraw);
+        Owned<IFileIO> partOutputIO = createMultipleWrite(this, *partDesc, diskRowMinSz, twFlags, compress, ecomp, this, &abortSoon, (external&&!query) ? &tempExternalName : NULL);
+
+        {
+            CriticalBlock block(statsCs);
+            outputIO.setown(partOutputIO.getClear());
+        }
+
+        if (compress)
+        {
+            ActPrintLog("Performing compression on output file: %s", fName.get());
+            // NB: block compressed output has implicit crc of 0, no need to calculate in row  writer.
+            calcFileCrc = false;
+        }
+        Owned<IFileIOStream> stream;
+        if (wantRaw())
+        {
+            outraw.setown(createBufferedIOStream(outputIO));
+            stream.set(outraw);
+        }
+        else
+        {
+            stream.setown(createIOStream(outputIO));
+            unsigned rwFlags = 0;
+            if (grouped)
+                rwFlags |= rw_grouped;
+            if (calcFileCrc)
+                rwFlags |= rw_crc;
+
+            extOut.setown(createRowWriter(stream, ::queryRowInterfaces(input), rwFlags));
+            out.set(extOut);
+        }
+        if (extend || (external && !query))
+            stream->seek(0,IFSend);
     }
-    else
-    {
-        stream.setown(createIOStream(outputIO));
-        unsigned rwFlags = 0;
-        if (grouped)
-            rwFlags |= rw_grouped;
-        if (calcFileCrc)
-            rwFlags |= rw_crc;
-        out.setown(createRowWriter(stream, ::queryRowInterfaces(input), rwFlags));
-    }
-    if (extend || (external && !query))
-        stream->seek(0,IFSend);
     ActPrintLog("Created output stream for %s, calcFileCrc=%s", fName.get(), calcFileCrc?"true":"false");
 }
 
@@ -411,20 +466,30 @@ void CDiskWriteSlaveActivityBase::close()
 {
     try
     {
-        if (out) {
-            uncompressedBytesWritten = out->getPosition();
-            if (calcFileCrc) {
-                if (diskHelperBase->getFlags() & TDWextend) {
-                    assertex(!"TBD need to merge CRC");
-                }   
-                else
-                    out->flush(&fileCRC);
+        if (out)
+        {
+            if (extOut)
+            {
+                uncompressedBytesWritten = extOut->getPosition();
+                if (calcFileCrc)
+                {
+                    if (diskHelperBase->getFlags() & TDWextend)
+                    {
+                        assertex(!"TBD need to merge CRC");
+                    }
+                    else if (!abortSoon)
+                        extOut->flush(&fileCRC);
+                }
+                else if (!abortSoon)
+                    out->flush();
+                extOut.clear();
             }
             else if (!abortSoon)
                 out->flush();
             out.clear();
         }
-        else if (outraw) {
+        else if (outraw)
+        {
             outraw->flush();
             uncompressedBytesWritten = outraw->tell();
             outraw.clear();

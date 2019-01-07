@@ -752,7 +752,7 @@ IFileIO *createMultipleWrite(CActivityBase *activity, IPartDescriptor &partDesc,
                 // if temp file then can use newer compressor
                 StringBuffer compType;
                 activity->getOpt(THOROPT_COMPRESS_SPILL_TYPE, compType);
-                compMethod = getCompMethod(compType);
+                compMethod = translateToCompMethod(compType);
             }
             // force
             if (activity->getOptBool(THOROPT_COMP_FORCELZW, false))

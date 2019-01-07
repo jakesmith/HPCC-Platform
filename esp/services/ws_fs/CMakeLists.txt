@@ -38,27 +38,27 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../../../dali/dfu 
-         ./../../../system/mp 
-         ./../../platform 
-         ./../../../dali/sasha 
-         ./../../../system/jlib 
-         ./../../../common/environment 
-         ./../../../dali/ft 
-         ./../common 
-         ./../../../esp/bindings/http/platform 
-         ./../../../system/security/securesocket 
-         ./../../../system/security/shared 
-         ./../../../system/include 
-         ./../../../system/xmllib
-         ./../../clients 
-         ./../../../esp/esplib 
-         ./../../../dali/base 
-         ./../../bindings 
-         ./../../smc/SMCLib 
-         ./../../bindings/SOAP/xpp 
-         ./../../../common/remote 
-         ./../../../common/workunit
+         ${HPCC_SOURCE_DIR}/dali/dfu 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/dali/sasha 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/common/environment 
+         ${HPCC_SOURCE_DIR}/dali/ft 
+         ${HPCC_SOURCE_DIR}/esp/services/common 
+         ${HPCC_SOURCE_DIR}/system/security/securesocket 
+         ${HPCC_SOURCE_DIR}/system/security/shared 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/xmllib
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/esp/bindings 
+         ${HPCC_SOURCE_DIR}/common/workunit
+         ${HPCC_SOURCE_DIR}/esp/bindings/http/platform 
+         ${HPCC_SOURCE_DIR}/esp/smc/SMCLib 
+         ${HPCC_SOURCE_DIR}/esp/esplib 
+         ${HPCC_SOURCE_DIR}/esp/platform 
+         ${HPCC_SOURCE_DIR}/esp/clients 
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp 
     )
 
 ADD_DEFINITIONS( -D_USRDLL )

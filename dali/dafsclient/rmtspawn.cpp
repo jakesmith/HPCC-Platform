@@ -21,7 +21,7 @@
 #include "portlist.h"
 
 
-#include "remoteerr.hpp"
+#include "dafscommon.hpp"
 
 #include "rmtspawn.hpp"
 #include "rmtssh.hpp"

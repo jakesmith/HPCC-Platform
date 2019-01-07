@@ -19,11 +19,11 @@
 #include "jfile.hpp"
 #include "jtime.hpp"
 #include "jsort.hpp"
-#include "sockfile.hpp"
 
 #include "rtlkey.hpp"
 #include "jhtree.hpp"
 #include "rmtfile.hpp"
+#include "remote.hpp"
 
 #include "thorstep.ipp"
 

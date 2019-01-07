@@ -18,13 +18,14 @@
 #ifndef RMTPASS_HPP
 #define RMTPASS_HPP
 
-#ifdef REMOTE_EXPORTS
-#define REMOTE_API DECL_EXPORT
+#ifdef DAFSCLIENT_EXPORTS
+#define DAFSCLIENT_API DECL_EXPORT
 #else
-#define REMOTE_API DECL_IMPORT
+#define DAFSCLIENT_API DECL_IMPORT
 #endif
 
-class REMOTE_API CachedPassword : public CInterface
+
+class DAFSCLIENT_API CachedPassword : public CInterface
 {
 public:
     void deserialize(MemoryBuffer & in)     { ip.ipdeserialize(in); in.read(password).read(username); }
@@ -38,7 +39,7 @@ public:
 
 
 class RemoteFilename;
-class REMOTE_API CachedPasswordProvider : public CInterface, implements IPasswordProvider
+class DAFSCLIENT_API CachedPasswordProvider : public CInterface, implements IPasswordProvider
 {
 public:
     IMPLEMENT_IINTERFACE

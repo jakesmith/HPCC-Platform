@@ -37,24 +37,24 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../.. 
-         ./../../../system/mp 
-         ./../../../system/jlib 
-         ./../../services 
-         ./../../../system/xmllib 
-         ./../../../system/security/securesocket 
-         ./../../../system/security/shared   
-         ./../../../system/include 
-         ./../../../common/remote 
-         ./../../../common/environment
-         ./../../../common/roxiecommlib
-         ./../../../common/workunit
-         ./../../clients 
-         ./../../../dali/base 
-         ./../../bindings 
-         ./../../bindings/SOAP/xpp 
-         ./../../../esp/platform 
-         ./../../smc/SMCLib 
+         ${HPCC_SOURCE_DIR}/esp
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/esp/services 
+         ${HPCC_SOURCE_DIR}/system/xmllib 
+         ${HPCC_SOURCE_DIR}/system/security/securesocket 
+         ${HPCC_SOURCE_DIR}/system/security/shared   
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/common/environment
+         ${HPCC_SOURCE_DIR}/common/roxiecommlib
+         ${HPCC_SOURCE_DIR}/common/workunit
+         ${HPCC_SOURCE_DIR}/esp/clients 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/esp/bindings 
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp 
+         ${HPCC_SOURCE_DIR}/esp/platform 
+         ${HPCC_SOURCE_DIR}/esp/smc/SMCLib 
     )
 
 ADD_DEFINITIONS( -D_USRDLL )
@@ -69,7 +69,7 @@ target_link_libraries ( ws_machine
          esphttp 
          mp 
          hrpc 
-         remote 
+         dafsclient 
          dalibase 
          environment 
          workunit

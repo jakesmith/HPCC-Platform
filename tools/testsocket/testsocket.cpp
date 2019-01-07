@@ -26,7 +26,7 @@
 #include "jthread.hpp"
 #include "jfile.hpp"
 #include "securesocket.hpp"
-#include "sockfile.hpp"
+#include "remote.hpp"
 
 bool abortEarly = false;
 bool forceHTTP = false;

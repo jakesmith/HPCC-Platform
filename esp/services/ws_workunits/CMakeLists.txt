@@ -47,41 +47,41 @@ set (    SRCS
 include_directories (
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
-         ./../../esplib
-         ./../../../system/mp
-         ./../../platform
-         ./../../../dali/dfu
-         ./../../../dali/sasha
-         ./../../../common/remote
-         ./../../../system/jlib
-         ./../../../common/environment
-         ./../../../rtl/eclrtl
-         ./../../../roxie/roxie
-         ./../../services
-         ./../common
-         ./../../../system/xmllib
-         ./../../../common/deftype
-         ./../../../ecl/hql
-         ./../../../system/security/securesocket
-         ./../../../system/security/shared
-         ./../../../system/security/LdapSecurity
-         ./../../../system/include
-         ./../../../common/thorhelper
-         ./../../../common/workunit
-         ./../../../common/wuwebview
-         ./../../../ecl/schedulectrl
-         ./../../clients
-         ./../../../common/fileview2
-         ./../../../dali/base
-         ./../../../system/security/zcrypt
-         ./../../../rtl/include
-         ./../../../common/dllserver
-         ./../../bindings
-         ./../../bindings/http/client
-         ./../../smc/SMCLib
-         ./../../bindings/SOAP/xpp
+         ${HPCC_SOURCE_DIR}/esp/esplib
+         ${HPCC_SOURCE_DIR}/system/mp
+         ${HPCC_SOURCE_DIR}/esp/platform
          ${HPCC_SOURCE_DIR}/dali/dfu
-         ./../../../testing/unittests
+         ${HPCC_SOURCE_DIR}/dali/sasha
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
+         ${HPCC_SOURCE_DIR}/system/jlib
+         ${HPCC_SOURCE_DIR}/common/environment
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl
+         ${HPCC_SOURCE_DIR}/roxie/roxie
+         ${HPCC_SOURCE_DIR}/esp/services
+         ${HPCC_SOURCE_DIR}/esp/common
+         ${HPCC_SOURCE_DIR}/system/xmllib
+         ${HPCC_SOURCE_DIR}/common/deftype
+         ${HPCC_SOURCE_DIR}/ecl/hql
+         ${HPCC_SOURCE_DIR}/system/security/securesocket
+         ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/system/security/LdapSecurity
+         ${HPCC_SOURCE_DIR}/system/include
+         ${HPCC_SOURCE_DIR}/common/thorhelper
+         ${HPCC_SOURCE_DIR}/common/workunit
+         ${HPCC_SOURCE_DIR}/common/wuwebview
+         ${HPCC_SOURCE_DIR}/ecl/schedulectrl
+         ${HPCC_SOURCE_DIR}/esp/clients
+         ${HPCC_SOURCE_DIR}/common/fileview2
+         ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/system/security/zcrypt
+         ${HPCC_SOURCE_DIR}/rtl/include
+         ${HPCC_SOURCE_DIR}/common/dllserver
+         ${HPCC_SOURCE_DIR}/esp/bindings
+         ${HPCC_SOURCE_DIR}/esp/bindings/http/client
+         ${HPCC_SOURCE_DIR}/esp/smc/SMCLib
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp
+         ${HPCC_SOURCE_DIR}/dali/dfu
+         ${HPCC_SOURCE_DIR}/testing/unittests
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DWS_WORKUNITS_EXPORTS )
@@ -93,7 +93,7 @@ target_link_libraries ( ws_workunits
          jlib
          mp
          hrpc
-         remote
+         dafsclient
          xmllib
          esphttp
          dalibase

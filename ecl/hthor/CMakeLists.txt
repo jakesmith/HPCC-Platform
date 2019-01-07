@@ -45,7 +45,6 @@ set (    INCLUDES
 
 include_directories (
          .
-         ${HPCC_SOURCE_DIR}/common/remote
          ${HPCC_SOURCE_DIR}/system/jhtree
          ${HPCC_SOURCE_DIR}/system/hrpc
          ${HPCC_SOURCE_DIR}/system/mp
@@ -53,6 +52,7 @@ include_directories (
          ${HPCC_SOURCE_DIR}/common/deftype
          ${HPCC_SOURCE_DIR}/system/include
          ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
          ${HPCC_SOURCE_DIR}/rtl/include
          ${HPCC_SOURCE_DIR}/ecl/eclagent
          ${HPCC_SOURCE_DIR}/system/jlib
@@ -79,7 +79,7 @@ target_link_libraries ( hthor
          jlib
          mp
          hrpc
-         remote
+         dafsclient
          dalibase
          environment
          dllserver

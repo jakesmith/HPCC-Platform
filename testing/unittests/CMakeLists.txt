@@ -40,17 +40,17 @@ set (    SRCS
 
 include_directories (
          .
-         ./../../system/include
-         ./../../system/jlib
-         ./../../system/mp
-         ./../../system/libbase58
-         ./../../common/remote
-         ./../../common/thorhelper
-         ./../../dali/base
-         ./../../system/security/shared
-         ./../../common/deftype
-         ./../../system/security/cryptohelper
-         ./../../configuration/configmgr/configmgrlib
+         ${HPCC_SOURCE_DIR}/system/include
+         ${HPCC_SOURCE_DIR}/system/jlib
+         ${HPCC_SOURCE_DIR}/system/mp
+         ${HPCC_SOURCE_DIR}/system/libbase58
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
+         ${HPCC_SOURCE_DIR}/common/thorhelper
+         ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/common/deftype
+         ${HPCC_SOURCE_DIR}/system/security/cryptohelper
+         ${HPCC_SOURCE_DIR}/configuration/configmgr/configmgrlib
          ${HPCC_SOURCE_DIR}/configuration/configmgr/RapidJSON/include
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
@@ -63,7 +63,7 @@ HPCC_ADD_EXECUTABLE ( unittests ${SRCS} )
 install ( TARGETS unittests RUNTIME DESTINATION ${EXEC_DIR} )
 target_link_libraries ( unittests
          jlib
-         remote
+         dafsclient
          dalibase
          deftype
          libbase58

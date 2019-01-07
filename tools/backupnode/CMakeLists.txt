@@ -29,15 +29,15 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../../system/include 
-         ./../../system/jlib 
-         ./../../system/mp
-         ./../../common/remote
-         ./../../dali/base
-         ./../../system/jhtree
-         ./../../rtl/include
-         ./../../rtl/eclrtl
-         ./../../system/security/shared
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/system/mp
+         ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
+         ${HPCC_SOURCE_DIR}/system/jhtree
+         ${HPCC_SOURCE_DIR}/rtl/include
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl
+         ${HPCC_SOURCE_DIR}/system/security/shared
     )
 
 ADD_DEFINITIONS( -D_CONSOLE )
@@ -48,7 +48,7 @@ install ( TARGETS backupnode RUNTIME DESTINATION ${EXEC_DIR} )
 target_link_libraries (  backupnode 
          jlib
          jhtree
-         remote
+         dafsclient
          mp
          dalibase
     )

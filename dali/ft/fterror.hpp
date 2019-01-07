@@ -18,7 +18,7 @@
 #ifndef FTERROR_HPP
 #define FTERROR_HPP
 
-#include "remoteerr.hpp"
+#include "dafscommon.hpp"
 
 #define ERR_DFT_FIRST                           8050
 #define ERR_DFT_LAST                            8099

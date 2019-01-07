@@ -19,13 +19,13 @@
 #define RMTSSH_HPP
 
 #ifdef RMTSSH_LOCAL
-#define RMTSSH_API
+# define DAFSCLIENT_API
 #else
-#ifdef REMOTE_EXPORTS
-#define RMTSSH_API DECL_EXPORT
-#else
-#define RMTSSH_API DECL_IMPORT
-#endif
+# ifdef DAFSCLIENT_EXPORTS
+#  define DAFSCLIENT_API DECL_EXPORT
+# else
+#  define DAFSCLIENT_API DECL_IMPORT
+# endif
 #endif
 
 interface IFRunSSH: extends IInterface
@@ -49,7 +49,7 @@ interface IFRunSSH: extends IInterface
 };
 
 
-extern RMTSSH_API IFRunSSH *createFRunSSH();
+extern DAFSCLIENT_API IFRunSSH *createFRunSSH();
 
 
 #endif

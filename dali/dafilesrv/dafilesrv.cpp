@@ -37,7 +37,8 @@ static const bool defaultDedicatedRowServiceSSL = false;
 static const char* defaultRowSericeConfiguration = "RowSvc";
 
 
-#include "remoteerr.hpp"
+#include "dafscommon.hpp"
+#include "remote.hpp"
 #include "sockfile.hpp"
 
 void usage()

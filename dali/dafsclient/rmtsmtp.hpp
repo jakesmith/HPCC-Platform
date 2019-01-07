@@ -18,18 +18,19 @@
 #ifndef RMTSMTP_HPP
 #define RMTSMTP_HPP
 
+#ifdef DAFSCLIENT_EXPORTS
+#define DAFSCLIENT_API DECL_EXPORT
+#else
+#define DAFSCLIENT_API DECL_IMPORT
+#endif
+
 #include "jbuff.hpp"
 #include "jstring.hpp"
 
-#ifdef REMOTE_EXPORTS
-#define REMOTE_API DECL_EXPORT
-#else
-#define REMOTE_API DECL_IMPORT
-#endif
 
-extern REMOTE_API void sendEmail( const char * to, const char * subject, const char * body, const char * mailServer, unsigned port, const char * sender, StringArray *warnings=NULL);
-extern REMOTE_API void sendEmailAttachText(const char * to, const char * subject, const char * body, const char * attachment, const char * mimeType, const char * attachmentName, const char * mailServer, unsigned int port, const char * sender, StringArray *warnings=NULL);
-extern REMOTE_API void sendEmailAttachData(const char * to, const char * subject, const char * body, size32_t lenAttachment, const void * attachment, const char * mimeType, const char * attachmentName, const char * mailServer, unsigned int port, const char * sender, StringArray *warnings=NULL);
+extern DAFSCLIENT_API void sendEmail( const char * to, const char * subject, const char * body, const char * mailServer, unsigned port, const char * sender, StringArray *warnings=NULL);
+extern DAFSCLIENT_API void sendEmailAttachText(const char * to, const char * subject, const char * body, const char * attachment, const char * mimeType, const char * attachmentName, const char * mailServer, unsigned int port, const char * sender, StringArray *warnings=NULL);
+extern DAFSCLIENT_API void sendEmailAttachData(const char * to, const char * subject, const char * body, size32_t lenAttachment, const void * attachment, const char * mimeType, const char * attachmentName, const char * mailServer, unsigned int port, const char * sender, StringArray *warnings=NULL);
 
 
 #endif

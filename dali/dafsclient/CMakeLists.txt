@@ -1,5 +1,5 @@
 ################################################################################
-#    HPCC SYSTEMS software Copyright (C) 2012 HPCC Systems®.
+#    HPCC SYSTEMS software Copyright (C) 2019 HPCC Systems®.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -14,43 +14,51 @@
 #    limitations under the License.
 ################################################################################
 
-
-# Component: daliadmin 
+# Component: dafsclient 
 #####################################################
 # Description:
 # ------------
-#    Cmake Input File for daliadmin
+#    Cmake Input File for dafsclient
 #####################################################
 
-project( daliadmin ) 
+project( dafsclient ) 
 
 set (    SRCS 
-         daliadmin.cpp 
+         dafsclient.cpp 
+         remote.cpp
+         rmtfile.cpp
+         rmtpass.cpp
+         rmtsmtp.cpp
+         rmtspawn.cpp
+         rmtssh.cpp
     )
 
 include_directories ( 
-         ${HPCC_SOURCE_DIR}/common/remote 
-         ${HPCC_SOURCE_DIR}/dali/base 
-         ${HPCC_SOURCE_DIR}/dali/dafsclient 
-         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/system/hrpc 
          ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/jhtree
          ${HPCC_SOURCE_DIR}/system/jlib 
-         ${HPCC_SOURCE_DIR}/dali/ft 
-         ${HPCC_SOURCE_DIR}/common/workunit
-         ${HPCC_SOURCE_DIR}/common/dllserver
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl
+         ${HPCC_SOURCE_DIR}/rtl/include
          ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/system/security/securesocket
+         ${HPCC_SOURCE_DIR}/system/security/cryptohelper
+         ${CMAKE_BINARY_DIR}
+         ${CMAKE_BINARY_DIR}/oss
     )
 
-ADD_DEFINITIONS( -D_CONSOLE )
+ADD_DEFINITIONS( -D_USRDLL -DDAFSCLIENT_EXPORTS )
 
-HPCC_ADD_EXECUTABLE ( daliadmin ${SRCS} )
-install ( TARGETS daliadmin RUNTIME DESTINATION ${EXEC_DIR} )
-target_link_libraries ( daliadmin  
-         jlib
-         mp 
-         dafsclient 
-         dalibase 
-         workunit
-         dllserver
+HPCC_ADD_LIBRARY( dafsclient SHARED ${SRCS}  )
+install ( TARGETS dafsclient RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
+
+target_link_libraries ( dafsclient
+        jlib
+        mp
+        eclrtl
+        securesocket
+        dalibase
     )
 

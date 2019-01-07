@@ -36,24 +36,25 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../thorutil 
-         ./../../system/jhtree 
-         ./../../system/mp 
-         ./../../rtl/include 
-         ./../../common/workunit 
-         ./../shared 
-         ./../../common/deftype 
-         ./../../system/include 
-         ./../../dali/base 
-         ./../../rtl/include 
-         ./../../common/dllserver 
-         ./../../system/jlib 
-         ./../thorcodectx 
-         ./../mfilemanager 
-         ./../../rtl/eclrtl 
-         ./../../common/thorhelper 
-         ./../../roxie/roxiemem
-         ./../../system/security/shared
+         ${HPCC_SOURCE_DIR}/thorlcr/thorutil 
+         ${HPCC_SOURCE_DIR}/system/jhtree 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/rtl/include 
+         ${HPCC_SOURCE_DIR}/common/workunit 
+         ${HPCC_SOURCE_DIR}/thorlcr/shared 
+         ${HPCC_SOURCE_DIR}/common/deftype 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/rtl/include 
+         ${HPCC_SOURCE_DIR}/common/dllserver 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/thorlcr/thorcodectx 
+         ${HPCC_SOURCE_DIR}/thorlcr/mfilemanager 
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl 
+         ${HPCC_SOURCE_DIR}/common/thorhelper 
+         ${HPCC_SOURCE_DIR}/roxie/roxiemem
+         ${HPCC_SOURCE_DIR}/system/security/shared
     )
 
 HPCC_ADD_LIBRARY( graph_lcr SHARED ${SRCS} )
@@ -64,7 +65,6 @@ install ( TARGETS graph_lcr RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION 
 target_link_libraries ( graph_lcr 
          jlib
          jhtree 
-         remote 
          dalibase 
          environment 
          dllserver 

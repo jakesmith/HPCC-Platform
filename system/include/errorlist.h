@@ -82,7 +82,7 @@
 #define FILEVIEW_ERROR_START    6700
 #define FILEVIEW_ERROR_END      6749
 
-#define REMOTE_ERROR_START      8000    // dafilesrv etc - see common/remote/remoteerr.hpp
+#define REMOTE_ERROR_START      8000    // dafilesrv etc - see common/remote/dafscommon.hpp
 #define REMOTE_ERROR_END        8099
 
 #define JHTREE_ERROR_START      8500

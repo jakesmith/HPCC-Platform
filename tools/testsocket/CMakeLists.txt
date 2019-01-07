@@ -27,7 +27,7 @@ include_directories (
          ./../../system/jlib
          ./../../system/include 
          ./../../system/security/securesocket
-         ./../../common/remote
+         ./../../dali/dafsclient
     )
 
 ADD_DEFINITIONS( -D_CONSOLE )

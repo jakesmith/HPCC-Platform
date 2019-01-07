@@ -29,17 +29,17 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../../common/remote 
-         ./../server 
-         ./../../system/mp 
-         . 
-         ./../../system/include 
-         ./../../system/jlib 
-         ./../ft 
-         ./../../common/environment 
-         ./../dfuXRefLib
-         ./../base
-         ./../../system/security/shared
+         ${HPCC_SOURCE_DIR}/common/remote 
+         ${HPCC_SOURCE_DIR}rver 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/dali/ft 
+         ${HPCC_SOURCE_DIR}/common/environment 
+         ${HPCC_SOURCE_DIR}/dali/dfuXRefLib
+         ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
+         ${HPCC_SOURCE_DIR}/system/security/shared
     )
 
 ADD_DEFINITIONS ( -D_CONSOLE -DMAIN_DFUXREF )
@@ -50,7 +50,7 @@ target_link_libraries ( dfuxref
          jlib
          mp 
          hrpc 
-         remote 
+         dafsclient
          dalibase 
          environment 
          dfuXRefLib 

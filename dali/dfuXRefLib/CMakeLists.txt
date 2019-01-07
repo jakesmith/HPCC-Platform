@@ -34,18 +34,17 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../../esp/bindings/SOAP/xpp 
-         ./../../common/remote 
-         ./../server 
-         ./../../system/mp 
-         . 
-         ./../base 
-         ./../ft 
-         ./../../system/include 
-         ./../../system/jlib 
-         ./../../common/environment 
-         ./../../common/workunit
-         ./../../system/security/shared
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp 
+         ${HPCC_SOURCE_DIR}/dali/server 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/ft 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/common/environment 
+         ${HPCC_SOURCE_DIR}/common/workunit
+         ${HPCC_SOURCE_DIR}/system/security/shared
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DDFUXREFLIB_EXPORTS )
@@ -56,7 +55,7 @@ target_link_libraries ( dfuXRefLib
          jlib
          mp 
          hrpc 
-         remote 
+         dafsclient 
          dalibase 
          environment 
     )

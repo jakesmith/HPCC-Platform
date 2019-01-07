@@ -154,7 +154,7 @@ interface IConstEnvironment : extends IConstEnvBase
     virtual IConstDropZoneInfo * getDropZoneByAddressPath(const char * netaddress, const char *targetPath) const = 0;
     virtual IConstDropZoneInfoIterator * getDropZoneIterator() const = 0;
     virtual bool isDropZoneRestrictionEnabled() const = 0;
-    virtual const char *getClusterKeyPairName(const char *cluster) const = 0;
+    virtual const char *getClusterGroupKeyPairName(const char *cluster) const = 0;
     virtual const char *getPublicKeyPath(const char *keyPairName) const = 0;
     virtual const char *getPrivateKeyPath(const char *keyPairName) const = 0;
     virtual const char *getFileAccessUrl() const = 0;

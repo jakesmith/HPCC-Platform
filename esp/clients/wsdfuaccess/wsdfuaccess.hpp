@@ -28,13 +28,24 @@
 
 #endif
 
+#include "dafsclient.hpp"
 
 class StringBuffer;
+interface IUserDescriptor;
 
+using dafsclient::IDFUFileAccess;
+using dafsclient::DFUFileType;
 namespace wsdfuaccess
 {
 
-WSDFUACCESS_API bool getFileAccess(StringBuffer &metaInfo, const char *serviceUrl, const char *jobId, const char *logicalName, SecAccessFlags access, unsigned expirySecs, const char *user, const char *token);
+WSDFUACCESS_API IDFUFileAccess *lookupDFUFile(const char *logicalName, const char *requestId, unsigned expirySecs, const char *user, const char *password);
+WSDFUACCESS_API IDFUFileAccess *lookupDFUFile(const char *logicalName, const char *requestId, unsigned expirySecs, IUserDescriptor *userDesc);
+
+WSDFUACCESS_API IDFUFileAccess *createDFUFile(const char *logicalName, const char *cluster, DFUFileType type, const char *recDef, const char *requestId, unsigned expirySecs, const char *user, const char *password);
+WSDFUACCESS_API IDFUFileAccess *createDFUFile(const char *logicalName, const char *cluster, DFUFileType type, const char *recDef, const char *requestId, unsigned expirySecs, IUserDescriptor *userDesc);
+
+WSDFUACCESS_API void publishDFUFile(IDFUFileAccess *dfuFile, bool overwrite, IUserDescriptor *userDesc);
+WSDFUACCESS_API void publishDFUFile(IDFUFileAccess *dfuFile, bool overwrite, const char *user, const char *password);
 
 } // end of namespace wsdfuaccess
 

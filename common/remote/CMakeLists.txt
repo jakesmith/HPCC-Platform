@@ -27,20 +27,7 @@ project( remote )
 HPCC_ADD_SUBDIRECTORY(hooks)
 
 set (    SRCS 
-         rmtfile.cpp 
-         rmtpass.cpp 
-         rmtspawn.cpp 
-         rmtssh.cpp 
-         rmtsmtp.cpp 
          sockfile.cpp
-         
-         remoteerr.hpp
-         rmtfile.hpp
-         rmtpass.hpp
-         rmtsmtp.hpp
-         rmtspawn.hpp
-         rmtssh.hpp
-         sockfile.hpp
     )
 if (USE_URIPARSER)
   set ( SRCS
@@ -51,16 +38,19 @@ if (USE_URIPARSER)
 endif(USE_URIPARSER)
 
 include_directories (
-         ./../../system/hrpc 
-         ./../../system/mp 
-         ./../../system/include 
-         ./../../system/jlib 
-         ./../../system/jhtree
-         ./../../rtl/eclrtl
-         ./../../system/security/securesocket
-         ./../../system/security/cryptohelper
-         ./../../testing/unittests
-         ./../../rtl/include
+         ${HPCC_SOURCE_DIR}/system/hrpc 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/system/jhtree
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl
+         ${HPCC_SOURCE_DIR}/system/security/securesocket
+         ${HPCC_SOURCE_DIR}/system/security/cryptohelper
+         ${HPCC_SOURCE_DIR}/testing/unittests
+         ${HPCC_SOURCE_DIR}/rtl/include
+         ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DREMOTE_EXPORTS )
@@ -73,6 +63,8 @@ target_link_libraries ( remote
     jlib
     jhtree 
     mp
+    dalibase
+    dafsclient
     ${URIPARSER_LIBRARIES}
     ${CPPUNIT_LIBRARIES}
     )

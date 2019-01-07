@@ -35,29 +35,29 @@ set ( SRCS
 
 include_directories ( 
          .
-         ./../../common/environment
-         ./../../common/remote 
-         ./../../system/jhtree 
-         ./../../system/mp 
-         ./../../common/workunit 
-         ./../../esp/clients 
-         ./../../dali/ft 
-         ./../../system/security/shared 
-         ./../../esp/bindings/SOAP/xpp 
-         ./../../common/deftype 
-         ./../../system/include 
-         ./../../esp/bindings 
-         ./../../dali/base 
-         ./../../ecl/eclagent 
-         ./../../rtl/include 
-         ./../../system/xmllib 
-         ./../../esp/platform 
-         ./../../system/jlib 
-         ./../../common/thorhelper 
-         ./../../rtl/eclrtl 
-         ./../../dali/dfu 
-         ./../../dali/dfuplus
-         ./../../system/jlib
+         ${HPCC_SOURCE_DIR}/common/environment
+         ${HPCC_SOURCE_DIR}/system/jhtree 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/common/workunit 
+         ${HPCC_SOURCE_DIR}/esp/clients 
+         ${HPCC_SOURCE_DIR}/dali/ft 
+         ${HPCC_SOURCE_DIR}/system/security/shared 
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp 
+         ${HPCC_SOURCE_DIR}/common/deftype 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/esp/bindings 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/ecl/eclagent 
+         ${HPCC_SOURCE_DIR}/rtl/include 
+         ${HPCC_SOURCE_DIR}/system/xmllib 
+         ${HPCC_SOURCE_DIR}/esp/platform 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/common/thorhelper 
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl 
+         ${HPCC_SOURCE_DIR}/dali/dfu 
+         ${HPCC_SOURCE_DIR}/dali/dfuplus
+         ${HPCC_SOURCE_DIR}/system/jlib
             )
 
 ADD_DEFINITIONS( -D_USRDLL -DFILESERVICES_EXPORTS )
@@ -67,7 +67,7 @@ add_dependencies ( fileservices espscm )
 install ( TARGETS fileservices DESTINATION plugins )
 target_link_libraries ( fileservices
          jlib
-         remote 
+         dafsclient 
          dalibase 
          environment 
          esphttp

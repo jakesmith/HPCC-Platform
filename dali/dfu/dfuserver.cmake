@@ -33,19 +33,19 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../../common/remote 
-         ./../../system/mp 
-         ./../../system/jhtree 
-         ./../../rtl/eclrtl 
-         ./../../ecl/schedulectrl 
-         ./../../rtl/include 
-         ./../base 
-         ./../../system/include 
-         ./../../system/jlib 
-         ./../ft 
-         ./../../common/environment 
-         ./../../common/workunit
-         ./../../system/security/shared
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/system/jhtree 
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl 
+         ${HPCC_SOURCE_DIR}/ecl/schedulectrl 
+         ${HPCC_SOURCE_DIR}/rtl/include 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/dali/ft 
+         ${HPCC_SOURCE_DIR}/common/environment 
+         ${HPCC_SOURCE_DIR}/common/workunit
+         ${HPCC_SOURCE_DIR}/system/security/shared
     )
 
 HPCC_ADD_EXECUTABLE ( dfuserver ${SRCS} )
@@ -57,8 +57,8 @@ target_link_libraries ( dfuserver
          jlib
          mp 
          hrpc 
-         remote 
          dalibase 
+         dafsclient 
          environment 
          dllserver 
          nbcd 

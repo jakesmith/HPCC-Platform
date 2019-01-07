@@ -114,7 +114,7 @@ private:
     mutable Mutex safeCache;
     mutable bool dropZoneCacheBuilt;
     mutable bool machineCacheBuilt;
-    mutable bool clusterKeyNameCache;
+    mutable bool clusterGroupKeyNameCache;
     StringBuffer fileAccessUrl;
 
     struct KeyPairMapEntity
@@ -122,7 +122,7 @@ private:
         std::string publicKey, privateKey;
     };
     mutable std::unordered_map<std::string, KeyPairMapEntity> keyPairMap;
-    mutable std::unordered_map<std::string, std::string> keyClusterMap;
+    mutable std::unordered_map<std::string, std::string> keyGroupMap;
     StringBuffer xPath;
     mutable unsigned numOfMachines;
     mutable unsigned numOfDropZones;
@@ -137,9 +137,9 @@ private:
     mutable bool dropZoneRestrictionEnabled = true;
 
 
-    void ensureClusterKeyMap() const // keyPairMap and keyClusterMap it alters is mutable
+    void ensureClusterGroupKeyMap() const // keyPairMap and keyGroupMap it alters is mutable
     {
-        if (!clusterKeyNameCache)
+        if (!clusterGroupKeyNameCache)
         {
             StringBuffer keysDir;
             envGetConfigurationDirectory("keys",nullptr, nullptr, keysDir);
@@ -193,40 +193,40 @@ private:
             for (unsigned i=0; i<2; i++) // once for std. "ClusterGroup", 2nd time for legacy "Cluster"
             {
 #endif
-                Owned<IPropertyTreeIterator> clusterIter = p->getElements(groupKeysPath);
+                Owned<IPropertyTreeIterator> clusterGroupIter = p->getElements(groupKeysPath);
 
 #ifdef BKWRDCOMPAT_CLUSTER_VS_CLUSTERGROUP
-                if (clusterIter->first() && keyClusterMap.size()) // NB: always 0 1st time around.
+                if (clusterGroupIter->first() && keyGroupMap.size()) // NB: always 0 1st time around.
                 {
                     WARNLOG("Invalid configuration: mixed 'Keys/ClusterGroup' definitions and legacy 'Keys/Cluster' definitions found, legacy 'Keys/Cluster' definition will be ignored.");
                     break;
                 }
 #endif
-                ForEach(*clusterIter)
+                ForEach(*clusterGroupIter)
                 {
-                    IPropertyTree &cluster = clusterIter->query();
-                    const char *clusterName = cluster.queryProp("@name");
-                    if (isEmptyString(clusterName))
+                    IPropertyTree &clusterGroup = clusterGroupIter->query();
+                    const char *groupName = clusterGroup.queryProp("@name");
+                    if (isEmptyString(groupName))
                     {
                         WARNLOG("skipping %s entry with no name", groupKeysPath);
                         continue;
                     }
-                    if (cluster.hasProp("@keyPairName"))
+                    if (clusterGroup.hasProp("@keyPairName"))
                     {
-                        const char *keyPairName = cluster.queryProp("@keyPairName");
+                        const char *keyPairName = clusterGroup.queryProp("@keyPairName");
                         if (isEmptyString(keyPairName))
                         {
-                            WARNLOG("skipping invalid %s entry, name=%s", groupKeysPath, clusterName);
+                            WARNLOG("skipping invalid %s entry, name=%s", groupKeysPath, groupName);
                             continue;
                         }
-                        keyClusterMap[clusterName] = keyPairName;
+                        keyGroupMap[groupName] = keyPairName;
                     }
                 }
 #ifdef BKWRDCOMPAT_CLUSTER_VS_CLUSTERGROUP
                 groupKeysPath = "EnvSettings/Keys/Cluster";
             }
 #endif
-            clusterKeyNameCache = true;
+            clusterGroupKeyNameCache = true;
         }
     }
 
@@ -274,22 +274,22 @@ public:
     IConstDropZoneInfo * getDropZoneByIndex(unsigned index) const;
     bool isDropZoneRestrictionEnabled() const;
 
-    virtual const char *getClusterKeyPairName(const char *cluster) const override
+    virtual const char *getClusterGroupKeyPairName(const char *group) const override
     {
         synchronized procedure(safeCache);
-        ensureClusterKeyMap();
-        return keyClusterMap[cluster].c_str();
+        ensureClusterGroupKeyMap();
+        return keyGroupMap[group].c_str();
     }
     virtual const char *getPublicKeyPath(const char *keyPairName) const override
     {
         synchronized procedure(safeCache);
-        ensureClusterKeyMap();
+        ensureClusterGroupKeyMap();
         return keyPairMap[keyPairName].publicKey.c_str();
     }
     virtual const char *getPrivateKeyPath(const char *keyPairName) const override
     {
         synchronized procedure(safeCache);
-        ensureClusterKeyMap();
+        ensureClusterGroupKeyMap();
         return keyPairMap[keyPairName].privateKey.c_str();
     }
     virtual const char *getFileAccessUrl() const
@@ -410,8 +410,8 @@ public:
             { return c->getDropZoneIterator(); }
     virtual bool isDropZoneRestrictionEnabled() const
             { return c->isDropZoneRestrictionEnabled(); }
-    virtual const char *getClusterKeyPairName(const char *cluster) const override
-            { return c->getClusterKeyPairName(cluster); }
+    virtual const char *getClusterGroupKeyPairName(const char *cluster) const override
+            { return c->getClusterGroupKeyPairName(cluster); }
     virtual const char *getPublicKeyPath(const char *keyPairName) const override
             { return c->getPublicKeyPath(keyPairName); }
     virtual const char *getPrivateKeyPath(const char *keyPairName) const override
@@ -1213,7 +1213,7 @@ void CLocalEnvironment::init()
     numOfMachines = 0;
     numOfDropZones = 0;
     isDropZoneRestrictionLoaded = false;
-    clusterKeyNameCache = false;
+    clusterGroupKeyNameCache = false;
     ::getFileAccessUrl(fileAccessUrl);
 }
 
@@ -1676,7 +1676,7 @@ void CLocalEnvironment::clearCache()
         p.setown(conn->getRoot());
     }
     cache.kill();
-    keyClusterMap.clear();
+    keyGroupMap.clear();
     keyPairMap.clear();
     init();
     resetPasswordsFromSDS();

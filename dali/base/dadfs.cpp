@@ -36,7 +36,6 @@
 #include "dautils.hpp"
 #include "danqs.hpp"
 #include "mputil.hpp"
-#include "rmtfile.hpp"
 #include "dadfs.hpp"
 #include "eclhelper.hpp"
 #include "seclib.hpp"
@@ -4134,11 +4133,16 @@ public:
         const char *diroverride = NULL;
         char psc = getPathSepChar(directory.get());
         DFD_OS os = SepCharBaseOs(psc);
+
+        const char *myBase;
         StringBuffer basedir;
         if (newbasedir)
+        {
             diroverride = newbasedir;
-
-        const char *myBase = queryBaseDirectory(grp_unknown, 0, os);
+            myBase = newbasedir;
+        }
+        else
+            myBase = queryBaseDirectory(grp_unknown, 0, os);
         StringBuffer baseDir, newPath;
         makePhysicalPartName(logicalName.get(), 0, 0, newPath, false, os, diroverride);
         if (!getBase(directory, newPath, baseDir))

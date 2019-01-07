@@ -28,7 +28,7 @@
 #include "dafdesc.hpp"
 #include "dasds.hpp"
 #include "rmtfile.hpp"
-#include "sockfile.hpp"
+#include "remote.hpp"
 
 #include "dalienv.hpp"
 

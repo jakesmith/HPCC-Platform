@@ -90,26 +90,27 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../thorutil 
-         ./../../system/jhtree 
-         ./../../system/mp 
-         ./../../common/workunit 
-         ./../shared 
-         ./../graph 
-         ./../activities/msort 
-         ./../../common/deftype 
-         ./../../system/include 
-         ./../../dali/base 
-         ./../../rtl/include 
-         ./../slave 
-         ./../../system/jlib 
-         ./../thorcodectx 
-         ./../mfilemanager 
-         ./../../common/thorhelper 
-         ./../activities 
-         ./../../rtl/eclrtl 
-         ./../../roxie/roxiemem
+         ${HPCC_SOURCE_DIR}/system/jhtree 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/common/workunit 
+         ${HPCC_SOURCE_DIR}/common/deftype 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/rtl/include 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/common/thorhelper 
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl 
+         ${HPCC_SOURCE_DIR}/roxie/roxiemem
          ${HPCC_SOURCE_DIR}/dali/ft
+         ${HPCC_SOURCE_DIR}/thorlcr/activities 
+         ${HPCC_SOURCE_DIR}/thorlcr/thorcodectx 
+         ${HPCC_SOURCE_DIR}/thorlcr/mfilemanager 
+         ${HPCC_SOURCE_DIR}/thorlcr/slave 
+         ${HPCC_SOURCE_DIR}/thorlcr/shared 
+         ${HPCC_SOURCE_DIR}/thorlcr/thorutil 
+         ${HPCC_SOURCE_DIR}/thorlcr/graph 
+         ${HPCC_SOURCE_DIR}/thorlcr/activities/msort
     )
 
 HPCC_ADD_LIBRARY( activityslaves_lcr SHARED ${SRCS} )
@@ -125,7 +126,6 @@ target_link_libraries ( activityslaves_lcr
          eclrtl 
          deftype 
          thorhelper 
-         remote 
          dalibase 
          environment 
          dllserver 

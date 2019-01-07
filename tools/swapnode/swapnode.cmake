@@ -28,14 +28,14 @@ set (    SRCS
     )
 
 include_directories (
-         ./../../common/remote
-         ./../../system/mp
-         ./../../system/include
-         ./../../dali/base
-         ./../../system/jlib
-         ./../../common/environment
-         ./../../common/workunit
-         ./../../system/security/shared
+         ${HPCC_SOURCE_DIR}/system/mp
+         ${HPCC_SOURCE_DIR}/system/include
+         ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
+         ${HPCC_SOURCE_DIR}/system/jlib
+         ${HPCC_SOURCE_DIR}/common/environment
+         ${HPCC_SOURCE_DIR}/common/workunit
+         ${HPCC_SOURCE_DIR}/system/security/shared
     )
 
 ADD_DEFINITIONS( -D_CONSOLE -DENABLE_AUTOSWAP )

@@ -31,6 +31,7 @@
 #include "workunit.hpp"
 #include "jfile.hpp"
 #include "keybuild.hpp"
+#include "remote.hpp"
 
 #include "hrpc.hpp"
 #include "hrpcsock.hpp"

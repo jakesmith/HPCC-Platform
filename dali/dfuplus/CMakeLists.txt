@@ -35,19 +35,20 @@ set (    SRCS
     )
 
 include_directories (
-         ./../../system/security/shared
-         ./../../esp/bindings/SOAP/xpp
-         ./../dfu
-         ./../ft
-         ./../../system/xmllib
-         ./../../esp/platform
-         ./../../esp/clients
-         ./../../rtl/include
-         ./../../system/include
-         ./../../system/jlib
-         ./../../esp/bindings
-         ./../../common/workunit
-         ./../../common/remote
+         ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp
+         ${HPCC_SOURCE_DIR}/dali//dfu
+         ${HPCC_SOURCE_DIR}/dali/ft
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
+         ${HPCC_SOURCE_DIR}/system/xmllib
+         ${HPCC_SOURCE_DIR}/esp/platform
+         ${HPCC_SOURCE_DIR}/esp/clients
+         ${HPCC_SOURCE_DIR}/rtl/include
+         ${HPCC_SOURCE_DIR}/system/include
+         ${HPCC_SOURCE_DIR}/system/jlib
+         ${HPCC_SOURCE_DIR}/esp/bindings
+         ${HPCC_SOURCE_DIR}/common/remote
+         ${HPCC_SOURCE_DIR}/common/workunit
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
     )
@@ -62,6 +63,7 @@ install ( TARGETS dfuplus RUNTIME DESTINATION ${EXEC_DIR} )
 target_link_libraries ( dfuplus
          jlib
          remote
+         dafsclient
          xmllib
          esphttp
     )

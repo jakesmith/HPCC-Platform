@@ -31,32 +31,32 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../thorutil 
-         ./../../common/remote 
-         ./../../system/jhtree 
-         ./../../system/mp 
-         ./../../common/workunit 
-         ./../shared 
-         ./../graph 
-         ./../../common/environment 
-         ./../../common/deftype 
-         ./../../system/include 
-         ./../../dali/base 
-         ./../../ecl/hql
-         ./../../rtl/include 
-         ./../../common/dllserver 
-         ./../../system/jlib 
-         ./../thorcodectx 
-         ./../mfilemanager 
-         ./../activities 
-         ./../../rtl/eclrtl 
-         ./../master 
-         ./../../common/thorhelper 
-         ./../../tools/swapnode
-         ./../../roxie/roxiemem
+         ${HPCC_SOURCE_DIR}/system/jhtree 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/common/workunit 
+         ${HPCC_SOURCE_DIR}/common/environment 
+         ${HPCC_SOURCE_DIR}/common/deftype 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/ecl/hql
+         ${HPCC_SOURCE_DIR}/rtl/include 
+         ${HPCC_SOURCE_DIR}/common/dllserver 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/common/thorhelper 
+         ${HPCC_SOURCE_DIR}/tools/swapnode
+         ${HPCC_SOURCE_DIR}/roxie/roxiemem
+         ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl 
+         ${HPCC_SOURCE_DIR}/thorlcr/thorutil 
+         ${HPCC_SOURCE_DIR}/thorlcr/shared 
+         ${HPCC_SOURCE_DIR}/thorlcr/graph 
+         ${HPCC_SOURCE_DIR}/thorlcr/thorcodectx 
+         ${HPCC_SOURCE_DIR}/thorlcr/mfilemanager 
+         ${HPCC_SOURCE_DIR}/thorlcr/activities 
+         ${HPCC_SOURCE_DIR}/thorlcr/master 
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
-         ./../../system/security/shared
     )
 
 ADD_DEFINITIONS( -D_CONSOLE )
@@ -70,8 +70,8 @@ install ( TARGETS thormaster_lcr RUNTIME DESTINATION ${EXEC_DIR} )
 target_link_libraries (  thormaster_lcr 
          jlib
          jhtree 
-         remote 
          dalibase 
+         dafsclient
          environment 
          dllserver 
          nbcd 

@@ -1,4 +1,4 @@
-################################################################################
+#################################################################################
 #    HPCC SYSTEMS software Copyright (C) 2012 HPCC Systems®.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,13 +28,15 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../../common/remote 
-         ./../server 
-         ./../../system/mp 
-         . 
-         ./../../system/include 
-         ./../../system/jlib
-         ./../../system/security/shared
+         ${HPCC_SOURCE_DIR}/dali/server 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/jlib
+         ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/esp/clients/wsdfuaccess
+         ${HPCC_SOURCE_DIR}/rtl/include
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl
     )
 
 HPCC_ADD_EXECUTABLE ( datest ${SRCS} )
@@ -43,9 +45,11 @@ target_link_libraries ( datest
          jlib
          mp 
          hrpc 
-         remote 
+         dafsclient 
          dalibase 
-                 ${CPPUNIT_LIBRARIES}
+         wsdfuaccess 
+         eclrtl 
+         ${CPPUNIT_LIBRARIES}
     )
 
 

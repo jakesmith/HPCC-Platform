@@ -38,7 +38,10 @@ include_directories (
          ${HPCC_SOURCE_DIR}/system/xmllib
          ${HPCC_SOURCE_DIR}/system/security/shared 
          ${HPCC_SOURCE_DIR}/system/security/securesocket 
+         ${HPCC_SOURCE_DIR}/common/environment
          ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
+         ${HPCC_SOURCE_DIR}/dali/dafilesrv
          ${HPCC_SOURCE_DIR}/system/mp
          ${HPCC_SOURCE_DIR}/esp/bindings 
          ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/client 
@@ -47,6 +50,7 @@ include_directories (
          ${HPCC_SOURCE_DIR}/esp/platform 
          ${HPCC_SOURCE_DIR}/esp/clients
          ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/Platform 
+         ${HPCC_SOURCE_DIR}//esp/smc/SMCLib
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DWSDFUACCESS_EXPORTS )
@@ -55,9 +59,11 @@ HPCC_ADD_LIBRARY( wsdfuaccess SHARED ${SRCS} )
 install ( TARGETS wsdfuaccess RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
 target_link_libraries ( wsdfuaccess 
          jlib
+         dalibase
+         dafsclient
+         environment
          xmllib 
          esphttp 
-         dalibase
     )
 
 

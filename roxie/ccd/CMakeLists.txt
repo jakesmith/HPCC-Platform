@@ -63,7 +63,6 @@ set (   SRCS
 
 include_directories ( 
          .
-         ${HPCC_SOURCE_DIR}/common/remote
          ${HPCC_SOURCE_DIR}/system/jhtree
          ${HPCC_SOURCE_DIR}/system/mp
          ${HPCC_SOURCE_DIR}/common/workunit
@@ -87,6 +86,7 @@ include_directories (
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
          ${HPCC_SOURCE_DIR}/dali/ft
+         ${HPCC_SOURCE_DIR}/dali/dafsclient
          ${HPCC_SOURCE_DIR}/system/security/shared
          ${HPCC_SOURCE_DIR}/system/security/securesocket
          ${HPCC_SOURCE_DIR}/system/libbase58
@@ -106,7 +106,7 @@ target_link_libraries ( ccd
          nbcd
          roxiemem 
          udplib 
-         remote 
+         dafsclient 
          eclrtl 
          dalibase 
          deftype 

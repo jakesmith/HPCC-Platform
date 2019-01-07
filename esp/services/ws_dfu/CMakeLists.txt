@@ -41,38 +41,38 @@ set (    SRCS
 include_directories ( 
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
-         ./../../../dali/dfu 
-         ./../../../system/mp 
-         ./../../platform 
-         ./../ws_topology 
-         ./../../../system/jlib 
-         ./../../../rtl/include
-         ./../../../rtl/eclrtl 
-         ./../../../rtl/nbcd
-         ./../../../common/environment 
-         ./../../../common/thorhelper 
-         ./../../services 
-         ./../../../dali/ft 
-         ./../common 
-         ./../../../dali/dfuXRefLib 
-         ./../../../system/xmllib 
-         ./../../../common/deftype 
-         ./../../../ecl/hql 
-         ./../../../system/security/securesocket 
-         ./../../../system/security/shared 
-         ./../../../system/security/cryptohelper 
-         ./../../../system/include 
-         ./../../../common/workunit 
-         ./../../../common/remote 
-         ./../../../common/roxiecommlib
-         ./../../clients 
-         ./../../../dali/base 
-         ./../ws_workunits 
-         ./../../bindings 
-         ./../../smc/SMCLib 
-         ./../../../common/fileview2 
-         ./../../bindings/SOAP/xpp 
+         ${HPCC_SOURCE_DIR}/dali/dfu 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/rtl/include
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl 
+         ${HPCC_SOURCE_DIR}/rtl/nbcd
+         ${HPCC_SOURCE_DIR}/common/environment 
+         ${HPCC_SOURCE_DIR}/common/thorhelper 
+         ${HPCC_SOURCE_DIR}/dali/ft 
+         ${HPCC_SOURCE_DIR}/dali/dfuXRefLib 
+         ${HPCC_SOURCE_DIR}/system/xmllib 
+         ${HPCC_SOURCE_DIR}/common/deftype 
+         ${HPCC_SOURCE_DIR}/ecl/hql 
+         ${HPCC_SOURCE_DIR}/system/security/securesocket 
+         ${HPCC_SOURCE_DIR}/system/security/shared 
+         ${HPCC_SOURCE_DIR}/system/security/cryptohelper 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/common/workunit 
+         ${HPCC_SOURCE_DIR}/common/roxiecommlib
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/common/fileview2 
+         ${HPCC_SOURCE_DIR}/esp/clients 
+         ${HPCC_SOURCE_DIR}/esp/platform 
+         ${HPCC_SOURCE_DIR}/esp/services 
+         ${HPCC_SOURCE_DIR}/esp/bindings 
+         ${HPCC_SOURCE_DIR}/esp/smc/SMCLib 
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp 
          ${HPCC_SOURCE_DIR}/esp/clients
+         ${HPCC_SOURCE_DIR}/esp/services/ws_topology 
+         ${HPCC_SOURCE_DIR}/esp/services/common 
+         ${HPCC_SOURCE_DIR}/esp/services/ws_workunits 
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DWS_DFU_EXPORTS )
@@ -84,7 +84,7 @@ target_link_libraries ( ws_dfu
          jlib
          mp 
          hrpc 
-         remote 
+         dafsclient 
          nbcd 
          eclrtl 
          jhtree 

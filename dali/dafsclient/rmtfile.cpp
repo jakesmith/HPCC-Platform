@@ -26,9 +26,9 @@
 #include "jmutex.hpp"
 #include "jfile.hpp"
 
-#include "sockfile.hpp"
 #include "rmtfile.hpp"
-#include "remoteerr.hpp"
+#include "dafscommon.hpp"
+#include "remote.hpp"
 
 //----------------------------------------------------------------------------
 
@@ -481,7 +481,7 @@ unsigned getDaliServixVersion(const IpAddress &ip,StringBuffer &ver)
     return getDaliServixVersion(ep,ver);
 }
 
-extern REMOTE_API int setDafileSvrTraceFlags(const SocketEndpoint &_ep,byte flags)
+extern DAFSCLIENT_API int setDafileSvrTraceFlags(const SocketEndpoint &_ep,byte flags)
 {
     SocketEndpoint ep(_ep);
     setDafsEndpointPort(ep);
@@ -499,7 +499,7 @@ extern REMOTE_API int setDafileSvrTraceFlags(const SocketEndpoint &_ep,byte flag
     return -2;
 }
 
-extern REMOTE_API int setDafileSvrThrottleLimit(const SocketEndpoint &_ep, ThrottleClass throttleClass, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit, unsigned queueLimit, StringBuffer *errMsg)
+extern DAFSCLIENT_API int setDafileSvrThrottleLimit(const SocketEndpoint &_ep, ThrottleClass throttleClass, unsigned throttleLimit, unsigned throttleDelayMs, unsigned throttleCPULimit, unsigned queueLimit, StringBuffer *errMsg)
 {
     SocketEndpoint ep(_ep);
     setDafsEndpointPort(ep);
@@ -517,7 +517,7 @@ extern REMOTE_API int setDafileSvrThrottleLimit(const SocketEndpoint &_ep, Throt
     return -2;
 }
 
-extern REMOTE_API int getDafileSvrInfo(const SocketEndpoint &_ep, unsigned level, StringBuffer &retstr)
+extern DAFSCLIENT_API int getDafileSvrInfo(const SocketEndpoint &_ep, unsigned level, StringBuffer &retstr)
 {
     SocketEndpoint ep(_ep);
     setDafsEndpointPort(ep);
@@ -785,7 +785,7 @@ static PointerArrayOf<SharedObject> *hookDlls;
 
 static void installFileHook(const char *hookFileSpec);
 
-extern REMOTE_API void installFileHooks(const char *hookFileSpec)
+extern DAFSCLIENT_API void installFileHooks(const char *hookFileSpec)
 {
     if (!hookDlls)
         hookDlls = new PointerArrayOf<SharedObject>;
@@ -854,7 +854,7 @@ static void installFileHook(const char *hookFile)
 
 // Should be called before closedown, ideally. MODEXIT tries to mop up but may be too late to do so cleanly
 
-extern REMOTE_API void removeFileHooks()
+extern DAFSCLIENT_API void removeFileHooks()
 {
     if (hookDlls)
     {

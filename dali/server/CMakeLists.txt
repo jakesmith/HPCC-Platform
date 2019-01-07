@@ -32,15 +32,15 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../../common/remote 
-         ./../../system/mp 
-         ./../base 
-         ./../../system/include 
-         ./../../system/security/shared 
-         ./../../system/security/LdapSecurity 
-         ./../../system/security/cryptohelper
-         ./../../system/jlib
-         ./../../common/workunit
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/security/shared 
+         ${HPCC_SOURCE_DIR}/system/security/LdapSecurity 
+         ${HPCC_SOURCE_DIR}/system/security/cryptohelper
+         ${HPCC_SOURCE_DIR}/system/jlib
+         ${HPCC_SOURCE_DIR}/common/workunit
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
     )
@@ -60,7 +60,7 @@ target_link_libraries ( daserver
          jlib
          mp 
          hrpc 
-         remote 
+         dafsclient 
          dalibase 
     )
 IF (USE_OPENLDAP)

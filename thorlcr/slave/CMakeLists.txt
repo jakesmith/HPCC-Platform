@@ -31,29 +31,29 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../thorutil 
-         ./../../common/remote 
-         ./../../system/jhtree 
-         ./../../system/mp 
-         ./../../common/workunit 
-         ./../shared 
          .
-         ./../../common/environment 
-         ./../../common/deftype 
-         ./../../system/include 
-         ./../../dali/base 
-         ./../../rtl/include 
-         ./../../common/dllserver 
-         ./../msort 
-         ./../../system/jlib 
-         ./../../rtl/eclrtl 
-         ./../master 
-         ./../graph 
-         ./../../common/thorhelper 
-         ./../../roxie/roxiemem
+         ${HPCC_SOURCE_DIR}/common/workunit 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/system/jhtree 
+         ${HPCC_SOURCE_DIR}/common/environment 
+         ${HPCC_SOURCE_DIR}/common/deftype 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/rtl/include 
+         ${HPCC_SOURCE_DIR}/common/dllserver 
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl 
+         ${HPCC_SOURCE_DIR}/common/thorhelper 
+         ${HPCC_SOURCE_DIR}/roxie/roxiemem
+         ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/thorlcr/msort 
+         ${HPCC_SOURCE_DIR}/thorlcr/thorutil 
+         ${HPCC_SOURCE_DIR}/thorlcr/master 
+         ${HPCC_SOURCE_DIR}/thorlcr/graph 
+         ${HPCC_SOURCE_DIR}/thorlcr/shared 
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
-         ./../../system/security/shared
     )
 
 ADD_DEFINITIONS( -D_CONSOLE )
@@ -66,7 +66,6 @@ HPCC_ADD_EXECUTABLE ( thorslave_lcr ${SRCS} )
 install ( TARGETS thorslave_lcr RUNTIME DESTINATION ${EXEC_DIR} )
 target_link_libraries (  thorslave_lcr 
          jlib
-         remote 
          dalibase 
          environment 
          dllserver 

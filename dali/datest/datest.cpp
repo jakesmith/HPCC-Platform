@@ -22,7 +22,7 @@
 #include "jmisc.hpp"
 #include "mpbase.hpp"
 #include "mpcomm.hpp"
-#include "sockfile.hpp"
+#include "remote.hpp"
 
 #include "daclient.hpp"
 #include "dadfs.hpp"
@@ -33,7 +33,15 @@
 #include "dasess.hpp"
 #include "mplog.hpp"
 
+#include "rtlformat.hpp"
+
 #include "jptree.hpp"
+#include "wsdfuaccess.hpp"
+
+using namespace wsdfuaccess;
+using namespace dafsclient;
+
+
 
 #define DEFAULT_TEST "RANDTEST"
 static const char *whichTest = DEFAULT_TEST;
@@ -2229,6 +2237,75 @@ void TestSDS1()
 #endif
 }
 
+void testDfuStream(const char *srcLfn)
+{
+    // reads a DFS file and writes it to <filename>_copy
+    try
+    {
+        Owned<IUserDescriptor> userDesc = createUserDescriptor();
+        userDesc->set("jsmith","password");
+        const char *srcFileName = testParams.item(0);
+
+        Owned<IDFUFileAccess> srcFile = lookupDFUFile(srcFileName, "me", 60, userDesc);
+        if (!srcFile)
+        {
+            WARNLOG("File '%s' not found", srcFileName);
+            return;
+        }
+        IDFUFileAccessExt *srcFileEx = srcFile->queryEngineInterface();
+
+        const char *recDef = srcFile->queryECLTypeInfo(); // JCSMORE - needs work
+        recDef = srcFileEx->queryProperties().queryProp("ECL");
+        IOutputMetaData *meta = srcFileEx->queryOutputMeta();
+
+        StringBuffer tgtFileName(srcFileName);
+        tgtFileName.append("_copy");
+        Owned<IDFUFileAccess> tgtFile = createDFUFile(tgtFileName, "mythor", dft_flat, recDef, "myRequestId", 300, userDesc);
+        IDFUFileAccessExt *tgtFileEx = srcFile->queryEngineInterface();
+
+        unsigned numRecs = 0;
+        unsigned n = srcFile->queryNumParts();
+        for (unsigned p=0; p<n; p++)
+        {
+            Owned<IDFUFilePartReader> reader = srcFile->createFilePartReader(p);
+            reader->start();
+            Owned<IDFUFilePartWriter> writer = tgtFile->createFilePartWriter(p);
+            writer->start();
+
+            while (true)
+            {
+                size32_t sz;
+                const void *row = reader->nextRow(sz);
+                if (row)
+                {
+                    ++numRecs;
+                    CommonXmlWriter xmlwrite(0);
+                    meta->toXML((const byte *)row, xmlwrite);
+                    PROGLOG("row: %s", xmlwrite.str());
+
+                    writer->write(sz, row);
+                }
+                else
+                {
+                    if (!srcFile->queryIsGrouped())
+                        break;
+                    row = reader->nextRow(sz);
+                    if (!row)
+                        break;
+                }
+            }
+        }
+
+        tgtFileEx->queryProperties().setPropInt64("@recordCount", numRecs);
+        //tgtFileEx->queryProperties().setPropInt64("@size", fileSize);
+        publishDFUFile(tgtFile, true, userDesc);
+    }
+    catch (IException *e)
+    {
+        EXCLOG(e, nullptr);
+        e->Release();
+    }
+}
 
 class CClientTestSDS : public Thread
 {
@@ -3038,7 +3115,7 @@ void usage(const char *error=NULL)
 {
     if (error) printf("%s\n", error);
     printf("usage: DATEST <server_ip:port>* [/test <name> [<test params...>] [/NITER <iterations>]\n");
-    printf("where name = RANDTEST | DFS | QTEST | QTEST2 | SESSION | LOCKS | SDS1 | SDS2 | XPATHS| STRESS | STRESS2 | SHUTDOWN | EXTERNAL | SUBLOCKS | SUBSCRIPTION | CONNECTIONSUBS | MULTIFILE | NODESUBS\n");
+    printf("where name = RANDTEST | DFS | QTEST | QTEST2 | SESSION | LOCKS | SDS1 | SDS2 | XPATHS| STRESS | STRESS2 | SHUTDOWN | EXTERNAL | SUBLOCKS | SUBSCRIPTION | CONNECTIONSUBS | MULTIFILE | NODESUBS | DFUSTREAM\n");
     printf("eg:  datest . /test QTEST put          -- one coven server running locally, running qtest with param \"put\"\n");
     printf("     datest eq0001016 eq0001017        -- two coven servers, use default test %s\n", DEFAULT_TEST);
 }
@@ -3241,6 +3318,8 @@ int main(int argc, char* argv[])
                 Test_PartIter();
             else if (TEST("MULTICONNECT"))
                 testMultiConnect();
+            else if (TEST("DFUSTREAM"))
+                testDfuStream(testParams.item(0));
 //          else if (TEST("DALILOG"))
 //              testDaliLog(testParams.ordinality()&&0!=atoi(testParams.item(0)));
             else

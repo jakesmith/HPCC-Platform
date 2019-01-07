@@ -29,15 +29,14 @@ set (    SRCS
     )
 
 include_directories ( 
-         ./../dfu 
-         ./../base 
-         ./../../common/remote 
-         ./../../system/mp 
-         . 
-         ./../../system/include 
-         ./../../system/jlib 
-         ./../../common/workunit 
-         ../../common/environment 
+         ${HPCC_SOURCE_DIR}/dali/dfu 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/common/workunit 
+         ${HPCC_SOURCE_DIR}/common/environment 
     )
 
 HPCC_ADD_EXECUTABLE ( dfuwutest ${SRCS} )
@@ -47,7 +46,7 @@ target_link_libraries ( dfuwutest
          jlib
          mp 
          hrpc 
-         remote 
+         dafsclient 
          dalibase 
          dfuwu 
          environment 

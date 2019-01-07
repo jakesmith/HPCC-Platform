@@ -72,31 +72,31 @@ set (    SRCS
     )
 
 include_directories ( 
+         ${HPCC_SOURCE_DIR}/system/jhtree 
+         ${HPCC_SOURCE_DIR}/system/mp 
+         ${HPCC_SOURCE_DIR}/common/workunit 
+         ${HPCC_SOURCE_DIR}/common/deftype 
+         ${HPCC_SOURCE_DIR}/system/include 
+         ${HPCC_SOURCE_DIR}/dali/base 
+         ${HPCC_SOURCE_DIR}/dali/dafsclient 
+         ${HPCC_SOURCE_DIR}/ecl/hql
+         ${HPCC_SOURCE_DIR}/rtl/include 
+         ${HPCC_SOURCE_DIR}/common/dllserver 
+         ${HPCC_SOURCE_DIR}/system/jlib 
+         ${HPCC_SOURCE_DIR}/common/thorhelper 
+         ${HPCC_SOURCE_DIR}/rtl/eclrtl
+         ${HPCC_SOURCE_DIR}/dali/ft
+         ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/thorlcr/thorutil 
+         ${HPCC_SOURCE_DIR}/thorlcr/mfilemanager 
+         ${HPCC_SOURCE_DIR}/thorlcr/master 
+         ${HPCC_SOURCE_DIR}/thorlcr/shared 
+         ${HPCC_SOURCE_DIR}/thorlcr/graph 
+         ${HPCC_SOURCE_DIR}/thorlcr/msort 
+         ${HPCC_SOURCE_DIR}/thorlcr/thorcodectx 
+         ${HPCC_SOURCE_DIR}/thorlcr/activities 
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss
-         ./../thorutil 
-         ./../../common/remote 
-         ./../../system/jhtree 
-         ./../../system/mp 
-         ./../master 
-         ./../../common/workunit 
-         ./../shared 
-         ./../graph 
-         ./../../common/deftype 
-         ./../../system/include 
-         ./../../dali/base 
-         ./../../ecl/hql
-         ./../../rtl/include 
-         ./../../common/dllserver 
-         ./../msort 
-         ./../thorcodectx 
-         ./../../system/jlib 
-         ./../mfilemanager 
-         ./../../common/thorhelper 
-         ./../activities 
-         ./../../rtl/eclrtl
-         ${HPCC_SOURCE_DIR}/dali/ft
-         ./../../system/security/shared
     )
 
 HPCC_ADD_LIBRARY( activitymasters_lcr SHARED ${SRCS} )
@@ -106,7 +106,7 @@ set_target_properties(activitymasters_lcr PROPERTIES
 install ( TARGETS activitymasters_lcr RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
 target_link_libraries ( activitymasters_lcr
          jlib
-         remote 
+         dafsclient 
          hql
          thorsort_lcr 
          jhtree 
