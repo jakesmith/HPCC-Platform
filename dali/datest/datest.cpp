@@ -3445,7 +3445,7 @@ public:
 template <class KEY, class VALUE, class LIMITER, unsigned types>
 class CTBBMRU
 {
-    struct QueueItem
+    struct QueueItem : public CSimpleInterface
     {
         QueueItem(const KEY &_key) : key(_key)
         {
@@ -3463,7 +3463,7 @@ class CTBBMRU
     std::atomic<QueueItem *> head{nullptr};
     std::atomic<QueueItem *> tail{nullptr};
 //    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>, ALLOCATOR> TBBMAP;
-    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, QueueItem *>, tbb::tbb_hash_compare<KEY>> TBBMAP;
+    typedef typename tbb::concurrent_hash_map<KEY, std::tuple<VALUE, unsigned, Owned<QueueItem>>, tbb::tbb_hash_compare<KEY>> TBBMAP;
 
     TBBMAP table;
 
@@ -3472,10 +3472,11 @@ class CTBBMRU
     LIMITER limiter;
     std::array<std::atomic<unsigned>, types> counts;
     std::atomic<unsigned> inactiveQueueItems{0};
-    const unsigned maxInactiveQueueItems = 100;
     std::atomic<bool> cleaningHoles{false};
     std::atomic<bool> pendingRemoveLRU{false};
 
+    const unsigned minLimit = 10;
+    const unsigned maxInactiveQueueItems = 100;
 
     void pushToTail(QueueItem *q)
     {
@@ -3498,7 +3499,9 @@ class CTBBMRU
     }
     void cleanSomeHoles()
     {
-        // NB: only 1 thread at a time doing this OR removeLRU()
+        /* NB: only 1 thread at a time doing this OR removeLRU()
+         * But other threads will be calling pushToTail() concurrently.
+         */
         if (pendingRemoveLRU) // removeLRU() deferred because cleaning, do now
         {
             removeLRU();
@@ -3507,59 +3510,68 @@ class CTBBMRU
         while (true)
         {
             QueueItem *q;
-            if (holes.try_pop(q))
-            {
-                QueueItem *next = q->next; // will never be null, because q will never be tail
-                QueueItem *prev = q->prev;
-                next->prev = prev;
-                if (prev)
-                    prev->next = next;
-                else
-                    head = prev;
-                delete q; // NB: could be old head
-            }
+            if (!holes.try_pop(q))
+                break;
+            QueueItem *next = q->next; // will never be null, because q will never be tail
+            QueueItem *prev = q->prev;
+            next->prev = prev;
+            if (prev)
+                prev->next = next;
+            else
+                head = prev;
+            --inactiveQueueItems;
+            q->Release();
         }
         bool expected=true;
         assertex(cleaningHoles.compare_exchange_strong(expected, false));
     }
     void removeLRU()
     {
-        // NB: only 1 thread at a time doing this OR cleaningSomeHoles()
+        /* NB: only 1 thread at a time doing this OR cleaningSomeHoles()
+         * But other threads will be calling pushToTail() concurrently.
+         */
         while (true)
         {
             QueueItem *oldHead = head;
-            QueueItem *newHead = head.load()->next;
+            QueueItem *newHead = oldHead->next;
             if (!newHead)
-                break;
-            if (newHead->prev.compare_exchange_strong(oldHead, nullptr))
+                return;
+            if (newHead->prev.compare_exchange_strong(oldHead, nullptr)) // (1): *IF* there is only 1 thread performing removeLRU() or cleanSomeHoles(), then this should never fail
             {
-                if (head.compare_exchange_strong(oldHead, newHead))
+                if (head.compare_exchange_strong(oldHead, newHead)) // (2): I don't think this can fail
                 {
-                    if (oldHead->active)
+                    if (oldHead->active) // false means stale node in list, query() has promoted the HT element and marked this inactive
                     {
                         typename TBBMAP::accessor a;
                         if (table.find(a, oldHead->key))
                         {
                             table.erase(a);
-                            delete oldHead;
                             break;
                         }
                     }
                     else
                         --inactiveQueueItems;
-                    delete oldHead;
                 }
+                else
+                    throwUnexpected(); // (2): I don't think should ever be hit
             }
             else
-                throwUnexpected();
+                throwUnexpected(); // (1): should not fail if just 1 thread performing removeLRU() or cleanSomeHoles()
+
+            oldHead->Release();
         }
     }
 
 public:
     CTBBMRU()
     {
-        head = new QueueItem();
-        tail = head.load();
+        QueueItem *q = new QueueItem();
+        head = q;
+        tail = q;
+    }
+    ~CTBBMRU()
+    {
+        cleanSomeHoles(); // must free QueueItems linked in 'holes'
     }
     bool query(const KEY &key, VALUE &res, unsigned *type=nullptr)
     {
@@ -3568,13 +3580,19 @@ public:
             return false;
         auto &rhs = a->second;
 
-        unsigned t;
-        QueueItem *q;
+        QueueItem *q = std::get<2>(a->second);
+
         std::tie(res, t, q) = rhs;
+
         if (nullptr != q->next) // 1st check if not last already
         {
-            q->active = false;
-            holes.push(q);
+            if (!q->active.compare_exchange_strong(expected, false))
+
+
+            bool expected=true;
+            if (!q->active.compare_exchange_strong(expected, false))
+                return false;
+            holes.push(LINK(q));
             if (++inactiveQueueItems > maxInactiveQueueItems)
             {
                 bool expected=false;
@@ -3583,6 +3601,7 @@ public:
             }
 
             q = new QueueItem(key);
+            std::get<2>(a->second) = q; // NB: it's possible other query() threads have links to old 'q' item
             pushToTail(q);
         }
         if (type)
@@ -3596,16 +3615,19 @@ public:
         if (res)
         {
             QueueItem *q = new QueueItem(key);
+            a->second = std::make_tuple(value, type, q); // NB: q in tuple is owned
             pushToTail(q);
-            a->second = std::make_tuple(value, type, q);
             unsigned c = ++counts[type];
-            if (limiter(value, type, c)) // perhaps want other criteria/specs. of what to do returned from function, but for now true means reduce by 10%
+            if (table.size() >= minLimit)
             {
-                bool expected = false;
-                if (cleaningHoles.compare_exchange_strong(expected, true))
-                    removeLRU();
-                else
-                    pendingRemoveLRU = true; // over capacity, another add()/or query() will
+                if (limiter(value, type, c)) // perhaps want other criteria/specs. of what to do returned from function, but for now true means reduce by 10%
+                {
+                    bool expected = false;
+                    if (cleaningHoles.compare_exchange_strong(expected, true))
+                        removeLRU();
+                    else
+                        pendingRemoveLRU = true; // over capacity, another add()/or query() will
+                }
             }
         }
         return res;
@@ -3613,6 +3635,9 @@ public:
 };
 #endif
 
+#include <iostream>
+#include <utility>
+#include <atomic>
 
 int main(int argc, char* argv[])
 {
