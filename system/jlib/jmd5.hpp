@@ -104,6 +104,8 @@ jlib_decl void md5_append(md5_state_t *pms, const md5_byte_t *data, int nbytes);
 /* Finish the message and return the digest. */
 jlib_decl void md5_finish(md5_state_t *pms, md5_byte_t digest[16]);
 
+/* Take in a block of memory and compute md5 */
+jlib_decl void md5_memory(const void *input, size32_t inputSz, StringBuffer& outstring);
 /* Take in a string and return it encoded */
 jlib_decl void md5_string (StringBuffer& inpstring, StringBuffer& outstring);
 jlib_decl void md5_string2(const char* inpstring, StringBuffer& outstring);

@@ -1778,6 +1778,10 @@ class CCritTable : private SimpleHashTableOf<CEndpointCS, const SocketEndpoint>
     typedef SimpleHashTableOf<CEndpointCS, const SocketEndpoint> PARENT;
     CriticalSection crit;
 public:
+    ~CCritTable()
+    {
+        PROGLOG("here");
+    }
     CEndpointCS *getCrit(const SocketEndpoint &ep)
     {
         CriticalBlock b(crit);

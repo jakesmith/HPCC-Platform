@@ -24,6 +24,7 @@
 
 #include "zip.h"
 #include "jexcept.hpp"
+#include "jlzw.hpp"
 #include <math.h>
 
 #ifdef WIN32
@@ -1010,6 +1011,17 @@ inline const char *getZlibHeaderTypeName(ZlibCompressionType zltype)
     return "deflate";
 }
 
+inline ZlibCompressionType translateToZlibHeaderType(const char *zlTypeString)
+{
+    if (strisame("gzip", zlTypeString))
+        return ZlibCompressionType::GZIP;
+    else if (strisame("zlib_deflate", zlTypeString))
+        return ZlibCompressionType::ZLIB_DEFLATE;
+    // default : else if (strisame("deflate", zlTypeString))
+
+    return ZlibCompressionType::DEFLATE;
+}
+
 static void throwZlibException(const char* operation, int errorCode, ZlibCompressionType zltype)
 {
     const char* errorMsg;
@@ -1222,3 +1234,311 @@ void removeZipExtension(StringBuffer & target, const char * source)
     if (extension && streq(extension, ".gz"))
         target.remove(extension-target.str(), 3);
 }
+
+
+class CZLibCompressHandler : public CSimpleInterfaceOf<ICompressHandler>
+{
+    class CZLibCompressor : public CSimpleInterfaceOf<ICompressor>
+    {
+        MemoryBuffer *outMb = nullptr;
+        Bytef *outPtr = nullptr;
+        size32_t outMaxSz = 0;
+        z_stream zs;        // z_stream is zlib's control structure
+        int compressionLevel;
+        ZlibCompressionType zltype;
+        size32_t compressedBufSz = 0; // only avail. after close()
+        size32_t committed = 0;
+        size32_t totalUncompressWritten = 0;
+        unsigned compressedSzOffset = 0;
+        bool opened = false;
+
+        MemoryBuffer inMemTest;
+
+        void initCommon()
+        {
+            if (opened)
+                deflateEnd(&zs);
+            zs.zalloc = Z_NULL; // Set zalloc, zfree, and opaque to Z_NULL so
+            zs.zfree  = Z_NULL; // that when we call deflateInit2 they will be
+            zs.opaque = Z_NULL; // updated to use default allocation functions.
+            zs.total_out = 0;   // Total number of output bytes produced so far
+            int ret = deflateInit2(&zs, compressionLevel, Z_DEFLATED, getWindowBits(zltype), 8, Z_DEFAULT_STRATEGY);
+            if (ret != Z_OK)
+                throwZlibException("initialization", ret, zltype);
+            compressedBufSz = 0;
+            committed = sizeof(totalUncompressWritten); // leading 4 bytes always contain uncompressed size
+            totalUncompressWritten = 0;
+            opened = true;
+        }
+    public:
+        CZLibCompressor(int _compressionLevel, ZlibCompressionType _zltype) : compressionLevel(_compressionLevel), zltype(_zltype)
+        {
+        }
+        ~CZLibCompressor()
+        {
+            if (opened)
+                deflateEnd(&zs);
+        }
+    // ICompressor
+        virtual void open(MemoryBuffer &mb, size32_t initialSize=0) override
+        {
+            outMb = &mb;
+            if (!initialSize)
+                initialSize = 0x100000; // 1MB
+            compressedSzOffset = outMb->length();
+            outPtr = (Bytef *)outMb->ensureCapacity(initialSize);
+            outMaxSz = outMb->capacity()-compressedSzOffset-sizeof(totalUncompressWritten);
+            initCommon();
+        }
+        virtual void open(void *blk, size32_t blkSize) override
+        {
+            outPtr = (Bytef *)blk;
+            outMaxSz = blkSize;
+            outMaxSz -= sizeof(totalUncompressWritten);
+            outMb = nullptr;
+            initCommon();
+        }
+        virtual void close() override
+        {
+            if (!opened)
+                return;
+            opened = false;
+
+            int ret = deflate(&zs, Z_FINISH);
+            if (ret != Z_STREAM_END)          // an error occurred that was not EOS
+            {
+                if (outMb)
+                    outMb->clear();
+                throwZlibException("compression", ret, zltype);
+            }
+
+            compressedBufSz = sizeof(totalUncompressWritten)+zs.total_out;
+            // Free data structures that were dynamically created for the stream.
+            deflateEnd(&zs);
+
+            if (outMb)
+            {
+                outMb->setWritePos(compressedSzOffset+compressedBufSz);
+                outMb->writeDirect(compressedSzOffset, sizeof(totalUncompressWritten), &totalUncompressWritten);
+            }
+            else
+                memcpy(outPtr, &totalUncompressWritten, sizeof(totalUncompressWritten));
+        }
+        virtual size32_t write(const void *buf, size32_t len) override
+        {
+            void *t = inMemTest.reserveTruncate(len);
+            memcpy(t, buf, len);
+
+            // set the z_stream's input
+            zs.next_in = (Bytef*)buf;
+            zs.avail_in = len;
+
+            // Create output memory buffer for compressed data. The zlib documentation states that
+            // destination buffer size must be at least 0.1% larger than avail_in plus 12 bytes.
+            const unsigned long outsize = (unsigned long) len + len / 1000 + 13;
+            size32_t remaining = outMaxSz-committed;
+            if (remaining < outsize)
+            {
+                if (outMb)
+                {
+                    outPtr = (Bytef *)outMb->ensureCapacity(outMaxSz+outsize);
+                    outPtr += sizeof(totalUncompressWritten);
+                    outMaxSz = outMb->capacity()-compressedSzOffset-sizeof(totalUncompressWritten)-committed;
+                }
+                else
+                    return 0; // failed to fit
+            }
+
+            /* NB: outsize calculation above should have guaranteed that there is enough room
+             * So I think it should never loop in the loop below.
+             */
+            do
+            {
+                zs.avail_out = remaining;
+                zs.next_out = outPtr+committed;
+
+                int ret = deflate(&zs, Z_NO_FLUSH);
+                if (ret != Z_OK)
+                {
+                    if (outMb)
+                        outMb->clear();
+                    throwZlibException("compression", ret, zltype);
+                }
+                committed += (remaining - zs.avail_out);
+            } while (zs.avail_out == 0); // i.e. was full, loop around to do more.
+
+            totalUncompressWritten += len;
+            return len;
+        }
+        virtual void *bufptr() override
+        {
+            assertex(!opened);
+            return outPtr;
+        }
+        virtual size32_t buflen() override
+        {
+            assertex(!opened);
+            return compressedBufSz;
+        }
+        virtual void startblock() override
+        {
+            // NA
+        }
+        virtual void commitblock() override
+        {
+            // NA
+        }
+    };
+    class CZLibExpander : public CSimpleInterfaceOf<IExpander>
+    {
+        z_stream zs;        // z_stream is zlib's control structure
+        ZlibCompressionType zltype;
+        Bytef *inData = nullptr;
+        byte *outData = nullptr;
+        size32_t outSz = 0;
+        size32_t inDataSz = 0;
+        MemoryBuffer outBufMb;
+
+        void initCommon()
+        {
+        }
+    public:
+        CZLibExpander(ZlibCompressionType _zltype) : zltype(_zltype)
+        {
+        }
+    // IExpander
+        virtual size32_t init(const void *_inData, size32_t _inDataSz) override
+        {
+            if (!_inDataSz)
+                return 0;
+            memcpy(&outSz, _inData, sizeof(outSz)); // read leading output length (size32_t)
+            inData = (Bytef *)_inData + sizeof(outSz);
+            inDataSz = _inDataSz;
+            return outSz;
+        }
+        virtual void expand(void *target) override
+        {
+            if (!outSz)
+                return;
+            if (target)
+            {
+                outBufMb.clear();
+                outData = (byte *)target;
+            }
+            else
+                outData = (byte *)outBufMb.ensureCapacity(outSz);
+
+            zs.next_in = inData;
+            zs.avail_in = inDataSz;
+
+            zs.zalloc = Z_NULL; // Set zalloc, zfree, and opaque to Z_NULL so
+            zs.zfree  = Z_NULL; // that when we call deflateInit2 they will be
+            zs.opaque = Z_NULL; // updated to use default allocation functions.
+            int ret = inflateInit2(&zs, getWindowBits(zltype));
+            if (ret != Z_OK)
+                throwZlibException("initialization", ret, zltype);
+
+            size32_t outLen = 0;
+            do
+            {
+                size32_t startAvail = outSz-outLen;
+                zs.avail_out = startAvail;
+                zs.next_out = ((byte *)outData) + outLen;
+
+                ret = inflate(&zs, Z_NO_FLUSH);
+                switch (ret)
+                {
+                    case Z_NEED_DICT:
+                        ret = Z_DATA_ERROR;     /* and fall through */
+                    case Z_DATA_ERROR:
+                    case Z_MEM_ERROR:
+                    case Z_STREAM_ERROR:
+                    {
+                        (void)inflateEnd(&zs);
+                        throwZlibException("decompression", ret, zltype);
+                    }
+                }
+                outLen += (startAvail - zs.avail_out);
+                if (Z_STREAM_END == ret)
+                    break;
+            } while (zs.avail_out == 0);
+            assertex(ret == Z_STREAM_END);
+            inflateEnd(&zs);
+        }
+        virtual void *bufptr() override
+        {
+            return outData;
+        }
+        virtual size32_t buflen() override
+        {
+            return outSz;
+        }
+    };
+
+    void parseOptions(const char *options, StringArray &optArray)
+    {
+        if (isEmptyString(options))
+            return;
+        optArray.appendList(options, ",", true);
+    }
+    const char *findOptValue(const char *opt, StringArray &optArray)
+    {
+        ForEachItemIn(o, optArray)
+        {
+            const char *opt = optArray.item(o);
+            StringArray pair;
+            pair.appendList(opt, "=", true);
+            if (2 == pair.ordinality())
+            {
+                if (strisame(opt, pair.item(0)))
+                    return pair.item(1);
+            }
+        }
+        return nullptr;
+    }
+public:
+    CZLibCompressHandler()
+    {
+    }
+// ICompressHandler
+    virtual const char *queryType() const override { return "ZLIB"; }
+    virtual ICompressor *getCompressor(const char *options=NULL) override
+    {
+        ZlibCompressionType zlType = ZlibCompressionType::DEFLATE;
+        int compLevel = GZ_DEFAULT_COMPRESSION;
+        if (options)
+        {
+            StringArray optArray;
+            parseOptions(options, optArray);
+            const char *typeVal = findOptValue("type", optArray);
+            if (typeVal)
+                ZlibCompressionType zlType = translateToZlibHeaderType(typeVal);
+            const char *levelVal = findOptValue("level", optArray);
+            if (levelVal)
+                compLevel = atoi(levelVal);
+        }
+        return new CZLibCompressor(compLevel, zlType);
+    }
+    virtual IExpander *getExpander(const char *options=NULL) override
+    {
+        ZlibCompressionType zlType = ZlibCompressionType::DEFLATE;
+        if (options)
+        {
+            StringArray optArray;
+            parseOptions(options, optArray);
+            const char *typeVal = findOptValue("type", optArray);
+            if (typeVal)
+                ZlibCompressionType zlType = translateToZlibHeaderType(typeVal);
+        }
+        return new CZLibExpander(zlType);
+    }
+};
+
+static std::atomic<bool> handlerInstalled{false};
+ZCRYPT_API void ensureZLibCompressionHandlerInstalled()
+{
+    bool tf=false;
+    if (handlerInstalled.compare_exchange_strong(tf, true))
+        addCompressorHandler(new CZLibCompressHandler());
+}
+

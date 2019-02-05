@@ -190,6 +190,7 @@ include_directories (
          ${HPCC_SOURCE_DIR}/system/lz4_sm/lz4/lib
          ${HPCC_SOURCE_DIR}/system/libbase58
          ${HPCC_SOURCE_DIR}/system/security/cryptohelper
+         ${HPCC_SOURCE_DIR}/testing/unittests
          ${CMAKE_CURRENT_BINARY_DIR}  # for generated jelog.h file 
          ${CMAKE_BINARY_DIR}
          ${CMAKE_BINARY_DIR}/oss

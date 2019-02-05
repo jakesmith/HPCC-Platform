@@ -407,7 +407,7 @@ md5_finish(md5_state_t *pms, md5_byte_t digest[16])
     digest[i] = (md5_byte_t)(pms->abcd[i >> 2] >> ((i & 3) << 3));
 }
 
-void md5_string(const char* inpstring, int inplen, StringBuffer& outstring)
+void md5_memory(const void* input, size32_t inputSz, StringBuffer& outstring)
 {
     md5_state_t context;
     unsigned char digest[16];
@@ -415,7 +415,7 @@ void md5_string(const char* inpstring, int inplen, StringBuffer& outstring)
     unsigned char digitstr[3];
 
     md5_init(&context);
-    md5_append(&context, (const unsigned char *)inpstring, inplen);
+    md5_append(&context, (const unsigned char *)input, inputSz);
     md5_finish(&context,digest);
     
     for (int i = 0; i < 16; i++)
@@ -431,12 +431,12 @@ void md5_string(const char* inpstring, int inplen, StringBuffer& outstring)
 
 void md5_string2(const char* inpstring, StringBuffer& outstring)
 {
-    md5_string(inpstring,(size32_t)strlen(inpstring),outstring);
+    md5_memory(inpstring,(size32_t)strlen(inpstring),outstring);
 }
 
 void md5_string(StringBuffer& inpstring, StringBuffer& outstring)
 {
-    md5_string(inpstring, inpstring.length(), outstring);
+    md5_memory(inpstring, inpstring.length(), outstring);
 }
 
 /* define chunk size to use with IFileIO read. */

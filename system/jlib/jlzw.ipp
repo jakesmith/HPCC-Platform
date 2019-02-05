@@ -91,7 +91,7 @@ public:
 
     CLZWExpander(bool _supportbigendian);
     ~CLZWExpander();
-    virtual size32_t  init(const void *blk); // returns size required
+    virtual size32_t  init(const void *blk, size32_t blkSz=0); // returns size required
     virtual void expand(void *target);
     virtual void *bufptr() { return outbuf;}
     virtual size32_t   buflen() { return outlen;}

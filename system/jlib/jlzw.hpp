@@ -39,7 +39,7 @@ interface jlib_decl ICompressor : public IInterface
 
 interface jlib_decl IExpander : public IInterface
 {
-    virtual size32_t init(const void *blk)=0; // returns size required
+    virtual size32_t init(const void *inData, size32_t inDataSz=0)=0; // returns size required
     virtual void   expand(void *target)=0;
     virtual void * bufptr()=0;
     virtual size32_t buflen()=0;
@@ -99,6 +99,7 @@ extern jlib_decl void appendToBuffer(MemoryBuffer & out, size32_t len, const voi
 #define COMPRESS_METHOD_FASTLZ 3
 #define COMPRESS_METHOD_LZMA   4
 #define COMPRESS_METHOD_LZ4    5
+#define COMPRESS_METHOD_ZLIB   6
 
 interface ICompressedFileIO: extends IFileIO
 {
@@ -144,7 +145,46 @@ extern jlib_decl bool removeCompressorHandler(ICompressHandler *handler); // ret
 extern jlib_decl ICompressor *getCompressor(const char *type, const char *options=NULL);
 extern jlib_decl IExpander *getExpander(const char *type, const char *options=NULL);
 
+inline unsigned translateToCompMethod(const char *compStr)
+{
+    unsigned compMethod = COMPRESS_METHOD_LZ4;
+    if (!isEmptyString(compStr))
+    {
+        if (strieq("FLZ", compStr))
+            compMethod = COMPRESS_METHOD_FASTLZ;
+        else if (strieq("LZW", compStr))
+            compMethod = COMPRESS_METHOD_LZW;
+        else if (strieq("RDIFF", compStr))
+            compMethod = COMPRESS_METHOD_ROWDIF;
+        else if (strieq("LZMA", compStr))
+            compMethod = COMPRESS_METHOD_LZMA;
+        else if (strieq("ZLIB", compStr))
+            compMethod = COMPRESS_METHOD_ZLIB;
+        //else // default is LZ4
+    }
+    return compMethod;
+}
 
+inline const char *translateFromCompMethod(unsigned compMethod)
+{
+    switch (compMethod)
+    {
+        case COMPRESS_METHOD_ROWDIF:
+            return "RDIFF";
+        case COMPRESS_METHOD_LZW:
+            return "LZW";
+        case COMPRESS_METHOD_FASTLZ:
+            return "FLZ";
+        case COMPRESS_METHOD_LZ4:
+            return "LZ4";
+        case COMPRESS_METHOD_LZMA:
+            return "LZMA";
+        case COMPRESS_METHOD_ZLIB:
+            return "ZLIB";
+        default:
+            return ""; // none
+    }
+}
 
 #define MIN_ROWCOMPRESS_RECSIZE 8
 #endif

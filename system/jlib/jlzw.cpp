@@ -52,11 +52,6 @@ typedef __int64 lbucket_t;
 
 //#define STATS
 //#define TEST
-#ifdef _DEBUG
-#define ASSERT(a) assertex(a)
-#else
-#define ASSERT(a) 
-#endif
 
 LZWDictionary::LZWDictionary()
 {
@@ -191,7 +186,7 @@ static struct __initShiftArray {
       outbits = outbytes+BITS_ALWAYS;                        \
       outnext += dict.curbits;                               \
       outlen += dict.curbits;                                \
-      ASSERT(shift==0);                                      \
+      dbgassertex(shift==0);                                 \
     }                                                        \
     outbitbuf = 0;                                           \
     if (shift != 0)                                          \
@@ -218,7 +213,7 @@ static struct __initShiftArray {
       inbytes = innext;                                      \
       inbits = inbytes+BITS_ALWAYS;                          \
       innext += dict.curbits;                                \
-      ASSERT(shift==0);                                      \
+      dbgassertex(shift==0);                                 \
     }                                                        \
     if (shift != 0)                                          \
        ret |= (*inbits << cur.shift2) & cur.mask2;           \
@@ -228,7 +223,7 @@ static struct __initShiftArray {
 
 void CLZWCompressor::initCommon()
 {
-    ASSERT(dict.curbits==0);   // check for open called twice with no close
+    dbgassertex(dict.curbits==0);   // check for open called twice with no close
     initdict();
     curcode = -1;
     inlen = 0;
@@ -302,7 +297,7 @@ void CLZWCompressor::open(void *buf,size32_t max)
         outbuf = malloc(bufalloc);
     }
     outBufMb = NULL;
-    ASSERT(max>SAFETY_MARGIN+sizeof(size32_t)); // minimum required
+    dbgassertex(max>SAFETY_MARGIN+sizeof(size32_t)); // minimum required
     maxlen=max-SAFETY_MARGIN;
     initCommon();
 }
@@ -450,7 +445,7 @@ CLZWExpander::~CLZWExpander()
         free(outbuf);
 }
 
-size32_t CLZWExpander::init(const void *blk)
+size32_t CLZWExpander::init(const void *blk, size32_t blkSz)
 {
     dict.initdict();
     BE_MEMCPY4(&outlen,blk);
@@ -846,7 +841,7 @@ size32_t DiffCompress(const void *src,void *dst,void *buff,size32_t rs)
     const unsigned char *s=(const unsigned char *)src;
     unsigned char *d=(unsigned char *)dst;
     unsigned char *b=(unsigned char *)buff;
-    ASSERT(rs);
+    dbgassertex(rs);
     size32_t cnt;
     cnt = 0;
     while (*s==*b) {
@@ -905,7 +900,7 @@ size32_t DiffCompress2(const void *src,void *dst,const void *prev,size32_t rs)
     const unsigned char *s=(const unsigned char *)src;
     unsigned char *d=(unsigned char *)dst;
     const unsigned char *b=(unsigned char *)prev;
-    ASSERT(rs);
+    dbgassertex(rs);
     size32_t cnt;
     cnt = 0;
     while (*s==*b) {
@@ -1008,7 +1003,7 @@ size32_t DiffExpand(const void *src,void *dst,const void *prev,size32_t rs)
     unsigned char *s=(unsigned char *)src;
     unsigned char *d=(unsigned char *)dst;
     const unsigned char *b=(const unsigned char *)prev;
-    ASSERT(rs);
+    dbgassertex(rs);
     while (rs) {
         size32_t cnt = 0;
         size32_t c;
@@ -1349,7 +1344,7 @@ public:
             outbuf = malloc(bufalloc);
         }
         outBufMb = NULL;
-        ASSERT(max>2+sizeof(size32_t)*2); // minimum required (actually will need enough for recsize so only a guess)
+        dbgassertex(max>2+sizeof(size32_t)*2); // minimum required (actually will need enough for recsize so only a guess)
         initCommon();
         remaining = max-outlen;
     }
@@ -1458,7 +1453,7 @@ public:
             free(outbuf);
     }
 
-    size32_t  init(const void *blk) // returns size required
+    size32_t  init(const void *blk, size32_t blkSz) // returns size required
     {
         memcpy(&outlen,blk,sizeof(outlen));
         memcpy(&recsize,(unsigned char *)blk+sizeof(outlen),sizeof(recsize));
@@ -1614,16 +1609,16 @@ public:
             outbuf = malloc(bufalloc);
         }
         outBufMb = NULL;
-        ASSERT(max>MIN_RRDHEADER_SIZE+sizeof(unsigned short)+3); // hopefully a lot bigger!
+        dbgassertex(max>MIN_RRDHEADER_SIZE+sizeof(unsigned short)+3); // hopefully a lot bigger!
         initCommon();
     }
 
     void close()
     {
         header->rowofs[0] = (unsigned short)diffbuf.length();
-        ASSERT((size32_t)(header->totsize+header->firstrlesize)<=max);
+        dbgassertex((size32_t)(header->totsize+header->firstrlesize)<=max);
         unsigned short hofs = header->hsize();
-        ASSERT(header->totsize==hofs+diffbuf.length());
+        dbgassertex(header->totsize==hofs+diffbuf.length());
         if (outBufMb)
         {
             outbuf = (byte *)outBufMb->ensureCapacity(header->totsize+header->firstrlesize);
@@ -2611,13 +2606,13 @@ public:
     {
         exp.setown(createLZWExpander(true));
     }
-    size32_t init(const void *blk)
+    size32_t init(const void *blk, size32_t inDataSz)
     {
         // first decrypt
         const byte *p = (const byte *)blk;
         size32_t l = *(const size32_t *)p;
         aesDecrypt(key.get(),key.length(),p+sizeof(size32_t),l,compbuf);
-        return exp->init(compbuf.bufferBase());         
+        return exp->init(compbuf.bufferBase());
     }
 
     void   expand(void *target)
@@ -2854,6 +2849,71 @@ IExpander *getExpander(const char *type, const char *options)
 }
 
 
+#ifdef _USE_CPPUNIT
+#include "unittests.hpp"
+#include "jmd5.hpp"
+
+class CCompressHandlerTests : public CppUnit::TestFixture
+{
+    CPPUNIT_TEST_SUITE(CCompressHandlerTests);
+        CPPUNIT_TEST(initialize);
+        CPPUNIT_TEST(simpleCompDecompTest);
+    CPPUNIT_TEST_SUITE_END();
+
+    void initialize()
+    {
+#ifdef _USE_ZLIP
+        ensureZLibCompressionHandlerInstalled();
+#endif
+    }
+    void simpleCompDecompTest()
+    {
+        size32_t memSz = 0x100000 * 10; // 10MB
+        MemoryBuffer mb;
+        void *mem = mb.reserveTruncate(memSz);
+        fillRandomData(memSz, mem);
+        StringBuffer origMd5;
+        md5_memory(mem, memSz, origMd5);
+        ForEachItemIn(h, compressors)
+        {
+            ICompressHandler &handler = compressors.item(h);
+            Owned<ICompressor> compressor = handler.getCompressor();
+
+            MemoryBuffer cmpMb;
+            compressor->open(cmpMb);
+            size32_t remaining = memSz;
+            byte *memPtr = (byte *)mem;
+            while (remaining)
+            {
+                size32_t writeChkSz = hashvalue(remaining, 0) & 0x100000; // up to 1MB
+                if (writeChkSz > remaining)
+                    writeChkSz = remaining;
+                compressor->write(memPtr, writeChkSz);
+                remaining -= writeChkSz;
+                if (0 == remaining)
+                    break;
+                memPtr += writeChkSz;
+            }
+            compressor->close();
+
+            MemoryBuffer uncompMb;
+            Owned<IExpander> expander = handler.getExpander();
+            size32_t uncompSz = expander->init(cmpMb.bytes(), cmpMb.length());
+            void *uncompPtr = uncompMb.reserveTruncate(uncompSz);
+            expander->expand(uncompPtr);
+
+            StringBuffer newMd5;
+            md5_memory(uncompPtr, uncompSz, newMd5);
+            if (!strsame(origMd5, newMd5))
+            {
+                VStringBuffer errMsg("Compression type=%s - failed compress/decompress md5 test. Original md5=%s, new md5=%s", handler.queryType(), origMd5.str(), newMd5.str());
+                CPPUNIT_ASSERT_MESSAGE(errMsg.str(), 0);
+            }
+        }
+    }
+};
+
+#endif
 
 //===================================================================================
 

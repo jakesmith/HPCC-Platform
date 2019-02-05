@@ -104,5 +104,6 @@ ZCRYPT_API void httpInflate(const byte* compressed, unsigned int comprLen, Strin
 ZCRYPT_API void gunzip(const byte* compressed, unsigned int comprLen, StringBuffer& sOutput);
 ZCRYPT_API bool isgzipped(const byte* content, size_t length);
 ZCRYPT_API void removeZipExtension(StringBuffer & target, const char * source);
+ZCRYPT_API void ensureZLibCompressionHandlerInstalled();
 
 #endif

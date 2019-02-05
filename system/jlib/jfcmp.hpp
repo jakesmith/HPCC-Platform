@@ -232,7 +232,7 @@ public:
             free(outbuf);
     }
 
-    virtual size32_t init(const void *blk)
+    virtual size32_t init(const void *blk, size32_t blkSz)
     {
         const size32_t *expsz = (const size32_t *)blk;
         outlen = *expsz;
