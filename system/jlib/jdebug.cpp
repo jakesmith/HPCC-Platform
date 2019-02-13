@@ -895,6 +895,8 @@ unsigned CpuInfo::getPercentCpu() const
     __uint64 total = getTotal();
     if (total == 0)
         return 0;
+    if (idle == 0)
+        return 100;
     unsigned percent = (unsigned)(((total - idle) * 100) / idle);
     if (percent > 100)
         percent = 100;
@@ -918,21 +920,29 @@ __uint64 CpuInfo::getTotalNs() const
 
 unsigned CpuInfo::getIdlePercent() const
 {
+    if (idle == 0) // NB: if idle>0, getTotal() will be >0
+        return 0;
     return (unsigned)((idle * 100) / getTotal());
 }
 
 unsigned CpuInfo::getIoWaitPercent() const
 {
+    if (iowait == 0) // NB: if iowait>0, getTotal() will be >0
+        return 0;
     return (unsigned)((iowait * 100) / getTotal());
 }
 
 unsigned CpuInfo::getSystemPercent() const
 {
+    if (system == 0) // NB: if system>0, getTotal() will be >0
+        return 0;
     return (unsigned)((system * 100) / getTotal());
 }
 
 unsigned CpuInfo::getUserPercent() const
 {
+    if (user == 0) // NB: if user>0, getTotal() will be >0
+        return 0;
     return (unsigned)((user * 100) / getTotal());
 }
 
