@@ -7312,6 +7312,8 @@ public:
                     break;
                 ne->query().setProp("@ip",tos.str());
                 PROGLOG("swapNode swapping %s for %s in group %s",froms.str(),tos.str(),name.str());
+                unsigned nodesSwapped = group.getPropInt("nodesSwapped");
+                group.setPropInt("nodesSwapped", nodesSwapped+1);
             }
         }
         CriticalBlock block(cachesect);
@@ -9694,6 +9696,11 @@ public:
         GroupType gt = getGroupType(type);
         return getGroupFromCluster(gt, cluster, expand);
     }
+    IPropertyTree *queryRawGroup(const char *name)
+    {
+        VStringBuffer xpath("Group[@name=\"%s\"]", name);
+        return groupsconnlock.conn->queryRoot()->queryPropTree(xpath.str());
+    }
 };
 
 void initClusterGroups(bool force, StringBuffer &response, IPropertyTree *oldEnvironment, unsigned timems)
@@ -9743,7 +9750,23 @@ static IGroup *getClusterNodeGroup(const char *clusterName, const char *type, bo
     CInitGroups init(timems);
     Owned<IGroup> expandedClusterGroup = init.getGroupFromCluster(type, cluster, true);
     if (!expandedClusterGroup->equals(nodeGroup))
-        throwStringExceptionV(0, "DFS cluster topology for '%s', does not match existing DFS group layout for group '%s'", clusterName, nodeGroupName.str());
+    {
+        IPropertyTree *rawGroup = init.queryRawGroup(nodeGroupName);
+        if (!rawGroup)
+            throwUnexpectedX("missing node group");
+        unsigned nodesSwapped = rawGroup->getPropInt("@nodesSwapped");
+        if (nodesSwapped)
+        {
+            unsigned rawGroupSize = rawGroup->getCount("Node");
+            if (rawGroupSize != expandedClusterGroup->ordinality())
+                throwStringExceptionV(0, "DFS cluster topology for '%s', does not match existing DFS group size for group '%s' [Environment cluster group size = %u, Dali group size = %u]",
+                        clusterName, nodeGroupName.str(), expandedClusterGroup->ordinality(), rawGroupSize);
+            VStringBuffer msg("DFS cluster topology for '%s' using group '%s', does not match environment due to previously swapped nodes", clusterName, nodeGroupName.str());
+            WARNLOG("%s", msg.str());
+        }
+        else
+            throwStringExceptionV(0, "DFS cluster topology for '%s', does not match existing DFS group layout for group '%s'", clusterName, nodeGroupName.str());
+    }
     Owned<IGroup> clusterGroup = init.getGroupFromCluster(type, cluster, false);
     ICopyArrayOf<INode> nodes;
     unsigned l=processGroup?cluster.getPropInt("@slavesPerNode", 1):1; // if process group requested, repeat clusterGroup slavesPerNode times.
