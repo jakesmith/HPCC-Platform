@@ -1,0 +1,16 @@
+<Dataset name='ids'>
+ <Row><value>5</value></Row>
+ <Row><value>10</value></Row>
+</Dataset>
+<Dataset name='Result 2'>
+ <Row><x>1</x></Row>
+ <Row><x>2</x></Row>
+ <Row><x>3</x></Row>
+ <Row><x>4</x></Row>
+ <Row><x>0</x></Row>
+ <Row><x>1</x></Row>
+ <Row><x>2</x></Row>
+ <Row><x>3</x></Row>
+ <Row><x>4</x></Row>
+ <Row><x>0</x></Row>
+</Dataset>
