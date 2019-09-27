@@ -55,7 +55,6 @@ static const char* SMC_ACCESS_DENIED = "Access Denied";
 static const char* QUEUE_ACCESS_DENIED = "Failed to access the queue functions. Permission denied.";
 
 const char* PERMISSIONS_FILENAME = "espsmc_permissions.xml";
-const unsigned DEFAULTACTIVITYINFOCACHETIMEOUTSECOND = 10;
 
 void AccessSuccess(IEspContext& context, char const * msg,...) __attribute__((format(printf, 2, 3)));
 void AccessSuccess(IEspContext& context, char const * msg,...)
@@ -142,10 +141,15 @@ void CWsSMCEx::init(IPropertyTree *cfg, const char *process, const char *service
         m_PortalURL.append(portalURL);
 
     xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/ActivityInfoCacheSeconds", process, service);
-    activityInfoCacheSeconds = cfg->getPropInt(xpath.str(), DEFAULTACTIVITYINFOCACHETIMEOUTSECOND);
+    unsigned activityInfoCacheSeconds = cfg->getPropInt(xpath.str(), DEFAULTACTIVITYINFOCACHEFORCEBUILDSECOND);
     xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/LogDaliConnection", process, service);
     if (cfg->getPropBool(xpath.str()))
         querySDS().setConfigOpt("Client/@LogConnection", "true");
+
+    xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/ActivityInfoCacheAutoRebuildSeconds", process, service);
+    unsigned activityInfoCacheAutoRebuildSeconds = cfg->getPropInt(xpath.str(), DEFAULTACTIVITYINFOCACHEAUTOREBUILDSECOND);
+    activityInfoReader.setown(new CActivityInfoReader(activityInfoCacheAutoRebuildSeconds * 1000, activityInfoCacheSeconds));
+    activityInfoReader->start();
 }
 
 struct CActiveWorkunitWrapper: public CActiveWorkunit
@@ -1194,7 +1198,7 @@ bool CWsSMCEx::onActivity(IEspContext &context, IEspActivityRequest &req, IEspAc
         if (version >= 1.06)
             setBannerAndChatData(version, resp);
 
-        Owned<CActivityInfo> activityInfo = getActivityInfo(context);
+        Owned<CActivityInfo> activityInfo = activityInfoReader->getActivityInfo();
         setActivityResponse(context, activityInfo, req, resp);
     }
     catch(IException* e)
@@ -1203,29 +1207,6 @@ bool CWsSMCEx::onActivity(IEspContext &context, IEspActivityRequest &req, IEspAc
     }
 
     return true;
-}
-
-void CWsSMCEx::clearActivityInfoCache()
-{
-    CriticalBlock b(getActivityCrit);
-    activityInfoCache.clear();
-}
-
-CActivityInfo* CWsSMCEx::getActivityInfo(IEspContext &context)
-{
-    CriticalBlock b(getActivityCrit);
-
-    if (activityInfoCache && activityInfoCache->isCachedActivityInfoValid(activityInfoCacheSeconds))
-        return activityInfoCache.getLink();
-
-    DBGLOG("CWsSMCEx::getActivityInfo - rebuild cached information");
-    {
-        EspTimeSection timer("createActivityInfo");
-        activityInfoCache.setown(new CActivityInfo());
-        activityInfoCache->createActivityInfo(context);
-    }
-
-    return activityInfoCache.getLink();
 }
 
 void CWsSMCEx::addWUsToResponse(IEspContext &context, const IArrayOf<IEspActiveWorkunit>& aws, IEspActivityResponse& resp)
@@ -1279,6 +1260,12 @@ void CWsSMCEx::setActivityResponse(IEspContext &context, CActivityInfo* activity
     double version = context.getClientVersion();
     const char* sortBy = req.getSortBy();
     bool descending = req.getDescending();
+    if (version >= 1.22)
+    {
+        StringBuffer s;
+        resp.setActivityTime(activityInfo->queryTimeCached(s));
+        resp.setDaliDetached(activityInfoReader->isDaliDetached());
+    }
     if (version >= 1.16)
     {
         IArrayOf<IEspTargetCluster> thorClusters;
@@ -1419,7 +1406,7 @@ bool CWsSMCEx::onMoveJobDown(IEspContext &context, IEspSMCJobRequest &req, IEspS
             }
         }
         AccessSuccess(context, "Changed job priority %s",req.getWuid());
-        clearActivityInfoCache();
+        activityInfoReader->rebuild();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -1448,7 +1435,7 @@ bool CWsSMCEx::onMoveJobUp(IEspContext &context, IEspSMCJobRequest &req, IEspSMC
             }
         }
         AccessSuccess(context, "Changed job priority %s",req.getWuid());
-        clearActivityInfoCache();
+        activityInfoReader->rebuild();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -1494,7 +1481,7 @@ bool CWsSMCEx::onMoveJobBack(IEspContext &context, IEspSMCJobRequest &req, IEspS
             }
         }
         AccessSuccess(context, "Changed job priority %s",req.getWuid());
-        clearActivityInfoCache();
+        activityInfoReader->rebuild();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -1541,7 +1528,7 @@ bool CWsSMCEx::onMoveJobFront(IEspContext &context, IEspSMCJobRequest &req, IEsp
         }
 
         AccessSuccess(context, "Changed job priority %s",req.getWuid());
-        clearActivityInfoCache();
+        activityInfoReader->rebuild();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -1571,7 +1558,7 @@ bool CWsSMCEx::onRemoveJob(IEspContext &context, IEspSMCJobRequest &req, IEspSMC
             }
         }
         AccessSuccess(context, "Removed job %s",req.getWuid());
-        clearActivityInfoCache();
+        activityInfoReader->rebuild();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -1593,7 +1580,7 @@ bool CWsSMCEx::onStopQueue(IEspContext &context, IEspSMCQueueRequest &req, IEspS
             queue->stop(createQueueActionInfo(context, "stopped", req, info));
         }
         AccessSuccess(context, "Stopped queue %s", req.getCluster());
-        clearActivityInfoCache();
+        activityInfoReader->rebuild();
         double version = context.getClientVersion();
         if (version >= 1.19)
             getStatusServerInfo(context, req.getServerType(), req.getCluster(), req.getNetworkAddress(), req.getPort(), resp.updateStatusServerInfo());
@@ -1619,7 +1606,7 @@ bool CWsSMCEx::onResumeQueue(IEspContext &context, IEspSMCQueueRequest &req, IEs
             queue->resume(createQueueActionInfo(context, "resumed", req, info));
         }
         AccessSuccess(context, "Resumed queue %s", req.getCluster());
-        clearActivityInfoCache();
+        activityInfoReader->rebuild();
         double version = context.getClientVersion();
         if (version >= 1.19)
             getStatusServerInfo(context, req.getServerType(), req.getCluster(), req.getNetworkAddress(), req.getPort(), resp.updateStatusServerInfo());
@@ -1662,7 +1649,7 @@ bool CWsSMCEx::onPauseQueue(IEspContext &context, IEspSMCQueueRequest &req, IEsp
             queue->pause(createQueueActionInfo(context, "paused", req, info));
         }
         AccessSuccess(context, "Paused queue %s", req.getCluster());
-        clearActivityInfoCache();
+        activityInfoReader->rebuild();
         double version = context.getClientVersion();
         if (version >= 1.19)
             getStatusServerInfo(context, req.getServerType(), req.getCluster(), req.getNetworkAddress(), req.getPort(), resp.updateStatusServerInfo());
@@ -1692,7 +1679,7 @@ bool CWsSMCEx::onClearQueue(IEspContext &context, IEspSMCQueueRequest &req, IEsp
             queue->clear();
         }
         AccessSuccess(context, "Cleared queue %s",req.getCluster());
-        clearActivityInfoCache();
+        activityInfoReader->rebuild();
         double version = context.getClientVersion();
         if (version >= 1.19)
             getStatusServerInfo(context, req.getServerType(), req.getCluster(), req.getNetworkAddress(), req.getPort(), resp.updateStatusServerInfo());
@@ -1761,7 +1748,7 @@ bool CWsSMCEx::onSetJobPriority(IEspContext &context, IEspSMCPriorityRequest &re
             }
         }
 
-        clearActivityInfoCache();
+        activityInfoReader->rebuild();
         resp.setRedirectUrl("/WsSMC/");
     }
     catch(IException* e)
@@ -2255,10 +2242,7 @@ void CWsSMCEx::getStatusServerInfo(IEspContext &context, const char *serverType,
     if (!serverType || !*serverType)
         throw MakeStringException(ECLWATCH_MISSING_PARAMS, "Server type not specified.");
 
-    Owned<CActivityInfo> activityInfo = getActivityInfo(context);
-    if (!activityInfo)
-        throw MakeStringException(ECLWATCH_INTERNAL_ERROR, "Failed to get Activity Info cache.");
-
+    Owned<CActivityInfo> activityInfo = activityInfoReader->getActivityInfo();
     if (strieq(serverType,STATUS_SERVER_THOR))
     {
         setTargetClusterInfo(context, serverType, server, activityInfo->queryThorTargetClusters(), activityInfo->queryActiveWUs(), statusServerInfo);
@@ -2621,3 +2605,50 @@ bool CWsSMCEx::onLockQuery(IEspContext &context, IEspLockQueryRequest &req, IEsp
     return true;
 }
 
+int CActivityInfoReader::run()
+{
+    PROGLOG("WsSMC CActivityInfoReader Thread started.");
+    unsigned int waitTimeMillies = autoRebuildMillSeconds;
+    while (!stopping)
+    {
+        if (!detached)
+        {
+            try
+            {
+                if (waitTimeMillies == (unsigned)-1)
+                {
+                    PROGLOG("WsSMC CActivityInfoReader Thread Re-started.");
+                    waitTimeMillies = autoRebuildMillSeconds;
+                }
+
+                PROGLOG("WsSMC CActivityInfoReader: collecting ActivityInfo.");
+                EspTimeSection timer("createActivityInfo");
+                Owned<IEspContext> espContext =  createEspContext();
+                Owned<CActivityInfo> activityInfo = new CActivityInfo();
+                activityInfo->createActivityInfo(*espContext);
+                PROGLOG("WsSMC CActivityInfoReader: ActivityInfo collected.");
+
+                CriticalBlock b(crit);
+                activityInfoCache.setown(activityInfo.getClear());
+                PROGLOG("WsSMC CActivityInfoReader: ActivityInfo cached.");
+            }
+            catch(IException *e)
+            {
+                StringBuffer msg;
+                IERRLOG("Exception %d:%s in WsSMC CActivityInfoReader::run", e->errorCode(), e->errorMessage(msg).str());
+                e->Release();
+            }
+            catch(...)
+            {
+                IERRLOG("Unknown exception in WsSMC CActivityInfoReader::run");
+            }
+        }
+        else
+        {
+            OWARNLOG("Detached from DALI, WsSMC CActivityInfoReader interrupted");
+            waitTimeMillies = (unsigned)-1;
+        }
+        sem.wait(waitTimeMillies);
+    }
+    return 0;
+}

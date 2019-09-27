@@ -24,6 +24,9 @@
 #include "TpWrapper.hpp"
 #include "WUXMLInfo.hpp"
 
+const unsigned DEFAULTACTIVITYINFOCACHEFORCEBUILDSECOND = 10;
+const unsigned DEFAULTACTIVITYINFOCACHEAUTOREBUILDSECOND = 120;
+
 enum BulletType
 {
     bulletNONE = 0,
@@ -154,15 +157,69 @@ public:
     inline IArrayOf<IEspActiveWorkunit>& queryActiveWUs() { return aws; };
     inline IArrayOf<IEspServerJobQueue>& queryServerJobQueues() { return serverJobQueues; };
     inline IArrayOf<IEspDFUJob>& queryDFURecoveryJobs() { return DFURecoveryJobs; };
+    inline StringBuffer& queryTimeCached(StringBuffer& str) { return timeCached.getString(str, true); }
+};
+
+class CWsSMCEx;
+
+class CActivityInfoReader : public Thread
+{
+    bool stopping = false;
+    bool detached = false;
+    unsigned autoRebuildMillSeconds = 1000*DEFAULTACTIVITYINFOCACHEAUTOREBUILDSECOND;
+    unsigned forceRebuildSeconds = DEFAULTACTIVITYINFOCACHEFORCEBUILDSECOND;
+    Owned<CActivityInfo> activityInfoCache;
+    Semaphore sem;
+    CriticalSection crit;
+public:
+    CActivityInfoReader(unsigned _autoRebuildMillSeconds, unsigned _forceRebuildSeconds)
+        : autoRebuildMillSeconds(_autoRebuildMillSeconds), forceRebuildSeconds(_forceRebuildSeconds) {};
+
+    ~CActivityInfoReader()
+    {
+        stopping = true;
+        sem.signal();
+        join();
+    }
+
+    virtual int run();
+    CActivityInfo* getActivityInfo()
+    {
+        while (!stopping)
+        {
+            {
+                CriticalBlock b(crit);
+                if (activityInfoCache)
+                {
+                    if (!activityInfoCache->isCachedActivityInfoValid(forceRebuildSeconds))
+                        rebuild();
+                    return activityInfoCache.getLink();
+                }
+            } //release crit so that the activityInfoCache can be set.
+            sleep(1);
+        }
+        return nullptr;
+    }
+    void rebuild()
+    {
+        sem.signal();
+    }
+    void setDetachedState(bool _detached)
+    {
+        if (detached != _detached)
+        {
+            detached = _detached;
+            if (!detached)
+                rebuild();
+        }
+    }
+    bool isDaliDetached() { return detached; }
 };
 
 class CWsSMCEx : public CWsSMC
 {
     long m_counter;
     CTpWrapper m_ClusterStatus;
-    CriticalSection getActivityCrit;
-    Owned<CActivityInfo> activityInfoCache;
-    unsigned activityInfoCacheSeconds;
 
     StringBuffer m_ChatURL;
     StringBuffer m_Banner;
@@ -173,6 +230,7 @@ class CWsSMCEx : public CWsSMC
     int m_BannerAction;
     bool m_EnableChatURL;
     CriticalSection crit;
+    Owned<CActivityInfoReader> activityInfoReader;
 
 public:
     IMPLEMENT_IINTERFACE;
@@ -195,6 +253,18 @@ public:
     bool onGetThorQueueAvailability(IEspContext &context, IEspGetThorQueueAvailabilityRequest &req, IEspGetThorQueueAvailabilityResponse& resp);
     bool onSetBanner(IEspContext &context, IEspSetBannerRequest &req, IEspSetBannerResponse& resp);
     bool onNotInCommunityEdition(IEspContext &context, IEspNotInCommunityEditionRequest &req, IEspNotInCommunityEditionResponse &resp);
+
+    bool attachServiceToDali() override
+    {
+        activityInfoReader->setDetachedState(false);
+        return true;
+    }
+
+    bool detachServiceFromDali() override
+    {
+        activityInfoReader->setDetachedState(true);
+        return true;
+    }
 
     virtual bool onBrowseResources(IEspContext &context, IEspBrowseResourcesRequest & req, IEspBrowseResourcesResponse & resp);
     virtual bool onRoxieControlCmd(IEspContext &context, IEspRoxieControlCmdRequest &req, IEspRoxieControlCmdResponse &resp);
@@ -221,8 +291,6 @@ private:
     void setJobPriority(IEspContext &context, IWorkUnitFactory* factory, const char* wuid, const char* queue, WUPriorityClass& priority);
 
     void setESPTargetClusters(IEspContext& context, const CIArrayOf<CWsSMCTargetCluster>& targetClusters, IArrayOf<IEspTargetCluster>& respTargetClusters);
-    void clearActivityInfoCache();
-    CActivityInfo* getActivityInfo(IEspContext &context);
     void setActivityResponse(IEspContext &context, CActivityInfo* activityInfo, IEspActivityRequest &req, IEspActivityResponse& resp);
     void addWUsToResponse(IEspContext &context, const IArrayOf<IEspActiveWorkunit>& aws, IEspActivityResponse& resp);
 
