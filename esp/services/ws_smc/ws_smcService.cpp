@@ -148,8 +148,7 @@ void CWsSMCEx::init(IPropertyTree *cfg, const char *process, const char *service
 
     xpath.setf("Software/EspProcess[@name=\"%s\"]/EspService[@name=\"%s\"]/ActivityInfoCacheAutoRebuildSeconds", process, service);
     unsigned activityInfoCacheAutoRebuildSeconds = cfg->getPropInt(xpath.str(), DEFAULTACTIVITYINFOCACHEAUTOREBUILDSECOND);
-    activityInfoReader.setown(new CActivityInfoReader(activityInfoCacheAutoRebuildSeconds * 1000, activityInfoCacheSeconds));
-    activityInfoReader->start();
+    activityInfoReader.setown(new CActivityInfoReader(activityInfoCacheAutoRebuildSeconds, activityInfoCacheSeconds));
 }
 
 struct CActiveWorkunitWrapper: public CActiveWorkunit
@@ -1199,6 +1198,7 @@ bool CWsSMCEx::onActivity(IEspContext &context, IEspActivityRequest &req, IEspAc
             setBannerAndChatData(version, resp);
 
         Owned<CActivityInfo> activityInfo = activityInfoReader->getActivityInfo();
+        assert(activityInfo);
         setActivityResponse(context, activityInfo, req, resp);
     }
     catch(IException* e)
@@ -2243,6 +2243,8 @@ void CWsSMCEx::getStatusServerInfo(IEspContext &context, const char *serverType,
         throw MakeStringException(ECLWATCH_MISSING_PARAMS, "Server type not specified.");
 
     Owned<CActivityInfo> activityInfo = activityInfoReader->getActivityInfo();
+    assert(activityInfo);
+
     if (strieq(serverType,STATUS_SERVER_THOR))
     {
         setTargetClusterInfo(context, serverType, server, activityInfo->queryThorTargetClusters(), activityInfo->queryActiveWUs(), statusServerInfo);
@@ -2605,32 +2607,34 @@ bool CWsSMCEx::onLockQuery(IEspContext &context, IEspLockQueryRequest &req, IEsp
     return true;
 }
 
-int CActivityInfoReader::run()
+void CActivityInfoReader::threadmain()
 {
     PROGLOG("WsSMC CActivityInfoReader Thread started.");
-    unsigned int waitTimeMillies = autoRebuildMillSeconds;
+    unsigned int autoRebuildMillSeconds = 1000*autoRebuildSeconds;
     while (!stopping)
     {
         if (!detached)
         {
             try
             {
-                if (waitTimeMillies == (unsigned)-1)
-                {
-                    PROGLOG("WsSMC CActivityInfoReader Thread Re-started.");
-                    waitTimeMillies = autoRebuildMillSeconds;
-                }
-
-                PROGLOG("WsSMC CActivityInfoReader: collecting ActivityInfo.");
                 EspTimeSection timer("createActivityInfo");
                 Owned<IEspContext> espContext =  createEspContext();
                 Owned<CActivityInfo> activityInfo = new CActivityInfo();
-                activityInfo->createActivityInfo(*espContext);
-                PROGLOG("WsSMC CActivityInfoReader: ActivityInfo collected.");
+                if (!activityInfoCache)
+                {
+                    CriticalBlock b(crit);
+                    activityInfo->createActivityInfo(*espContext);
+                    PROGLOG("WsSMC CActivityInfoReader: ActivityInfo collected.");
+                    activityInfoCache.setown(activityInfo.getClear());
+                }
+                else
+                {
+                    activityInfo->createActivityInfo(*espContext);
+                    PROGLOG("WsSMC CActivityInfoReader: ActivityInfo collected.");
 
-                CriticalBlock b(crit);
-                activityInfoCache.setown(activityInfo.getClear());
-                PROGLOG("WsSMC CActivityInfoReader: ActivityInfo cached.");
+                    CriticalBlock b(crit);
+                    activityInfoCache.setown(activityInfo.getClear());
+                }
             }
             catch(IException *e)
             {
@@ -2643,12 +2647,12 @@ int CActivityInfoReader::run()
                 IERRLOG("Unknown exception in WsSMC CActivityInfoReader::run");
             }
         }
-        else
+
+        waiting = true;
+        if (!sem.wait(autoRebuildMillSeconds))
         {
-            OWARNLOG("Detached from DALI, WsSMC CActivityInfoReader interrupted");
-            waitTimeMillies = (unsigned)-1;
+            bool expected = true;
+            waiting.compare_exchange_strong(expected, false);
         }
-        sem.wait(waitTimeMillies);
     }
-    return 0;
 }

@@ -162,47 +162,45 @@ public:
 
 class CWsSMCEx;
 
-class CActivityInfoReader : public Thread
+class CActivityInfoReader : public CInterface, implements IThreaded
 {
     bool stopping = false;
     bool detached = false;
-    unsigned autoRebuildMillSeconds = 1000*DEFAULTACTIVITYINFOCACHEAUTOREBUILDSECOND;
+    unsigned autoRebuildSeconds = DEFAULTACTIVITYINFOCACHEAUTOREBUILDSECOND;
     unsigned forceRebuildSeconds = DEFAULTACTIVITYINFOCACHEFORCEBUILDSECOND;
     Owned<CActivityInfo> activityInfoCache;
     Semaphore sem;
     CriticalSection crit;
+    CThreaded threaded;
+    std::atomic<bool> waiting = {false};
 public:
-    CActivityInfoReader(unsigned _autoRebuildMillSeconds, unsigned _forceRebuildSeconds)
-        : autoRebuildMillSeconds(_autoRebuildMillSeconds), forceRebuildSeconds(_forceRebuildSeconds) {};
+    CActivityInfoReader(unsigned _autoRebuildSeconds, unsigned _forceRebuildSeconds)
+        : autoRebuildSeconds(_autoRebuildSeconds), forceRebuildSeconds(_forceRebuildSeconds), threaded("ActivityInfoReader")
+    {
+        threaded.init(this);
+    };
 
     ~CActivityInfoReader()
     {
         stopping = true;
         sem.signal();
-        join();
+        threaded.join();
     }
 
-    virtual int run();
+    virtual void threadmain() override;
     CActivityInfo* getActivityInfo()
     {
-        while (!stopping)
-        {
-            {
-                CriticalBlock b(crit);
-                if (activityInfoCache)
-                {
-                    if (!activityInfoCache->isCachedActivityInfoValid(forceRebuildSeconds))
-                        rebuild();
-                    return activityInfoCache.getLink();
-                }
-            } //release crit so that the activityInfoCache can be set.
-            sleep(1);
-        }
-        return nullptr;
+        CriticalBlock b(crit);
+        assert(activityInfoCache);
+        if (!activityInfoCache->isCachedActivityInfoValid(forceRebuildSeconds))
+            rebuild();
+        return activityInfoCache.getLink();
     }
     void rebuild()
     {
-        sem.signal();
+        bool expected = true;
+        if (waiting.compare_exchange_strong(expected, false))
+            sem.signal();
     }
     void setDetachedState(bool _detached)
     {
@@ -213,7 +211,7 @@ public:
                 rebuild();
         }
     }
-    bool isDaliDetached() { return detached; }
+    bool isDaliDetached() const { return detached; }
 };
 
 class CWsSMCEx : public CWsSMC
@@ -254,13 +252,13 @@ public:
     bool onSetBanner(IEspContext &context, IEspSetBannerRequest &req, IEspSetBannerResponse& resp);
     bool onNotInCommunityEdition(IEspContext &context, IEspNotInCommunityEditionRequest &req, IEspNotInCommunityEditionResponse &resp);
 
-    bool attachServiceToDali() override
+    virtual bool attachServiceToDali() override
     {
         activityInfoReader->setDetachedState(false);
         return true;
     }
 
-    bool detachServiceFromDali() override
+    virtual bool detachServiceFromDali() override
     {
         activityInfoReader->setDetachedState(true);
         return true;
