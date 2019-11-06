@@ -166,10 +166,13 @@ class CActivityInfoReader : public CInterface, implements IThreaded
 {
     bool stopping = false;
     bool detached = false;
+    bool first = true;
+    bool firstBlocked = false;
     unsigned autoRebuildSeconds = DEFAULTACTIVITYINFOCACHEAUTOREBUILDSECOND;
     unsigned forceRebuildSeconds = DEFAULTACTIVITYINFOCACHEFORCEBUILDSECOND;
     Owned<CActivityInfo> activityInfoCache;
     Semaphore sem;
+    Semaphore firstSem;
     CriticalSection crit;
     CThreaded threaded;
     std::atomic<bool> waiting = {false};
@@ -184,14 +187,28 @@ public:
     {
         stopping = true;
         sem.signal();
+        firstSem.signal(); // in case
         threaded.join();
     }
 
     virtual void threadmain() override;
     CActivityInfo* getActivityInfo()
     {
-        CriticalBlock b(crit);
-        assert(activityInfoCache);
+        CLeavableCriticalBlock b(crit);
+        if (first)
+        {
+            if (detached)
+                return nullptr;
+            firstBlocked = true;
+            b.leave();
+            firstSem.wait();
+            b.enter();
+            if (first)
+                return nullptr;
+        }
+        if (detached && !activityInfoCache)
+            return nullptr;
+        assertex(activityInfoCache);
         if (!activityInfoCache->isCachedActivityInfoValid(forceRebuildSeconds))
             rebuild();
         return activityInfoCache.getLink();
@@ -204,10 +221,20 @@ public:
     }
     void setDetachedState(bool _detached)
     {
+        CriticalBlock b(crit);
         if (detached != _detached)
         {
             detached = _detached;
-            if (!detached)
+            if (detached)
+            {
+                // NB: first will still be true, signal and getActivityInfo() will return null
+                if (firstBlocked)
+                {
+                    firstBlocked = false;
+                    firstSem.signal(); // NB: first still false
+                }
+            }
+            else
                 rebuild();
         }
     }

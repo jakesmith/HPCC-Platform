@@ -2620,20 +2620,17 @@ void CActivityInfoReader::threadmain()
                 EspTimeSection timer("createActivityInfo");
                 Owned<IEspContext> espContext =  createEspContext();
                 Owned<CActivityInfo> activityInfo = new CActivityInfo();
-                if (!activityInfoCache)
+                activityInfo->createActivityInfo(*espContext);
+                CriticalBlock b(crit);
+                activityInfoCache.setown(activityInfo.getClear());
+                if (first) // if 1st and getActivityInfo blocked, release it.
                 {
-                    CriticalBlock b(crit);
-                    activityInfo->createActivityInfo(*espContext);
-                    PROGLOG("WsSMC CActivityInfoReader: ActivityInfo collected.");
-                    activityInfoCache.setown(activityInfo.getClear());
-                }
-                else
-                {
-                    activityInfo->createActivityInfo(*espContext);
-                    PROGLOG("WsSMC CActivityInfoReader: ActivityInfo collected.");
-
-                    CriticalBlock b(crit);
-                    activityInfoCache.setown(activityInfo.getClear());
+                    first = false;
+                    if (firstBlocked)
+                    {
+                        firstBlocked = false;
+                        firstSem.signal();
+                    }
                 }
             }
             catch(IException *e)
