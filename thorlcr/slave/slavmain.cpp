@@ -388,15 +388,25 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         Owned<IKeyIndex> keyIndex;
         Linked<IOutputMetaData> meta;
         const RtlRecord *record = nullptr;
+        RowFilter keyFilters;
 
     public:
-        CKeyLookupContext(CKJService &_service, CActivityContext *_activityCtx, const CLookupKey &_key, IOutputMetaData *_meta)
+        CKeyLookupContext(CKJService &_service, CActivityContext *_activityCtx, const CLookupKey &_key, IOutputMetaData *_meta, const std::vector<std::string> &filters)
             : CContext(_service, _activityCtx), key(_key), meta(_meta)
         {
             keyIndex.setown(createKeyIndex(key.fname, key.crc, false, false));
             expectedFormat.set(activityCtx->queryHelper()->queryIndexRecordSize());
             expectedFormatCrc = activityCtx->queryHelper()->getIndexFormatCrc();
             record = &meta->queryRecordAccessor(true);
+
+            if (filters.size())
+            {
+                for (auto &filter: filters)
+                {
+                    IFieldFilter *keyFilter = deserializeFieldFilter(*record, filter.c_str());
+                    keyFilters.addFilter(*record, filter.c_str());
+                }
+            }
         }
         unsigned queryHash() const { return key.queryHash(); }
         const CLookupKey &queryKey() const { return key; }
@@ -419,7 +429,14 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         {
             return createLocalKeyManager(*record, keyIndex, nullptr, true, false);
         }
+        RtlDynRow *createKeyFilterRow()
+        {
+            if (!keyFilters.numFilterFields())
+                return nullptr;
+            return new RtlDynRow(*record);
+        }
         inline IHThorKeyedJoinArg *queryHelper() const { return activityCtx->queryHelper(); }
+        inline RowFilter &queryFilters() const { return keyFilters; }
     };
     class CFetchContext : public CContext
     {
@@ -458,6 +475,8 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         Linked<CKeyLookupContext> ctx;
         Owned<IKeyManager> keyManager;
         unsigned handle = 0;
+        RtlDynRow *filterRow = nullptr;
+        RowFilter *filters = nullptr;
     public:
         CKMContainer(CKJService &_service, CKeyLookupContext *_ctx)
             : service(_service), ctx(_ctx)
@@ -468,6 +487,9 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             if (translator)
                 keyManager->setLayoutTranslator(translator);
             handle = service.getUniqId();
+
+            filterRow = ctx->createKeyFilterRow();
+            filters = &ctx->queryFilters();
         }
         ~CKMContainer()
         {
@@ -476,6 +498,14 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         CKeyLookupContext &queryCtx() const { return *ctx; }
         IKeyManager *queryKeyManager() const { return keyManager; }
         unsigned queryHandle() const { return handle; }
+        RtlDynRow *queryFilterRow() const { return filterRow; }
+        inline bool fieldFilterMatch(const void * buffer)
+        {
+            if (!filterRow)
+                return true;
+            filterRow->setRow(filterRow, filters->getNumFieldsRequired());
+            return filters->matches(*filterRow);
+        }
     };
     template<class KEY, class ITEM>
     class CKeyedCacheEntry : public CInterface
@@ -677,6 +707,13 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             getHeaderFromRow(row, lookupKeyHeader);
             const void *keyedFieldsRow = (byte *)row + sizeof(KeyLookupHeader);
 
+
+JCSMORE
+    filters.createSegmentMonitors(keyManager);
+    keyManager->finishSegmentMonitors();
+    keyManager->reset();
+
+
             helper->createSegmentMonitors(keyManager, keyedFieldsRow);
             keyManager->finishSegmentMonitors();
             keyManager->reset();
@@ -685,6 +722,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             // NB: keepLimit is not on hard matches and can only be applied later, since other filtering (e.g. in transform) may keep below keepLimit
             while (keyManager->lookup(true))
             {
+
                 ++candidates;
                 if (candidates > abortLimit)
                 {
@@ -700,6 +738,13 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 byte const * keyRow = keyManager->queryKeyBuffer();
                 size_t fposOffset = keyManager->queryRowSize() - sizeof(offset_t);
                 offset_t fpos = rtlReadBigUInt8(keyRow + fposOffset);
+
+                if (kmc->fieldFilterMatch(keyRow))
+                {
+                    
+                }
+
+
                 if (helper->indexReadMatch(keyedFieldsRow, keyRow,  &adapter))
                 {
                     if (fetchRequired)
@@ -1007,11 +1052,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         activityContextsHT.insert({id, activityCtx}); // NB: does not link/take ownership
         return activityCtx;
     }
-    CKeyLookupContext *createLookupContext(CActivityContext *activityCtx, const CLookupKey &key, IOutputMetaData *meta)
+    CKeyLookupContext *createLookupContext(CActivityContext *activityCtx, const CLookupKey &key, IOutputMetaData *meta, const std::vector<std::string> &filters)
     {
-        return new CKeyLookupContext(*this, activityCtx, key, meta);
+        return new CKeyLookupContext(*this, activityCtx, key, meta, filters);
     }
-    CKeyLookupContext *ensureKeyLookupContext(CJobBase &job, const CLookupKey &key, MemoryBuffer &createCtxMb, IOutputMetaData *meta, bool *created=nullptr)
+    CKeyLookupContext *ensureKeyLookupContext(CJobBase &job, const CLookupKey &key, MemoryBuffer &createCtxMb, IOutputMetaData *meta, const std::vector<std::string> &filters, bool *created=nullptr)
     {
         CriticalBlock b(lCCrit);
         auto it = keyLookupContextsHT.find(key);
@@ -1024,7 +1069,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         if (created)
             *created = true;
         Owned<CActivityContext> activityCtx = ensureActivityContext(job, key.id, createCtxMb);
-        CKeyLookupContext *keyLookupContext = createLookupContext(activityCtx, key, meta);
+        CKeyLookupContext *keyLookupContext = createLookupContext(activityCtx, key, meta, filters);
         keyLookupContextsHT.insert({key, keyLookupContext}); // NB: does not link/take ownership
         return keyLookupContext;
     }
@@ -1302,11 +1347,21 @@ public:
                         msg.read(publishedFormatCrc);
                         Owned<IOutputMetaData> publishedFormat = createTypeInfoOutputMetaData(msg, false);
 
+                        std::vector<std::string> filters;
+                        unsigned numFilters;
+                        msg.read(numFilters);
+                        for (unsigned f=0; f<numFilters; f++)
+                        {
+                            StringAttr filter;
+                            msg.read(filter);
+                            filters.push_back(filter);
+                        }
+
                         bool messageCompression;
                         msg.read(messageCompression);
 
                         bool created;
-                        Owned<CKeyLookupContext> keyLookupContext = ensureKeyLookupContext(*currentJob, key, createCtxMb, publishedFormat, &created); // ensure entry in keyLookupContextsHT, will be removed by last CKMContainer
+                        Owned<CKeyLookupContext> keyLookupContext = ensureKeyLookupContext(*currentJob, key, createCtxMb, publishedFormat, filters, &created); // ensure entry in keyLookupContextsHT, will be removed by last CKMContainer
                         keyLookupContext->queryActivityCtx()->setMessageCompression(messageCompression);
                         RecordTranslationMode translationMode;
                         msg.read(reinterpret_cast<std::underlying_type<RecordTranslationMode>::type &> (translationMode));
