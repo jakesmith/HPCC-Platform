@@ -386,13 +386,17 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
     {
         CLookupKey key;
         Owned<IKeyIndex> keyIndex;
+        Linked<IOutputMetaData> meta;
+        const RtlRecord *record = nullptr;
+
     public:
-        CKeyLookupContext(CKJService &_service, CActivityContext *_activityCtx, const CLookupKey &_key)
-            : CContext(_service, _activityCtx), key(_key)
+        CKeyLookupContext(CKJService &_service, CActivityContext *_activityCtx, const CLookupKey &_key, IOutputMetaData *_meta)
+            : CContext(_service, _activityCtx), key(_key), meta(_meta)
         {
             keyIndex.setown(createKeyIndex(key.fname, key.crc, false, false));
             expectedFormat.set(activityCtx->queryHelper()->queryIndexRecordSize());
             expectedFormatCrc = activityCtx->queryHelper()->getIndexFormatCrc();
+            record = &meta->queryRecordAccessor(true);
         }
         unsigned queryHash() const { return key.queryHash(); }
         const CLookupKey &queryKey() const { return key; }
@@ -413,7 +417,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
 
         IKeyManager *createKeyManager()
         {
-            return createLocalKeyManager(queryHelper()->queryIndexRecordSize()->queryRecordAccessor(true), keyIndex, nullptr, queryHelper()->hasNewSegmentMonitors(), false);
+            return createLocalKeyManager(*record, keyIndex, nullptr, true, false);
         }
         inline IHThorKeyedJoinArg *queryHelper() const { return activityCtx->queryHelper(); }
     };
@@ -1003,11 +1007,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         activityContextsHT.insert({id, activityCtx}); // NB: does not link/take ownership
         return activityCtx;
     }
-    CKeyLookupContext *createLookupContext(CActivityContext *activityCtx, const CLookupKey &key)
+    CKeyLookupContext *createLookupContext(CActivityContext *activityCtx, const CLookupKey &key, IOutputMetaData *meta)
     {
-        return new CKeyLookupContext(*this, activityCtx, key);
+        return new CKeyLookupContext(*this, activityCtx, key, meta);
     }
-    CKeyLookupContext *ensureKeyLookupContext(CJobBase &job, const CLookupKey &key, MemoryBuffer &createCtxMb, bool *created=nullptr)
+    CKeyLookupContext *ensureKeyLookupContext(CJobBase &job, const CLookupKey &key, MemoryBuffer &createCtxMb, IOutputMetaData *meta, bool *created=nullptr)
     {
         CriticalBlock b(lCCrit);
         auto it = keyLookupContextsHT.find(key);
@@ -1020,7 +1024,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         if (created)
             *created = true;
         Owned<CActivityContext> activityCtx = ensureActivityContext(job, key.id, createCtxMb);
-        CKeyLookupContext *keyLookupContext = createLookupContext(activityCtx, key);
+        CKeyLookupContext *keyLookupContext = createLookupContext(activityCtx, key, meta);
         keyLookupContextsHT.insert({key, keyLookupContext}); // NB: does not link/take ownership
         return keyLookupContext;
     }
@@ -1294,18 +1298,20 @@ public:
                         MemoryBuffer createCtxMb;
                         createCtxMb.setBuffer(createCtxSz, (void *)msg.readDirect(createCtxSz)); // NB: read only
 
-                        bool created;
-                        Owned<CKeyLookupContext> keyLookupContext = ensureKeyLookupContext(*currentJob, key, createCtxMb, &created); // ensure entry in keyLookupContextsHT, will be removed by last CKMContainer
+                        unsigned publishedFormatCrc;
+                        msg.read(publishedFormatCrc);
+                        Owned<IOutputMetaData> publishedFormat = createTypeInfoOutputMetaData(msg, false);
+
                         bool messageCompression;
                         msg.read(messageCompression);
+
+                        bool created;
+                        Owned<CKeyLookupContext> keyLookupContext = ensureKeyLookupContext(*currentJob, key, createCtxMb, publishedFormat, &created); // ensure entry in keyLookupContextsHT, will be removed by last CKMContainer
                         keyLookupContext->queryActivityCtx()->setMessageCompression(messageCompression);
                         RecordTranslationMode translationMode;
                         msg.read(reinterpret_cast<std::underlying_type<RecordTranslationMode>::type &> (translationMode));
                         if (RecordTranslationMode::None != translationMode)
                         {
-                            unsigned publishedFormatCrc;
-                            msg.read(publishedFormatCrc);
-                            Owned<IOutputMetaData> publishedFormat = createTypeInfoOutputMetaData(msg, false);
                             Owned<IOutputMetaData> projectedFormat;
                             bool projected;
                             msg.read(projected);

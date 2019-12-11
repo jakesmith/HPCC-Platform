@@ -1486,11 +1486,17 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                 activity.queryHelper()->serializeCreateContext(msg);
                 sizeMark.write();
 
-                msg.append(activity.messageCompression);
-                // NB: potentially translation per part could be different if dealing with superkeys
                 IPropertyTree &props = part.queryOwner().queryProperties();
                 unsigned publishedFormatCrc = (unsigned)props.getPropInt("@formatCrc", 0);
                 Owned<IOutputMetaData> publishedFormat = getDaliLayoutInfo(props);
+                msg.append(publishedFormatCrc);
+                if (!dumpTypeInfo(msg, publishedFormat->querySerializedDiskMeta()->queryTypeInfo()))
+                    throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler [dumpTypeInfo] - failed handling publishedFormat");
+
+                msg.append(activity.messageCompression);
+
+
+                // NB: potentially translation per part could be different if dealing with superkeys
                 unsigned projectedFormatCrc = helper->getProjectedIndexFormatCrc();
                 IOutputMetaData *projectedFormat = helper->queryProjectedIndexRecordSize();
                 unsigned expectedFormatCrc = helper->getIndexFormatCrc();
@@ -1505,9 +1511,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                     if (!canRemoteTranslate)
                         throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler - translation required, but formats unserializable");
                     msg.append(static_cast<std::underlying_type<RecordTranslationMode>::type>(translationMode));
-                    msg.append(publishedFormatCrc);
-                    if (!dumpTypeInfo(msg, publishedFormat->querySerializedDiskMeta()->queryTypeInfo()))
-                        throw MakeActivityException(&activity, 0, "CKeyLookupRemoteHandler [dumpTypeInfo] - failed handling publishedFormat");
                     if (projectedFormat != publishedFormat)
                     {
                         msg.append(true);
