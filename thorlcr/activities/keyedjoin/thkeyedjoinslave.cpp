@@ -1395,6 +1395,20 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
         void writeRowData(CThorExpandingRowArray &rows, MemoryBuffer &mb)
         {
+            IConstArrayOf<IFieldFilter> fieldFilters;  // These refer to the expected layout
+            struct CIndexReadContext : implements IIndexReadContext
+            {
+                IConstArrayOf<IFieldFilter> &fieldFilters;
+                CIndexReadContext(IConstArrayOf<IFieldFilter> &_fieldFilters) : fieldFilters(_fieldFilters)
+                {
+                }
+                virtual void append(IKeySegmentMonitor *segment) override { throwUnexpected(); }
+                virtual void append(FFoption option, const IFieldFilter * filter) override
+                {
+                    fieldFilters.append(*filter);
+                }
+            } context(fieldFilters);
+
             DelayedSizeMarker sizeMark(mb);
             MemoryBuffer tmpMB;
             MemoryBuffer &dst = activity.messageCompression ? tmpMB : mb;
@@ -1406,6 +1420,10 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             for (rowidx_t r=0; r<numRows; r++)
             {
                 const void *row = rows.query(r);
+
+                helper->createSegmentMonitors(&context);
+
+
                 serializer->serialize(s, (const byte *)row);
             }
             if (activity.messageCompression)

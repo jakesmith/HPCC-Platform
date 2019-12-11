@@ -707,14 +707,9 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             getHeaderFromRow(row, lookupKeyHeader);
             const void *keyedFieldsRow = (byte *)row + sizeof(KeyLookupHeader);
 
+            RowFilter filters;
 
-JCSMORE
-    filters.createSegmentMonitors(keyManager);
-    keyManager->finishSegmentMonitors();
-    keyManager->reset();
-
-
-            helper->createSegmentMonitors(keyManager, keyedFieldsRow);
+            filters.createSegmentMonitors(keyManager);
             keyManager->finishSegmentMonitors();
             keyManager->reset();
 
@@ -722,7 +717,6 @@ JCSMORE
             // NB: keepLimit is not on hard matches and can only be applied later, since other filtering (e.g. in transform) may keep below keepLimit
             while (keyManager->lookup(true))
             {
-
                 ++candidates;
                 if (candidates > abortLimit)
                 {
@@ -740,12 +734,6 @@ JCSMORE
                 offset_t fpos = rtlReadBigUInt8(keyRow + fposOffset);
 
                 if (kmc->fieldFilterMatch(keyRow))
-                {
-                    
-                }
-
-
-                if (helper->indexReadMatch(keyedFieldsRow, keyRow,  &adapter))
                 {
                     if (fetchRequired)
                         reply.addRow(nullptr, fpos);
