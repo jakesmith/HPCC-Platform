@@ -50,12 +50,13 @@
 #include "thkeyedjoincommon.hpp"
 #include "thkeyedjoinslave.ipp"
 
-#include <vector>
+#include <algorithm>
 #include <atomic>
 #include <deque>
-#include <algorithm>
+#include <string>
 #include <typeinfo>
 #include <type_traits>
+#include <vector>
 
 static const unsigned defaultKeyLookupQueuedBatchSize = 1000;
 static const unsigned defaultKeyLookupFetchQueuedBatchSize = 1000;
@@ -158,7 +159,7 @@ static const unsigned defaultFetchLookupProcessBatchLimit = 10000;
 class CJoinGroup;
 
 
-enum AllocatorTypes { AT_Transform=1, AT_LookupWithJG, AT_LookupWithJGRef, AT_JoinFields, AT_FetchRequest, AT_FetchResponse, AT_JoinGroup, AT_JoinGroupRhsRows, AT_FetchDisk, AT_LookupResponse };
+enum AllocatorTypes { AT_Transform=1, AT_LookupWithJG, AT_RemoteLookup, AT_LookupWithJGRef, AT_JoinFields, AT_FetchRequest, AT_FetchResponse, AT_JoinGroup, AT_JoinGroupRhsRows, AT_FetchDisk, AT_LookupResponse };
 
 
 struct Row
@@ -1395,20 +1396,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
         void writeRowData(CThorExpandingRowArray &rows, MemoryBuffer &mb)
         {
-            IConstArrayOf<IFieldFilter> fieldFilters;  // These refer to the expected layout
-            struct CIndexReadContext : implements IIndexReadContext
-            {
-                IConstArrayOf<IFieldFilter> &fieldFilters;
-                CIndexReadContext(IConstArrayOf<IFieldFilter> &_fieldFilters) : fieldFilters(_fieldFilters)
-                {
-                }
-                virtual void append(IKeySegmentMonitor *segment) override { throwUnexpected(); }
-                virtual void append(FFoption option, const IFieldFilter * filter) override
-                {
-                    fieldFilters.append(*filter);
-                }
-            } context(fieldFilters);
-
             DelayedSizeMarker sizeMark(mb);
             MemoryBuffer tmpMB;
             MemoryBuffer &dst = activity.messageCompression ? tmpMB : mb;
@@ -1420,10 +1407,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             for (rowidx_t r=0; r<numRows; r++)
             {
                 const void *row = rows.query(r);
-
-                helper->createSegmentMonitors(&context);
-
-
                 serializer->serialize(s, (const byte *)row);
             }
             if (activity.messageCompression)
@@ -1480,6 +1463,20 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     class CKeyLookupRemoteHandler : public CRemoteLookupHandler
     {
         typedef CRemoteLookupHandler PARENT;
+
+        std::vector<Owned<const IFieldFilter>> fieldFilters;  // These refer to the expected layout
+        struct CIndexReadContext : implements IIndexReadContext
+        {
+            std::vector<Owned<const IFieldFilter>> &fieldFilters;
+            CIndexReadContext(std::vector<Owned<const IFieldFilter>> &_fieldFilters) : fieldFilters(_fieldFilters)
+            {
+            }
+            virtual void append(IKeySegmentMonitor *segment) override { throwUnexpected(); }
+            virtual void append(FFoption option, const IFieldFilter * filter) override
+            {
+                fieldFilters.push_back(filter);
+            }
+        } filterContext;
 
         void initRead(CMessageBuffer &msg, unsigned selected, unsigned partNo, unsigned copy)
         {
@@ -1542,6 +1539,38 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                     msg.append(static_cast<std::underlying_type<RecordTranslationMode>::type>(RecordTranslationMode::None));
             }
         }
+        void writeRowData(CThorExpandingRowArray &rows, MemoryBuffer &mb)
+        {
+            DelayedSizeMarker sizeMark(mb);
+            MemoryBuffer tmpMB;
+            MemoryBuffer &dst = activity.messageCompression ? tmpMB : mb;
+
+            unsigned numRows = rows.ordinality();
+            dst.append(numRows);
+            IOutputRowSerializer *serializer = rowIf->queryRowSerializer();
+            for (rowidx_t r=0; r<numRows; r++)
+            {
+                const void *row = rows.query(r);
+
+                const void *keyedFieldsRow = (byte *)row + sizeof(KeyLookupHeader);
+                helper->createSegmentMonitors(&filterContext, keyedFieldsRow);
+
+                /* NB: these are psuedo rows of type CKeyRemoteLookupRowOutputMetaData (see slavmain.cpp).
+                 * i.e. they are not actually being created in roxiemem here, but created directly in what would be their
+                 * serialized form, which is: size32_t, followed by data. Where the remote side knows the data is: {numFilters, filter data}
+                 */
+                DelayedSizeMarker sizeOfRowMark(dst);
+                dst.append((unsigned)fieldFilters.size());
+                for (auto &f: fieldFilters)
+                    f->serialize(dst);
+                sizeOfRowMark.write();
+
+                fieldFilters.clear();
+            }
+            if (activity.messageCompression)
+                fastLZCompressToBuffer(mb, tmpMB.length(), tmpMB.toByteArray());
+            sizeMark.write();
+        }
         void prepAndSend(CMessageBuffer &msg, CThorExpandingRowArray &processing, unsigned selected, unsigned partNo, unsigned copy)
         {
             initRead(msg, selected, partNo, copy);
@@ -1552,7 +1581,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
             msg.clear();
         }
     public:
-        CKeyLookupRemoteHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave) : PARENT(_activity, _activity.keyLookupRowWithJGRowIf, _lookupSlave, _activity.keyLookupProcessBatchLimit)
+        CKeyLookupRemoteHandler(CKeyedJoinSlave &_activity, unsigned _lookupSlave)
+            : PARENT(_activity, _activity.keyLookupRowWithJGRowIf, _lookupSlave, _activity.keyLookupProcessBatchLimit), filterContext(fieldFilters)
         {
             limiter = &activity.lookupThreadLimiter;
             allParts = &activity.allIndexParts;
@@ -2131,6 +2161,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     Owned<IThorRowInterfaces> keyLookupReplyOutputMetaRowIf;
 
     IEngineRowAllocator *keyLookupRowWithJGAllocator = nullptr;
+
     Owned<IEngineRowAllocator> transformAllocator;
     bool endOfInput = false; // marked true when input exhausted, but may be groups in flight
     bool eos = false; // marked true when everything processed
