@@ -217,14 +217,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                     inline CKRLOutputRowSerializer(unsigned _activityId) : COutputRowSerializer(_activityId)
                     {
                     }
-                    virtual void serialize(IRowSerializerTarget & out, const byte * self)
+                    virtual void serialize(IRowSerializerTarget & out, const byte * row)
                     {
-                        out.put(sizeof(KeyLookupHeader) + sizeof(size32_t), self);
                         size32_t sz;
-                        const byte *filterData = self + sizeof(KeyLookupHeader);
-                        memcpy(&sz, filterData, sizeof(sz));
-                        filterData += sizeof(sz);
-                        out.put(sz, filterData);
+                        memcpy(&sz, row, sizeof(sz));
+                        out.put(sizeof(sz)+sz, row);
                     }
                 };
                 class CKRLOutputRowDeserializer : public COutputRowDeserializer
@@ -235,12 +232,12 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                     }
                     virtual size32_t deserialize(ARowBuilder & rowBuilder, IRowDeserializerSource & in)
                     {
-                        in.read(sizeof(KeyLookupHeader)+sizeof(size32_t), rowBuilder.getSelf());
                         size32_t sz;
-                        memcpy(&sz, rowBuilder.getSelf()+sizeof(KeyLookupHeader), sizeof(sz));
-                        byte *filterData = rowBuilder.ensureCapacity(sz, "filterData");
+                        in.read(sizeof(sz), rowBuilder.getSelf());
+                        memcpy(&sz, rowBuilder.getSelf(), sizeof(sz));
+                        byte *filterData = rowBuilder.ensureCapacity(sizeof(sz)+sz, "filterData") + sizeof(sz);
                         in.read(sz, filterData);
-                        return sizeof(KeyLookupHeader)+sizeof(size32_t)+sz;
+                        return sizeof(sz)+sz;
                     }
                 };
                 class CKRLSourceRowPrefetcher : public CSourceRowPrefetcher
@@ -251,22 +248,21 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                     }
                     virtual void readAhead(IRowPrefetcherSource & in)
                     {
-                        in.skip(sizeof(KeyLookupHeader));
                         size32_t sz = in.readSize();
                         in.skip(sz);
                     }
                 };
             public:
-                CKeyRemoteLookupRowOutputMetaData() : CVariableOutputMetaData(sizeof(KeyLookupHeader) + sizeof(size32_t))
+                CKeyRemoteLookupRowOutputMetaData() : CVariableOutputMetaData(sizeof(size32_t))
                 {                
                 }
                 virtual size32_t getRecordSize(const void * data) override
                 {
                     if (!data)
-                        return sizeof(KeyLookupHeader) + sizeof(size32_t);
+                        return sizeof(size32_t);
                     size32_t sz;
-                    memcpy(&sz, ((const byte *)data) + sizeof(KeyLookupHeader), sizeof(sz));
-                    return sizeof(KeyLookupHeader) + sizeof(size32_t) + sz;
+                    memcpy(&sz, data, sizeof(sz));
+                    return sizeof(size32_t) + sz;
                 }
                 virtual IOutputRowSerializer *createDiskSerializer(ICodeContext * ctx, unsigned activityId) override
                 {
@@ -278,9 +274,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 }
                 virtual ISourceRowPrefetcher *createDiskPrefetcher() override
                 {
-                    ISourceRowPrefetcher * fetcher = defaultCreateDiskPrefetcher();
-                    if (fetcher)
-                        return fetcher;
                     return new CKRLSourceRowPrefetcher();
                 }
             };
@@ -558,12 +551,12 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         IKeyManager *queryKeyManager() const { return keyManager; }
         unsigned queryHandle() const { return handle; }
         RtlDynRow *queryFilterRow() const { return filterRow; }
-        inline bool fieldFilterMatch(const void * buffer, const RowFilter &filters)
+        inline bool fieldFilterMatch(const void * keyRow, const RowFilter &filters)
         {
             // NB: non re-entrant. Only 1 thread will call.
             if (!filterRow)
                 return true;
-            filterRow->setRow(filterRow, filters.getNumFieldsRequired());
+            filterRow->setRow(keyRow, filters.getNumFieldsRequired());
             return filters.matches(*filterRow);
         }
     };
@@ -764,16 +757,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         }
         void processRow(const void *row, IKeyManager *keyManager, CKeyLookupResult &reply)
         {
-            KeyLookupHeader lookupKeyHeader;
-            getHeaderFromRow(row, lookupKeyHeader);
-            const byte *rowData = ((const byte *)row) + sizeof(KeyLookupHeader);
-
-            size32_t totalFiltersSz;
-            memcpy(&totalFiltersSz, rowData, sizeof(totalFiltersSz));
-            rowData += sizeof(totalFiltersSz);
+            size32_t filtersSz;
+            memcpy(&filtersSz, row, sizeof(filtersSz));
 
             MemoryBuffer filtersMb;
-            filtersMb.setBuffer(totalFiltersSz, (byte *)rowData); // read only, not owned by MemoryBuffer
+            filtersMb.setBuffer(filtersSz, ((byte *)row)+sizeof(filtersSz)); // read only, not owned by MemoryBuffer
 
             unsigned numFilters;
             filtersMb.read(numFilters);
@@ -782,6 +770,11 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
             for (unsigned f=0; f<numFilters; f++)
             {
                 IFieldFilter *filter = deserializeFieldFilter(*record, filtersMb);
+
+                StringBuffer str("Deserialized: ");
+                filter->describe(str);
+                PROGLOG("filter = %s", str.str());
+
                 filters.addFilter(*filter);
             }
 
@@ -809,7 +802,7 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 size_t fposOffset = keyManager->queryRowSize() - sizeof(offset_t);
                 offset_t fpos = rtlReadBigUInt8(keyRow + fposOffset);
 
-                if (kmc->fieldFilterMatch(keyRow, filters))
+                if (helper->indexReadMatch(keyedFieldsRow, keyRow,  &adapter))
                 {
                     if (fetchRequired)
                         reply.addRow(nullptr, fpos);

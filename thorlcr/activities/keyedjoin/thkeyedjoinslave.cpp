@@ -1556,13 +1556,18 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
 
                 /* NB: these are psuedo rows of type CKeyRemoteLookupRowOutputMetaData (see slavmain.cpp).
                  * i.e. they are not actually being created in roxiemem here, but created directly in what would be their
-                 * serialized form, which is: KeyLookupHeader, size32_t, followed by data. Where the remote side knows the data is: {numFilters, filter data}
+                 * serialized form, which is: size32_t, followed by data. Where the remote side knows the data is: {numFilters, filter data}
                  */
-                dst.append(sizeof(KeyLookupHeader), row);
                 DelayedSizeMarker sizeOfRowMark(dst);
                 dst.append((unsigned)fieldFilters.size());
-                for (auto &f: fieldFilters)
-                    f->serialize(dst);
+                for (auto &filter: fieldFilters)
+                {
+                    filter->serialize(dst);
+
+                    StringBuffer str("Serialized: ");
+                    filter->describe(str);
+                    PROGLOG("filter = %s", str.str());
+                }
                 sizeOfRowMark.write();
 
                 fieldFilters.clear();
