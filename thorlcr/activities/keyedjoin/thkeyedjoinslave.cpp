@@ -1547,7 +1547,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
 
             unsigned numRows = rows.ordinality();
             dst.append(numRows);
-            IOutputRowSerializer *serializer = rowIf->queryRowSerializer();
             for (rowidx_t r=0; r<numRows; r++)
             {
                 const void *row = rows.query(r);
@@ -1557,8 +1556,9 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
 
                 /* NB: these are psuedo rows of type CKeyRemoteLookupRowOutputMetaData (see slavmain.cpp).
                  * i.e. they are not actually being created in roxiemem here, but created directly in what would be their
-                 * serialized form, which is: size32_t, followed by data. Where the remote side knows the data is: {numFilters, filter data}
+                 * serialized form, which is: KeyLookupHeader, size32_t, followed by data. Where the remote side knows the data is: {numFilters, filter data}
                  */
+                dst.append(sizeof(KeyLookupHeader), row);
                 DelayedSizeMarker sizeOfRowMark(dst);
                 dst.append((unsigned)fieldFilters.size());
                 for (auto &f: fieldFilters)

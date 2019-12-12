@@ -211,6 +211,51 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
         {
             class CKeyRemoteLookupRowOutputMetaData : public CVariableOutputMetaData
             {
+                class CKRLOutputRowSerializer : public COutputRowSerializer
+                {
+                public:
+                    inline CKRLOutputRowSerializer(unsigned _activityId) : COutputRowSerializer(_activityId)
+                    {
+                    }
+                    virtual void serialize(IRowSerializerTarget & out, const byte * self)
+                    {
+                        out.put(sizeof(KeyLookupHeader) + sizeof(size32_t), self);
+                        size32_t sz;
+                        const byte *filterData = self + sizeof(KeyLookupHeader);
+                        memcpy(&sz, filterData, sizeof(sz));
+                        filterData += sizeof(sz);
+                        out.put(sz, filterData);
+                    }
+                };
+                class CKRLOutputRowDeserializer : public COutputRowDeserializer
+                {
+                public:
+                    inline CKRLOutputRowDeserializer(unsigned _activityId) : COutputRowDeserializer(_activityId)
+                    {
+                    }
+                    virtual size32_t deserialize(ARowBuilder & rowBuilder, IRowDeserializerSource & in)
+                    {
+                        in.read(sizeof(KeyLookupHeader)+sizeof(size32_t), rowBuilder.getSelf());
+                        size32_t sz;
+                        memcpy(&sz, rowBuilder.getSelf()+sizeof(KeyLookupHeader), sizeof(sz));
+                        byte *filterData = rowBuilder.ensureCapacity(sz, "filterData");
+                        in.read(sz, filterData);
+                        return sizeof(KeyLookupHeader)+sizeof(size32_t)+sz;
+                    }
+                };
+                class CKRLSourceRowPrefetcher : public CSourceRowPrefetcher
+                {
+                public:
+                    inline CKRLSourceRowPrefetcher()
+                    {
+                    }
+                    virtual void readAhead(IRowPrefetcherSource & in)
+                    {
+                        in.skip(sizeof(KeyLookupHeader));
+                        size32_t sz = in.readSize();
+                        in.skip(sz);
+                    }
+                };
             public:
                 CKeyRemoteLookupRowOutputMetaData() : CVariableOutputMetaData(sizeof(KeyLookupHeader) + sizeof(size32_t))
                 {                
@@ -222,6 +267,21 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                     size32_t sz;
                     memcpy(&sz, ((const byte *)data) + sizeof(KeyLookupHeader), sizeof(sz));
                     return sizeof(KeyLookupHeader) + sizeof(size32_t) + sz;
+                }
+                virtual IOutputRowSerializer *createDiskSerializer(ICodeContext * ctx, unsigned activityId) override
+                {
+                    return new CKRLOutputRowSerializer(activityId);
+                }
+                virtual IOutputRowDeserializer *createDiskDeserializer(ICodeContext * ctx, unsigned activityId) override
+                {
+                    return new CKRLOutputRowDeserializer(activityId);
+                }
+                virtual ISourceRowPrefetcher *createDiskPrefetcher() override
+                {
+                    ISourceRowPrefetcher * fetcher = defaultCreateDiskPrefetcher();
+                    if (fetcher)
+                        return fetcher;
+                    return new CKRLSourceRowPrefetcher();
                 }
             };
             Owned<IOutputMetaData> lookupInputMeta = new CKeyRemoteLookupRowOutputMetaData();
@@ -505,10 +565,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 return true;
             filterRow->setRow(filterRow, filters.getNumFieldsRequired());
             return filters.matches(*filterRow);
-        }
-        void deserializeRow(const void *row)
-        {
-            
         }
     };
     template<class KEY, class ITEM>
@@ -814,7 +870,6 @@ class CKJService : public CSimpleInterfaceOf<IKJService>, implements IThreaded, 
                 while (!abortSoon)
                 {
                     OwnedConstThorRow row = getRowClear(rowNum++);
-                    kmc->deserializeRow(row);
                     processRow(row, kmc->queryKeyManager(), lookupResult);
                     lookupResult.serialize(replyMb);
                     bool last = rowNum == rowCount;
