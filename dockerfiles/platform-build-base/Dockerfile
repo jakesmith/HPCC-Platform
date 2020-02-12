@@ -72,7 +72,7 @@ WORKDIR /home/temp
 RUN curl https://cmake.org/files/v3.16/cmake-3.16.3.tar.gz | tar xvz
 WORKDIR /home/temp/cmake-3.16.3/
 RUN ./bootstrap
-RUN make -j4
+RUN make -j$(($(nproc)*3/2))
 RUN make install
 WORKDIR /
 RUN rm -rf /home/temp
