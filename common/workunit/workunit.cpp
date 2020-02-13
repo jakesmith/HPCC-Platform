@@ -7702,20 +7702,44 @@ extern WORKUNIT_API StringBuffer &getClusterEclAgentQueueName(StringBuffer &ret,
 extern WORKUNIT_API IStringIterator *getTargetClusters(const char *processType, const char *processName)
 {
     Owned<CStringArrayIterator> ret = new CStringArrayIterator;
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> env = factory->openEnvironment();
-    Owned<IPropertyTree> root = &env->getPTree();
-    StringBuffer xpath;
-    xpath.appendf("%s", processType ? processType : "*");
-    if (processName && *processName)
-        xpath.appendf("[@process=\"%s\"]", processName);
-    Owned<IPropertyTreeIterator> targets = root->getElements("Software/Topology/Cluster");
-    ForEach(*targets)
+
+    if (isCloud())
     {
-        IPropertyTree &target = targets->query();
-        if (target.hasProp(xpath))
+        Owned<IRemoteConnection> statusConn = querySDS().connect("/Status/Servers", myProcessSession(), RTM_LOCK_READ, 10000);
+        Owned<IPropertyTreeIterator> iter = statusConn->queryRoot()->getElements("Server[@name=\"ECLCCserver\"]");
+        unsigned extLen = strlen(ECLCCSERVER_QUEUE_EXT);
+        ForEach(*iter)
         {
-            ret->append(target.queryProp("@name"));
+            IPropertyTree &tree = iter->query();
+            const char *queueName = tree.queryProp("@queue");
+            unsigned qLen = strlen(queueName);
+            if ((qLen > extLen) &&
+                streq(ECLCCSERVER_QUEUE_EXT, queueName+qLen-extLen))
+            {
+                StringBuffer clusterName;
+                clusterName.append(qLen-extLen, queueName);
+                PROGLOG("valid clusterName=%s", clusterName.str());
+                ret->append(clusterName.str());
+            }
+        }
+    }
+    else
+    {
+        Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+        Owned<IConstEnvironment> env = factory->openEnvironment();
+        Owned<IPropertyTree> root = &env->getPTree();
+        StringBuffer xpath;
+        xpath.appendf("%s", processType ? processType : "*");
+        if (processName && *processName)
+            xpath.appendf("[@process=\"%s\"]", processName);
+        Owned<IPropertyTreeIterator> targets = root->getElements("Software/Topology/Cluster");
+        ForEach(*targets)
+        {
+            IPropertyTree &target = targets->query();
+            if (target.hasProp(xpath))
+            {
+                ret->append(target.queryProp("@name"));
+            }
         }
     }
     return ret.getClear();
@@ -7809,18 +7833,160 @@ IPropertyTree* getTopologyCluster(Owned<IPropertyTree> &envRoot, const char *clu
 
 bool validateTargetClusterName(const char *clustname)
 {
-    Owned<IPropertyTree> envRoot;
-    Owned<IPropertyTree> cluster = getTopologyCluster(envRoot, clustname);
-    return (cluster.get()!=NULL);
+    Owned<IConstWUClusterInfo> cluster = getTargetClusterInfo(clustname);
+    return nullptr != cluster;
 }
 
 IConstWUClusterInfo* getTargetClusterInfo(const char *clustname)
 {
-    Owned<IPropertyTree> envRoot;
-    Owned<IPropertyTree> cluster = getTopologyCluster(envRoot, clustname);
-    if (!cluster)
-        return NULL;
-    return getTargetClusterInfo(envRoot, cluster);
+    if (isCloud())
+    {
+        /* JCSMORE - fake cluster info
+         * discover clusters via /Status/Server
+         * most components publish a node there, that automatically disappears when session closes
+         * could continue to use that approach and fill in enough info. in Status to populate these instances
+         */
+        class CConstWUClusterInfo : public CSimpleInterfaceOf<IConstWUClusterInfo>
+        {
+            StringAttr name;
+            StringArray thors;
+            SocketEndpointArray roxieEps;
+        public:
+            CConstWUClusterInfo(const char *_name) : name(_name)
+            {
+                // Thor's name's should be configured.
+                // Then this should find in /Status/Servers
+                thors.append("mythor");
+            }
+            virtual IStringVal & getName(IStringVal & str) const override
+            {
+                str.set(name);
+                return str;
+            }
+            virtual IStringVal & getScope(IStringVal & str) const override
+            {
+                str.set(name); // JCSMORE for now (was @prefix)
+                return str;
+            }
+            virtual IStringVal & getThorQueue(IStringVal & str) const override
+            {
+                StringBuffer queueName(name);
+                queueName.append(THOR_QUEUE_EXT);
+                str.set(queueName);
+                return str;
+            }
+            virtual unsigned getSize() const override
+            {
+                return 1; // JCSMORE was/should be thor size. NB: meant that all thor's (and roxie's?) should be same size in cluster
+            }
+            virtual unsigned getNumberOfSlaveLogs() const override
+            {
+                return 1; // was slavesPerNode * width
+            }
+            virtual ClusterType getPlatform() const override
+            {
+                // if theres a thor - then platform = thor, if there's a roxie... else hthor
+
+                return ThorLCRCluster;
+            }
+            virtual IStringVal & getAgentQueue(IStringVal & str) const override
+            {
+                StringBuffer queueName(name);
+                queueName.append(ECLAGENT_QUEUE_EXT);
+                str.set(queueName);
+                return str;
+            }
+            virtual IStringVal & getAgentName(IStringVal & str) const override
+            {
+                // agentexec's name's should be configured.
+                // Then this should find in /Status/Servers
+                str.set("myeclagent");
+                return str;
+            }
+            virtual IStringVal & getServerQueue(IStringVal & str) const override
+            {
+                StringBuffer queueName(name);
+                queueName.append(ECLCCSERVER_QUEUE_EXT);
+                str.set(queueName);
+                return str;
+            }
+            virtual IStringVal & getRoxieProcess(IStringVal & str) const override
+            {
+                return str;
+            }
+            virtual const StringArray & getThorProcesses() const override
+            {
+                // Thor's name's should be configured.
+                // Then this should find in /Status/Servers
+                return thors;
+            }
+            virtual const StringArray & getPrimaryThorProcesses() const override
+            {
+                return thors;
+            }
+            virtual const SocketEndpointArray & getRoxieServers() const override
+            {
+                return roxieEps;
+            }
+            virtual const char *getLdapUser() const override
+            {
+                return nullptr;
+            }
+            virtual const char *getLdapPassword() const override
+            {
+                return nullptr;
+            }
+            virtual unsigned getRoxieRedundancy() const override
+            {
+                return 0;
+            }
+            virtual unsigned getChannelsPerNode() const override
+            {
+                return 1; // JCSMORE
+            }
+            virtual int getRoxieReplicateOffset() const override
+            {
+                return 0;
+            }
+            virtual const char *getAlias() const override
+            {
+                return nullptr;
+            }
+        };
+
+        Owned<IRemoteConnection> statusConn = querySDS().connect("/Status/Servers", myProcessSession(), RTM_LOCK_READ, 10000);
+        Owned<IPropertyTreeIterator> iter = statusConn->queryRoot()->getElements("Server[@name=\"ECLCCserver\"]");
+        unsigned extLen = strlen(ECLCCSERVER_QUEUE_EXT);
+        ForEach(*iter)
+        {
+            IPropertyTree &tree = iter->query();
+            const char *queuesStr = tree.queryProp("@queue");
+            StringArray queues;
+            queues.appendList(queuesStr, ",");
+            ForEachItemIn(q, queues)
+            {
+                const char *queueName = queues.item(q);
+                unsigned qLen = strlen(queueName);
+                if ((qLen > extLen) &&
+                    streq(ECLCCSERVER_QUEUE_EXT, queueName+qLen-extLen))
+                {
+                    StringBuffer clusterName;
+                    clusterName.append(qLen-extLen, queueName);
+                    if (streq(clusterName, clustname))
+                        return new CConstWUClusterInfo(clustname);
+                }
+            }
+        }
+        return nullptr;
+    }
+    else
+    {
+        Owned<IPropertyTree> envRoot;
+        Owned<IPropertyTree> cluster = getTopologyCluster(envRoot, clustname);
+        if (!cluster)
+            return NULL;
+        return getTargetClusterInfo(envRoot, cluster);
+    }
 }
 
 unsigned getEnvironmentClusterInfo(CConstWUClusterInfoArray &clusters)
