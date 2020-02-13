@@ -196,9 +196,8 @@ public:
             watchdog->addSlave(ep);
         ++slavesRegistered;
     }
-    bool connect()
+    bool connect(unsigned slaves)
     {
-        unsigned slaves = queryNodeClusterWidth();
         LOG(MCdebugProgress, thorJob, "Waiting for %d slaves to register", slaves);
 
         IPointerArrayOf<INode> connectedSlaves;
@@ -851,7 +850,7 @@ int main( int argc, char *argv[]  )
             numSlaves = queryNodeClusterWidth();
         }
 
-        if (registry->connect())
+        if (registry->connect(numSlaves))
         {
             unsigned totSlaveProcs = queryNodeClusterWidth();
             for (unsigned s=0; s<totSlaveProcs; s++)

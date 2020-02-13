@@ -26,13 +26,14 @@ build_image() {
 }
 
 #more - only do this if head does not match BUILD_VER
-docker image build -t hpccsystems/platform-build:${HEAD} --build-arg=${BUILD_USER} --build-arg BUILD_VER=${PREV} --build-arg COMMIT=${HEAD} platform-build-incremental/
+docker image build -t hpccsystems/platform-build:${HEAD} --build-arg=BUILD_USER=${BUILD_USER} --build-arg BUILD_VER=${PREV} --build-arg COMMIT=${HEAD} platform-build-incremental/
 
-build_image platform-core ${BUILD_VER}
-build_image roxie ${BUILD_VER}
-build_image dali ${BUILD_VER}
-build_image esp ${BUILD_VER}
-build_image eclccserver ${BUILD_VER}
-build_image eclaent ${BUILD_VER}
-build_image thormaster ${BUILD_VER}
-build_image thorslave ${BUILD_VER}
+build_image platform-core ${HEAD}
+
+build_image roxie ${HEAD}
+build_image dali ${HEAD}
+build_image esp ${HEAD}
+build_image eclccserver ${HEAD}
+build_image eclagent ${HEAD}
+build_image thormaster ${HEAD}
+build_image thorslave ${HEAD}
