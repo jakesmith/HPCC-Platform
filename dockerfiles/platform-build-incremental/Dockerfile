@@ -1,9 +1,9 @@
 ARG BUILD_VER
 FROM hpccsystems/platform-build:${BUILD_VER}
 
-ARG USER=richardkchapman
+ARG BUILD_USER=richardkchapman
 WORKDIR /hpcc-dev/HPCC-Platform
-RUN git remote add user https://github.com/${USER}/HPCC-Platform.git
+RUN git remote add user https://github.com/${BUILD_USER}/HPCC-Platform.git
 
 ARG COMMIT
 

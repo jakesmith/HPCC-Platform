@@ -1750,7 +1750,7 @@ public:
         if (globals->getPropBool("Debug/@dllsToSlaves",true))
             querySoCache.init(soPath.str(), DEFAULT_QUERYSO_LIMIT, soPattern);
         Owned<ISlaveWatchdog> watchdog;
-        if (globals->getPropBool("@watchdogEnabled", true))
+        if (globals->getPropBool("@watchdogEnabled"))
             watchdog.setown(createProgressHandler(globals->getPropBool("@useUDPWatchdog")));
 
         CMessageBuffer msg;

@@ -841,6 +841,7 @@ int main( int argc, char *argv[]  )
         masterSlaveMpTag = allocateClusterMPTag();
         kjServiceMpTag = allocateClusterMPTag();
 
+        PROGLOG("numSlaves = %u", numSlaves);
         if (0 == numSlaves) // bare metal
         {
             unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", DEFAULT_SLAVEPORTINC);
