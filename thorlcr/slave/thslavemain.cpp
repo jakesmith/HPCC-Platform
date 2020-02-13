@@ -137,6 +137,7 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
         unsigned slaveBasePort = globals->getPropInt("@slaveport", DEFAULT_THORSLAVEPORT);
         setupCluster(masterNode, processGroup, channelsPerSlave, slaveBasePort, localThorPortInc);
 
+        ensurePTree(globals, "Debug");
         unsigned numStrands, blockSize;
         if (globals->hasProp("Debug/@forceNumStrands"))
             numStrands = globals->getPropInt("Debug/@forceNumStrands");
