@@ -66,7 +66,7 @@ static Owned<ICommunicator> nodeComm;
 
 mptag_t masterSlaveMpTag;
 mptag_t kjServiceMpTag;
-IPropertyTree *globals;
+Owned<IPropertyTree> globals;
 static Owned<IMPtagAllocator> ClusterMPAllocator;
 
 MODULE_INIT(INIT_PRIORITY_STANDARD)
