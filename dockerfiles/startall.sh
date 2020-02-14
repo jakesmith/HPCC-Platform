@@ -14,7 +14,7 @@ kubectl run eclcc --image=hpccsystems/eclccserver:${BUILD_VER} --image-pull-poli
 kubectl run eclagent --image=hpccsystems/eclagent:${BUILD_VER} --image-pull-policy=Never
 kubectl run thormaster --image=hpccsystems/thormaster:${BUILD_VER} --image-pull-policy=Never
 kubectl expose deployment thormaster --port=20000
-kubectl run thorslave --image=hpccsystems/thorslave:${BUILD_VER} --image-pull-policy=Never MASTER=thormaster
+kubectl run thorslave --image=hpccsystems/thorslave:${BUILD_VER} --image-pull-policy=Never master=thormaster
 
 #kubectl logs mydali-759f975769-v6tmm
 
