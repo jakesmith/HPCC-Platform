@@ -4579,6 +4579,7 @@ public:
     IMPLEMENT_IINTERFACE;
     CStringArrayIterator() { idx = 0; };
     void append(const char *str) { strings.append(str); }
+    void appendUnique(const char *str) { strings.appendUniq(str); }
     virtual bool first() { idx = 0; return strings.isItem(idx); }
     virtual bool next() { idx ++; return strings.isItem(idx); }
     virtual bool isValid() { return strings.isItem(idx); }
@@ -7729,28 +7730,61 @@ extern WORKUNIT_API StringBuffer &getClusterEclAgentQueueName(StringBuffer &ret,
     return ret.append(cluster).append(ECLAGENT_QUEUE_EXT);
 }
 
+static unsigned getRunningClusters(const char *statusType, const char *match, StringArray &clusters)
+{
+    Owned<IRemoteConnection> statusConn = querySDS().connect("/Status/Servers", myProcessSession(), RTM_LOCK_READ, 10000);
+    VStringBuffer xpath("Server[@name=\"%s\"]", statusType);
+    Owned<IPropertyTreeIterator> iter = statusConn->queryRoot()->getElements(xpath);
+    unsigned results = 0;
+    ForEach(*iter)
+    {
+        IPropertyTree &tree = iter->query();
+        const char *queueList = tree.queryProp("@queue");
+        if (!isEmptyString(queueList))
+        {
+            StringArray queues;
+            queues.appendListUniq(queueList, ",");
+            ForEachItemIn(q, queues)
+            {
+                const char *queueName = queues.item(q);
+                StringBuffer clusterName;
+                size32_t clusterNameLen = 0;
+                const char *extStart = strrchr(queueName, '.');
+                if (extStart)
+                {
+                    clusterNameLen = extStart - queueName;
+                    StringBuffer clusterName;
+                    clusterName.append(clusterNameLen, queueName);
+                    clusters.appendUniq(clusterName.str());
+                    results++;
+                    if (match && streq(match, clusterName))
+                        break;
+                }
+            }
+        }
+    }
+    return results;
+}
+
 extern WORKUNIT_API IStringIterator *getTargetClusters(const char *processType, const char *processName)
 {
     Owned<CStringArrayIterator> ret = new CStringArrayIterator;
 
     if (isCloud())
     {
-        Owned<IRemoteConnection> statusConn = querySDS().connect("/Status/Servers", myProcessSession(), RTM_LOCK_READ, 10000);
-        Owned<IPropertyTreeIterator> iter = statusConn->queryRoot()->getElements("Server[@name=\"ECLCCserver\"]");
-        unsigned extLen = strlen(ECLCCSERVER_QUEUE_EXT);
-        ForEach(*iter)
+        const char *statusType = nullptr;
+        if (isEmptyString(processType))
+            statusType = "*";
+        else if (streq("RoxieCluster", processType))
+            statusType = "RoxieServer";
+        else
+            statusType = "ECLCCserver";
+
+        StringArray clusters;
+        if (getRunningClusters(statusType, nullptr, clusters))
         {
-            IPropertyTree &tree = iter->query();
-            const char *queueName = tree.queryProp("@queue");
-            unsigned qLen = strlen(queueName);
-            if ((qLen > extLen) &&
-                streq(ECLCCSERVER_QUEUE_EXT, queueName+qLen-extLen))
-            {
-                StringBuffer clusterName;
-                clusterName.append(qLen-extLen, queueName);
-                PROGLOG("valid clusterName=%s", clusterName.str());
-                ret->append(clusterName.str());
-            }
+            ForEachItemIn(c, clusters)
+                ret->appendUnique(clusters.item(c));
         }
     }
     else
@@ -7984,29 +8018,9 @@ IConstWUClusterInfo* getTargetClusterInfo(const char *clustname)
             }
         };
 
-        Owned<IRemoteConnection> statusConn = querySDS().connect("/Status/Servers", myProcessSession(), RTM_LOCK_READ, 10000);
-        Owned<IPropertyTreeIterator> iter = statusConn->queryRoot()->getElements("Server[@name=\"ECLCCserver\"]");
-        unsigned extLen = strlen(ECLCCSERVER_QUEUE_EXT);
-        ForEach(*iter)
-        {
-            IPropertyTree &tree = iter->query();
-            const char *queuesStr = tree.queryProp("@queue");
-            StringArray queues;
-            queues.appendList(queuesStr, ",");
-            ForEachItemIn(q, queues)
-            {
-                const char *queueName = queues.item(q);
-                unsigned qLen = strlen(queueName);
-                if ((qLen > extLen) &&
-                    streq(ECLCCSERVER_QUEUE_EXT, queueName+qLen-extLen))
-                {
-                    StringBuffer clusterName;
-                    clusterName.append(qLen-extLen, queueName);
-                    if (streq(clusterName, clustname))
-                        return new CConstWUClusterInfo(clustname);
-                }
-            }
-        }
+        StringArray clusters;
+        if (getRunningClusters("ECLCCserver", clustname, clusters))
+            return new CConstWUClusterInfo(clustname);
         return nullptr;
     }
     else

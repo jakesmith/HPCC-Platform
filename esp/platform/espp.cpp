@@ -506,6 +506,7 @@ int init_main(int argc, char* argv[])
 
 int main(int argc, char* argv[])
 {
+    MilliSleep(10000);
     start_init_main(argc, argv, init_main);
     stopPerformanceMonitor();
     UseSysLogForOperatorMessages(false);

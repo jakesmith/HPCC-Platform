@@ -48,6 +48,7 @@ public:
 
    bool load()
     {
+       PROGLOG("SharedObject::load(m_plugin.str( : %s", m_plugin.str());
         SharedObject::load(m_plugin.str(), true);       // I'm not really sure what this should be - if global (as default) there will be clashes between multiple dloads
         if (!loaded())
         {

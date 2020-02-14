@@ -669,6 +669,7 @@ void CEspConfig::loadProtocol(protocol_cfg &xcfg)
 void CEspConfig::loadService(srv_cfg &xcfg)
 {
     esp_service_factory_t xproc = NULL;
+    PROGLOG("plugin path = %s", xcfg.plugin.str());
     builtin *pdirect = getBuiltIn(xcfg.plugin.str());
     if (pdirect)
         xproc = pdirect->serv;
@@ -682,7 +683,17 @@ void CEspConfig::loadService(srv_cfg &xcfg)
     if (xproc)
         xcfg.srv.setown(xproc(xcfg.name.str(), xcfg.type.str(), m_envpt.get(), m_process.str()));
     else
-        throw MakeStringException(-1, "procedure esp_service_factory can't be loaded");
+    {
+        try
+        {
+            throw MakeStringException(-1, "procedure esp_service_factory can't be loaded");
+        }
+        catch (IException *e)
+        {
+            EXCLOG(e, nullptr);
+            e->Release();
+        }
+    }
 }
 
 void CEspConfig::loadServices()
