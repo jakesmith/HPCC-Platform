@@ -30,7 +30,7 @@ spec:
 {{ include "hpcc.utils.addVolumes" . | indent 6 }}
 ---
 {{- include "hpcc.utils.generateConfigMap" (dict "root" $ "me" .) }}
-  jobspec.yaml: |
+  eclccserver.yaml: |
     apiVersion: batch/v1
     kind: Job
     metadata:

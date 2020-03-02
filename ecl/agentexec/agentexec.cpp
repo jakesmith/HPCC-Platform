@@ -195,7 +195,7 @@ public:
         {
             if (queryComponentConfig().getPropBool("@containerPerAgent", false))  // MORE - make this a per-workunit setting?
             {
-                runK8sJob("eclagent", wuid);
+                runK8sJob("eclagent", wuid, wuid);
             }
             else
             {

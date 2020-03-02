@@ -29,15 +29,6 @@ global:
 dali:
 - name: mydali
 
-eclagent:
-- name: myeclagent
-  replicas: 1
-  config: |
-    version: 1.0
-    EclAgent:
-      containerPerAgent: true
-      maxActive: 2
-    
 eclccserver:
 - name: myeclccserver
   replicas: 1
@@ -65,6 +56,18 @@ xroxie:
 
 thor:
   - name: thor1
-    masterport: 20000
-    numSlaves: 2
-    slaveport: 20100
+    eclagentreplicas: 1
+    numSlaves: 4
+    config: |
+      version: 1.0
+      EclAgent:
+        containerPerAgent: true
+        maxActive: 2
+      Thor:
+        name: mythor
+        masterport: 20000
+        numSlaves: 4
+        slaveport: 20100
+        globalMemorySize: 4096
+        watchdogEnabled: true
+        watchdogProgressEnabled: true
