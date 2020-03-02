@@ -15,6 +15,7 @@ spec:
     spec:
       serviceAccountName: hpcc
       terminationGracePeriodSeconds: {{ .terminationGracePeriodSeconds | default 600 }}
+      {{- include "hpcc.checkDllServerHostMount" (dict "root" $) | indent 6 }}
       containers:
       - name: {{ .name | quote }}
         args: [
@@ -29,7 +30,7 @@ spec:
 {{ include "hpcc.addVolumes" $ | indent 6 }}
 ---
 {{- include "hpcc.generateConfigMap" (dict "root" $ "component" "EclCCServer" "me" .) }}
-  jobspec.yaml: |
+  eclccserver.yaml: |
     apiVersion: batch/v1
     kind: Job
     metadata:
