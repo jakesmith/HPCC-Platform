@@ -51,7 +51,7 @@ esp:
 
 roxie:
 - name: myroxie
-  ports: 9876
+  ports: [9876,0]
   numChannels: 2
   serverReplicas: 1
   topoReplicas: 2
