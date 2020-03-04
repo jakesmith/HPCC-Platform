@@ -28,7 +28,7 @@ spec:
 {{ include "hpcc.addConfigVolume" . | indent 6 }}
 {{ include "hpcc.addVolumes" $ | indent 6 }}
 ---
-{{- include "hpcc.generateConfigMap" (dict "root" $ "me" .) }}
+{{- include "hpcc.generateConfigMap" (dict "root" $ "component" "EclCCServer" "me" .) }}
   jobspec.yaml: |
     apiVersion: batch/v1
     kind: Job
