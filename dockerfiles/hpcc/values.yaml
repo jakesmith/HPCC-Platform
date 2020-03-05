@@ -64,14 +64,13 @@ roxie:
 thor:
 - name: thor1
   config: thor1
-  Thor:
-    masterport: 20000
-    numSlaves: 4
-    slaveport: 20100
-    globalMemorySize: 4096
-    watchdogEnabled: true
-    watchdogProgressEnabled: true
-  EclAgent:
+  masterport: 20000
+  numSlaves: 4
+  slaveport: 20100
+  globalMemorySize: 4096
+  watchdogEnabled: true
+  watchdogProgressEnabled: true
+  maxActive: 2
+  eclagent:
     replicas: 1
     containerPerAgent: true
-    maxActive: 2

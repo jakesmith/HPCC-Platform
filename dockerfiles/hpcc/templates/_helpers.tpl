@@ -52,12 +52,8 @@ Generate local config info into config section
 {{- else -}}
 {{- .me.name -}}.yaml: |
   version: 1.0
-{{- if .component }}
   {{ .component }}:
 {{ toYaml .me | indent 4 -}}
-{{ else }}
-{{ toYaml .me | indent 2 -}}
-{{- end -}}
 {{- end -}}
 {{- end -}}
 
@@ -117,8 +113,7 @@ volumeMounts:
 
 {{- /* Add config arg for a component */ -}}
 {{- define "hpcc.configArg" -}}
-{{- if or (hasKey . "configFile") (hasKey . "config") -}}
-"--config=/etc/config/{{ .name }}.yaml", {{ end -}}
+"--config=/etc/config/{{ .name }}.yaml",
 "--global=/etc/config/global.yaml"
 {{- end -}}
 

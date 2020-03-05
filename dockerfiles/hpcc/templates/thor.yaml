@@ -9,7 +9,7 @@ kind: Deployment
 metadata:
   name: {{ $eclagentName | quote }}
 spec:
-  replicas: {{ $thor.EclAgent.replicas | default 1 }}
+  replicas: {{ $thor.eclagent.replicas | default 1 }}
   selector:
     matchLabels:
       run: {{ $eclagentName | quote }}
@@ -26,6 +26,9 @@ spec:
         args: [
                 {{ include "hpcc.configArg" . }},
                 {{ include "hpcc.daliArg" $ }}
+                {{- if $thor.maxActive }},
+                --maxActive={{ $thor.maxActive }}
+                {{- end }}
               ]
 {{ include "hpcc.addImageAttrs" (dict "root" $ "me" . "imagename" "eclagent") | indent 8 }}
 {{ include "hpcc.addVolumeMounts" . | indent 8 }}
@@ -33,7 +36,7 @@ spec:
 {{ include "hpcc.addConfigVolume" . | indent 6 }}
 {{ include "hpcc.addVolumes" $ | indent 6 }}
 ---
-{{- include "hpcc.generateConfigMap" (dict "root" $ "component" "" "me" .) }}
+{{- include "hpcc.generateConfigMap" (dict "root" $ "component" "thor" "me" .) }}
   eclagent.yaml: |
     apiVersion: batch/v1
     kind: Job
@@ -98,7 +101,7 @@ spec:
     metadata:
       name: %jobname
     spec:
-      parallelism: {{ $thor.Thor.numSlaves }}
+      parallelism: {{ $thor.numSlaves }}
       ttlSecondsAfterFinished: 100
       template:
         spec:
