@@ -52,7 +52,7 @@ esp:
 - name: myesp
   replicas: 1
 
-roxie:
+xroxie:
 - name: myroxie
   ports: [9876,0]
   numChannels: 2
@@ -63,7 +63,6 @@ roxie:
 
 thor:
 - name: thor1
-  config: thor1
   masterport: 20000
   numSlaves: 4
   slaveport: 20100

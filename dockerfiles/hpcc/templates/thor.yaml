@@ -37,6 +37,10 @@ spec:
 {{ include "hpcc.addVolumes" $ | indent 6 }}
 ---
 {{- include "hpcc.generateConfigMap" (dict "root" $ "component" "thor" "me" .) }}
+{{- if $thor.eclagent }}
+    EclAgent:
+{{ toYaml $thor.eclagent | indent 6 }}
+{{- end }}
   eclagent.yaml: |
     apiVersion: batch/v1
     kind: Job
@@ -47,7 +51,7 @@ spec:
       template:
         spec:
           serviceAccountName: hpcc
-          {{- include "hpcc.checkDataStorageHostMount" (dict "root" $) | indent 6 }}
+          {{- include "hpcc.checkDataStorageHostMount" (dict "root" $) | indent 10 }}
           containers:
           - name: %jobname
             image: {{ include "hpcc.imageName" (dict "root" $ "me" . "imagename" "eclagent") }}
@@ -80,7 +84,7 @@ spec:
       template:
         spec:
           serviceAccountName: hpcc
-          {{- include "hpcc.checkDataStorageHostMount" (dict "root" $) | indent 6 }}
+          {{- include "hpcc.checkDataStorageHostMount" (dict "root" $) | indent 10 }}
           containers:
           - name: %jobname
 {{ include "hpcc.addImageAttrs" (dict "root" $ "me" . "imagename" "thormaster") | indent 12 }}
@@ -106,7 +110,6 @@ spec:
       template:
         spec:
           serviceAccountName: hpcc
-          {{- include "hpcc.checkDataStorageHostMount" (dict "root" $) | indent 6 }}
           containers:
           - name: %jobname
 {{ include "hpcc.addImageAttrs" (dict "root" $ "me" . "imagename" "thorslave") | indent 12 }}
@@ -116,9 +119,14 @@ spec:
                     %args
                   ]
 {{ include "hpcc.addVolumeMounts" . | indent 12 }}
+            - name: wsl-pv
+              mountPath: "/var/lib/HPCCSystems/thor/logs"
           volumes:
 {{ include "hpcc.addConfigVolume" . | indent 10 }}
 {{ include "hpcc.addVolumes" $ | indent 10 }}
+          - name: wsl-pv
+            persistentVolumeClaim:
+              claimName: "wsl-pv-claim"
           restartPolicy: Never
       backoffLimit: 0
 ---
