@@ -598,6 +598,12 @@ int main( int argc, const char *argv[]  )
         return 0; // no recycle
     }
 
+    if (!globals->hasProp("@thorTempDirectory"))
+    {
+        VStringBuffer tmpDir("/var/lib/HPCCSystems/%s/temp", globals->queryProp("@name"));
+        globals->setProp("@thorTempDirectory", tmpDir);
+    }
+
     SocketEndpoint thorEp;
     const char *master = globals->queryProp("@master");
     if (master)
