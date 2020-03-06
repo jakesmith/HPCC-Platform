@@ -108,8 +108,6 @@ public:
 #pragma warning(pop)
 #endif
 
-void dosomething(IException *e);
-
 // A more general implementation of IInterface that includes a virtual function beforeDispose().
 // beforeDispose() allows an a fully constructed object to be cleaned up (which means that virtual
 // function calls still work (unlike a virtual destructor).
@@ -151,13 +149,6 @@ public:
             try
             {
                 const_cast<CInterfaceOf<INTERFACE> *>(this)->beforeDispose();
-            }
-            catch (IException *e)
-            {
-#if _DEBUG
-    dosomething(e);
-#endif
-                throw;
             }
             catch (...)
             {

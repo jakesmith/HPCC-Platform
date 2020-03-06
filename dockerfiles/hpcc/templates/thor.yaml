@@ -38,8 +38,9 @@ spec:
 ---
 {{- include "hpcc.generateConfigMap" (dict "root" $ "component" "thor" "me" .) }}
 {{- if $thor.eclagent }}
-    EclAgent:
+    eclagent:
 {{ toYaml $thor.eclagent | indent 6 }}
+      name: myeclagent-thor
 {{- end }}
   eclagent.yaml: |
     apiVersion: batch/v1

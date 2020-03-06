@@ -44,7 +44,7 @@ global:
 dali:
 - name: mydali
 
-eclagent:
+xeclagent:
 - name: myeclagent
   replicas: 1
   containerPerAgent: true
