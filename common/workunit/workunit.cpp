@@ -13188,7 +13188,7 @@ void deleteK8sJob(const char *componentName, const char *job)
 {
     VStringBuffer jobname("%s-%s", componentName, job);
     jobname.toLowerCase();
-    VStringBuffer deleteJob("kubectl delete job/%s", jobname);
+    VStringBuffer deleteJob("kubectl delete job/%s", jobname.str());
     StringBuffer output, error;
     bool ret = runExternalCommand(output, error, deleteJob.str(), nullptr);
     DBGLOG("kubectl delete output: %s", output.str());
