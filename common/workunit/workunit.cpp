@@ -13198,7 +13198,7 @@ void deleteK8sJob(const char *componentName, const char *job)
 }
 #endif
 
-void waitK8sJob(const char *componentName, const char *job, const char *condition=nullptr)
+void waitK8sJob(const char *componentName, const char *job, const char *condition)
 {
     VStringBuffer jobname("%s-%s", componentName, job);
     jobname.toLowerCase();
