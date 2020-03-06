@@ -28,7 +28,7 @@ spec:
 {{ include "hpcc.addVolumes" $ | indent 6 }}
 ---
 {{- include "hpcc.generateConfigMap" (dict "root" $ "component" "eclagent" "me" .) }}
-  jobspec.yaml: |
+  eclagent.yaml: |
     apiVersion: batch/v1
     kind: Job
     metadata:

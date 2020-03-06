@@ -21,15 +21,13 @@ ARG BUILD_LABEL
 FROM hpccsystems/platform-build:${BUILD_LABEL}
 
 RUN groupadd -g 1000 hpcc
-RUN useradd -s /bin/bash -r -m -N -c "hpcc runtime User" -u 999 -g hpcc hpcc
+RUN useradd -s /bin/bash -r -N -c "hpcc runtime User" -u 999 -g hpcc hpcc
 RUN passwd -l hpcc 
 
 RUN mkdir /var/lib/HPCCSystems && chown hpcc:hpcc /var/lib/HPCCSystems
 RUN mkdir /var/log/HPCCSystems && chown hpcc:hpcc /var/log/HPCCSystems
 RUN mkdir /var/lock/HPCCSystems && chown hpcc:hpcc /var/lock/HPCCSystems
 RUN mkdir /var/run/HPCCSystems && chown hpcc:hpcc /var/run/HPCCSystems
-
-# RUN chown -R hpcc:hpcc /hpcc-dev
 
 USER hpcc
 
