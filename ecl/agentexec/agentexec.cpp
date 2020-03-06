@@ -88,7 +88,15 @@ int CEclAgentExecutionServer::run()
     {
         Owned<IGroup> serverGroup = createIGroup(daliServers, DALI_SERVER_PORT);
         initClientProcess(serverGroup, DCR_AgentExec);
+#ifdef _CONTAINERIZED
+        globals->getProp("@queueNames", queueNames.s);
+        
+        // temporary
+        if (0 == queueNames.length())
+            getAgentQueueNames(queueNames, agentName);
+#else
         getAgentQueueNames(queueNames, agentName);
+#endif
         queue.setown(createJobQueue(queueNames.str()));
         queue->connect(false);
     }

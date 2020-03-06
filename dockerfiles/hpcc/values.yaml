@@ -44,8 +44,9 @@ global:
 dali:
 - name: mydali
 
-xeclagent:
+eclagent:
 - name: myeclagent
+  queueNames: "thor.agent"
   replicas: 1
   containerPerAgent: true
   maxActive: 2
@@ -73,5 +74,6 @@ thor:
   globalMemorySize: 4096
   maxActive: 2
   eclagent:
+    queueNames: "thor.agent"
     replicas: 1
     containerPerAgent: true
