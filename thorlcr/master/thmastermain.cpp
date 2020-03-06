@@ -797,7 +797,7 @@ int main( int argc, const char *argv[]  )
         logDiskSpace(); // Log before temp space is cleared
         StringBuffer tempPrefix("thtmp");
         tempPrefix.append(getMasterPortBase()).append("_");
-        SetTempDir(tempDirStr.str(), tempPrefix.str(), true);
+        SetTempDir(0, tempDirStr.str(), tempPrefix.str(), true);
 
         char thorPath[1024];
         if (!GetCurrentDirectory(1024, thorPath))

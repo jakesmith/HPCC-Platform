@@ -451,7 +451,7 @@ int main( int argc, const char *argv[]  )
             addPathSepChar(tempDirStr).append(mySlaveNum);
 
             logDiskSpace(); // Log before temp space is cleared
-            SetTempDir(tempDirStr.str(), "thtmp", true);
+            SetTempDir(mySlaveNum, tempDirStr.str(), "thtmp", true);
 
             useMemoryMappedRead(globals->getPropBool("@useMemoryMappedRead"));
 
