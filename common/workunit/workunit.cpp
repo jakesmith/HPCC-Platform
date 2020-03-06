@@ -13184,7 +13184,6 @@ static void setResources(StringBuffer &jobYaml, const IConstWorkUnit *workunit, 
 }
 
 
-#ifndef _DEBUG
 void deleteK8sJob(const char *componentName, const char *job)
 {
     VStringBuffer deleteJob("kubectl delete job/%s", jobname.str());
@@ -13196,7 +13195,6 @@ void deleteK8sJob(const char *componentName, const char *job)
     if (ret)
         throw makeStringException(0, "Failed to run kubectl delete");
 }
-#endif
 
 void waitK8sJob(const char *componentName, const char *job, const char *condition)
 {
