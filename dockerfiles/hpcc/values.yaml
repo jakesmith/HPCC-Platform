@@ -46,7 +46,7 @@ dali:
 
 eclagent:
 - name: myeclagent
-  queueNames: "thor.agent"
+  queueNames: "hthor.agent"
   replicas: 1
   containerPerAgent: true
   maxActive: 2
