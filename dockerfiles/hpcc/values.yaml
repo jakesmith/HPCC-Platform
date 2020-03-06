@@ -44,6 +44,12 @@ global:
 dali:
 - name: mydali
 
+xeclagent:
+- name: myeclagent
+  replicas: 1
+  containerPerAgent: true
+  maxActive: 2
+    
 eclccserver:
 - name: myeclccserver
   replicas: 1
