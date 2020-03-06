@@ -943,7 +943,8 @@ int main( int argc, const char *argv[]  )
             PROGLOG("Registration aborted");
 #ifdef _CONTAINERIZED
         registry.clear();
-        waitK8sJob("thorslave", cloudJobName);
+        deleteK8sJob("thorslave", cloudJobName);
+        waitK8sJob("thorslave", cloudJobName, "delete");
         setExitCode(0);
 #endif
         LOG(MCdebugProgress, thorJob, "ThorMaster terminated OK");

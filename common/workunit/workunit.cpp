@@ -13198,13 +13198,16 @@ void deleteK8sJob(const char *componentName, const char *job)
 }
 #endif
 
-void waitK8sJob(const char *componentName, const char *job)
+void waitK8sJob(const char *componentName, const char *job, const char *condition=nullptr)
 {
     VStringBuffer jobname("%s-%s", componentName, job);
     jobname.toLowerCase();
 
+    if (isEmptyString(condition))
+        condition = "condition=complete";
+
     // MORE - blocks indefinitely here if you request too many resources
-    VStringBuffer waitJob("kubectl wait --for=condition=complete --timeout=10h job/%s", jobname.str());  // MORE - make timeout configurable
+    VStringBuffer waitJob("kubectl wait --for=%s --timeout=10h job/%s", condition, jobname.str());  // MORE - make timeout configurable
     StringBuffer output, error;
     bool ret = runExternalCommand(output, error, waitJob.str(), nullptr);
     DBGLOG("kubectl wait output: %s", output.str());
@@ -13212,9 +13215,6 @@ void waitK8sJob(const char *componentName, const char *job)
         DBGLOG("kubectl wait error: %s", error.str());
     if (ret)
         throw makeStringException(0, "Failed to run kubectl wait");
-#ifndef _DEBUG
-    deleteK8sJob(componentName, job);
-#endif
 }
 
 void launchK8sJob(const char *componentName, const char *wuid, const char *job, const std::list<std::pair<std::string, std::string>> &extraParams)
@@ -13254,6 +13254,11 @@ void runK8sJob(const char *componentName, const char *wuid, const char *job, boo
 {
     launchK8sJob(componentName, wuid, job, extraParams);
     if (wait)
+    {
         waitK8sJob(componentName, job);
+#ifndef _DEBUG
+        deleteK8sJob(componentName, job);
+#endif
+    }
 }
 #endif

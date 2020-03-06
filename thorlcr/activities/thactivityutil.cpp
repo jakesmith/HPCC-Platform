@@ -711,6 +711,15 @@ public:
     virtual void flush() { dbgassertex(primaryio); primaryio->flush(); }
     virtual void close()
     {
+ unsigned p = activity.queryJob().getOptInt("pause");
+ if (p)
+ {
+     PROGLOG("Pausing: %u", p);
+     MilliSleep(p);
+     PROGLOG("Finished pausing");
+ }
+        dbgassertex(primaryio);
+        primaryio->close();
         complete();
     }
 };
