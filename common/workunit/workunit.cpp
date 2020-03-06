@@ -13186,7 +13186,9 @@ static void setResources(StringBuffer &jobYaml, const IConstWorkUnit *workunit, 
 
 void deleteK8sJob(const char *componentName, const char *job)
 {
-    VStringBuffer deleteJob("kubectl delete job/%s", jobname.str());
+    VStringBuffer jobname("%s-%s", componentName, job);
+    jobname.toLowerCase();
+    VStringBuffer deleteJob("kubectl delete job/%s", jobname);
     StringBuffer output, error;
     bool ret = runExternalCommand(output, error, deleteJob.str(), nullptr);
     DBGLOG("kubectl delete output: %s", output.str());
