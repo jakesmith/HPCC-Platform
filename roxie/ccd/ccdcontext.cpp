@@ -19,6 +19,7 @@
 #include "jlib.hpp"
 
 #include "environment.hpp"
+#include "workunit.hpp"
 #include "wujobq.hpp"
 #include "nbcd.hpp"
 #include "rtlread_imp.hpp"
@@ -2276,9 +2277,9 @@ protected:
         VStringBuffer job("%s-%s", wuid.get(), graphName);
         runK8sJob("thormaster", wuid, job, true, { { "graphName", graphName} });
 
-        if (wuRead->getExceptionCount())
+        if (workUnit->getExceptionCount())
         {
-            Owned<IConstWUExceptionIterator> iter = &wuRead->getExceptions();
+            Owned<IConstWUExceptionIterator> iter = &workUnit->getExceptions();
             ForEach(*iter)
             {
                 IConstWUException &e = iter->query();
@@ -2465,7 +2466,7 @@ protected:
             workUnit->forceReload();
         }
         while (resubmit); // if pause interrupted job (i.e. with pausenow action), resubmit graph
-
+#endif
     }
 };
 
