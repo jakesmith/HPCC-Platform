@@ -950,7 +950,7 @@ int main( int argc, const char *argv[]  )
 #ifdef _CONTAINERIZED
         registry.clear();
         deleteK8sJob("thorslave", cloudJobName);
-        waitK8sJob("thorslave", cloudJobName, "delete");
+//        waitK8sJob("thorslave", cloudJobName, "delete");
         setExitCode(0);
 #endif
         LOG(MCdebugProgress, thorJob, "ThorMaster terminated OK");
@@ -959,6 +959,10 @@ int main( int argc, const char *argv[]  )
     {
         FLLOG(MCexception(e), thorJob, e,"ThorMaster");
         e->Release();
+#ifdef _CONTAINERIZED
+        setExitCode(0); // do we ever want to exit with non-zero in K8s world - which prevents job completing
+#endif
+        
     }
 
     // cleanup handler to be sure we end
