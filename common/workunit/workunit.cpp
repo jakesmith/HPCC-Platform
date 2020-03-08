@@ -11364,16 +11364,23 @@ extern WORKUNIT_API void submitWorkUnit(const char *wuid, const char *username, 
         throw MakeStringException(WUERR_InvalidCluster, "No target cluster specified");
     workunit->commit();
     workunit.clear();
+
+    SCMStringBuffer serverQueue;
+#ifdef _CONTAINERIZED
+    /* NB: workunit clusterName is the top-level Q the users submit to, .eclserver is the sub-queue we submit the job
+     * to be compiled to.
+     */
+    serverQueue.s.appendf("%s.eclserver", clusterName.str());
+#else
     Owned<IConstWUClusterInfo> clusterInfo = getTargetClusterInfo(clusterName.str());
     if (!clusterInfo) 
         throw MakeStringException(WUERR_InvalidCluster, "Unknown cluster %s", clusterName.str());
-    SCMStringBuffer serverQueue;
     clusterInfo->getServerQueue(serverQueue);
     assertex(serverQueue.length());
+#endif
     Owned<IJobQueue> queue = createJobQueue(serverQueue.str());
     if (!queue.get()) 
         throw MakeStringException(WUERR_InvalidQueue, "Could not create workunit queue");
-
     IJobQueueItem *item = createJobQueueItem(wuid);
     queue->enqueue(item);
 }

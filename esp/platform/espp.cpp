@@ -295,6 +295,13 @@ void openEspLogFile(IPropertyTree* envpt, IPropertyTree* procpt)
         UseSysLogForOperatorMessages();
 }   
 
+
+static constexpr const char * defaultYaml = R"!!(
+version: "1.0"
+esp:
+)!!";
+
+
 static void usage()
 {
     puts("ESP - Enterprise Service Platform server. (C) 2001-2011, HPCC Systems®.");
@@ -396,6 +403,20 @@ int init_main(int argc, char* argv[])
         }
         else
             throw MakeStringException(-1, "Failed to load config file %s", cfgfile);
+
+#ifdef _CONTAINERIZED
+        Owned<IPropertyTree> espConfig;
+        try
+        {
+            /* For now, whilst esp lives with needing/reading a copy of the whole /Environment as it's configuration
+             * continue to do so, but also read component configuration (esp.yaml), and carry it inside the envpt tree,
+             * that is passed through services.
+             * Each service that can pick up the component config from "Config"
+             */
+            espConfig.setown(loadConfiguration(defaultYaml, argv, "esp", "ESP", nullptr, nullptr));
+            envpt->setPropTree("Config", espConfig.getClear());
+        }
+#endif
 
         const char* build_ver = BUILD_TAG;
         setBuildVersion(build_ver);

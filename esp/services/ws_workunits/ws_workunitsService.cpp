@@ -351,6 +351,7 @@ void CWsWorkunitsEx::init(IPropertyTree *cfg, const char *process, const char *s
         OERRLOG("No Dali Connection Active.");
         throw MakeStringException(-1, "No Dali Connection Active. Please Specify a Dali to connect to in you configuration file");
     }
+    config.setown(cfg->getPropTree("Config"));   
 
     DBGLOG("Initializing %s service [process = %s]", service, process);
 
@@ -441,6 +442,18 @@ void CWsWorkunitsEx::init(IPropertyTree *cfg, const char *process, const char *s
 void CWsWorkunitsEx::refreshValidClusters()
 {
     validClusters.kill();
+#ifdef _CONTAINERIZED
+    // discovered from generated cluster names
+    Owned<IPropertyTreeIterator> iter = config->getElements("queues");
+    ForEach(*iter)
+    {
+        IPropertyTree &queue = iter->query();
+        const char *qName = queue.queryProp("@name");
+        bool* found = validClusters.getValue(qName);
+        if (!found || !*found)
+            validClusters.setValue(qName, true);
+    }
+#else
     Owned<IStringIterator> it = getTargetClusters(NULL, NULL);
     ForEach(*it)
     {
@@ -450,6 +463,7 @@ void CWsWorkunitsEx::refreshValidClusters()
         if (!found || !*found)
             validClusters.setValue(val.str(), true);
     }
+#endif
 }
 
 bool CWsWorkunitsEx::isValidCluster(const char *cluster)
@@ -977,6 +991,7 @@ bool CWsWorkunitsEx::onWUSubmit(IEspContext &context, IEspWUSubmitRequest &req, 
         const char *cluster = req.getCluster();
         if (isEmpty(cluster))
             throw MakeStringException(ECLWATCH_INVALID_INPUT,"No Cluster defined.");
+            
         if (!isValidCluster(cluster))
             throw MakeStringException(ECLWATCH_INVALID_CLUSTER_NAME, "Invalid cluster name: %s", cluster);
 

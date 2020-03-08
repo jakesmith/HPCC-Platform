@@ -182,3 +182,22 @@ securityContext:
 {{- end -}}
 {{- end -}}
 
+
+{{- /* Generate instance queue names */ -}}
+{{- define "hpcc.generateConfigMapQueues" -}}
+queues:
+{{- range $.Values.eclagent }}
+      - name: {{ .name }}
+        type: {{ .type | default "hthor" }}
+        prefix: {{ .prefix | default "null" }}
+{{- end -}}
+{{- range $.Values.roxie }}
+      - name: {{ .name }}
+        type: roxie 
+        prefix: {{ .prefix | default "null" }}
+{{- end -}}
+{{- range $.Values.thor }}
+      - name: {{ .name }}
+        type: thor
+        prefix: {{ .prefix | default "null" }}
+{{- end }}
