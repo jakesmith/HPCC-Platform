@@ -200,7 +200,7 @@ int start_init_main(int argc, char** argv, int (*init_main_func)(int, char**))
 #define SET_ESP_SIGNAL_HANDLER(sig, handler) signal(sig, handler)
 #define RESET_ESP_SIGNAL_HANDLER(sig, handler) signal(sig, handler)
 
-int start_init_main(int argc, char** argv, int (*init_main_func)(int,char**))
+int start_init_main(int argc, const char** argv, int (*init_main_func)(int, const char**))
 {
     return init_main_func(argc, argv);
 }
@@ -316,7 +316,7 @@ static void usage()
     exit(1);
 }
 
-int init_main(int argc, char* argv[])
+int init_main(int argc, const char* argv[])
 {
     for (unsigned i=0;i<(unsigned)argc;i++) {
         if (streq(argv[i],"--daemon") || streq(argv[i],"-d")) {
@@ -406,16 +406,13 @@ int init_main(int argc, char* argv[])
 
 #ifdef _CONTAINERIZED
         Owned<IPropertyTree> espConfig;
-        try
-        {
-            /* For now, whilst esp lives with needing/reading a copy of the whole /Environment as it's configuration
-             * continue to do so, but also read component configuration (esp.yaml), and carry it inside the envpt tree,
-             * that is passed through services.
-             * Each service that can pick up the component config from "Config"
-             */
-            espConfig.setown(loadConfiguration(defaultYaml, argv, "esp", "ESP", nullptr, nullptr));
-            envpt->setPropTree("Config", espConfig.getClear());
-        }
+        /* For now, whilst esp lives with needing/reading a copy of the whole /Environment as it's configuration
+         * continue to do so, but also read component configuration (esp.yaml), and carry it inside the envpt tree,
+         * that is passed through services.
+         * Each service that can pick up the component config from "Config"
+         */
+        espConfig.setown(loadConfiguration(defaultYaml, argv, "esp", "ESP", nullptr, nullptr));
+        envpt->setPropTree("Config", espConfig.getClear());
 #endif
 
         const char* build_ver = BUILD_TAG;
@@ -515,7 +512,7 @@ int init_main(int argc, char* argv[])
 // [2] config location - local file name or dali address
 // [3] config location type - "dali" or ""
 
-int main(int argc, char* argv[])
+int main(int argc, const char* argv[])
 {
     start_init_main(argc, argv, init_main);
     stopPerformanceMonitor();
