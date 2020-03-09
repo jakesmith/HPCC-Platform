@@ -34,7 +34,7 @@ RUN if ! git config remote.${USER}.url > /dev/null ; then git remote add ${USER}
 
 ARG COMMIT
 
-RUN git fetch ${USER} && git checkout ${COMMIT} && git submodule update --init --recursive
+RUN git fetch ${USER} && git reset --hard HEAD && git checkout ${COMMIT} && git submodule update --init --recursive
 
 WORKDIR /hpcc-dev/build
 RUN make -j$(($(nproc)*3/2)) install
