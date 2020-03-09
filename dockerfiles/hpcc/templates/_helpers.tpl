@@ -201,3 +201,4 @@ queues:
         type: thor
         prefix: {{ .prefix | default "null" }}
 {{- end }}
+{{- end }}
