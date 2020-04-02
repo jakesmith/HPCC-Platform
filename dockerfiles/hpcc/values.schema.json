@@ -111,6 +111,15 @@
       "required": [ "storageSize" ],
       "additionalProperties": false
     },
+    "logging": {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
     "dali": {
       "type": "object",
       "required": [ "name", "storage" ],
@@ -125,6 +134,9 @@
         },
         "storage": {
           "$ref": "#/definitions/storage"
+        },
+        "logging": {
+          "$ref": "#/definitions/logging"
         }
       }
     },

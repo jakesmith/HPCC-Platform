@@ -39,6 +39,8 @@ global:
 
 dali:
 - name: mydali
+  logging:
+    fields: "ALL-PID-TID"
   storage:
     storageSize: 1Gi
     ## If defined, storageClassName: <storageClass>
