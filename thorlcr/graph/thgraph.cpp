@@ -320,6 +320,45 @@ CGraphElementBase *createGraphElement(IPropertyTree &node, CGraphBase &owner, CG
     return container;
 }
 
+/////////////////////////////////// 
+static const StatisticsMapping statsMap({});
+CActivityCodeContext::CActivityCodeContext() : stats(statsMap)
+{    
+}
+
+IThorChildGraph * CActivityCodeContext::resolveChildQuery(__int64 gid, IHThorArg * colocal)
+{
+    return parent->getChildGraph((graph_id)gid);
+}
+
+IEclGraphResults * CActivityCodeContext::resolveLocalQuery(__int64 gid)
+{
+    if (gid == containerGraph->queryGraphId())
+        return containerGraph;
+    else
+        return ctx->resolveLocalQuery(gid);
+}
+
+unsigned CActivityCodeContext::getGraphLoopCounter() const
+{
+    return containerGraph->queryLoopCounter();           // only called if value is valid
+}
+
+ISectionTimer * CActivityCodeContext::registerTimer(unsigned activityId, const char * name)
+{
+    CriticalBlock b(contextCrit);
+    ISectionTimer *timer = functionTimers.getValue(name);
+    if (!timer)
+    {
+        timer = ThorSectionTimer::createTimer(stats, name);
+        functionTimers.setValue(name, timer);
+        timer->Release(); // Value returned is not linked
+    }
+    return timer;
+}
+
+/////////////////////////////////// 
+
 CGraphElementBase::CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml) : owner(&_owner)
 {
     xgmml.setown(createPTreeFromIPT(&_xgmml));
@@ -349,6 +388,11 @@ CGraphElementBase::CGraphElementBase(CGraphBase &_owner, IPropertyTree &_xgmml) 
     if (0 == maxCores)
         maxCores = queryJob().queryMaxDefaultActivityCores();
     baseHelper.setown(helperFactory());
+
+    CGraphBase *graphContainer = resultsGraph;
+    if (!graphContainer)
+        graphContainer = owner;
+    activityCodeContext.setContext(owner, graphContainer, &queryJobChannel().queryCodeContext());
 }
 
 CGraphElementBase::~CGraphElementBase()
@@ -779,9 +823,9 @@ void CGraphElementBase::createActivity()
         owner->addActiveSink(*this);
 }
 
-ICodeContext *CGraphElementBase::queryCodeContext()
+ICodeContextExt *CGraphElementBase::queryCodeContext()
 {
-    return queryOwner().queryCodeContext();
+    return &activityCodeContext;
 }
 
 /////
@@ -1886,12 +1930,6 @@ void CGraphBase::createFromXGMML(IPropertyTree *_node, CGraphBase *_owner, CGrap
     parentActivityId = node->getPropInt("att[@name=\"_parentActivity\"]/@value", 0);
 
     graphResultsContainer = resultsGraph;
-    CGraphBase *graphContainer = this;
-    if (resultsGraph)
-        graphContainer = resultsGraph; // JCSMORE is this right?
-
-    graphCodeContext.setContext(this, graphContainer, (ICodeContextExt *)&jobChannel.queryCodeContext());
-
 
     unsigned numResults = xgmml->getPropInt("att[@name=\"_numResults\"]/@value", 0);
     if (numResults)
@@ -2959,7 +2997,7 @@ void CJobChannel::wait()
         graphExecutor->wait();
 }
 
-ICodeContext &CJobChannel::queryCodeContext() const
+ICodeContextExt &CJobChannel::queryCodeContext() const
 {
     return *codeCtx;
 }
@@ -3342,4 +3380,9 @@ void CActivityBase::cancelReceiveMsg(ICommunicator &comm, const rank_t rank, con
 void CActivityBase::cancelReceiveMsg(const rank_t rank, const mptag_t mpTag)
 {
     cancelReceiveMsg(queryJobChannel().queryJobComm(), rank, mpTag);
+}
+
+unsigned jcsFunc1Ctx(ICodeContext *ctx, unsigned p1)
+{
+    return p1 * 2;
 }

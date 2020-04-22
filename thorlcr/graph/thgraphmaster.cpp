@@ -362,8 +362,10 @@ void CSlaveMessageHandler::threadmain()
 
 //////////////////////
 
+static const StatisticsMapping codeCtxStatistics({});
+
 CMasterActivity::CMasterActivity(CGraphElementBase *_container) : CActivityBase(_container), threaded("CMasterActivity", this), timingInfo(_container->queryJob()),
-                                                                  blockedTime(queryJob(), StTimeBlocked)
+                                                                  blockedTime(queryJob(), StTimeBlocked), ctxStatsCollection(queryJob(), codeCtxStatistics)
 {
     notedWarnings = createThreadSafeBitSet();
     mpTag = TAG_NULL;
@@ -516,7 +518,13 @@ void CMasterActivity::reset()
 void CMasterActivity::deserializeStats(unsigned node, MemoryBuffer &mb)
 {
     CriticalBlock b(progressCrit); // don't think needed
+    byte flags;
+    mb.read(flags);
     deserializeActivityStats(node, mb);
+    if (flags) // JCSMORE extend with bit flags
+    {
+        ctxStatsCollection.deserializeMerge(node, mb);
+    }
     rowcount_t count;
     ForEachItemIn(p, progressInfo)
     {
@@ -538,6 +546,7 @@ void CMasterActivity::getActivityStats(IStatisticGatherer & stats)
 {
     timingInfo.getStats(stats);
     blockedTime.getStats(stats,false);
+    ctxStatsCollection.getStats(stats);
 }
 
 void CMasterActivity::getEdgeStats(IStatisticGatherer & stats, unsigned idx)
@@ -2772,6 +2781,7 @@ bool CMasterGraph::deserializeStats(unsigned node, MemoryBuffer &mb)
             return false; // don't know if or how this could happen, but all bets off with packet if did.
         }
     }
+
     unsigned subs;
     mb.read(subs);
     while (subs--)

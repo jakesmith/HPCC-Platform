@@ -126,6 +126,8 @@ bool CThorInput::isFastThrough() const
 }
 // 
 
+static const StatisticsMapping codeCtxStatistics({});
+
 CSlaveActivity::CSlaveActivity(CGraphElementBase *_container) : CActivityBase(_container), CEdgeProgress(this)
 {
     data = NULL;
@@ -559,7 +561,18 @@ void CSlaveActivity::serializeActivityStats(MemoryBuffer &mb) const
 void CSlaveActivity::serializeStats(MemoryBuffer &mb)
 {
     CriticalBlock b(crit);
+    byte flags = 0;
+    unsigned flagsPos = mb.length();
+    mb.append(flags); // JCSMORE - could I use 1 bit from act. id (what is max?)
     serializeActivityStats(mb);
+    unsigned beginCtxStatsPos = mb.length();
+    if (queryStats().serialize(mb))
+    {
+        flags = 1; // ctx stats present
+        mb.writeDirect(flagsPos, sizeof(flags), &flags);
+    }
+    else // no ctx stats, rewind
+        mb.rewrite(beginCtxStatsPos);
     ForEachItemIn(i, outputs)
     {
         IThorDataLink *output = queryOutput(i);
@@ -1244,13 +1257,9 @@ bool CSlaveGraph::serializeStats(MemoryBuffer &mb)
             {
                 CGraphElementBase &element = iter->query();
                 CSlaveActivity &activity = (CSlaveActivity &)*element.queryActivity();
-                unsigned pos = mb.length();
                 mb.append(activity.queryContainer().queryId());
                 activity.serializeStats(mb);
-                if (pos == mb.length()-sizeof(activity_id))
-                    mb.rewrite(pos);
-                else
-                    ++count;
+                ++count;
             }
             mb.writeDirect(cPos, sizeof(count), &count);
         }

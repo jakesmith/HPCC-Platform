@@ -289,6 +289,7 @@ class graphmaster_decl CMasterActivity : public CActivityBase, implements IThrea
     MemoryBuffer *data;
     CriticalSection progressCrit;
     IArrayOf<IDistributedFile> readFiles;
+    CThorStatsCollection ctxStatsCollection;
 
 protected:
     ProgressInfoArray progressInfo;
