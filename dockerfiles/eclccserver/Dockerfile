@@ -21,7 +21,12 @@ ARG BUILD_LABEL
 ARG DOCKER_REPO
 FROM ${DOCKER_REPO}/platform-core:${BUILD_LABEL}
 
+#RUN chown hpcc:hpcc ${HPCC_DLLSERVER_PATH}
+
 USER hpcc
+# Create a directory for the database and expose as a volume for persistence
+RUN mkdir -p ${HPCC_DLLSERVER_PATH}
+VOLUME ${HPCC_DLLSERVER_PATH}
 RUN mkdir -p /var/lib/HPCCSystems/eclccserver
 WORKDIR /var/lib/HPCCSystems/eclccserver
 ENTRYPOINT [ "eclccserver" ]
