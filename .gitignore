@@ -10,3 +10,4 @@ esp/src/hpcc-js
 .vscode/
 .eclcc/
 eclcc.log
+dockerfiles/incr.sh
