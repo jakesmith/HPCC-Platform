@@ -71,43 +71,29 @@ protected:
 
 class graphmaster_decl CThorStatsCollection : public CInterface
 {
+    std::vector<OwnedMalloc<CRuntimeStatisticCollection>> nodeStats;
+    const StatisticsMapping & mapping;
+    CRuntimeSummaryStatisticCollection summary;
 public:
-    CThorStatsCollection(CJobBase &ctx, const StatisticsMapping & _mapping) : mapping(_mapping)
+    CThorStatsCollection(CJobBase &ctx, const StatisticsMapping & _mapping) : mapping(_mapping), summary(_mapping)
     {
-        unsigned num = mapping.numStatistics();
-        stats = new Owned<CThorStats>[num];
-        for (unsigned i=0; i < num; i++)
-            stats[i].setown(new CThorStats(ctx, mapping.getKind(i)));
-    }
-    ~CThorStatsCollection()
-    {
-        delete [] stats;
+        unsigned c = queryClusterWidth();
+        while (c--)
+            nodeStats.push_back(new CRuntimeStatisticCollection(mapping));
     }
 
     void deserializeMerge(unsigned node, MemoryBuffer & mb)
     {
-        CRuntimeStatisticCollection nodeStats(mapping);
-        nodeStats.deserialize(mb);
-        extract(node, nodeStats);
-    }
-
-    void extract(unsigned node, const CRuntimeStatisticCollection & source)
-    {
-        for (unsigned i=0; i < mapping.numStatistics(); i++)
-            stats[i]->extract(node, source);
+        nodeStats[node]->deserialize(mb);
     }
 
     void getStats(IStatisticGatherer & result)
     {
+        for (unsigned n=0; n < nodeStats.size(); n++) // NB: size is = queryClusterWidth()
+            summary.merge(*nodeStats[n], n);
         for (unsigned i=0; i < mapping.numStatistics(); i++)
-        {
-            stats[i]->getStats(result, false);
-        }
+            summary.recordStatistics(result);
     }
-
-private:
-    Owned<CThorStats> * stats;
-    const StatisticsMapping & mapping;
 };
 
 class graphmaster_decl CTimingInfo : public CThorStats
