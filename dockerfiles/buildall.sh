@@ -31,6 +31,8 @@ BUILD_TYPE=                                     # Set to Debug for a debug build
 [[ -n ${INPUT_BUILD_USER} ]] && BUILD_USER=${INPUT_BUILD_USER}
 [[ -n ${INPUT_BUILD_VER} ]] && BUILD_TAG=${INPUT_BUILD_VER}
 [[ -n ${GITHUB_REPOSITORY} ]] && BUILD_USER=${GITHUB_REPOSITORY%/*}
+DOCKER_REPO=hpccsystems
+[[ -n ${INPUT_DOCKER_REPO} ]] && DOCKER_REPO=${INPUT_DOCKER_REPO}
 
 if [[ -n ${INPUT_BUILDTYPE} ]] ; then
   BUILD_TYPE=$INPUT_BUILDTYPE
@@ -72,10 +74,10 @@ build_image() {
   local label=$2
   [[ -z ${label} ]] && label=$BUILD_LABEL
 
-  if ! docker pull hpccsystems/${name}:${label} ; then
-    docker image build -t hpccsystems/${name}:${label} \
+  if ! docker pull ${DOCKER_REPO}/${name}:${label} ; then
+    docker image build -t ${DOCKER_REPO}/${name}:${label} \
        --build-arg BASE_VER=${BASE_VER} \
-       --build-arg DOCKER_REPO=hpccsystems \
+       --build-arg DOCKER_REPO=${DOCKER_REPO} \
        --build-arg BUILD_TAG=${BUILD_TAG} \
        --build-arg BUILD_LABEL=${BUILD_LABEL} \
        --build-arg BUILD_USER=${BUILD_USER} \
@@ -83,14 +85,14 @@ build_image() {
        --build-arg BUILD_THREADS=${BUILD_THREADS} \
        ${name}/ 
     if [ "$LATEST" = "1" ] ; then
-      docker tag hpccsystems/${name}:${label} hpccsystems/${name}:latest
+      docker tag ${DOCKER_REPO}/${name}:${label} ${DOCKER_REPO}/${name}:latest
       if [ "$PUSH" = "1" ] ; then
-        docker push hpccsystems/${name}:${label}
-        docker push hpccsystems/${name}:latest
+        docker push ${DOCKER_REPO}/${name}:${label}
+        docker push ${DOCKER_REPO}/${name}:latest
       fi
     else
       if [ "$PUSH" = "1" ] ; then
-        docker push hpccsystems/${name}:${label}
+        docker push ${DOCKER_REPO}/${name}:${label}
       fi
     fi
   fi
