@@ -57,6 +57,8 @@ DOCKER_REPO=hpccsystems
 BUILD_TYPE=Debug
 [[ -n ${INPUT_BUILD_TYPE} ]] && BUILD_TYPE=${INPUT_BUILD_TYPE}
 BUILD_THREADS=$INPUT_BUILD_THREADS # If not set, picks up default based on nproc
+BUILD_USER=hpcc-systems
+[[ -n ${INPUT_BUILD_USER} ]] && BUILD_USER=${INPUT_BUILD_USER}
 
 HEAD=$(git rev-parse --short HEAD)
 BUILD_LABEL="${HEAD}-Debug"
