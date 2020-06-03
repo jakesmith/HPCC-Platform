@@ -874,21 +874,30 @@ int main( int argc, const char *argv[]  )
         const char *workunit = nullptr;
         const char *graphName = nullptr;
 #ifdef _CONTAINERIZED
-        if (!globals->hasProp("@numSlaves"))
-            throw makeStringException(0, "Number of slaves not defined (numSlaves)");
-        else
-        {
-            numSlaves = globals->getPropInt("@numSlaves", 0);
-            if (0 == numSlaves)
-                throw makeStringException(0, "Number of slaves must be > 0 (numSlaves)");
-        }
-
         workunit = globals->queryProp("@workunit");
         graphName = globals->queryProp("@graphName");
         if (isEmptyString(workunit))
             throw makeStringException(0, "missing --workunit");
         if (isEmptyString(graphName))
             throw makeStringException(0, "missing --graphName");
+
+        if (!globals->hasProp("@numSlaves"))
+            throw makeStringException(0, "Default number of slaves not defined (numSlaves)");
+        else
+        {
+            // check 'numSlaves' workunit option.
+            Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
+            Owned<IConstWorkUnit> wuRead = factory->openWorkUnit(workunit);
+            if (!wuRead)
+                throw makeStringExceptionV(0, "Cannot open workunit: %s", workunit);
+            if (wuRead->hasDebugValue("numSlaves"))
+                numSlaves = wuRead->getDebugValueInt("numSlaves", 0);
+            else
+                numSlaves = globals->getPropInt("@numSlaves", 0);
+            if (0 == numSlaves)
+                throw makeStringException(0, "Number of slaves must be > 0 (numSlaves)");
+        }
+
         cloudJobName.appendf("%s-%s", workunit, graphName);
 
         StringBuffer myEp;
@@ -901,6 +910,7 @@ int main( int argc, const char *argv[]  )
         Owned<IGroup> rawGroup = getClusterNodeGroup(thorname, "ThorCluster");
         setClusterGroup(queryMyNode(), rawGroup, slavesPerNode, channelsPerSlave, slaveBasePort, localThorPortInc);
         numSlaves = queryNodeClusterWidth();
+
 #endif
 
         if (registry->connect(numSlaves))
