@@ -903,7 +903,7 @@ int main( int argc, const char *argv[]  )
         StringBuffer myEp;
         queryMyNode()->endpoint().getUrlStr(myEp);
 
-        launchK8sJob("thorslave", workunit, cloudJobName, { { "graphName", graphName}, { "master", myEp.str() } });
+        launchK8sJob("thorslave", workunit, cloudJobName, { { "graphName", graphName}, { "master", myEp.str() }, { "numSlaves", std::to_string(numSlaves)} });
 #else
         unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", DEFAULT_SLAVEPORTINC);
         unsigned slaveBasePort = globals->getPropInt("@slaveport", DEFAULT_THORSLAVEPORT);
