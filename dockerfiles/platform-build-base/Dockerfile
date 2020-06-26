@@ -17,7 +17,7 @@
 
 # Build container image containing all 3rd-party tools required to build HPCC platform
 
-FROM ubuntu:20.04 as build
+FROM centos:7.5 as build
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt clean -y && \
     apt autoclean -y && \
