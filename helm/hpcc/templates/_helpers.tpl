@@ -60,12 +60,36 @@ storage:
   ##The following is a temporary solution to allow blob storage to be tested
   ##This will be completely rewritten and restructured to encompass the idea of multiple storage planes.
   ##The source of the information is likely to be move to .Values.storage rather than .Values.global
+  planes:
+{{- $done := dict "value" false }}
+{{- if (hasKey .Values.storage "planes") -}}
+{{- if hasPrefix "[]" (typeOf .Values.storage.planes) -}}
+{{- if (ne (len .Values.storage.planes) 0) -}}
+ {{- range $plane := .Values.storage.planes -}}
+  {{- $num := int ( $plane.numDevices | default 0 ) }}
+  - name: {{ $plane.name | quote }}
+{{ toYaml (unset (unset (deepCopy $plane) "name") "pvc")| indent 4 }}
+{{- end }}
+ {{- $_ := set $done "value" true }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $done.value }}
+  - name: dataplane
+    mount: {{ .Values.global.defaultDataPath | default "/var/lib/HPCCSystems/hpcc-data" | quote }}
+{{- if .Values.global.defaultMirrorPath }}
+    replication:
+    - mirrorplane
+  - name: mirrorplane
+    mount: {{ .Values.global.defaultDataPath | default "/var/lib/HPCCSystems/hpcc-mirror" | quote }}
+{{- end }}
   default:
 {{- if .Values.global.defaultDataPath }}
     data: {{ .Values.global.defaultDataPath }}
 {{- end }}
 {{- if .Values.global.defaultMirrorPath }}
     mirror: {{ .Values.global.defaultMirrorPath }}
+{{- end }}
 {{- end }}
 {{- end -}}
 
@@ -101,19 +125,73 @@ Add ConfigMap volume for a component
 
 {{/*
 Add data volume mount
+If Any storage planes are defined, then they specify the pvcs that will be mounted
 */}}
 {{- define "hpcc.addDataVolumeMount" -}}
+{{- $done := dict "value" false -}}
+{{- if (hasKey .root.Values.storage "planes") -}}
+{{- if hasPrefix "[]" (typeOf .root.Values.storage.planes) -}}
+{{- if (ne (len .root.Values.storage.planes) 0) -}}
+ {{- range $plane := .root.Values.storage.planes -}}
+  {{- if $plane.pvc -}}
+   {{- $num := int ( $plane.numDevices | default 1 ) -}}
+    {{- if le $num 1 }}
+- name: {{ $plane.name }}-pv
+  mountPath: {{ $plane.prefix | quote }}
+    {{- else }}
+{{- range $elem := until $num }}
+- name: {{ $plane.name }}-pv-many-{{- add $elem 1 }}
+  mountPath: {{ printf "%s/d%d" $plane.prefix (add $elem 1) | quote }}
+{{- end }}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $done "value" true -}}
+{{- end }}
+{{- end }}
+{{- end -}}
+{{- end -}}
+{{- if not $done.value -}}
 - name: datastorage-pv
   mountPath: "/var/lib/HPCCSystems/hpcc-data"
+{{- end }}
 {{- end -}}
 
 {{/*
 Add data volume
 */}}
 {{- define "hpcc.addDataVolume" -}}
+{{- if (hasKey .root.Values "storage") -}}
+{{- $done := dict "value" false -}}
+{{- if hasPrefix "[]" (typeOf .root.Values.storage.planes) -}}
+{{- if (ne (len .root.Values.storage.planes) 0) -}}
+ {{- range $plane := .root.Values.storage.planes -}}
+  {{- if $plane.pvc -}}
+   {{- $num := int ( $plane.numDevices | default 1 ) -}}
+   {{- $pvc := $plane.pvc | required (printf "pvc for %s not supplied" $plane.name) }}
+    {{- if le $num 1 }}
+- name: {{ $plane.name }}-pv
+  persistentVolumeClaim:
+    claimName: {{ $pvc }}
+    {{- else }}
+{{- range $elem := until $num }}
+- name: {{ $plane.name }}-pv-many-{{- add $elem 1 }}
+  persistentVolumeClaim:
+    claimName: {{ $pvc }}-{{- add $elem 1 }}
+{{- end }}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $done "value" true -}}
+{{- end }}
+{{- end }}
+{{- end -}}
+{{- if not $done.value -}}
+{{- if (hasKey .root.Values.storage "dataStorage") -}}
 - name: datastorage-pv
   persistentVolumeClaim:
-    claimName: {{ .Values.storage.dataStorage.existingClaim | default (printf "%s-datastorage-pvc" (include "hpcc.fullname" .)) }}
+    claimName: {{ .root.Values.storage.dataStorage.existingClaim | default (printf "%s-datastorage-pvc" (include "hpcc.fullname" .root )) }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- end -}}
 
 {{/*
@@ -165,6 +243,31 @@ Add Secret volume for a component
  {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Add data volume mount
+If Any storage planes are defined, then they specify the pvcs that will be mounted
+*/}}
+{{- define "hpcc.checkDefaultStoragePlane" -}}
+{{- if hasKey .me "storagePlane" }}
+ {{- $search := .me.storagePlane -}}
+ {{- $done := dict "matched" (eq $search "dataplane") }}
+ {{- if hasKey .root.Values "storage" }}
+  {{- if hasKey .root.Values.storage "planes" }}
+   {{- $_ := set $done "matched" false }}
+   {{- range $plane := .root.Values.storage.planes -}}
+    {{- if eq $search $plane.name -}}
+     {{- $_ := set $done "matched" true }}
+    {{- end }}
+   {{- end }}
+  {{- end }}
+ {{- end }}
+ {{- if not $done.matched }}
+ {{- $_ := fail (printf "storage plane %s for %s is not defined " $search .me.name ) }}
+ {{- end -}}
+{{- end }}
+{{- end -}}
+
 
 {{/*
 Add config arg for a component
