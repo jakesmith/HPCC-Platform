@@ -22,7 +22,7 @@
 ARG BUILD_LABEL
 ARG DOCKER_REPO
 FROM ${DOCKER_REPO}/platform-build:${BUILD_LABEL} as build
-FROM ubuntu:20.04
+FROM centos:centos7.5.1804
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt clean -y && \
     apt autoclean -y && \

@@ -17,7 +17,7 @@
 
 # Build container image containing all 3rd-party tools required to build HPCC platform
 
-FROM centos:7.5 as build
+FROM centos:centos7.5.1804 as build
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt clean -y && \
     apt autoclean -y && \
@@ -97,5 +97,5 @@ WORKDIR /
 RUN rm -rf /home/temp
 RUN apt-get clean -y
 
-FROM ubuntu:20.04
+FROM centos:centos7.5.1804
 COPY --from=build / /
