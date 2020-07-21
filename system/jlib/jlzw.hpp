@@ -136,6 +136,8 @@ interface ICompressHandler : extends IInterface
     virtual ICompressor *getCompressor(const char *options=NULL) = 0;
     virtual IExpander *getExpander(const char *options=NULL) = 0;
 };
+typedef IIteratorOf<ICompressHandler> ICompressHandlerIterator;
+extern jlib_decl ICompressHandlerIterator *getCompressHandlerIterator();
 extern jlib_decl void setDefaultCompressor(const char *type);
 extern jlib_decl ICompressHandler *queryCompressHandler(const char *type);
 extern jlib_decl ICompressHandler *queryDefaultCompressHandler();

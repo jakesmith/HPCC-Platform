@@ -2752,6 +2752,14 @@ public:
     }
 } compressors;
 
+typedef IIteratorOf<ICompressHandler> ICompressHandlerIterator;
+
+ICompressHandlerIterator *getCompressHandlerIterator()
+{
+    return new ArrayIIteratorOf<IArrayOf<ICompressHandler>, ICompressHandler, ICompressHandlerIterator>(compressors);
+}
+
+
 
 bool addCompressorHandler(ICompressHandler *handler)
 {
@@ -2793,7 +2801,14 @@ MODULE_INIT(INIT_PRIORITY_STANDARD)
     {
     public:
         CLZ4CompressHandler() : CCompressHandlerBase("LZ4") { }
-        virtual ICompressor *getCompressor(const char *options) { return createLZ4Compressor(); }
+        virtual ICompressor *getCompressor(const char *options) { return createLZ4Compressor(false); }
+        virtual IExpander *getExpander(const char *options) { return createLZ4Expander(); }
+    };
+    class CLZ4HCCompressHandler : public CCompressHandlerBase
+    {
+    public:
+        CLZ4HCCompressHandler() : CCompressHandlerBase("LZ4HC") { }
+        virtual ICompressor *getCompressor(const char *options) { return createLZ4Compressor(true); }
         virtual IExpander *getExpander(const char *options) { return createLZ4Expander(); }
     };
     class CAESCompressHandler : public CCompressHandlerBase
@@ -2829,6 +2844,7 @@ MODULE_INIT(INIT_PRIORITY_STANDARD)
     addCompressorHandler(new CDiffCompressHandler());
     addCompressorHandler(new CLZWCompressHandler());
     addCompressorHandler(new CFLZCompressHandler());
+    addCompressorHandler(new CLZ4HCCompressHandler());    
     ICompressHandler *lz4Compressor = new CLZ4CompressHandler();
     addCompressorHandler(lz4Compressor);
     defaultCompressor.set(lz4Compressor);
