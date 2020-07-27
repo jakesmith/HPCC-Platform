@@ -3580,15 +3580,12 @@ public:
             return false;
         auto &rhs = a->second;
 
-        QueueItem *q = std::get<2>(a->second);
-
+        QueueItem *q;
+        unsigned t;
         std::tie(res, t, q) = rhs;
 
         if (nullptr != q->next) // 1st check if not last already
         {
-            if (!q->active.compare_exchange_strong(expected, false))
-
-
             bool expected=true;
             if (!q->active.compare_exchange_strong(expected, false))
                 return false;
@@ -3601,7 +3598,7 @@ public:
             }
 
             q = new QueueItem(key);
-            std::get<2>(a->second) = q; // NB: it's possible other query() threads have links to old 'q' item
+            std::get<2>(rhs) = q; // NB: it's possible other query() threads have links to old 'q' item
             pushToTail(q);
         }
         if (type)
