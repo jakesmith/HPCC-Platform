@@ -3598,14 +3598,14 @@ public:
             }
 
             q = new QueueItem(key);
-            std::get<2>(rhs) = q; // NB: it's possible other query() threads have links to old 'q' item
+            //std::get<2>(rhs) = q; // NB: it's possible other query() threads have links to old 'q' item
             pushToTail(q);
         }
         if (type)
             *type = t;
         return true;
     }
-    bool add(const KEY &key, const VALUE &value, unsigned type)
+    bool add(const KEY &key, VALUE &value, unsigned type)
     {
         typename TBBMAP::accessor a;
         bool res = table.insert(a, key);
@@ -3770,7 +3770,7 @@ int main(int argc, char* argv[])
 
             struct CMRULimiter
             {
-                bool operator() (const Owned<IPropertyTree> &newValue, unsigned type, unsigned count)
+                bool operator() (Owned<IPropertyTree> &newValue, unsigned type, unsigned count)
                 {
                     if (count > hardLimit)
                         return true;
