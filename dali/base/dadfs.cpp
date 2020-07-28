@@ -9553,7 +9553,7 @@ class CInitGroups
         return loadMachineMap(conn->queryRoot());
     }
 
-    IPropertyTree *createClusterGroup(GroupType groupType, const std::vector<std::string> &hosts, const char *dir, const IPropertyTree &envCluster, bool realCluster, bool _expand)
+    IPropertyTree *createClusterGroup(GroupType groupType, const std::vector<std::string> &hosts, const char *dir, const IPropertyTree * envCluster, bool realCluster, bool _expand)
     {
         bool expand = _expand;
         if (grp_thor != groupType)
@@ -9589,8 +9589,9 @@ class CInitGroups
         };
         if (expand)
         {
-            unsigned slavesPerNode = envCluster.getPropInt("@slavesPerNode", 1);
-            unsigned channelsPerSlave = envCluster.getPropInt("@channelsPerSlave", 1);
+            assertex(envCluster);
+            unsigned slavesPerNode = envCluster->getPropInt("@slavesPerNode", 1);
+            unsigned channelsPerSlave = envCluster->getPropInt("@channelsPerSlave", 1);
             for (unsigned s=0; s<(slavesPerNode*channelsPerSlave); s++)
                 addHostsToIPTFunc();
         }
@@ -9661,7 +9662,7 @@ class CInitGroups
         if (!hosts.size())
             return nullptr;
 
-        return createClusterGroup(groupType, hosts, dir, cluster, realCluster, expand);
+        return createClusterGroup(groupType, hosts, dir, &cluster, realCluster, expand);
     }
 
     bool constructGroup(const IPropertyTree &cluster, const char *altName, IPropertyTree *oldEnvCluster, GroupType groupType, bool force, StringBuffer &messages)
@@ -9699,9 +9700,7 @@ class CInitGroups
         if (altName)
             gname.clear().append(altName).toLowerCase();
 
-        VStringBuffer xpath("Group[@name=\"%s\"]", gname.str());
-        IPropertyTree *existingClusterGroup = groupsconnlock.conn->queryRoot()->queryPropTree(xpath.str()); // 'live' cluster group
-
+        IPropertyTree *existingClusterGroup = queryExistingGroup(gname);
         bool matchOldEnv = false;
         Owned<IPropertyTree> newClusterGroup = createClusterGroupFromEnvCluster(groupType, cluster, defDir, realCluster, true);
         bool matchExisting = !force && clusterGroupCompare(newClusterGroup, existingClusterGroup);
@@ -9767,7 +9766,7 @@ class CInitGroups
                     VStringBuffer gname("hthor__%s", groupname);
                     if (ins>1)
                         gname.append('_').append(ins);
-                    Owned<IPropertyTree> clusterGroup = createClusterGroup(grp_hthor, { na }, nullptr, cluster, true, false);
+                    Owned<IPropertyTree> clusterGroup = createClusterGroup(grp_hthor, { na }, nullptr, &cluster, true, false);
                     addClusterGroup(gname.str(), clusterGroup.getClear(), true);
                 }
             }
@@ -10006,13 +10005,84 @@ public:
             }
         }
     }
+
+    IPropertyTree * createStorageGroup(const char * name, size32_t size)
+    {
+        std::vector<std::string> hosts;
+        for (unsigned n=0; n<size; n++)
+            hosts.push_back("localhost");
+        const char * dir = nullptr;
+        return createClusterGroup(grp_unknown, hosts, dir, nullptr, false, false);
+    }
+
+    void ensureStorageGroup(bool force, const char * name, unsigned numDevices, StringBuffer & messages)
+    {
+        IPropertyTree *existingClusterGroup = queryExistingGroup(name);
+        Owned<IPropertyTree> newClusterGroup = createStorageGroup(name, numDevices);
+        bool matchExisting = clusterGroupCompare(newClusterGroup, existingClusterGroup);
+        if (!existingClusterGroup || !matchExisting)
+        {
+            if (!existingClusterGroup)
+            {
+                VStringBuffer msg("New cluster layout for cluster %s", name);
+                UWARNLOG("%s", msg.str());
+                messages.append(msg).newline();
+                addClusterGroup(name, newClusterGroup.getClear(), false);
+            }
+            else if (force)
+            {
+                VStringBuffer msg("Forcing new group layout for storageplane %s", name);
+                UWARNLOG("%s", msg.str());
+                messages.append(msg).newline();
+                addClusterGroup(name, newClusterGroup.getClear(), false);
+            }
+            else
+            {
+                VStringBuffer msg("Active cluster '%s' group layout does not match stroageplane definition", name);
+                UWARNLOG("%s", msg.str());                                                                        \
+                messages.append(msg).newline();
+            }
+        }
+    }
+
+    void constructStorageGroups(bool force, StringBuffer &messages)
+    {
+        IPropertyTree & global = queryGlobalConfig();
+        IPropertyTree * storage = global.queryPropTree("storage");
+        if (storage)
+        {
+            Owned<IPropertyTreeIterator> planes = storage->getElements("planes");
+            ForEach(*planes)
+            {
+                IPropertyTree & plane = planes->query();
+                const char * name = plane.queryProp("@name");
+                if (isEmptyString(name))
+                    continue;
+
+                //Two main type of storage plane - with a host group (bare metal) and without.
+                IPropertyTree *existingGroup = queryExistingGroup(name);
+                const char * hosts = plane.queryProp("@hosts");
+                if (hosts)
+                {
+                    IPropertyTree *existingClusterGroup = queryExistingGroup(name);
+                    if (!existingClusterGroup)
+                        UNIMPLEMENTED_X("Bare metal storage planes not yet supported");
+                }
+                else
+                {
+                    unsigned numDevices = plane.getPropInt("@numDevices", 1);
+                    ensureStorageGroup(force, name, numDevices, messages);
+                }
+            }
+        }
+    }
     IGroup *getGroupFromCluster(const char *type, const IPropertyTree &cluster, bool expand)
     {
         loadMachineMap();
         GroupType gt = getGroupType(type);
         return getGroupFromCluster(gt, cluster, expand);
     }
-    IPropertyTree *queryRawGroup(const char *name)
+    IPropertyTree *queryExistingGroup(const char *name)
     {
         VStringBuffer xpath("Group[@name=\"%s\"]", name);
         return groupsconnlock.conn->queryRoot()->queryPropTree(xpath.str());
@@ -10043,6 +10113,13 @@ bool removeClusterSpares(const char *clusterName, const char *type, const std::v
     return init.removeSpares(clusterName, type, hosts, response);
 }
 
+void initStoragePlaneGroups(StringBuffer &response, unsigned timems)
+{
+    CInitGroups init(timems);
+    init.constructStorageGroups(false, response);
+}
+
+
 static IGroup *getClusterNodeGroup(const char *clusterName, const char *type, bool processGroup, unsigned timems)
 {
     VStringBuffer clusterPath("/Environment/Software/%s[@name=\"%s\"]", type, clusterName);
@@ -10069,7 +10146,7 @@ static IGroup *getClusterNodeGroup(const char *clusterName, const char *type, bo
         throwStringExceptionV(0, "Failed to get group for '%s' cluster '%s'", type, clusterName);
     if (!expandedClusterGroup->equals(nodeGroup))
     {
-        IPropertyTree *rawGroup = init.queryRawGroup(nodeGroupName);
+        IPropertyTree *rawGroup = init.queryExistingGroup(nodeGroupName);
         if (!rawGroup)
             throwUnexpectedX("missing node group");
         unsigned nodesSwapped = rawGroup->getPropInt("@nodesSwapped");

@@ -6397,6 +6397,9 @@ void CCovenSDSManager::loadStore(const char *storeName, const bool *abort)
     initClusterGroups(forceGroupUpdate, response, oldEnvironment);
     if (response.length())
         PROGLOG("DFS group initialization : %s", response.str()); // should this be a syslog?
+    initStoragePlaneGroups(response);
+    if (response.length())
+        PROGLOG("StoragePlane group initialization : %s", response.str()); // should this be a syslog?
 }
 
 void CCovenSDSManager::saveStore(const char *storeName, bool currentEdition)
