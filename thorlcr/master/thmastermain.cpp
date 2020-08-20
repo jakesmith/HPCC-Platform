@@ -967,6 +967,23 @@ int main( int argc, const char *argv[]  )
                 throwStringExceptionV(0, "Failed to connect to all nodes");
             PROGLOG("verified mp connection to rest of cluster");
 
+#ifdef _CONTAINERIZED
+            if (globals->getPropBool("@persistentThor"))
+            {
+                std::vector<std::string> hosts;
+                for (unsigned n=0; n<queryProcessGroup().ordinality(); n++)
+                {
+                    INode &node = queryProcessGroup().queryNode(n);
+                    StringBuffer host;
+                    node.endpoint().getIpText(host);
+                    hosts.push_back(host.str());
+                }
+                queryNamedGroupStore().add(thorName, hosts);
+                // change default plane
+                queryComponentConfig().setProp("storagePlane", thorName);
+                PROGLOG("Persistent Thor group created");
+            }
+#endif
             LOG(MCauditInfo, ",Progress,Thor,Startup,%s,%s,%s,%s",nodeGroup.str(),thorname,queueName.str(),logUrl.str());
             auditStartLogged = true;
 
