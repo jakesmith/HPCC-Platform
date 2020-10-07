@@ -396,11 +396,19 @@ Check that the storage and spill planes for a component exist
 
 
 {{/*
+Add config path for a component
+*/}}
+{{- define "hpcc.configPath" -}}
+"/etc/config/{{ .name }}.yaml"
+{{- end -}}
+
+{{/*
 Add config arg for a component
 */}}
 {{- define "hpcc.configArg" -}}
 "--config=/etc/config/{{ .name }}.yaml"
 {{- end -}}
+
 
 {{/*
 Add dali arg for a component
@@ -600,4 +608,220 @@ resources:
   limits:
     cpu: "50m"
     memory: "100M"
+{{- end -}}
+
+{{/*
+Thor configmap
+Pass in dict with root and me
+*/}}
+{{- define "hpcc.thorConfigMap" }}
+{{- include "hpcc.checkDefaultStoragePlane" (dict "root" $ "me" .me) }}
+{{- $hthorName := printf "%s-hthor" .me.name }}
+{{- $eclAgentName := printf "%s-agent" .me.name }}
+{{- $thorAgentName := printf "%s-thoragent" .me.name }}
+{{- $workerName := printf "%s-worker" .me.name }}
+{{- $serviceName := printf "%s-svc" .me.name }}
+{{- $eclAgentDefaults := dict "name" $eclAgentName "useChildProcesses" true "replicas" 1 }}
+{{- $eclAgentScope := .me.eclagent | mergeOverwrite $eclAgentDefaults | default $eclAgentDefaults }}
+{{- $agentAppType := $eclAgentScope.type | default "hthor" }}
+{{- $thorAgentDefaults := dict "name" $thorAgentName "useChildProcesses" false "replicas" 1 }}
+{{- $thorAgentScope := .me.thoragent | mergeOverwrite $thorAgentDefaults | default $thorAgentDefaults }}
+{{- $hthorDefaults := dict "name" $hthorName }}
+{{- $hthorScope := .me.eclagent | mergeOverwrite $hthorDefaults | default $hthorDefaults }}
+{{- $thorScopeStd := omit .me "eclagent" "thoragent" "hthor" }}
+{{- $thorScope := $thorAgentScope.useChildProcesses | ternary ($thorScopeStd | mergeOverwrite (dict "masterport" 0 "slaveport" 0)) ($thorScopeStd) }}
+kind: ConfigMap 
+apiVersion: v1 
+metadata:
+  name: {{ $thorScope.name }}-configmap 
+data:
+  {{ $thorScope.name }}.yaml: |
+    version: 1.0
+    thor:
+{{ toYaml (omit $thorScope "logging") | indent 6 }}
+{{- include "hpcc.generateLoggingConfig" (dict "root" .root "me" $thorScope) | indent 6 }}
+{{ include "hpcc.generateVaultConfig" (dict "root" .root "categories" (list "storage" "ecl" "ecl-user" ) ) | indent 6 }}
+    {{ $agentAppType }}:
+{{- if $thorScope.multiJobLinger }}
+      multiJobLinger: true
+{{- end }}
+{{ toYaml (omit $hthorScope "logging") | indent 6 }}
+      platform:
+        type: "thor"
+        width: {{ mul (.me.numWorkers | default 1) ( .me.channelsPerWorker | default 1) }}
+{{- include "hpcc.generateLoggingConfig" (dict "root" .root "me" $hthorScope) | indent 6 }}
+{{ include "hpcc.generateVaultConfig" (dict "root" .root "categories" (list "storage" "ecl" "ecl-user" ) ) | indent 6 }}
+    eclagent: # main agent Q handler
+{{ toYaml (omit $eclAgentScope "logging") | indent 6 }}
+{{- include "hpcc.generateLoggingConfig" (dict "root" .root "me" $eclAgentScope) | indent 6 }}
+{{ include "hpcc.generateVaultConfig" (dict "root" .root "categories" (list "storage" "ecl" "ecl-user" ) ) | indent 6 }}
+    global:
+{{ include "hpcc.generateGlobalConfigMap" .root | indent 6 }}
+
+  {{ $thorAgentScope.name }}.yaml: |
+    version: 1.0
+    eclagent:
+{{ toYaml (omit $thorAgentScope "logging") | indent 6 }}
+{{- include "hpcc.generateLoggingConfig" (dict "root" .root "me" $thorAgentScope) | indent 6 }}
+      type: thor
+{{- if $thorAgentScope.useChildProcesses }}
+    thor:
+{{ toYaml (omit $thorScope "logging") | indent 6 }}
+{{- include "hpcc.generateLoggingConfig" (dict "root" .root "me" $thorScope) | indent 6 }}
+{{- end }}
+    global:
+{{ include "hpcc.generateGlobalConfigMap" .root | indent 6 }}
+{{- if not $eclAgentScope.useChildProcesses }}
+
+  {{ $agentAppType }}-jobspec.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: {{ $agentAppType }}-%jobname
+    spec:
+      ttlSecondsAfterFinished: 100
+      template:
+        metadata:
+          labels:
+            accessDali: "yes"
+            accessEsp: "yes"
+        spec:
+          serviceAccountName: {{ $thorAgentScope.useChildProcesses | default false | ternary "hpcc-default" "hpcc-agent" }}
+          initContainers: 
+            {{- include "hpcc.checkDataMount" (dict "root" .root) | indent 10 }}
+          containers:
+          - name: {{ $agentAppType }}-%jobname
+{{- include "hpcc.addSecurityContext" (dict "root" .root "me" .me) | indent 12 }}
+{{ include "hpcc.addImageAttrs" (dict "root" .root "me" .me) | indent 12 }}
+{{- include "hpcc.addResources" (dict "me" $thorScope.eclAgentResources) | indent 12 }}
+            workingDir: /var/lib/HPCCSystems
+            command: [ {{ $agentAppType | quote }} ] 
+            args: [
+                        {{ include "hpcc.configArg" .me }},
+                        {{ include "hpcc.daliArg" .root }},
+                        %args
+                     ]
+            volumeMounts:
+{{ include "hpcc.addConfigMapVolumeMount" .me | indent 12 }}
+{{ include "hpcc.addDataVolumeMount" (dict "root" .root "me" .me ) | indent 12 }}
+{{ include "hpcc.addDllVolumeMount" .root | indent 12 }}
+{{ include "hpcc.addSecretVolumeMounts" (dict "root" .root "categories" (list "system" "ecl" "storage" ) ) | indent 12 }}
+          volumes:
+{{ include "hpcc.addConfigMapVolume" .me | indent 10 }}
+{{ include "hpcc.addDataVolume" (dict "root" .root "me" .me ) | indent 10 }}
+{{ include "hpcc.addDllVolume" .root | indent 10 }}
+{{ include "hpcc.addSecretVolumes" (dict "root" .root "categories" (list "system" "ecl" "storage" ) ) | indent 10 }}
+          restartPolicy: Never
+      backoffLimit: 0
+{{- end }}
+{{- if not $thorAgentScope.useChildProcesses }}
+
+  thormanager-jobspec.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: thormanager-%jobname
+    spec:
+      ttlSecondsAfterFinished: 100
+      template:
+        metadata:
+          labels:
+            app: thor
+            accessDali: "yes"
+            accessEsp: "yes"
+            job: %jobname
+        spec:
+          serviceAccountName: hpcc-agent
+          initContainers:
+            {{- include "hpcc.checkDataMount" (dict "root" .root) | indent 10 }}
+          containers:
+          - name: thormanager-%jobname
+{{- include "hpcc.addSecurityContext" (dict "root" .root "me" .me) | indent 12 }}
+{{ include "hpcc.addImageAttrs" (dict "root" .root "me" .me) | indent 12 }}
+{{- include "hpcc.addResources" (dict "me" $thorScope.managerResources) | indent 12 }}
+            workingDir: /var/lib/HPCCSystems
+            command: [ thormaster_lcr ] 
+            args: [
+                    {{ include "hpcc.configArg" .me }},
+                    {{ include "hpcc.daliArg" .root }},
+                    %args
+                  ]
+            volumeMounts:
+{{ include "hpcc.addConfigMapVolumeMount" .me | indent 12 }}
+{{ include "hpcc.addDataVolumeMount" (dict "root" .root "me" .me ) | indent 12 }}
+{{ include "hpcc.addDllVolumeMount" .root | indent 12 }}
+{{ include "hpcc.addSecretVolumeMounts" (dict "root" .root "categories" (list "system" "ecl" "storage" ) ) | indent 12 }}
+          volumes:
+{{ include "hpcc.addConfigMapVolume" .me | indent 10 }}
+{{ include "hpcc.addDataVolume" (dict "root" .root "me" .me ) | indent 10 }}
+{{ include "hpcc.addDllVolume" .root | indent 10 }}
+{{ include "hpcc.addSecretVolumes" (dict "root" .root "categories" (list "system" "ecl" "storage" ) ) | indent 10 }}
+          restartPolicy: Never
+      backoffLimit: 0
+
+  thorworker-jobspec.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: thorworker-%jobname
+    spec:
+      parallelism: %numWorkers
+      ttlSecondsAfterFinished: 100
+      template:
+        metadata:
+          labels:
+            app: thor
+            accessEsp: "true"
+            job: %jobname
+        spec:
+          serviceAccountName: hpcc-default
+          containers:
+          - name: thorworker-%jobname
+{{- include "hpcc.addSecurityContext" (dict "root" .root "me" .me) | indent 12 }}
+{{ include "hpcc.addImageAttrs" (dict "root" .root "me" .me) | indent 12 }}
+{{- include "hpcc.addResources" (dict "me" $thorScope.workerResources) | indent 12 }}
+            workingDir: /var/lib/HPCCSystems
+            command: [ thorslave_lcr ] 
+            args: [
+                    {{ include "hpcc.configArg" .me }},
+                    {{ include "hpcc.daliArg" .root }},
+                    %args
+                  ]
+            volumeMounts:
+{{ include "hpcc.addConfigMapVolumeMount" .me | indent 12 }}
+{{ include "hpcc.addDataVolumeMount" (dict "root" .root "me" .me ) | indent 12 }}
+{{ include "hpcc.addDllVolumeMount" .root | indent 12 }}
+{{ include "hpcc.addSecretVolumeMounts" (dict "root" .root "categories" (list "system" "ecl" "storage" ) ) | indent 12 }}
+          volumes:
+{{ include "hpcc.addConfigMapVolume" .me | indent 10 }}
+{{ include "hpcc.addDataVolume" (dict "root" .root "me" .me ) | indent 10 }}
+{{ include "hpcc.addDllVolume" .root | indent 10 }}
+{{ include "hpcc.addSecretVolumes" (dict "root" .root "categories" (list "system" "ecl" "storage" ) ) | indent 10 }}
+          restartPolicy: Never
+      backoffLimit: 0
+
+  thormanager-networkspec.yaml: |
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: thormanager-%jobname
+    spec:
+      podSelector:
+        matchLabels:
+          app: thor
+          job: %jobname
+      ingress:
+      - from:
+        - podSelector:
+            matchLabels:
+              app: thor
+              job: %jobname
+      egress:
+      - to:
+        - podSelector:
+            matchLabels:
+              app: thor
+              job: %jobname
+               
+{{- end }}
 {{- end -}}
