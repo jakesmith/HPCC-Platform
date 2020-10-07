@@ -21,6 +21,8 @@ spec:
         roxie-server: {{ $servername | quote }}
         accessDali: "yes"
         accessEsp: "yes"
+      annotations:
+        checksum/globalConfig: {{ include "hpcc.generateGlobalConfigMap" $ | sha256sum }}
     spec:
       serviceAccountName: "hpcc-default"
       initContainers:

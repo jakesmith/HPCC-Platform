@@ -29,6 +29,9 @@ spec:
         run: {{ $eclAgentName | quote }}
         accessDali: "yes"
         accessEsp: {{ $eclAgentUseChildProcesses | ternary "yes" "no" | quote }}
+      annotations:
+        checksum/eclAgentConfig: "1"
+        checksum/globalConfig: {{ include "hpcc.generateGlobalConfigMap" $ | sha256sum }}
     spec:
       serviceAccountName: {{ $eclAgentUseChildProcesses | ternary "hpcc-default" "hpcc-agent" }}
       containers:

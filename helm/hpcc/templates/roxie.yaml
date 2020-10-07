@@ -135,6 +135,8 @@ spec:
         roxie-cluster: {{ $roxie.name | quote }}
         accessDali: "yes"
         accessEsp: "yes"
+      annotations:
+        checksum/globalConfig: {{ include "hpcc.generateGlobalConfigMap" $ | sha256sum }}
     spec:
       serviceAccountName: "hpcc-default"
       initContainers:
@@ -199,6 +201,8 @@ spec:
         roxie-cluster: {{ $roxie.name | quote }}
         accessDali: "yes"
         accessEsp: "yes"
+      annotations:
+        checksum/globalConfig: {{ include "hpcc.generateGlobalConfigMap" $ | sha256sum }}
     spec:
       serviceAccountName: "hpcc-default"
       initContainers:

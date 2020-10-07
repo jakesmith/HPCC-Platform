@@ -17,6 +17,8 @@ spec:
         run: {{ .name | quote }}
         accessDali: "yes"
         accessEsp: {{ .useChildProcesses | default false | ternary "yes" "no" | quote }}
+      annotations:
+        checksum/globalConfig: {{ include "hpcc.generateGlobalConfigMap" $ | sha256sum }}
     spec:
       serviceAccountName: {{ .useChildProcesses | default false | ternary "hpcc-default" "hpcc-agent" }}
       initContainers:

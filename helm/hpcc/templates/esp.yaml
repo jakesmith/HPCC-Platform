@@ -16,6 +16,8 @@ spec:
         run: {{ .name | quote }}
         accessDali: "yes"
         app: {{ $application }}
+      annotations:
+        checksum/globalConfig: {{ include "hpcc.generateGlobalConfigMap" $ | sha256sum }}
     spec:
       serviceAccountName: "hpcc-default"
       containers:
