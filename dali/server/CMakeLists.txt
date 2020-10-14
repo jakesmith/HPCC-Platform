@@ -66,3 +66,12 @@ target_link_libraries ( daserver
 IF (USE_OPENLDAP)
 target_link_libraries ( daserver LdapSecurity )
 ENDIF(USE_OPENLDAP)
+
+IF (USE_PROMETHEUS)
+include_directories ( 
+         ${HPCC_SOURCE_DIR}/system/prometheus-cpp/core/include
+)
+target_link_libraries ( daserver prometheus-cpp::pull )
+ENDIF(USE_PROMETHEUS)
+
+

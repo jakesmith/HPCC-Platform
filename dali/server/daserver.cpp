@@ -139,6 +139,55 @@ void usage(void)
     printf("--daemon|-d <instanceName>\t: run daemon as instance\n");
 }
 
+
+#include <chrono>
+#include <map>
+#include <memory>
+#include <string>
+#include <thread>
+#include <functional>
+
+#include <prometheus/counter.h>
+#include <prometheus/exposer.h>
+#include <prometheus/registry.h>
+
+std::unique_ptr<prometheus::Exposer> createMetricServer(unsigned port)
+{
+    using namespace prometheus;
+
+    // create an http server running on port 8080
+    std::string epStr = "localhost:" + port;
+    std::unique_ptr<Exposer> exposer(new Exposer{epStr});
+
+    // create a metrics registry with component=main labels applied to all its
+    // metrics
+    auto registry = std::make_shared<Registry>();
+
+    // add a new counter family to the registry (families combine values with the
+    // same name, but distinct label dimensions)
+    auto &counter_family = BuildCounter()
+                               .Name("time_running_seconds_total")
+                               .Help("How many seconds is this server running?")
+                               .Labels({{"label", "value"}})
+                               .Register(*registry);
+
+    // add a counter to the metric family
+    auto &second_counter = counter_family.Add(
+        {{"another_label", "value"}, {"yet_another_label", "value"}});
+
+    // ask the exposer to scrape the registry on incoming scrapes
+    exposer->RegisterCollectable(registry);
+
+    for (;;)
+    {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        // increment the counter by one (second)
+        second_counter.Increment();
+    }
+
+    return exposer;
+}
+
 /* NB: Ideally this belongs within common/environment,
  * however, that would introduce a circular dependency.
  */
@@ -372,6 +421,7 @@ int main(int argc, const char* argv[])
     const char *server = nullptr;
     int port = 0;
 
+    std::unique_ptr<prometheus::Exposer> metricServer;
     InitModuleObjects();
     NoQuickEditSection x;
     try
@@ -386,8 +436,11 @@ int main(int argc, const char* argv[])
         serverConfig.setown(loadConfiguration(defaultYaml, argv, "dali", "DALI", DALICONF, nullptr));
         Owned<IFile> sentinelFile = createSentinelTarget();
         removeSentinelFile(sentinelFile);
-#ifndef _CONTAINERIZED
-	
+
+#ifdef _CONTAINERIZED
+        setupContainerizedLogMsgHandler();
+#else
+        metricServer = createMetricServer(serverConfig->getPropInt("metricPort", 8080));
         for (unsigned i=1;i<(unsigned)argc;i++) {
             if (streq(argv[i],"--daemon") || streq(argv[i],"-d")) {
                 if (daemon(1,0) || write_pidfile(argv[++i])) {
@@ -407,9 +460,7 @@ int main(int argc, const char* argv[])
                 return EXIT_FAILURE;
             }
         }
-#endif
 
-#ifndef _CONTAINERIZED
         ILogMsgHandler * fileMsgHandler;
         {
             Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(serverConfig, "dali");
@@ -417,8 +468,6 @@ int main(int argc, const char* argv[])
             lf->setName("DaServer");//override default filename
             fileMsgHandler = lf->beginLogging();
         }
-#else
-        setupContainerizedLogMsgHandler();
 #endif
         PROGLOG("Build %s", BUILD_TAG);
 
