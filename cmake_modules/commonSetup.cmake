@@ -85,6 +85,12 @@ IF ("${COMMONSETUP_DONE}" STREQUAL "")
   endif()
   option(USE_AWS "Configure use of aws" ON)
 
+  if (WIN32)
+    option(USE_PROMETHEUS "Include the Prometheus exporter and metrict library" OFF)
+  else()
+    option(USE_PROMETHEUS "Include the Prometheus exporter and metrict library" ON)
+  endif()
+
   IF (WIN32)
      option(USE_NATIVE_LIBRARIES "Search standard OS locations (otherwise in EXTERNALS_DIRECTORY) for 3rd party libraries" OFF)
   ELSE()
