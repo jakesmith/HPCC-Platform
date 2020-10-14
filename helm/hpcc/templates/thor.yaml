@@ -6,7 +6,6 @@
 {{- $eclAgentType := .eclAgentType | default "hthor" }}
 {{- $hthorName := printf "%s-%s" .name $eclAgentType }}
 {{- $workerName := printf "%s-worker" .name }}
-{{- $serviceName := printf "%s-svc" .name }}
 {{- $eclAgentUseChildProcesses := hasKey . "eclAgentUseChildProcesses" | ternary .eclAgentUseChildProcesses true }}
 {{- $eclAgentReplicas := .eclAgentReplicas | default 1 }}
 {{- $thorAgentReplicas := .thorAgentReplicas | default 1 }}
