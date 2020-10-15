@@ -151,42 +151,56 @@ void usage(void)
 #include <prometheus/exposer.h>
 #include <prometheus/registry.h>
 
-std::unique_ptr<prometheus::Exposer> createMetricServer(unsigned port)
+class CMetricServer
 {
-    using namespace prometheus;
-
-    // create an http server running on port 8080
-    std::string epStr = "localhost:" + port;
-    std::unique_ptr<Exposer> exposer(new Exposer{epStr});
-
-    // create a metrics registry with component=main labels applied to all its
-    // metrics
-    auto registry = std::make_shared<Registry>();
-
-    // add a new counter family to the registry (families combine values with the
-    // same name, but distinct label dimensions)
-    auto &counter_family = BuildCounter()
-                               .Name("time_running_seconds_total")
-                               .Help("How many seconds is this server running?")
-                               .Labels({{"label", "value"}})
-                               .Register(*registry);
-
-    // add a counter to the metric family
-    auto &second_counter = counter_family.Add(
-        {{"another_label", "value"}, {"yet_another_label", "value"}});
-
-    // ask the exposer to scrape the registry on incoming scrapes
-    exposer->RegisterCollectable(registry);
-
-    for (;;)
+    std::unique_ptr<prometheus::Exposer> exposer;
+    Semaphore sem;
+    unsigned updateFrequencyMs = 1000;
+    prometheus::Gauge *gauge = nullptr;
+    std::unique_ptr<std::thread> collectorThread;
+public:
+    CMetricServer(unsigned port=8080)
     {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        // increment the counter by one (second)
-        second_counter.Increment();
-    }
+        using namespace prometheus;
 
-    return exposer;
-}
+        // create an http server running on port 8080
+        std::string epStr = "localhost:" + port;
+        exposer.reset(new Exposer{epStr});
+
+        // create a metrics registry with component=main labels applied to all its
+        // metrics
+        auto registry = std::make_shared<Registry>();
+
+        // add a new counter family to the registry (families combine values with the
+        // same name, but distinct label dimensions)
+        auto &gauge_family = BuildGauge()
+                                .Name("time_running_seconds_total")
+                                .Help("How many seconds is this server running?")
+                                .Labels({{"label", "value"}})
+                                .Register(*registry);
+
+        // add a counter to the metric family
+        gauge = &gauge_family.Add(
+            {{"another_label", "value"}, {"yet_another_label", "value"}});
+
+        // ask the exposer to scrape the registry on incoming scrapes
+        exposer->RegisterCollectable(registry);
+
+        collectorThread.reset(new std::thread([this]() { this->collect(); }));
+    }
+    ~CMetricServer()
+    {
+        sem.signal();
+        collectorThread->join();
+    }
+    void collect()
+    {
+        while (!sem.wait(updateFrequencyMs))
+        {
+            gauge->Increment();
+        }
+    }
+};
 
 /* NB: Ideally this belongs within common/environment,
  * however, that would introduce a circular dependency.
@@ -421,7 +435,7 @@ int main(int argc, const char* argv[])
     const char *server = nullptr;
     int port = 0;
 
-    std::unique_ptr<prometheus::Exposer> metricServer;
+    std::unique_ptr<CMetricServer> metricServer;
     InitModuleObjects();
     NoQuickEditSection x;
     try
@@ -439,8 +453,8 @@ int main(int argc, const char* argv[])
 
 #ifdef _CONTAINERIZED
         setupContainerizedLogMsgHandler();
+        metricServer.reset(new CMetricServer(serverConfig->getPropInt("metricPort", 8080)));
 #else
-        metricServer = createMetricServer(serverConfig->getPropInt("metricPort", 8080));
         for (unsigned i=1;i<(unsigned)argc;i++) {
             if (streq(argv[i],"--daemon") || streq(argv[i],"-d")) {
                 if (daemon(1,0) || write_pidfile(argv[++i])) {
