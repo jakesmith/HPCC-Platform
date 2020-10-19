@@ -63,9 +63,14 @@ metadata:
   name: {{ .name | quote }}
 spec:
   ports:
-  - port: 7070
+  - name: dali
+    port: 7070
     protocol: TCP
     targetPort: 7070
+  - name: stats
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
   selector:
     run: {{ .name | quote }}
   type: ClusterIP

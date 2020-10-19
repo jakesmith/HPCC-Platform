@@ -164,7 +164,9 @@ public:
         using namespace prometheus;
 
         // create an http server running on port 8080
-        std::string epStr = "localhost:" + port;
+        std::string epStr = "localhost:" + std::to_string(port);
+
+        PROGLOG("Creating Exposer : %s", epStr.c_str());
         exposer.reset(new Exposer{epStr});
 
         // create a metrics registry with component=main labels applied to all its
@@ -195,9 +197,12 @@ public:
     }
     void collect()
     {
+        PROGLOG("CMetricServer::collect()");
         while (!sem.wait(updateFrequencyMs))
         {
+            PROGLOG("CMetricServer performing increment");
             gauge->Increment();
+            PROGLOG("CMetricServer performed");
         }
     }
 };
@@ -453,8 +458,9 @@ int main(int argc, const char* argv[])
 
 #ifdef _CONTAINERIZED
         setupContainerizedLogMsgHandler();
-        metricServer.reset(new CMetricServer(serverConfig->getPropInt("metricPort", 8080)));
 #else
+ PROGLOG("HERE!");
+        metricServer.reset(new CMetricServer(serverConfig->getPropInt("metricPort", 8080)));
         for (unsigned i=1;i<(unsigned)argc;i++) {
             if (streq(argv[i],"--daemon") || streq(argv[i],"-d")) {
                 if (daemon(1,0) || write_pidfile(argv[++i])) {
