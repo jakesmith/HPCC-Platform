@@ -944,10 +944,14 @@ public:
 
         // first see if target exists (and remove if does and overwrite specified)
         Owned<IDistributedFile> dfile = queryDistributedFileDirectory().lookup(dlfn,ctx.user,true,false,false,nullptr,defaultPrivilegedUser);
+        IDistributedSuperFile *sfile = nullptr;
         if (dfile) {
             if (!ctx.superoptions->getOverwrite())
                 throw MakeStringException(-1,"Destination file %s already exists",dlfn.get());
-            if (!dfile->querySuperFile())
+            sfile = dfile->querySuperFile();
+            if (sfile)
+                sfile->removeSubFile(nullptr, false);
+            else
             {
                 if (ctx.superoptions->getIfModified()&&
                     (ftree->hasProp("Attr/@fileCrc")&&ftree->getPropInt64("Attr/@size")&&
@@ -956,9 +960,16 @@ public:
                     PROGLOG("File copy of %s not done as file unchanged",srclfn);
                     return;
                 }
+                if (strcmp(ftree->queryName(),queryDfsXmlBranchName(DXB_SuperFile))==0)
+                {
+                    // not a super, no choice but to delete existing non-super now and create super (and hold lock)
+                    dfile->detach();
+                    dfile.setown(queryDistributedFileDirectory().createSuperFile(dlfn.get(),ctx.user,true,false));
+                    if (!dfile)
+                        throw MakeStringException(-1,"SuperFile %s could not be created", dlfn.get());
+                    sfile = dfile->querySuperFile();
+                }
             }
-            dfile->detach();
-            dfile.clear();
         }
         if (strcmp(ftree->queryName(),queryDfsXmlBranchName(DXB_File))==0) {
             StringAttr wuid;
@@ -970,6 +981,7 @@ public:
 
         }
         else if (strcmp(ftree->queryName(),queryDfsXmlBranchName(DXB_SuperFile))==0) {
+            assertex(sfile);
             unsigned numtodo=0;
             StringArray subfiles;
             Owned<IPropertyTreeIterator> piter = ftree->getElements("SubFile");
@@ -988,10 +1000,6 @@ public:
                 if ((ctx.level==1)&&ctx.feedback)
                     ctx.feedback->displayProgress(numtodo?(numdone*100/numtodo):0,0,"unknown",0,0,"",0,0,0);
             }
-            // now construct the superfile
-            Owned<IDistributedSuperFile> sfile = queryDistributedFileDirectory().createSuperFile(dlfn.get(),ctx.user,true,false);
-            if (!sfile)
-                throw MakeStringException(-1,"SuperFile %s could not be created",dlfn.get());
             ForEachItemIn(i,subfiles) {
                 sfile->addSubFile(subfiles.item(i));
             }
