@@ -1,0 +1,91 @@
+# This is a basic workflow to help you get started with Actions
+
+name: buildit-using-docker
+
+on:
+  # Trigger the workflow on push or pull request,
+  # but only for the main branch
+#  push:
+#    branches:
+#      - notmain
+  pull_request:
+    branches:
+      - notmaster
+
+jobs:
+  builditjob:
+    runs-on: ubuntu-20.04
+    name: A job to build and push docker
+
+    steps:
+    - name: vars1
+      run: echo GITHUB_ACTOR is ${GITHUB_ACTOR}
+    - name: vars2
+      run: echo github.actor is ${{ github.actor }}
+    - name: vars3
+      run: echo github.repository_owner is ${{ github.repository_owner }}
+    - name: vars4
+      run: echo baseref is ${{ github.base_ref }}, head_ref is ${{ github.head_ref }}, ref is ${{ github.ref }}, sha is ${{ github.sha }}
+
+
+    - name: Checkout
+      uses: actions/checkout@v2
+#      with:
+#        submodules: recursive ## guessing, check
+
+    - name: Set up Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@master
+
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1 
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build base
+      uses: docker/build-push-action@v2
+      with:
+        context: .github/workflows/docker/base
+        file: .github/workflows/docker/base/Dockerfile
+        builder: ${{ steps.buildx.outputs.name }}
+        #platforms: linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64,linux/ppc64le,linux/s390x
+        push: true
+        cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/prtestbase:latest
+        cache-to: type=inline
+        build-args: |
+          GITHUB_REPO_OWNER=${{ github.repository_owner }}
+          BASE_BRANCH=${{ github.base_ref }}
+#        tags: ${{ github.repository_owner }}/prtestbase:latest
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/prtestbase:latest
+
+#          BUILDKIT_INLINE_CACHE=1 
+
+    - name: Build branch
+      uses: docker/build-push-action@v2
+      with:
+        context: .github/workflows/docker/branch
+        file: .github/workflows/docker/branch/Dockerfile
+        builder: ${{ steps.buildx.outputs.name }}
+        #platforms: linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64,linux/ppc64le,linux/s390x
+        push: true
+        cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/prtestbranch:latest
+        cache-to: type=inline
+        build-args: |
+          BASE_IMAGE=${{ secrets.DOCKERHUB_USERNAME }}/prtestbase:latest
+          GITHUB_ACTOR=${{ github.actor }}
+          BUILD_BRANCH=${{ github.head_ref }}
+#          BASE_BRANCH=master
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/prtestbranch:latest
+
+
+    - name: Image digest
+      run: echo ${{ steps.docker_build.outputs.digest }}
+
+    - name: Run datest
+      run: docker run --rm ${{ secrets.DOCKERHUB_USERNAME }}/prtestbranch:latest ./build/RelWithDebInfo/bin/datest
+
+#    - name: Image inspect
+#      run: |
+#        docker image inspect ${{ secrets.DOCKERHUB_USERNAME }}/prtestbranch:latest
+
