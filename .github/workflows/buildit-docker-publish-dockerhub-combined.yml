@@ -57,7 +57,7 @@ jobs:
         push: true
         cache-from: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.base_ref }}
         #cache-to: type=inline
-        cache-from: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.base_ref }}
+        cache-to: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.base_ref }}
         build-args: |
           GITHUB_REPO_OWNER=${{ github.repository_owner }}
           GITHUB_ACTOR=${{ github.actor }}
