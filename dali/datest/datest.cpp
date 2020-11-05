@@ -3359,6 +3359,7 @@ int main(int argc, char* argv[])
 
     printf("This is a test\n");
     printf("This is another test\n");
+    printf("This is another test2\n");
     fflush(stdout);
     return 0;
 
