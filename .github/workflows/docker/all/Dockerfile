@@ -79,11 +79,4 @@ RUN make -j$(cat ~/build_threads)
 RUN make install
 
 COPY entrypoint.sh .
-ENTRYPOINT ["entrypoint.sh"]
-
-RUN /etc/init.d/hpcc-init start
-
-WORKDIR /hpcc-dev/HPCC-Platform/testing/regress
-RUN ./ecl-test setup
-RUN ./ecl-test query --target thor --pq 2 --excludeclass embedded,3rdparty,spray sqagg*.ecl
-RUN tar cvpfz 
+ENTRYPOINT ["./entrypoint.sh"]
