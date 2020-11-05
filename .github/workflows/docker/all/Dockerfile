@@ -58,7 +58,7 @@ RUN make -j$(cat ~/build_threads)
 ARG BUILD_BRANCH=master
 ARG GITHUB_ACTOR=hpcc-systems
 WORKDIR /hpcc-dev/HPCC-Platform
-RUN git fetch https://github.com/${GITHUB_ACTOR}/HPCC-Platform ${BUILD_BRANCH}:${BUILD_BRANCH}
+RUN git fetch --depth=1 https://github.com/${GITHUB_ACTOR}/HPCC-Platform ${BUILD_BRANCH}:${BUILD_BRANCH}
 RUN git checkout ${BUILD_BRANCH}
 RUN git submodule update --init --recursive
 
