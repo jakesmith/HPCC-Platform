@@ -62,8 +62,8 @@ jobs:
           GITHUB_REPO_OWNER=${{ github.repository_owner }}
           GITHUB_ACTOR=${{ github.actor }}
           BASE_BRANCH=${{ github.base_ref }}
-          BUILD_BRANCH=${{ github.head_ref }}
-          BUILD_BRANCH=${{ github.event.pull_request.head.sha }}
+          BUILD_BRANCH=${{ github.ref }}
+          #BUILD_BRANCH=${{ github.event.pull_request.head.sha }}
 #        tags: ${{ github.repository_owner }}/prtestall:latest
         tags: ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
