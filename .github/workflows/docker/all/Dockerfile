@@ -78,5 +78,5 @@ RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
 RUN make -j$(cat ~/build_threads)
 RUN make install
 
-COPY entrypoint.sh .
-ENTRYPOINT ["./entrypoint.sh"]
+COPY entrypoint.sh /
+ENTRYPOINT ["/entrypoint.sh"]
