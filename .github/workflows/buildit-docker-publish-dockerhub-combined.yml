@@ -69,6 +69,8 @@ jobs:
 
 #          BUILDKIT_INLINE_CACHE=1  # not needed when using cache-to: type=inline
 
+    - name: Run regression suite
+      run: docker run --name 'prtest' ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
     - name: Image digest
       run: echo ${{ steps.buildx.outputs.digest }}
