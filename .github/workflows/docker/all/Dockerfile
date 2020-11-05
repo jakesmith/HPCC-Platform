@@ -78,7 +78,7 @@ RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
 RUN make -j$(cat ~/build_threads)
 RUN make install
 
-COPY docker/all/entrypoint.sh .
+COPY entrypoint.sh .
 ENTRYPOINT ["entrypoint.sh"]
 
 RUN /etc/init.d/hpcc-init start
