@@ -1,3 +1,5 @@
+#!/bin/bash
+
 /etc/init.d/hpcc-init start
 
 cd /hpcc-dev/HPCC-Platform/testing/regress
