@@ -13,7 +13,7 @@ on:
       - master
 
 jobs:
-  builditjob:
+  buildit:
     runs-on: ubuntu-20.04
     name: A job to build and push docker
 
@@ -39,9 +39,9 @@ jobs:
     - name: Download files
       run: |
         mkdir -p dockerctx
-        curl -s --output dockerctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/Dockerfile"
-        curl -s --output dockerctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/entrypoint.sh"
-        curl -s --output dockerctx/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/ecl-test.json"
+        curl -s --output dockerctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/dockerctx/Dockerfile"
+        curl -s --output dockerctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/dockerctx/entrypoint.sh"
+        curl -s --output dockerctx/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/dockerctx/ecl-test.json"
 
     - name: Set up Docker Buildx
       id: buildx
@@ -80,5 +80,26 @@ jobs:
       run: |
         docker push ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
-    - name: Run regression suite
-      run: docker run --name 'prtest' ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+  regress-setup:
+    needs: buildit
+    steps:
+    - name: Regression suite setup
+      run: docker run --name 'prtest' ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} setup
+
+  regress-hthor:
+    needs: [ buildit, regress-setup ]
+    steps:
+    - name: Regression suite hthor
+      run: docker run --name 'prtest' ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} hthor
+
+  regress-thor:
+    needs: [ buildit, regress-setup ]
+    steps:
+    - name: Regression suite thor
+      run: docker run --name 'prtest' ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} thor
+
+  regress-roxie:
+    needs: [ buildit, regress-setup ]
+    steps:
+    - name: Regression suite roxie
+      run: docker run --name 'prtest' ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} roxie

@@ -1,5 +1,8 @@
 #!/bin/bash
 
+echo This would test $1
+exit
+
 source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv
 /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start
 
