@@ -35,15 +35,29 @@ jobs:
 #        fetch-depth: 1
 #        submodules: recursive ## guessing, check
 
-    - name: Download the file
+    - name: Download file1
       uses: suisei-cn/actions-download-file@v1
-      id: downloadfile  # Remember to give an ID if you need the output
+      id: downloadfile1  # Remember to give an ID if you need the output
       with:
         url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/Dockerfile"
         target: dockerctx/
-    - name: testing1
-      run: svn export "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all"
+    - name: Download file2
+      uses: suisei-cn/actions-download-file@v1
+      id: downloadfile2  # Remember to give an ID if you need the output
+      with:
+        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/entrypoint.sh"
+        target: dockerctx/
+    - name: Download file3
+      uses: suisei-cn/actions-download-file@v1
+      id: downloadfile3  # Remember to give an ID if you need the output
+      with:
+        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/ecl-test.json"
+        target: dockerctx/
+
     - name: list
       run: ls -ltR
+
     - name: show
       run: cat dockerctx/Dockerfile
+      run: cat dockerctx/entrypoint.sh
+      run: cat dockerctx/ecl-test.json
