@@ -41,7 +41,9 @@ jobs:
       uses: suisei-cn/actions-download-file@v1
       id: downloadfile  # Remember to give an ID if you need the output
       with:
-        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.ref }}/.github/workflows"
-        target: dockerctx
+        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.ref }}/.github/workflows/Dockerfile"
+        target: dockerctx/
     - name: list
       run: ls -ltR
+    - name: show
+      run: cat dockerctx/Dockerfile
