@@ -37,9 +37,9 @@ jobs:
         fetch-depth: 1
 #        submodules: recursive ## guessing, check
 
-  - name: Download the file
-    uses: suisei-cn/actions-download-file@v1
-    id: downloadfile  # Remember to give an ID if you need the output
-    with:
-      url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.ref }}/.github/workflows/Dockerfile"
-      target: .github/workflows
+    - name: Download the file
+      uses: suisei-cn/actions-download-file@v1
+      id: downloadfile  # Remember to give an ID if you need the output
+      with:
+        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.ref }}/.github/workflows/Dockerfile"
+        target: .github/workflows
