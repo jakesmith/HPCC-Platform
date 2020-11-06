@@ -55,6 +55,7 @@ jobs:
         builder: ${{ steps.buildx.outputs.name }}
         #platforms: linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64,linux/ppc64le,linux/s390x
         push: true
+        load: true
         cache-from: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.base_ref }}
         #cache-to: type=inline
         cache-to: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.base_ref }}
@@ -68,6 +69,10 @@ jobs:
         tags: ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
 #          BUILDKIT_INLINE_CACHE=1  # not needed when using cache-to: type=inline
+
+#    - name: push to registry
+#      run: |
+#        docker push ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
     - name: Run regression suite
       run: docker run --name 'prtest' ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
