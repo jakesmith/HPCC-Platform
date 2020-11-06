@@ -95,7 +95,7 @@ RUN usermod -aG sudo hpcc
 RUN echo "hpcc     ALL=(ALL) NOPASSWD:ALL"  >> /etc/sudoers
 USER hpcc
 
-COPY ./entrypoint.sh /hpcc-dev/entrypoint.sh
+COPY --chown hpcc:hpcc entrypoint.sh /hpcc-dev/
 RUN ls -lt /hpcc-dev/
 RUN chmod +x /hpcc-dev/entrypoint.sh
 RUN ls -lt /hpcc-dev/
