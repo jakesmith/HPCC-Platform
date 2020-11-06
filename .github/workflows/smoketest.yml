@@ -41,7 +41,7 @@ jobs:
         mkdir -p dockerctx
         curl -s --output dockerctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/Dockerfile"
         curl -s --output dockerctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/entrypoint.sh"
-        curl -s --output dockerctx/ecl-test.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/ecl-test.json"
+        curl -s --output dockerctx/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/ecl-test.json"
 
     - name: Set up Docker Buildx
       id: buildx
