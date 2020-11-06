@@ -101,4 +101,4 @@ COPY ./entrypoint.sh .
 WORKDIR /hpcc-dev/HPCC-Platform/testing/regress
 COPY ./ecl-test.json .
 
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["/hpcc-dev/entrypoint.sh"]
