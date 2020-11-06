@@ -29,7 +29,7 @@ jobs:
     - name: vars5
       run: echo base.sha ${{ github.context.pull_request.base.sha }}
     - name: vars6
-      run: echo event - base.sha ${{ github.event.pull_request.base.sha }}
+      run: echo event - pull_request.base.sha ${{ github.event.pull_request.base.sha }}
 
 #    - name: Checkout
 #      uses: actions/checkout@v2
@@ -41,7 +41,8 @@ jobs:
       uses: suisei-cn/actions-download-file@v1
       id: downloadfile  # Remember to give an ID if you need the output
       with:
-        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.ref }}/.github/workflows/Dockerfile"
+#        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.ref }}/.github/workflows/Dockerfile"
+        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.event.pull_request.base.sha }}/.github/workflows/docker/all/Dockerfile"
         target: dockerctx/
     - name: list
       run: ls -ltR
