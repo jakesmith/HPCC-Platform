@@ -95,8 +95,7 @@ RUN usermod -aG sudo hpcc
 RUN echo "hpcc     ALL=(ALL) NOPASSWD:ALL"  >> /etc/sudoers
 USER hpcc
 
-WORKDIR /hpcc-dev
-COPY ./entrypoint.sh .
+COPY ./entrypoint.sh /hpcc-dev/
 
 WORKDIR /hpcc-dev/HPCC-Platform/testing/regress
 COPY ./ecl-test.json .

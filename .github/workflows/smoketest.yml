@@ -60,8 +60,8 @@ jobs:
         file: dockerctx/Dockerfile
         builder: ${{ steps.buildx.outputs.name }}
         #platforms: linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64,linux/ppc64le,linux/s390x
-        load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
-        #push: true
+        #load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
+        push: true
         cache-from: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.base_ref }}
         #cache-to: type=inline
         cache-to: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.base_ref }}
@@ -76,9 +76,9 @@ jobs:
 
 #          BUILDKIT_INLINE_CACHE=1  # not needed when using cache-to: type=inline
 
-    - name: push to registry
-      run: |
-        docker push ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+#    - name: push to registry
+#      run: |
+#        docker push ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
   regress-setup:
     runs-on: ubuntu-20.04
