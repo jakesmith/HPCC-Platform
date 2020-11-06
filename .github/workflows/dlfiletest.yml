@@ -41,8 +41,8 @@ jobs:
       with:
         url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/Dockerfile"
         target: dockerctx/
-    - name: wget dir
-      run: wget -r -np "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/"
+    - name: testing1
+      run: svn checkout "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all"
     - name: list
       run: ls -ltR
     - name: show
