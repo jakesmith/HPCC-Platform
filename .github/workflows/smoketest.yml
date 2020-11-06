@@ -1,6 +1,6 @@
 # This is a basic workflow to help you get started with Actions
 
-name: buildit-using-docker
+name: st-docker
 
 on:
   # Trigger the workflow on push or pull request,
