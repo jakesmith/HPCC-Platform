@@ -43,3 +43,5 @@ jobs:
       with:
         url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.ref }}/.github/workflows"
         target: dockerctx
+    - name: list
+      run: ls -lt
