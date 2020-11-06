@@ -59,5 +59,7 @@ jobs:
 
     - name: show
       run: cat dockerctx/Dockerfile
+    - name: show
       run: cat dockerctx/entrypoint.sh
+    - name: show
       run: cat dockerctx/ecl-test.json
