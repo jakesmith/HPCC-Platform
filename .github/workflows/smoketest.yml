@@ -36,26 +36,12 @@ jobs:
 #        fetch-depth: 1
 ##        submodules: recursive ## guessing, check
 
-    - name: Download Dockerfile
-      uses: suisei-cn/actions-download-file@v1
-      id: downloadfile1  # Remember to give an ID if you need the output
-      with:
-        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/Dockerfile"
-        target: dockerctx/
-
-    - name: Download entrypoint.sh
-      uses: suisei-cn/actions-download-file@v1
-      id: downloadfile2  # Remember to give an ID if you need the output
-      with:
-        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/entrypoint.sh"
-        target: dockerctx/
-
-    - name: Download ecl-test.json
-      uses: suisei-cn/actions-download-file@v1
-      id: downloadfile3  # Remember to give an ID if you need the output
-      with:
-        url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/ecl-test.json"
-        target: dockerctx/
+    - name: Download files
+      run: |
+        mkdir -p dockerctx
+        curl -s --output dockerctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/Dockerfile"
+        curl -s --output dockerctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/entrypoint.sh"
+        curl -s --output dockerctx/ecl-test.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/ecl-test.json"
 
     - name: Set up Docker Buildx
       id: buildx
