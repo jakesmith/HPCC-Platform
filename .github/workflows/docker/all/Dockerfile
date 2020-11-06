@@ -22,6 +22,14 @@ RUN apt-get install -y nodejs
 
 RUN apt-get install -y git
 
+RUN groupadd -g 1000 hpcc
+RUN useradd -s /bin/bash -r -m -N -c "hpcc runtime User" -u 999 -g hpcc hpcc
+RUN passwd -l hpcc 
+
+RUN mkdir /hpcc-dev
+RUN chown hpcc:hpcc /hpcc-dev
+USER hpcc
+
 # Fetch and build hpcc sources
 
 WORKDIR /hpcc-dev
@@ -37,13 +45,15 @@ ARG BUILD_THREADS
 RUN if [ -n "${BUILD_THREADS}" ] ; then echo ${BUILD_THREADS} > ~/build_threads; else echo $(nproc) > ~/build_threads ; fi
 RUN echo Building with $(cat ~/build_threads) threads
 
-RUN mkdir build
+RUN mkdir /hpcc-dev/build
 WORKDIR /hpcc-dev/build
 
 ARG BUILD_TYPE=RelWithDebInfo
 ARG USE_CPPUNIT=0
 
-RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off
+#RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off
+RUN mkdir /hpcc-dev/hpccinstall
+RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off
 
 RUN make -j$(cat ~/build_threads) jlib
 RUN make -j$(cat ~/build_threads) esp
@@ -78,5 +88,17 @@ RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
 RUN make -j$(cat ~/build_threads)
 RUN make install
 
+# For debugging image only
+USER root
+RUN apt-get install -y sudo
+RUN usermod -aG sudo hpcc
+RUN echo "hpcc     ALL=(ALL) NOPASSWD:ALL"  >> /etc/sudoers
+USER hpcc
+
+WORKDIR /hpcc-dev
 COPY ./entrypoint.sh .
+
+WORKDIR /hpcc-dev/HPCC-Platform/testing/regress
+COPY ./ecl-test.json .
+
 ENTRYPOINT ["./entrypoint.sh"]
