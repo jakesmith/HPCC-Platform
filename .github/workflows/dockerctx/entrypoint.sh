@@ -1,10 +1,18 @@
 #!/bin/bash
 
-echo This would test $1
-exit
-
+runtype=$1
 source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv
 /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start
 
-./ecl-test setup
-./ecl-test run --pq 2 --excludeclass embedded,3rdparty,spray
+case ${runtype} in
+
+  setup)
+    ./ecl-test setup
+    ;;
+
+  *)
+    ./ecl-test run --pq 2 --target ${runtype} --excludeclass embedded,3rdparty,spray
+    ;;
+esac
+    
+
