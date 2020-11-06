@@ -70,8 +70,6 @@ jobs:
           GITHUB_ACTOR=${{ github.actor }}
           BASE_BRANCH=${{ github.base_ref }}
           BUILD_BRANCH=${{ github.ref }}
-          #BUILD_BRANCH=${{ github.event.pull_request.head.sha }}
-#        tags: ${{ github.repository_owner }}/prtestall:latest
         tags: ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
 #          BUILDKIT_INLINE_CACHE=1  # not needed when using cache-to: type=inline
