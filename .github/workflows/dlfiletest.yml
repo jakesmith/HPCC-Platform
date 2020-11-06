@@ -42,7 +42,7 @@ jobs:
         url: "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all/Dockerfile"
         target: dockerctx/
     - name: testing1
-      run: svn checkout "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all"
+      run: svn export "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/docker/all"
     - name: list
       run: ls -ltR
     - name: show
