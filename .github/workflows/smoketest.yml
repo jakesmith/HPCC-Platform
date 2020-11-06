@@ -81,24 +81,32 @@ jobs:
         docker push ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
   regress-setup:
+    runs-on: ubuntu-20.04
+    name: Regression setup job
     needs: buildit
     steps:
     - name: Regression suite setup
       run: docker run --name 'prtest' ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} setup
 
   regress-hthor:
+    runs-on: ubuntu-20.04
+    name: Regression hthor job
     needs: [ buildit, regress-setup ]
     steps:
     - name: Regression suite hthor
       run: docker run --name 'prtest' ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} hthor
 
   regress-thor:
+    runs-on: ubuntu-20.04
+    name: Regression thor job
     needs: [ buildit, regress-setup ]
     steps:
     - name: Regression suite thor
       run: docker run --name 'prtest' ${{ secrets.DOCKERHUB_USERNAME }}/prtestall:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} thor
 
   regress-roxie:
+    runs-on: ubuntu-20.04
+    name: Regression roxie job
     needs: [ buildit, regress-setup ]
     steps:
     - name: Regression suite roxie
