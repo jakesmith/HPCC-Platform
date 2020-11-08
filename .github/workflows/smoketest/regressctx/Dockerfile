@@ -1,5 +1,9 @@
 # Prepare build environemnt, install pre-requisites
 FROM ubuntu:20.04 as hpccbase
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE} as build
+
+COPY --from=build /hpcc-dev/hpccinstall /hpcc-dev/hpccinstall
 
 RUN apt-get update
 RUN apt-get install -y cmake
