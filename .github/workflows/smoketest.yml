@@ -36,12 +36,16 @@ jobs:
 #        fetch-depth: 1
 ##        submodules: recursive ## guessing, check
 
-    - name: Download files
+    - name: Download files # might be better as a tarball and 1 file download
       run: |
-        mkdir -p dockerctx
-        curl -s --output dockerctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/dockerctx/Dockerfile"
-        curl -s --output dockerctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/dockerctx/entrypoint.sh"
-        curl -s --output dockerctx/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/dockerctx/ecl-test.json"
+        mkdir -p smoketest/imagectx
+        mkdir -p smoketest/basebranchctx
+        mkdir -p smoketest/prbranchctx
+        curl -s --output smoketest/imagectx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/imagectx/Dockerfile"
+        curl -s --output smoketest/basebranchctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/basebranchctx/Dockerfile"
+        curl -s --output smoketest/prbranchctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbranchctx/Dockerfile"
+        curl -s --output smoketest/prbuildctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbuildctx/entrypoint.sh"
+        curl -s --output smoketest/prbuildctx/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbuildctx/ecl-test.json"
 
     - name: Set up Docker Buildx
       id: buildx
