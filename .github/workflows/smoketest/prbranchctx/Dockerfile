@@ -1,8 +1,6 @@
 ARG IMAGE_BASE
 FROM ${IMAGE_BASE}
 
-FROM ubuntu:20.04
-
 ARG BUILD_BRANCH=master
 ARG GITHUB_ACTOR=hpcc-systems
 WORKDIR /hpcc-dev/HPCC-Platform

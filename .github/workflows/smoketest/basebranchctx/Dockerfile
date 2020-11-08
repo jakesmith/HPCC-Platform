@@ -1,8 +1,6 @@
 ARG IMAGE_BASE
 FROM ${IMAGE_BASE}
 
-FROM ubuntu:20.04
-
 WORKDIR /hpcc-dev
 ARG GITHUB_REPO_OWNER=hpcc-systems
 ARG BASE_BRANCH=master

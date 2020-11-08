@@ -40,11 +40,13 @@ jobs:
         mkdir -p smoketest/imagectx
         mkdir -p smoketest/basebranchctx
         mkdir -p smoketest/prbranchctx
+        mkdir -p smoketest/regresssetupctx
         curl -s --output smoketest/imagectx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/imagectx/Dockerfile"
         curl -s --output smoketest/basebranchctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/basebranchctx/Dockerfile"
         curl -s --output smoketest/prbranchctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbranchctx/Dockerfile"
-        curl -s --output smoketest/prbranchctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbranchctx/entrypoint.sh"
-        curl -s --output smoketest/prbranchctx/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbranchctx/ecl-test.json"
+        curl -s --output smoketest/regresssetupctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/regresssetupctx/Dockerfile"
+        curl -s --output smoketest/regresssetupctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/regresssetupctx/entrypoint.sh"
+        curl -s --output smoketest/regresssetupctx/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/regresssetupctx/ecl-test.json"
 
     - name: Set up Docker Buildx
       id: buildx
@@ -102,6 +104,22 @@ jobs:
           GITHUB_ACTOR=${{ github.actor }}
           BUILD_BRANCH=${{ github.ref }}
         tags: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-prbranch:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+
+    - name: Regress setup
+      uses: docker/build-push-action@v2
+      with:
+        context: smoketest/regresssetupctx
+        file: smoketest/regresssetupctx/Dockerfile
+        builder: ${{ steps.buildx.outputs.name }}
+        load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
+        #push: true
+        cache-from: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-prbranch:${{ github.base_ref }}
+        #cache-to: type=inline
+        cache-to: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-prbranch:${{ github.base_ref }}
+        build-args: |
+          IMAGE_BASE=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
+          BASE_BRANCH_IMAGE=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-basebranch:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regresssetup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
 #          BUILDKIT_INLINE_CACHE=1  # not needed when using cache-to: type=inline
 
