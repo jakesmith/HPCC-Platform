@@ -65,8 +65,8 @@ jobs:
         file: smoketest/imagectx/Dockerfile
         builder: ${{ steps.buildx.outputs.name }}
         #platforms: linux/386,linux/amd64,linux/arm/v6,linux/arm/v7,linux/arm64,linux/ppc64le,linux/s390x
-        load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
-        #push: true
+        #load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
+        push: true
         cache-from: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
         cache-to: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
         tags: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
@@ -77,8 +77,8 @@ jobs:
         context: smoketest/basebranchctx
         file: smoketest/basebranchctx/Dockerfile
         builder: ${{ steps.buildx.outputs.name }}
-        load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
-        #push: true
+        #load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
+        push: true
         cache-from: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-basebranch:${{ github.base_ref }}
         #cache-to: type=inline
         cache-to: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-basebranch:${{ github.base_ref }}
@@ -94,8 +94,8 @@ jobs:
         context: smoketest/prbranchctx
         file: smoketest/prbranchctx/Dockerfile
         builder: ${{ steps.buildx.outputs.name }}
-        load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
-        #push: true
+        #load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
+        push: true
         cache-from: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-prbranch:${{ github.base_ref }}
         #cache-to: type=inline
         cache-to: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-prbranch:${{ github.base_ref }}
@@ -111,8 +111,8 @@ jobs:
         context: smoketest/regresssetupctx
         file: smoketest/regresssetupctx/Dockerfile
         builder: ${{ steps.buildx.outputs.name }}
-        load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
-        #push: true
+        #load: true # NB: forces buildx.with.driver=docker (as opposed to default driver=docker-containerized)
+        push: true
         cache-from: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-prbranch:${{ github.base_ref }}
         #cache-to: type=inline
         cache-to: type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-prbranch:${{ github.base_ref }}
