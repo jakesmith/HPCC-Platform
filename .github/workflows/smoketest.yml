@@ -44,8 +44,8 @@ jobs:
         curl -s --output smoketest/imagectx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/imagectx/Dockerfile"
         curl -s --output smoketest/basebranchctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/basebranchctx/Dockerfile"
         curl -s --output smoketest/prbranchctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbranchctx/Dockerfile"
-        curl -s --output smoketest/prbuildctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbuildctx/entrypoint.sh"
-        curl -s --output smoketest/prbuildctx/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbuildctx/ecl-test.json"
+        curl -s --output smoketest/prbuildctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbranchctx/entrypoint.sh"
+        curl -s --output smoketest/prbranchctx/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbranchctx/ecl-test.json"
 
     - name: Set up Docker Buildx
       id: buildx
