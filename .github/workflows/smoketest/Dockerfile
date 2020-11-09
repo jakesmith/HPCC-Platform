@@ -34,14 +34,14 @@ FROM base-image AS base-branch-build
 ARG BASE_REPO=hpcc-systems
 ARG BASE_BRANCH=master
 ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
+WORKDIR /hpcc-dev/HPCC-Platform
 RUN echo BASE_SHA is ${BASE_SHA}
 RUN ls -lt ~hpcc
 RUN ls -lt /home
 RUN cd ~hpcc && pwd
-RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git && \
-    cd HPCC-Platform && \
-    git checkout ${BASE_BRANCH} && \
-    git submodule update --init --recursive
+RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
+RUN git checkout ${BASE_BRANCH}
+# RUN git submodule update --init --recursive
 
 ARG BUILD_THREADS
 RUN if [ -n "${BUILD_THREADS}" ] ; then echo ${BUILD_THREADS} > ~/build_threads; else echo $(nproc) > ~/build_threads ; fi
@@ -77,7 +77,7 @@ WORKDIR /hpcc-dev/HPCC-Platform
 RUN echo PR_SHA is ${PR_SHA}
 RUN git fetch --depth=1 https://github.com/${PR_REPO}/HPCC-Platform ${PR_BRANCH}:${PR_BRANCH}
 RUN git checkout ${PR_BRANCH}
-RUN git submodule update --init --recursive
+#RUN git submodule update --init --recursive
 
 WORKDIR /hpcc-dev/build
 
