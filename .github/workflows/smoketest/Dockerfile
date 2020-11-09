@@ -38,8 +38,33 @@ FROM base-image AS base-branch-build
 ARG BASE_REPO=hpcc-systems
 ARG BASE_BRANCH=master
 ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
-RUN echo This is the base build - checking caching1
-RUN echo This is the base build - checking caching2
+RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
+WORKDIR /hpcc-dev/HPCC-Platform
+RUN git checkout ${BASE_BRANCH}
+RUN git submodule update --init --recursive
+
+ARG BUILD_THREADS
+RUN if [ -n "${BUILD_THREADS}" ] ; then echo ${BUILD_THREADS} > ~/build_threads; else echo $(nproc) > ~/build_threads ; fi
+RUN echo Building with $(cat ~/build_threads) threads
+
+RUN mkdir /hpcc-dev/build
+WORKDIR /hpcc-dev/build
+
+ARG BUILD_TYPE=RelWithDebInfo
+ARG USE_CPPUNIT=0
+
+RUN mkdir /hpcc-dev/hpccinstall
+RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off
+
+RUN make -j$(cat ~/build_threads) jlib
+RUN make -j$(cat ~/build_threads) esp
+RUN make -j$(cat ~/build_threads) roxie
+RUN make -j$(cat ~/build_threads) ws_workunits ecl
+RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
+RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
+RUN make -j$(cat ~/build_threads)
+RUN make install
+
 
 # STAGE - build head branch
 FROM base-branch-build AS head-branch-build
@@ -47,12 +72,37 @@ FROM base-branch-build AS head-branch-build
 ARG HEAD_BRANCH=master
 ARG HEAD_REPO=hpcc-systems
 ARG HEAD_SHA=sha # NB: not used, but set to dirty cache if different
-RUN echo This is the head build - checking caching1
-RUN echo This is the head build - checking caching2
+WORKDIR /hpcc-dev/HPCC-Platform
+RUN git fetch --depth=1 https://github.com/${HEAD_REPO}/HPCC-Platform ${HEAD_BRANCH}:${HEAD_BRANCH}
+RUN git checkout ${HEAD_BRANCH}
+RUN git submodule update --init --recursive
+
+WORKDIR /hpcc-dev/build
+
+RUN make -j$(cat ~/build_threads) jlib
+RUN make -j$(cat ~/build_threads) esp
+RUN make -j$(cat ~/build_threads) roxie
+RUN make -j$(cat ~/build_threads) ws_workunits ecl
+RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
+RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
+RUN make -j$(cat ~/build_threads)
+RUN make install
+
+# For debugging image only
+USER root
+RUN apt-get install -y sudo
+RUN usermod -aG sudo hpcc
+RUN echo "hpcc     ALL=(ALL) NOPASSWD:ALL"  >> /etc/sudoers
+USER hpcc
+
 
 # STAGE - Regress setup
 FROM base-image AS regress-setup
 
+COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/hpccinstall /hpcc-dev/hpccinstall
+COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/regress /hpcc-dev/regress
 
-RUN echo This is the regress-setup build - checking caching1
-RUN echo This is the regress-setup build - checking caching2
+WORKDIR /hpcc-dev/regress
+COPY ecl-test.json .
+
+RUN /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && ./ecl-test setup"
