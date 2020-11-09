@@ -98,12 +98,11 @@ USER hpcc
 
 
 # STAGE - Regress setup
-FROM pr-branch-build AS prbuild
 FROM base-image AS regress-setup
 
 
-COPY --from=prbuild --chown=hpcc:hpcc /hpcc-dev/hpccinstall /hpcc-dev/hpccinstall
-COPY --from=prbuild --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/regress /hpcc-dev/regress
+COPY --from=pr-branch-build --chown=hpcc:hpcc /hpcc-dev/hpccinstall /hpcc-dev/hpccinstall
+COPY --from=pr-branch-build --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/regress /hpcc-dev/regress
 
 WORKDIR /hpcc-dev/regress
 COPY ecl-test.json .
