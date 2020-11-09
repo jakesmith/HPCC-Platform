@@ -11,7 +11,7 @@ on:
 #      - notmain
   pull_request:
     branches:
-      - notmaster
+      - master
 
 jobs:
   build-and-setup:
@@ -57,16 +57,10 @@ jobs:
 
 # NB: cache to registry (as smoketest-image), so others action runs can share
     - name: Build base image
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image smoketest/
-
-# NB: cache to registry (as smoketest-base-branch-build:<base_ref>, so others action runs can share
-    - name: Build base branch
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-branch-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }} --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} smoketest/
-
-# NB: no cache to registry as not common with others
-# Also no push, as image will not be used directly, the regress suite setup derived from suite will be
-    - name: Build pr branch
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target pr-branch-build --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} --build-arg PR_REPO=${{ github.actor }} --build-arg PR_BRANCH=${{ github.ref }} --build-arg PR_SHA=${{ github.event.pull_request.head.sha }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-pr-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
+      run: |
+        docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image smoketest/
+        docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-branch-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }} --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} smoketest/
+        docker buildx build --builder=${{ steps.buildx.outputs.name }} --target pr-branch-build --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} --build-arg PR_REPO=${{ github.actor }} --build-arg PR_BRANCH=${{ github.ref }} --build-arg PR_SHA=${{ github.event.pull_request.head.sha }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-pr-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
 
 # NB: no cache to registry, as not common with others
 # pushed, as other jobs in this action will use this image in parallel to run the regression suite queries
