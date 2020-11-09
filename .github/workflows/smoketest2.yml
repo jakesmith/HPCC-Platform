@@ -21,6 +21,7 @@ jobs:
       IMAGE_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
       BASE_BRANCH_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
       HEAD_BRANCH_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+      REGRESS_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
     steps:
     - name: vars
@@ -95,7 +96,7 @@ jobs:
         echo ====== BUILDING regress-setup =====
         echo ===================================
         echo
-        docker buildx build --builder=${{ steps.buildx.outputs.name }} --target regress-setup --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} --build-arg HEAD_REPO=${{ github.actor }} --build-arg HEAD_BRANCH=${{ github.ref }} --build-arg HEAD_SHA=${{ github.event.pull_request.head.sha }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
+        docker buildx build --builder=${{ steps.buildx.outputs.name }} --target regress-setup --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} --build-arg HEAD_REPO=${{ github.actor }} --build-arg HEAD_BRANCH=${{ github.ref }} --build-arg HEAD_SHA=${{ github.event.pull_request.head.sha }} -t $REGRESS_TAG smoketest/
 
 #  regress-hthor:
 #    runs-on: ubuntu-20.04
@@ -103,5 +104,5 @@ jobs:
 #    needs: [ build-and-setup ]
 #    steps:
 #    - name: Regression suite hthor
-#      run: docker run --name 'smoketest-regress-hthor' ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} hthor
+#      run: docker run --name 'smoketest-regress-hthor' $REGRESS_TAG hthor
 
