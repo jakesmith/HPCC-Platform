@@ -66,7 +66,7 @@ jobs:
         echo ====== BUILDING base-image ========
         echo ===================================
         echo
-        docker buildx build --progress --builder=${{ steps.buildx.outputs.name }} --target base-image --push -t ${{ IMAGE_TAG }} --cache-from type=registry,ref=${{ IMAGE_TAG }} --cache-to type=registry,ref=${{ IMAGE_TAG }} smoketest/
+        docker buildx build --progress --builder=${{ steps.buildx.outputs.name }} --target base-image --push -t ${{ IMAGE_TAG }} --cache-from type=registry,ref=$IMAGE_TAG --cache-to type=registry,ref=$IMAGE_TAG smoketest/
     - name: Build base branch
       run: |
         echo
