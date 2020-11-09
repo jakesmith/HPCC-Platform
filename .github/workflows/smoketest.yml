@@ -54,16 +54,16 @@ jobs:
 
         #docker pull ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image || true
     - name: Build base image
-      run: docker buildx build --builder=mybuilder --target base-image --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image smoketest/
+      run: docker buildx build --builder=buildx --target base-image --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image smoketest/
 
     - name: Build base branch
-      run: docker buildx build --builder=mybuilder --target base-branch-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }} --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} smoketest/
+      run: docker buildx build --builder=buildx --target base-branch-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }} --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} smoketest/
 
     - name: Build pr branch
-      run: docker buildx build --builder=mybuilder --target pr-branch-build --build-arg PR_REPO=${{ github.actor }} --build-arg PR_BRANCH=${{ github.ref }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-pr-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
+      run: docker buildx build --builder=buildx --target pr-branch-build --build-arg PR_REPO=${{ github.actor }} --build-arg PR_BRANCH=${{ github.ref }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-pr-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
 
     - name: Regress setup
-      run: docker buildx build --builder=mybuilder --target regress-setup --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
+      run: docker buildx build --builder=buildx --target regress-setup --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
 
   regress-hthor:
     runs-on: ubuntu-20.04
