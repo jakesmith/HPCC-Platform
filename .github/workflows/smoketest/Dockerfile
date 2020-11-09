@@ -34,12 +34,12 @@ FROM base-image AS base-branch-build
 ARG BASE_REPO=hpcc-systems
 ARG BASE_BRANCH=master
 ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
-WORKDIR /hpcc-dev/HPCC-Platform
 RUN echo BASE_SHA is ${BASE_SHA}
 RUN ls -lt ~hpcc
 RUN ls -lt /home
 RUN cd ~hpcc && pwd
 RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
+WORKDIR /hpcc-dev/HPCC-Platform
 RUN git checkout ${BASE_BRANCH}
 # RUN git submodule update --init --recursive
 
