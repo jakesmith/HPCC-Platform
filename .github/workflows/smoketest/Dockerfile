@@ -38,14 +38,21 @@ FROM base-image AS base-branch-build
 ARG BASE_REPO=hpcc-systems
 ARG BASE_BRANCH=master
 ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
-RUN echo This is the base branch - checking caching1
-RUN echo This is the base branch - checking caching2
+RUN echo This is the base build - checking caching1
+RUN echo This is the base build - checking caching2
 
-# STAGE - build pr branch
-FROM base-branch-build AS pr-branch-build
+# STAGE - build head branch
+FROM base-branch-build AS head-branch-build
 
-ARG PR_BRANCH=master
-ARG PR_REPO=hpcc-systems
-ARG PR_SHA=sha # NB: not used, but set to dirty cache if different
-RUN echo This is the pr branch - checking caching1
-RUN echo This is the pr branch - checking caching2
+ARG HEAD_BRANCH=master
+ARG HEAD_REPO=hpcc-systems
+ARG HEAD_SHA=sha # NB: not used, but set to dirty cache if different
+RUN echo This is the head build - checking caching1
+RUN echo This is the head build - checking caching2
+
+# STAGE - Regress setup
+FROM base-image AS regress-setup
+
+
+RUN echo This is the regress-setup build - checking caching1
+RUN echo This is the regress-setup build - checking caching2
