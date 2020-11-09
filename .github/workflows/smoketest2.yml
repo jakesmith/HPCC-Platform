@@ -15,17 +15,14 @@ on:
 
 jobs:
   build-and-setup:
-    runs-on: ubuntu-20.04
     name: A job to build and push docker
+    runs-on: ubuntu-20.04
+    env:
+      IMAGE_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
+      BASE_BRANCH_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
+      HEAD_BRANCH_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
     steps:
-    - name: Set some variables
-      run: echo NOP
-      env:
-        IMAGE_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
-        BASE_BRANCH_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
-        HEAD_BRANCH_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
-
     - name: vars
       run: |
         echo GITHUB_ACTOR is ${GITHUB_ACTOR}
