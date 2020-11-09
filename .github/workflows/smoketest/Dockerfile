@@ -34,6 +34,10 @@ FROM base-image AS base-branch-build
 ARG BASE_REPO=hpcc-systems
 ARG BASE_BRANCH=master
 ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
+RUN echo BASE_SHA is ${BASE_SHA}
+RUN ls -lt ~hpcc
+RUN ls -lt /home
+RUN cd ~hpcc && pwd
 RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git && \
     cd HPCC-Platform && \
     git checkout ${BASE_BRANCH} && \
@@ -53,14 +57,14 @@ ARG USE_CPPUNIT=0
 RUN mkdir /hpcc-dev/hpccinstall
 RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off
 
-RUN make -j$(cat ~/build_threads) jlib
-RUN make -j$(cat ~/build_threads) esp
-RUN make -j$(cat ~/build_threads) roxie
-RUN make -j$(cat ~/build_threads) ws_workunits ecl
-RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
-RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
-RUN make -j$(cat ~/build_threads)
-RUN make install
+#RUN make -j$(cat ~/build_threads) jlib
+#RUN make -j$(cat ~/build_threads) esp
+#RUN make -j$(cat ~/build_threads) roxie
+#RUN make -j$(cat ~/build_threads) ws_workunits ecl
+#RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
+#RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
+#RUN make -j$(cat ~/build_threads)
+#RUN make install
 
 
 # STAGE - build pr branch
@@ -70,6 +74,7 @@ ARG PR_BRANCH=master
 ARG PR_REPO=hpcc-systems
 ARG PR_SHA=sha # NB: not used, but set to dirty cache if different
 WORKDIR /hpcc-dev/HPCC-Platform
+RUN echo PR_SHA is ${PR_SHA}
 RUN git fetch --depth=1 https://github.com/${PR_REPO}/HPCC-Platform ${PR_BRANCH}:${PR_BRANCH}
 RUN git checkout ${PR_BRANCH}
 RUN git submodule update --init --recursive
@@ -81,14 +86,14 @@ ARG USE_CPPUNIT=0
 
 #RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off
 
-RUN make -j$(cat ~/build_threads) jlib
-RUN make -j$(cat ~/build_threads) esp
-RUN make -j$(cat ~/build_threads) roxie
-RUN make -j$(cat ~/build_threads) ws_workunits ecl
-RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
-RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
-RUN make -j$(cat ~/build_threads)
-RUN make install
+#RUN make -j$(cat ~/build_threads) jlib
+#RUN make -j$(cat ~/build_threads) esp
+#RUN make -j$(cat ~/build_threads) roxie
+#RUN make -j$(cat ~/build_threads) ws_workunits ecl
+#RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
+#RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
+#RUN make -j$(cat ~/build_threads)
+#RUN make install
 
 # For debugging image only
 USER root

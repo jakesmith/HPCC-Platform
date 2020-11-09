@@ -62,14 +62,14 @@ jobs:
     - name: Build pr branch
       run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target pr-branch-build --build-arg PR_REPO=${{ github.actor }} --build-arg PR_BRANCH=${{ github.ref }} --build-arg PR_SHA=${{ github.event.pull_request.head.sha }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-pr-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
 
-    - name: Regress setup
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target regress-setup --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
+#    - name: Regress setup
+#      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target regress-setup --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
 
-  regress-hthor:
-    runs-on: ubuntu-20.04
-    name: Regression hthor job
-    needs: [ build-and-setup ]
-    steps:
-    - name: Regression suite hthor
-      run: docker run --name 'smoketest-regress-hthor' ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} hthor
+#  regress-hthor:
+#    runs-on: ubuntu-20.04
+#    name: Regression hthor job
+#    needs: [ build-and-setup ]
+#    steps:
+#    - name: Regression suite hthor
+#      run: docker run --name 'smoketest-regress-hthor' ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} hthor
 
