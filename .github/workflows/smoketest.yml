@@ -13,7 +13,7 @@ on:
       - master
 
 jobs:
-  buildit:
+  build-and-setup:
     runs-on: ubuntu-20.04
     name: A job to build and push docker
 
@@ -37,16 +37,10 @@ jobs:
 
     - name: Download files # might be better as a tarball and 1 file download
       run: |
-        mkdir -p smoketest/imagectx
-        mkdir -p smoketest/basebranchctx
-        mkdir -p smoketest/prbranchctx
-        mkdir -p smoketest/regresssetupctx
-        curl -s --output smoketest/imagectx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/imagectx/Dockerfile"
-        curl -s --output smoketest/basebranchctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/basebranchctx/Dockerfile"
-        curl -s --output smoketest/prbranchctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/prbranchctx/Dockerfile"
-        curl -s --output smoketest/regresssetupctx/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/regresssetupctx/Dockerfile"
-        curl -s --output smoketest/regresssetupctx/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/regresssetupctx/entrypoint.sh"
-        curl -s --output smoketest/regresssetupctx/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/regresssetupctx/ecl-test.json"
+        mkdir -p smoketest
+        curl -s --output smoketest/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/Dockerfile"
+        curl -s --output smoketest/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/entrypoint.sh"
+        curl -s --output smoketest/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/ecl-test.json"
 
     - name: Set up Docker Buildx
       id: buildx
@@ -58,7 +52,24 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+        #docker pull ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image || true
     - name: Build base image
-      run: |
-        docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image smoketest/imagectx
-        docker push
+      run: docker buildx build --builder=mybuilder --target base-image --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image smoketest/
+
+    - name: Build base branch
+      run: docker buildx build --builder=mybuilder --target base-branch-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }} --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} smoketest/
+
+    - name: Build pr branch
+      run: docker buildx build --builder=mybuilder --target pr-branch-build --build-arg PR_REPO=${{ github.actor }} --build-arg PR_BRANCH=${{ github.ref }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-pr-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
+
+    - name: Regress setup
+      run: docker buildx build --builder=mybuilder --target regress-setup --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
+
+  regress-hthor:
+    runs-on: ubuntu-20.04
+    name: Regression hthor job
+    needs: [ build-and-setup ]
+    steps:
+    - name: Regression suite hthor
+      run: docker run --name 'smoketest-regress-hthor' ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} hthor
+
