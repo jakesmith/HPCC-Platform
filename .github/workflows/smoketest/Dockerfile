@@ -38,7 +38,6 @@ FROM base-image AS base-branch-build
 ARG BASE_REPO=hpcc-systems
 ARG BASE_BRANCH=master
 ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
-RUN echo BASE_SHA is ${BASE_SHA}
 RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
 WORKDIR /hpcc-dev/HPCC-Platform
 RUN git checkout ${BASE_BRANCH}
@@ -113,12 +112,5 @@ COPY --from=pr-branch-build --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/re
 
 WORKDIR /hpcc-dev/regress
 COPY ecl-test.json .
-
-# For debugging image only
-USER root
-RUN apt-get install -y sudo
-RUN usermod -aG sudo hpcc
-RUN echo "hpcc     ALL=(ALL) NOPASSWD:ALL"  >> /etc/sudoers
-USER hpcc
 
 RUN /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && ./ecl-test setup"
