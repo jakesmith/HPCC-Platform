@@ -32,29 +32,44 @@ RUN chown hpcc:hpcc /hpcc-dev
 USER hpcc
 
 
-# STAGE - build base branch
-FROM base-image AS base-branch-build
+# STAGE - build master base
+FROM base-image AS master-base-build
 
 ARG BASE_REPO=hpcc-systems
-ARG BASE_BRANCH=master
-ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
-RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
-WORKDIR /hpcc-dev/HPCC-Platform
-RUN git checkout ${BASE_BRANCH}
-RUN git submodule update --init --recursive
-
+ARG MAJOR_MINOR_BASE=community_7.12.0
 ARG BUILD_THREADS
-RUN if [ -n "${BUILD_THREADS}" ] ; then echo ${BUILD_THREADS} > ~/build_threads; else echo $(nproc) > ~/build_threads ; fi
-RUN echo Building with $(cat ~/build_threads) threads
-
-RUN mkdir /hpcc-dev/build
-WORKDIR /hpcc-dev/build
-
 ARG BUILD_TYPE=RelWithDebInfo
 ARG USE_CPPUNIT=0
 
+RUN if [ -n "${BUILD_THREADS}" ] ; then echo ${BUILD_THREADS} > ~/build_threads; else echo $(nproc) > ~/build_threads ; fi
+RUN echo Building with $(cat ~/build_threads) threads
+RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
+WORKDIR /hpcc-dev/HPCC-Platform
+RUN checkout ${MAJOR_MINOR_BASE}
+RUN git submodule update --init --recursive
+
+RUN mkdir /hpcc-dev/build
+WORKDIR /hpcc-dev/build
 RUN mkdir /hpcc-dev/hpccinstall
 RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off
+RUN make -j$(cat ~/build_threads) jlib
+RUN make -j$(cat ~/build_threads) esp
+RUN make -j$(cat ~/build_threads) roxie
+RUN make -j$(cat ~/build_threads) ws_workunits ecl
+RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
+RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
+RUN make -j$(cat ~/build_threads)
+
+
+
+# STAGE - build base branch
+FROM master-base-build AS base-branch-build
+
+ARG BASE_BRANCH=master
+ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
+RUN git checkout ${BASE_BRANCH}
+RUN git submodule update --init --recursive
+
 
 RUN make -j$(cat ~/build_threads) jlib
 RUN make -j$(cat ~/build_threads) esp
@@ -63,7 +78,6 @@ RUN make -j$(cat ~/build_threads) ws_workunits ecl
 RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
 RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
 RUN make -j$(cat ~/build_threads)
-RUN make install
 
 
 # STAGE - build head branch
