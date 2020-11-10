@@ -37,11 +37,6 @@ jobs:
         echo github.repository_owner is ${{ github.repository_owner }}
         echo event - base.sha ${{ github.event.pull_request.base.sha }}
         echo HEAD_BRANCH_TAG - $HEAD_BRANCH_TAG
-        echo ::set-output name=MAJOR_MINOR_BASE_VERSION::$(git tag --sort=committerdate -l 'community_*' | sed -e 's/^community_\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)\-.*$/\1 \2 \3/' | sort -n -k1 -k2 -k3 | head -n 1)
-        echo MAJOR_MINOR_BASE_VERSION1 = ${{ steps.vars.outputs.MAJOR_MINOR_BASE_VERSION }}
-    - name: read-output
-      run: |
-        echo MAJOR_MINOR_BASE_VERSION2 = ${{ steps.vars.outputs.MAJOR_MINOR_BASE_VERSION }}
 
 #    - name: Checkout
 #      uses: actions/checkout@v2
@@ -50,11 +45,18 @@ jobs:
 ##        submodules: recursive ## guessing, check
 
     - name: Download files # might be better as a tarball and 1 file download
+      id: dlfiles
       run: |
         mkdir -p smoketest
         curl -s --output smoketest/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/Dockerfile"
         curl -s --output smoketest/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/entrypoint.sh"
         curl -s --output smoketest/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/ecl-test.json"
+        curl -s --output smoketest/getmajorminorbase.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/getmajorminorbase.sh"
+        echo ::set-output name=MAJOR_MINOR_BASE_VERSION::$(smoketest/getmajorminorbase.sh ${{ github.base_ref }})
+
+    - name: read-output
+      run: |
+        echo MAJOR_MINOR_BASE_VERSION2 = ${{ steps.dlfiles.outputs.MAJOR_MINOR_BASE_VERSION }}
 
     - name: Set up Docker Buildx
       id: buildx
