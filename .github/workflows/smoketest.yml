@@ -78,9 +78,9 @@ jobs:
         builder: ${{ steps.buildx.outputs.name }}
         push: true
         target: base-image
-        cache-from: type=registry,ref=${{ IMAGE_CACHETAG }}
-        cache-to: type=registry,ref=${{ IMAGE_CACHETAG }}
-        tags: ${{ IMAGE_CACHETAG }}
+        cache-from: type=registry,ref=${{ env.IMAGE_CACHETAG }}
+        cache-to: type=registry,ref=${{ env.IMAGE_CACHETAG }}
+        tags: ${{ env.IMAGE_CACHETAG }}
 
 #    - name: Build base image
 #      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-to type=registry,ref=$IMAGE_CACHETAG -t $IMAGE_CACHETAG smoketest/ 
