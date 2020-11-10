@@ -37,7 +37,7 @@ jobs:
         echo github.repository_owner is ${{ github.repository_owner }}
         echo event - base.sha ${{ github.event.pull_request.base.sha }}
         echo HEAD_BRANCH_TAG - $HEAD_BRANCH_TAG
-        echo ::set-output name=MAJOR_MINOR_BASE_VERSION::test123
+        echo ::set-output name=MAJOR_MINOR_BASE_VERSION::$(git tag --sort=committerdate -l 'community_*' | sed -e 's/^community_\([0-9][0-9]*\)\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)\-.*$/\1 \2 \3/' | sort -n -k1 -k2 -k3 | head -n 1)
         echo MAJOR_MINOR_BASE_VERSION1 = ${{ steps.vars.outputs.MAJOR_MINOR_BASE_VERSION }}
     - name: read-output
       run: |
