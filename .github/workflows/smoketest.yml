@@ -74,8 +74,7 @@ jobs:
       run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push \
            --cache-from type=registry,ref=$IMAGE_CACHETAG \
            --cache-to type=registry,ref=$IMAGE_CACHETAG \
-           -t $IMAGE_CACHETAG \
-           smoketest/
+           -t $IMAGE_CACHETAG smoketest/
 
     - name: Build major-minor base branch
       run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target major-minor-base-build --push \
