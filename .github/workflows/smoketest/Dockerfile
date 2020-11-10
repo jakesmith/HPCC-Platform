@@ -48,9 +48,9 @@ WORKDIR /hpcc-dev/HPCC-Platform
 RUN git checkout ${MAJOR_MINOR_BASE}
 RUN git submodule update --init --recursive
 
+RUN mkdir /hpcc-dev/hpccinstall
 RUN mkdir /hpcc-dev/build
 WORKDIR /hpcc-dev/build
-RUN mkdir /hpcc-dev/hpccinstall
 RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off
 RUN make -j$(cat ~/build_threads) jlib
 RUN make -j$(cat ~/build_threads) esp
@@ -67,10 +67,11 @@ FROM major-minor-base-build AS base-branch-build
 
 ARG BASE_BRANCH=master
 ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
+WORKDIR /hpcc-dev/HPCC-Platform
 RUN git checkout ${BASE_BRANCH}
 RUN git submodule update --init --recursive
 
-
+WORKDIR /hpcc-dev/build
 RUN make -j$(cat ~/build_threads) jlib
 RUN make -j$(cat ~/build_threads) esp
 RUN make -j$(cat ~/build_threads) roxie
@@ -92,7 +93,6 @@ RUN git checkout ${HEAD_BRANCH}
 RUN git submodule update --init --recursive
 
 WORKDIR /hpcc-dev/build
-
 RUN make -j$(cat ~/build_threads) jlib
 RUN make -j$(cat ~/build_threads) esp
 RUN make -j$(cat ~/build_threads) roxie

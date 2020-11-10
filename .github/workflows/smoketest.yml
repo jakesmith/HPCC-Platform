@@ -94,10 +94,10 @@ jobs:
           BASE_REPO=${{ github.repository_owner }}
           MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
         cache-from: |
-          type=registry,ref=$IMAGE_CACHETAG
-          type=registry,ref=$MM_CACHETAG:${{ steps.dlfiles.outputs.mmbase-tag }}
-        cache-to: type=registry,ref=$MM_CACHETAG:${{ steps.dlfiles.outputs.mmbase-tag }}
-        tags: $MM_CACHETAG:${{ steps.dlfiles.outputs.mmbase-tag }}
+          type=registry,ref=${{ env.IMAGE_CACHETAG }}
+          type=registry,ref=${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+        cache-to: type=registry,ref=${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+        tags: ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
 
     - name: Build base branch
       uses: docker/build-push-action@v2
@@ -113,11 +113,11 @@ jobs:
           BASE_BRANCH=${{ github.base_ref }} 
           BASE_SHA=${{ github.event.pull_request.base.sha }} 
         cache-from: |
-          type=registry,ref=$IMAGE_CACHETAG
-          type=registry,ref=$MM_CACHETAG:${{ steps.dlfiles.outputs.mmbase-tag }}
-          type=registry,ref=$BASE_BRANCH_CACHETAG
-        cache-to: type=registry,ref=$BASE_BRANCH_CACHETAG
-        tags: $BASE_BRANCH_CACHETAG
+          type=registry,ref=${{ env.IMAGE_CACHETAG }}
+          type=registry,ref=${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+          type=registry,ref=${{ env.BASE_BRANCH_CACHETAG }}
+        cache-to: type=registry,ref=${{ env.BASE_BRANCH_CACHETAG }}
+        tags: ${{ env.BASE_BRANCH_CACHETAG }}
 
     - name: Build head branch
       uses: docker/build-push-action@v2
@@ -136,10 +136,10 @@ jobs:
           HEAD_BRANCH=${{ github.ref }} 
           HEAD_SHA=${{ github.event.pull_request.head.sha }}
         cache-from: |
-          type=registry,ref=$IMAGE_CACHETAG
-          type=registry,ref=$MM_CACHETAG:${{ steps.dlfiles.outputs.mmbase-tag }}
-          type=registry,ref=$BASE_BRANCH_CACHETAG
-        tags: $HEAD_BRANCH_CACHETAG
+          type=registry,ref=${{ env.IMAGE_CACHETAG }}
+          type=registry,ref=${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+          type=registry,ref=${{ env.BASE_BRANCH_CACHETAG }}
+        tags: ${{ env.HEAD_BRANCH_CACHETAG }}
 
     - name: Regress setup
       uses: docker/build-push-action@v2
@@ -157,8 +157,8 @@ jobs:
           HEAD_REPO=${{ github.actor }} 
           HEAD_BRANCH=${{ github.ref }} 
           HEAD_SHA=${{ github.event.pull_request.head.sha }}
-        cache-from: type=registry,ref=$IMAGE_CACHETAG
-        tags: $REGRESS_CACHETAG
+        cache-from: type=registry,ref=${{ env.IMAGE_CACHETAG }}
+        tags: ${{ env.REGRESS_CACHETAG }}
 
 #  regress-hthor:
 #    runs-on: ubuntu-20.04
