@@ -33,10 +33,10 @@ USER hpcc
 
 
 # STAGE - build master base
-FROM base-image AS master-base-build
+FROM base-image AS major-minor-base-build
 
 ARG BASE_REPO=hpcc-systems
-ARG MAJOR_MINOR_BASE=community_7.12.0
+ARG MAJOR_MINOR_BASE=community_7.0.0
 ARG BUILD_THREADS
 ARG BUILD_TYPE=RelWithDebInfo
 ARG USE_CPPUNIT=0
@@ -45,7 +45,7 @@ RUN if [ -n "${BUILD_THREADS}" ] ; then echo ${BUILD_THREADS} > ~/build_threads;
 RUN echo Building with $(cat ~/build_threads) threads
 RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
 WORKDIR /hpcc-dev/HPCC-Platform
-RUN checkout ${MAJOR_MINOR_BASE}
+RUN git checkout ${MAJOR_MINOR_BASE}
 RUN git submodule update --init --recursive
 
 RUN mkdir /hpcc-dev/build
@@ -63,7 +63,7 @@ RUN make -j$(cat ~/build_threads)
 
 
 # STAGE - build base branch
-FROM master-base-build AS base-branch-build
+FROM major-minor-base-build AS base-branch-build
 
 ARG BASE_BRANCH=master
 ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different

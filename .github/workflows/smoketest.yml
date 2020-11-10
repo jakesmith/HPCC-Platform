@@ -18,11 +18,11 @@ jobs:
     name: A job to build and push docker
     runs-on: ubuntu-20.04
     env:
-      IMAGE_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
-      MAJOR_MINOR_BASE_BRANCH_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-major-minor-base
-      BASE_BRANCH_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
-      HEAD_BRANCH_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
-      REGRESS_TAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+      IMAGE_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
+      MM_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-major-minor-base
+      BASE_BRANCH_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
+      HEAD_BRANCH_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+      REGRESS_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
     steps:
     - name: vars
@@ -36,7 +36,7 @@ jobs:
         echo github.actor is ${{ github.actor }}
         echo github.repository_owner is ${{ github.repository_owner }}
         echo event - base.sha ${{ github.event.pull_request.base.sha }}
-        echo HEAD_BRANCH_TAG - $HEAD_BRANCH_TAG
+        echo HEAD_BRANCH_CACHETAG - $HEAD_BRANCH_CACHETAG
 
 #    - name: Checkout
 #      uses: actions/checkout@v2
@@ -53,11 +53,11 @@ jobs:
         curl -s --output smoketest/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/ecl-test.json"
         curl -s --output smoketest/getmajorminorbase.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/getmajorminorbase.sh"
         chmod +x smoketest/getmajorminorbase.sh
-        echo ::set-output name=MAJOR_MINOR_BASE_VERSION::$(smoketest/getmajorminorbase.sh ${{ github.base_ref }})
+        echo ::set-output name=major-minor-base-tag::$(smoketest/getmajorminorbase.sh ${{ github.base_ref }})
 
     - name: read-output
       run: |
-        echo MAJOR_MINOR_BASE_VERSION2 = ${{ steps.dlfiles.outputs.MAJOR_MINOR_BASE_VERSION }}
+        echo major-minor-base-tag = ${{ steps.dlfiles.outputs.major-minor-base-tag }}
 
     - name: Set up Docker Buildx
       id: buildx
@@ -71,22 +71,22 @@ jobs:
 
 # NB: cache to registry (as smoketest-image), so others action runs can share
     - name: Build base image
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push -t $IMAGE_TAG --cache-from type=registry,ref=$IMAGE_TAG --cache-to type=registry,ref=$IMAGE_TAG smoketest/
+      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push -t $IMAGE_CACHETAG --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-to type=registry,ref=$IMAGE_CACHETAG smoketest/
 
     - name: Build major-minor base branch
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target master-base-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} -t $MAJOR_MINOR_BASE_BRANCH_TAG --cache-from type=registry,ref=$IMAGE_TAG --cache-from type=registry,ref=$MAJOR_MINOR_BASE_BRANCH_TAG --cache-to type=registry,ref=$MAJOR_MINOR_BASE_BRANCH_TAG smoketest/
+      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target major-minor-base-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.major-minor-base-tag }} -t $MM_CACHETAG --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-from type=registry,ref=$MM_CACHETAG --cache-to type=registry,ref=$MM_CACHETAG smoketest/
 
     - name: Build base branch
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-branch-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} -t $BASE_BRANCH_TAG --cache-from type=registry,ref=$IMAGE_TAG --cache-from type=registry,ref=$MAJOR_MINOR_BASE_BRANCH_TAG --cache-from type=registry,ref=$BASE_BRANCH_TAG --cache-to type=registry,ref=$BASE_BRANCH_TAG smoketest/
+      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-branch-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.major-minor-base-tag }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} -t $BASE_BRANCH_CACHETAG --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-from type=registry,ref=$MM_CACHETAG --cache-from type=registry,ref=$BASE_BRANCH_CACHETAG --cache-to type=registry,ref=$BASE_BRANCH_CACHETAG smoketest/
 
     - name: Build head branch
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target head-branch-build --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} --build-arg HEAD_REPO=${{ github.actor }} --build-arg HEAD_BRANCH=${{ github.ref }} --build-arg HEAD_SHA=${{ github.event.pull_request.head.sha }} -t $HEAD_BRANCH_TAG --cache-from type=registry,ref=$IMAGE_TAG --cache-from type=registry,ref=$MAJOR_MINOR_BASE_BRANCH_TAG --cache-from type=registry,ref=$BASE_BRANCH_TAG smoketest/
+      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target head-branch-build --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.major-minor-base-tag }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} --build-arg HEAD_REPO=${{ github.actor }} --build-arg HEAD_BRANCH=${{ github.ref }} --build-arg HEAD_SHA=${{ github.event.pull_request.head.sha }} -t $HEAD_BRANCH_CACHETAG --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-from type=registry,ref=$MM_CACHETAG --cache-from type=registry,ref=$BASE_BRANCH_CACHETAG smoketest/
 
 # NB: no cache to registry, as not common with others
 # pushed, as other jobs in this action will use this image in parallel to run the regression suite queries
 
     - name: Regress setup
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target regress-setup --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} --build-arg HEAD_REPO=${{ github.actor }} --build-arg HEAD_BRANCH=${{ github.ref }} --build-arg HEAD_SHA=${{ github.event.pull_request.head.sha }} -t $REGRESS_TAG smoketest/
+      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target regress-setup --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} --build-arg HEAD_REPO=${{ github.actor }} --build-arg HEAD_BRANCH=${{ github.ref }} --build-arg HEAD_SHA=${{ github.event.pull_request.head.sha }} -t $REGRESS_CACHETAG smoketest/
 
 #  regress-hthor:
 #    runs-on: ubuntu-20.04
@@ -94,5 +94,5 @@ jobs:
 #    needs: [ build-and-setup ]
 #    steps:
 #    - name: Regression suite hthor
-#      run: docker run --name 'smoketest-regress-hthor' $REGRESS_TAG hthor
+#      run: docker run --name 'smoketest-regress-hthor' $REGRESS_CACHETAG hthor
 
