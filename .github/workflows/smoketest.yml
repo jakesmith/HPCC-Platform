@@ -38,9 +38,9 @@ jobs:
         echo event - base.sha ${{ github.event.pull_request.base.sha }}
         echo HEAD_BRANCH_TAG - $HEAD_BRANCH_TAG
         echo ::set-output name=MAJOR_MINOR_BASE_VERSION::test123
-     - name: read-output
-       run: |
-        echo MAJOR_MINOR_BASE_VERSION2 = ${{ steps.vars.outputs.MAJOR_MINOR_BASE_VERSION }}
+    - name: read-output
+      run: |
+       echo MAJOR_MINOR_BASE_VERSION2 = ${{ steps.vars.outputs.MAJOR_MINOR_BASE_VERSION }}
 
 #    - name: Checkout
 #      uses: actions/checkout@v2
