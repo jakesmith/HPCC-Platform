@@ -71,10 +71,7 @@ jobs:
 
 # NB: cache to registry (as smoketest-image), so others action runs can share
     - name: Build base image
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push \
-           --cache-from type=registry,ref=$IMAGE_CACHETAG \
-           --cache-to type=registry,ref=$IMAGE_CACHETAG \
-           -t $IMAGE_CACHETAG smoketest/
+      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-to type=registry,ref=$IMAGE_CACHETAG -t $IMAGE_CACHETAG smoketest/ 
 
     - name: Build major-minor base branch
       run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target major-minor-base-build --push \
