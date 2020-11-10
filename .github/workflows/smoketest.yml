@@ -71,10 +71,21 @@ jobs:
 
 # NB: cache to registry (as smoketest-image), so others action runs can share
     - name: Build base image
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push -t $IMAGE_CACHETAG --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-to type=registry,ref=$IMAGE_CACHETAG smoketest/
+      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push \
+           --cache-from type=registry,ref=$IMAGE_CACHETAG \
+           --cache-to type=registry,ref=$IMAGE_CACHETAG \
+           -t $IMAGE_CACHETAG \
+           smoketest/
 
     - name: Build major-minor base branch
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target major-minor-base-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.major-minor-base-tag }} -t $MM_CACHETAG --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-from type=registry,ref=$MM_CACHETAG --cache-to type=registry,ref=$MM_CACHETAG smoketest/
+      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target major-minor-base-build --push \
+           --build-arg BASE_REPO=${{ github.repository_owner }} \
+           --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.major-minor-base-tag }} \
+           --cache-from type=registry,ref=$IMAGE_CACHETAG \
+           --cache-from type=registry,ref=$MM_CACHETAG \
+           --cache-to type=registry,ref=$MM_CACHETAG \
+           -t $MM_CACHETAG \
+           smoketest/
 
     - name: Build base branch
       run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-branch-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.major-minor-base-tag }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} -t $BASE_BRANCH_CACHETAG --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-from type=registry,ref=$MM_CACHETAG --cache-from type=registry,ref=$BASE_BRANCH_CACHETAG --cache-to type=registry,ref=$BASE_BRANCH_CACHETAG smoketest/
