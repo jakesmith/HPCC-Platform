@@ -52,6 +52,7 @@ jobs:
         curl -s --output smoketest/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/entrypoint.sh"
         curl -s --output smoketest/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/ecl-test.json"
         curl -s --output smoketest/getmajorminorbase.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/getmajorminorbase.sh"
+        chmod +x smoketest/getmajorminorbase.sh
         echo ::set-output name=MAJOR_MINOR_BASE_VERSION::$(smoketest/getmajorminorbase.sh ${{ github.base_ref }})
 
     - name: read-output
