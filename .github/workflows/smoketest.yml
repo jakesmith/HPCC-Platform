@@ -78,12 +78,12 @@ jobs:
         builder: ${{ steps.buildx.outputs.name }}
         push: true
         target: base-image
-        cache-from: type=registry,ref=$IMAGE_CACHETAG
-        cache-to: type=registry,ref=$IMAGE_CACHETAG
-        tags: $IMAGE_CACHETAG
+        cache-from: type=registry,ref=${{ IMAGE_CACHETAG }}
+        cache-to: type=registry,ref=${{ IMAGE_CACHETAG }}
+        tags: ${{ IMAGE_CACHETAG }}
 
-    - name: Build base image
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-to type=registry,ref=$IMAGE_CACHETAG -t $IMAGE_CACHETAG smoketest/ 
+#    - name: Build base image
+#      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-to type=registry,ref=$IMAGE_CACHETAG -t $IMAGE_CACHETAG smoketest/ 
 
     - name: Build major-minor base branch
       run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target major-minor-base-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} --cache-from type=registry,ref=$IMAGE_CACHETAG --cache-from type=registry,ref=$MM_CACHETAG:${{ steps.dlfiles.outputs.mmbase-tag }} --cache-to type=registry,ref=$MM_CACHETAG:${{ steps.dlfiles.outputs.mmbase-tag }} -t $MM_CACHETAG:${{ steps.dlfiles.outputs.mmbase-tag }} smoketest/
