@@ -51,7 +51,8 @@ RUN git submodule update --init --recursive
 RUN mkdir /hpcc-dev/hpccinstall
 RUN mkdir /hpcc-dev/build
 WORKDIR /hpcc-dev/build
-RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off
+RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On
+-DCMAKE_CXX_FLAGS="/DBUILD_VERSION_MINOR=1 /DBUILD_VERSION_MINOR=1 /DBUILD_VERSION_POINT=0 /DBUILD_TAG=dummytag"
 RUN make -j$(cat ~/build_threads) jlib
 RUN make -j$(cat ~/build_threads) esp
 RUN make -j$(cat ~/build_threads) roxie
@@ -72,6 +73,7 @@ RUN git checkout ${BASE_BRANCH}
 RUN git submodule update --init --recursive
 
 WORKDIR /hpcc-dev/build
+RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DSUPPRESS_BUILD_CONFIG_H=On
 RUN make -j$(cat ~/build_threads) jlib
 RUN make -j$(cat ~/build_threads) esp
 RUN make -j$(cat ~/build_threads) roxie
@@ -93,6 +95,7 @@ RUN git checkout ${HEAD_BRANCH}
 RUN git submodule update --init --recursive
 
 WORKDIR /hpcc-dev/build
+RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DSUPPRESS_BUILD_CONFIG_H=On
 RUN make -j$(cat ~/build_threads) jlib
 RUN make -j$(cat ~/build_threads) esp
 RUN make -j$(cat ~/build_threads) roxie

@@ -82,7 +82,11 @@ enable_testing()
 set(HPCC_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(CMAKE_MODULE_PATH "${HPCC_SOURCE_DIR}/cmake_modules/")
 
-include(${HPCC_SOURCE_DIR}/version.cmake)
+if(NOT SUPPRESS_BUILD_CONFIG_H)
+    include(${HPCC_SOURCE_DIR}/version.cmake)
+else()
+    ADD_DEFINITIONS(-DCMAKE_CXX_FLAGS=-DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0 -DBUILD_TAG="dummytag")
+endif()
 
 ###
 ## Build Level
@@ -356,7 +360,9 @@ if(NOT "${BASE_BUILD_TAG}" STREQUAL "")
     set(BASE_BUILD_TAG "${BUILD_TAG}")
 endif()
 message("-- Base build tag is '${BASE_BUILD_TAG}'")
-configure_file(${HPCC_SOURCE_DIR}/build-config.h.cmake "build-config.h")
+if(NOT SUPPRESS_BUILD_CONFIG_H)
+    configure_file(${HPCC_SOURCE_DIR}/build-config.h.cmake "build-config.h")
+endif()
 
 if(USE_SHLIBDEPS)
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
