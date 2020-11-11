@@ -3357,8 +3357,10 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
-    printf("This is a test\n");
-    fflush(stdout);
+    printf("BUILD_VERSION_MAJOR=%u\n", BUILD_VERSION_MAJOR);
+    printf("BUILD_VERSION_MINOR=%u\n", BUILD_VERSION_MINOR);
+    printf("BUILD_VERSION_POINT=%u\n", BUILD_VERSION_POINT);
+    printf("BUILD_TAG=%s\n", BUILD_TAG);
     return 0;
 
     try {
