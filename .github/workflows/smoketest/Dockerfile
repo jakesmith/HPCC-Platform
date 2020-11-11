@@ -83,6 +83,8 @@ RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
 RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
 RUN make -j$(cat ~/build_threads)
 
+RUN echo new && cat system/jlib/CMakeFiles/jlib.dir/flags.make
+
 
 # STAGE - build head branch
 FROM base-branch-build AS head-branch-build
@@ -97,8 +99,9 @@ RUN git submodule update --init --recursive
 
 WORKDIR /hpcc-dev/build
 RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DSUPPRESS_BUILD_CONFIG_H=On
+RUN echo new && cat system/jlib/CMakeFiles/jlib.dir/flags.make
 
-RUN make --debug=a -j$(cat ~/build_threads) jlib
+#RUN make --debug=a -j$(cat ~/build_threads) jlib
 #RUN make -j$(cat ~/build_threads) esp
 #RUN make -j$(cat ~/build_threads) roxie
 #RUN make -j$(cat ~/build_threads) ws_workunits ecl
