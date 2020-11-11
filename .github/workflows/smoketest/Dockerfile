@@ -43,22 +43,25 @@ ARG USE_CPPUNIT=0
 
 RUN if [ -n "${BUILD_THREADS}" ] ; then echo ${BUILD_THREADS} > ~/build_threads; else echo $(nproc) > ~/build_threads ; fi
 RUN echo Building with $(cat ~/build_threads) threads
-RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
-WORKDIR /hpcc-dev/HPCC-Platform
-RUN git checkout ${MAJOR_MINOR_BASE}
-RUN git submodule update --init --recursive
+#RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
+#WORKDIR /hpcc-dev/HPCC-Platform
+#RUN git checkout ${MAJOR_MINOR_BASE}
+#RUN git submodule update --init --recursive
 
 RUN mkdir /hpcc-dev/hpccinstall
 RUN mkdir /hpcc-dev/build
 WORKDIR /hpcc-dev/build
-RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On
-RUN make -j$(cat ~/build_threads) jlib
-RUN make -j$(cat ~/build_threads) esp
-RUN make -j$(cat ~/build_threads) roxie
-RUN make -j$(cat ~/build_threads) ws_workunits ecl
-RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
-RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
-RUN make -j$(cat ~/build_threads)
+#RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On
+#RUN make -j$(cat ~/build_threads) jlib
+#RUN make -j$(cat ~/build_threads) esp
+#RUN make -j$(cat ~/build_threads) roxie
+#RUN make -j$(cat ~/build_threads) ws_workunits ecl
+#RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
+#RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
+#RUN make -j$(cat ~/build_threads)
+RUN echo =====================================
+RUN echo === Building major-minor-base-build =
+RUN echo =====================================
 
 
 
@@ -68,18 +71,21 @@ FROM major-minor-base-build AS base-branch-build
 ARG BASE_BRANCH=master
 ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
 WORKDIR /hpcc-dev/HPCC-Platform
-RUN git checkout ${BASE_BRANCH}
-RUN git submodule update --init --recursive
+#RUN git checkout ${BASE_BRANCH}
+#RUN git submodule update --init --recursive
 
 WORKDIR /hpcc-dev/build
-RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DSUPPRESS_BUILD_CONFIG_H=On
-RUN make -j$(cat ~/build_threads) jlib
-RUN make -j$(cat ~/build_threads) esp
-RUN make -j$(cat ~/build_threads) roxie
-RUN make -j$(cat ~/build_threads) ws_workunits ecl
-RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
-RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
-RUN make -j$(cat ~/build_threads)
+#RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DSUPPRESS_BUILD_CONFIG_H=On
+#RUN make -j$(cat ~/build_threads) jlib
+#RUN make -j$(cat ~/build_threads) esp
+#RUN make -j$(cat ~/build_threads) roxie
+#RUN make -j$(cat ~/build_threads) ws_workunits ecl
+#RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
+#RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
+#RUN make -j$(cat ~/build_threads)
+RUN echo =====================================
+RUN echo === Building base-branch-build ======
+RUN echo =====================================
 
 
 # STAGE - build head branch
@@ -89,20 +95,23 @@ ARG HEAD_BRANCH=master
 ARG HEAD_REPO=hpcc-systems
 ARG HEAD_SHA=sha # NB: not used, but set to dirty cache if different
 WORKDIR /hpcc-dev/HPCC-Platform
-RUN git fetch --depth=1 https://github.com/${HEAD_REPO}/HPCC-Platform ${HEAD_BRANCH}:${HEAD_BRANCH}
-RUN git checkout ${HEAD_BRANCH}
-RUN git submodule update --init --recursive
+#RUN git fetch --depth=1 https://github.com/${HEAD_REPO}/HPCC-Platform ${HEAD_BRANCH}:${HEAD_BRANCH}
+#RUN git checkout ${HEAD_BRANCH}
+#RUN git submodule update --init --recursive
 
 WORKDIR /hpcc-dev/build
-RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DSUPPRESS_BUILD_CONFIG_H=On
-RUN make -j$(cat ~/build_threads) jlib
-RUN make -j$(cat ~/build_threads) esp
-RUN make -j$(cat ~/build_threads) roxie
-RUN make -j$(cat ~/build_threads) ws_workunits ecl
-RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
-RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
-RUN make -j$(cat ~/build_threads)
-RUN make install
+#RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DSUPPRESS_BUILD_CONFIG_H=On
+#RUN make -j$(cat ~/build_threads) jlib
+#RUN make -j$(cat ~/build_threads) esp
+#RUN make -j$(cat ~/build_threads) roxie
+#RUN make -j$(cat ~/build_threads) ws_workunits ecl
+#RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
+#RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
+#RUN make -j$(cat ~/build_threads)
+#RUN make install
+RUN echo =====================================
+RUN echo === Building head-branch-build ======
+RUN echo =====================================
 
 # For debugging image only
 USER root
@@ -115,10 +124,13 @@ USER hpcc
 # STAGE - Regress setup
 FROM base-image AS regress-setup
 
-COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/hpccinstall /hpcc-dev/hpccinstall
-COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/regress /hpcc-dev/regress
+#COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/hpccinstall /hpcc-dev/hpccinstall
+#COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/regress /hpcc-dev/regress
 
 WORKDIR /hpcc-dev/regress
 COPY ecl-test.json .
 
-RUN /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && ./ecl-test setup"
+#RUN /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && ./ecl-test setup"
+RUN echo =====================================
+RUN echo === In regress-setup ================
+RUN echo =====================================
