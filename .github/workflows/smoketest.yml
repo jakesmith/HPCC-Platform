@@ -96,7 +96,8 @@ jobs:
         cache-from: |
           type=registry,ref=${{ env.IMAGE_CACHETAG }}
           type=registry,ref=${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-        cache-to: type=registry,ref=${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+        cache-to: |
+          type=registry,ref=${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
         tags: ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
 
     - name: Build base branch
@@ -116,7 +117,8 @@ jobs:
           type=registry,ref=${{ env.IMAGE_CACHETAG }}
           type=registry,ref=${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
           type=registry,ref=${{ env.BASE_BRANCH_CACHETAG }}
-        cache-to: type=registry,ref=${{ env.BASE_BRANCH_CACHETAG }}
+        cache-to: |
+          type=registry,ref=${{ env.BASE_BRANCH_CACHETAG }}
         tags: ${{ env.BASE_BRANCH_CACHETAG }}
 
     - name: Build head branch
