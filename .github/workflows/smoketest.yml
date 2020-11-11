@@ -162,11 +162,27 @@ jobs:
         cache-from: type=registry,ref=${{ env.IMAGE_CACHETAG }}
         tags: ${{ env.REGRESS_CACHETAG }}
 
-#  regress-hthor:
-#    runs-on: ubuntu-20.04
-#    name: Regression hthor job
-#    needs: [ build-and-setup ]
-#    steps:
-#    - name: Regression suite hthor
-#      run: docker run --name 'smoketest-regress-hthor' $REGRESS_CACHETAG hthor
+  regress-hthor:
+    runs-on: ubuntu-20.04
+    name: Regression hthor job
+    needs: [ build-and-setup ]
+    steps:
+    - name: Regression suite hthor
+      run: docker run --name 'smoketest-regress-hthor' $REGRESS_CACHETAG hthor
+
+  regress-thor:
+    runs-on: ubuntu-20.04
+    name: Regression thor job
+    needs: [ build-and-setup ]
+    steps:
+    - name: Regression suite thor
+      run: docker run --name 'smoketest-regress-thor' $REGRESS_CACHETAG thor
+
+  regress-roxie:
+    runs-on: ubuntu-20.04
+    name: Regression roxie job
+    needs: [ build-and-setup ]
+    steps:
+    - name: Regression suite roxie
+      run: docker run --name 'smoketest-regress-roxie' $REGRESS_CACHETAG roxie
 
