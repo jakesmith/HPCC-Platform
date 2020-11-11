@@ -63,6 +63,7 @@ RUN if grep -q '^aeron_client:' Makefile; then make -j$(cat ~/build_threads) aer
 RUN if grep -q '^aeron_driver:' Makefile; then make -j$(cat ~/build_threads) aeron_driver; fi
 RUN if grep -q '^antlr3c:' Makefile; then make -j$(cat ~/build_threads) antlr3c; fi
 
+RUN echo new2 && cat system/jlib/CMakeFiles/jlib.dir/flags.make
 
 # STAGE - build base branch
 FROM major-minor-base-build AS base-branch-build
@@ -77,15 +78,15 @@ WORKDIR /hpcc-dev/build
 #RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On
 RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\"dummytag\" -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0 -DCMAKE_CXX_FLAGS=-DBUILD_VERSION_MAJOR=1"
 
-RUN make -j$(cat ~/build_threads) jlib
-RUN make -j$(cat ~/build_threads) esp
-RUN make -j$(cat ~/build_threads) roxie
-RUN make -j$(cat ~/build_threads) ws_workunits ecl
-RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
-RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
-RUN make -j$(cat ~/build_threads)
+#RUN make -j$(cat ~/build_threads) jlib
+#RUN make -j$(cat ~/build_threads) esp
+#RUN make -j$(cat ~/build_threads) roxie
+#RUN make -j$(cat ~/build_threads) ws_workunits ecl
+#RUN make -j$(cat ~/build_threads) thormaster_lcr thorslave_lcr
+#RUN make -j$(cat ~/build_threads) eclccserver hthor agentexec
+#RUN make -j$(cat ~/build_threads)
 
-RUN echo new && cat system/jlib/CMakeFiles/jlib.dir/flags.make
+RUN echo new2 && cat system/jlib/CMakeFiles/jlib.dir/flags.make
 
 
 # STAGE - build head branch
@@ -102,7 +103,7 @@ RUN git submodule update --init --recursive
 WORKDIR /hpcc-dev/build
 #RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On
 RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\"dummytag\" -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0 -DCMAKE_CXX_FLAGS=-DBUILD_VERSION_MAJOR=1"
-RUN echo new && cat system/jlib/CMakeFiles/jlib.dir/flags.make
+RUN echo new2 && cat system/jlib/CMakeFiles/jlib.dir/flags.make
 
 #RUN make --debug=a -j$(cat ~/build_threads) jlib
 #RUN make -j$(cat ~/build_threads) esp
