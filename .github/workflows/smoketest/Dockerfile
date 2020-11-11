@@ -52,7 +52,19 @@ RUN mkdir /hpcc-dev/hpccinstall
 RUN mkdir /hpcc-dev/build
 WORKDIR /hpcc-dev/build
 RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On
-RUN make -j$(cat ~/build_threads) jlib
+RUN if grep -q '^lz4:' Makefile; then make -j$(cat ~/build_threads) lz4; fi
+RUN if grep -q '^yaml:' Makefile; then make -j$(cat ~/build_threads) yaml; fi
+RUN if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(cat ~/build_threads) aws-sdk-cpp; fi
+RUN if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(cat ~/build_threads) azure-storage-cpplite; fi
+RUN if grep -q '^libbase58:' Makefile; then make -j$(cat ~/build_threads) libbase58; fi
+RUN if grep -q '^tbb:' Makefile; then make -j$(cat ~/build_threads) tbb; fi
+
+RUN if grep -q '^aeron_client:' Makefile; then make -j$(cat ~/build_threads) aeron_client; fi
+RUN if grep -q '^aeron_driver:' Makefile; then make -j$(cat ~/build_threads) aeron_driver; fi
+
+RUN if grep -q '^antlr3c:' Makefile; then make -j$(cat ~/build_threads) antlr3c; fi
+
+#RUN make -j$(cat ~/build_threads) jlib
 #RUN make -j$(cat ~/build_threads) esp
 #RUN make -j$(cat ~/build_threads) roxie
 #RUN make -j$(cat ~/build_threads) ws_workunits ecl
@@ -62,7 +74,6 @@ RUN make -j$(cat ~/build_threads) jlib
 RUN echo =====================================
 RUN echo === Building major-minor-base-build =
 RUN echo =====================================
-
 
 
 # STAGE - build base branch
@@ -76,7 +87,22 @@ RUN git submodule update --init --recursive
 
 WORKDIR /hpcc-dev/build
 RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DSUPPRESS_BUILD_CONFIG_H=On
-RUN make --debug=a -j$(cat ~/build_threads) jlib
+
+
+# test only
+RUN if grep -q '^lz4:' Makefile; then make -j$(cat ~/build_threads) lz4; fi
+RUN if grep -q '^yaml:' Makefile; then make -j$(cat ~/build_threads) yaml; fi
+RUN if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(cat ~/build_threads) aws-sdk-cpp; fi
+RUN if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(cat ~/build_threads) azure-storage-cpplite; fi
+RUN if grep -q '^libbase58:' Makefile; then make -j$(cat ~/build_threads) libbase58; fi
+RUN if grep -q '^tbb:' Makefile; then make -j$(cat ~/build_threads) tbb; fi
+
+RUN if grep -q '^aeron_client:' Makefile; then make -j$(cat ~/build_threads) aeron_client; fi
+RUN if grep -q '^aeron_driver:' Makefile; then make -j$(cat ~/build_threads) aeron_driver; fi
+
+RUN if grep -q '^antlr3c:' Makefile; then make -j$(cat ~/build_threads) antlr3c; fi
+
+#RUN make -j$(cat ~/build_threads) jlib
 #RUN make -j$(cat ~/build_threads) esp
 #RUN make -j$(cat ~/build_threads) roxie
 #RUN make -j$(cat ~/build_threads) ws_workunits ecl
@@ -101,7 +127,22 @@ RUN git submodule update --init --recursive
 
 WORKDIR /hpcc-dev/build
 RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DSUPPRESS_BUILD_CONFIG_H=On
-RUN make --debug=a -j$(cat ~/build_threads) jlib
+
+
+# test only
+RUN if grep -q '^lz4:' Makefile; then make -j$(cat ~/build_threads) lz4; fi
+RUN if grep -q '^yaml:' Makefile; then make -j$(cat ~/build_threads) yaml; fi
+RUN if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(cat ~/build_threads) aws-sdk-cpp; fi
+RUN if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(cat ~/build_threads) azure-storage-cpplite; fi
+RUN if grep -q '^libbase58:' Makefile; then make -j$(cat ~/build_threads) libbase58; fi
+RUN if grep -q '^tbb:' Makefile; then make -j$(cat ~/build_threads) tbb; fi
+
+RUN if grep -q '^aeron_client:' Makefile; then make -j$(cat ~/build_threads) aeron_client; fi
+RUN if grep -q '^aeron_driver:' Makefile; then make -j$(cat ~/build_threads) aeron_driver; fi
+
+RUN if grep -q '^antlr3c:' Makefile; then make -j$(cat ~/build_threads) antlr3c; fi
+
+#RUN make --debug=a -j$(cat ~/build_threads) jlib
 #RUN make -j$(cat ~/build_threads) esp
 #RUN make -j$(cat ~/build_threads) roxie
 #RUN make -j$(cat ~/build_threads) ws_workunits ecl
