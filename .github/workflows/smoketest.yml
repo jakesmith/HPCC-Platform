@@ -58,12 +58,11 @@ jobs:
         curl -s --output smoketest/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/entrypoint.sh"
         curl -s --output smoketest/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/ecl-test.json"
         curl -s --output smoketest/getmajorminorbase.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/getmajorminorbase.sh"
+        mkdir -p head
+        curl -s --output head/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/head/Dockerfile"
+        curl -s --output head/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/head/ecl-test.json"
         chmod +x smoketest/getmajorminorbase.sh
         echo ::set-output name=mmbase-tag::$(smoketest/getmajorminorbase.sh ${{ github.base_ref }})
-
-    - name: read-output
-      run: |
-        echo mmbase-tag = ${{ steps.dlfiles.outputs.mmbase-tag }}
 
     - name: Set up Docker Buildx
       id: buildx
@@ -153,46 +152,59 @@ jobs:
     - name: Regress setup
       uses: docker/build-push-action@v2
       with:
-        context: smoketest
-        file: smoketest/Dockerfile
+        context: head
+        file: head/Dockerfile
         builder: ${{ steps.buildx.outputs.name }}
         push: true
         target: regress-setup
         build-args: |
-          BASE_REPO=${{ github.repository_owner }}
-          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
-          BASE_BRANCH=${{ github.base_ref }} 
-          BASE_SHA=${{ github.event.pull_request.base.sha }} 
-          HEAD_REPO=${{ github.actor }} 
-          HEAD_BRANCH=${{ github.ref }} 
-          HEAD_SHA=${{ github.event.pull_request.head.sha }}
-        cache-from: |
-          ${{ env.IMAGE_CACHETAG }}
-          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-          ${{ env.BASE_BRANCH_CACHETAG }}
+          BASE_IMAGE=${{ env.IMAGE_CACHETAG }}
+          HEAD_IMAGE=${{ env.HEAD_BRANCH_CACHETAG }}
         tags: ${{ env.REGRESS_CACHETAG }}
 
-  regress-hthor:
-    runs-on: ubuntu-20.04
-    name: Regression hthor job
-    needs: [ build-and-setup ]
-    steps:
-    - name: Regression suite hthor
-      run: docker run --name 'smoketest-regress-hthor' $REGRESS_CACHETAG hthor
 
-  regress-thor:
-    runs-on: ubuntu-20.04
-    name: Regression thor job
-    needs: [ build-and-setup ]
-    steps:
-    - name: Regression suite thor
-      run: docker run --name 'smoketest-regress-thor' $REGRESS_CACHETAG thor
+    # - name: Regress setup
+    #   uses: docker/build-push-action@v2
+    #   with:
+    #     context: smoketest
+    #     file: smoketest/Dockerfile
+    #     builder: ${{ steps.buildx.outputs.name }}
+    #     push: true
+    #     target: regress-setup
+    #     build-args: |
+    #       BASE_REPO=${{ github.repository_owner }}
+    #       MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
+    #       BASE_BRANCH=${{ github.base_ref }} 
+    #       BASE_SHA=${{ github.event.pull_request.base.sha }} 
+    #       HEAD_REPO=${{ github.actor }} 
+    #       HEAD_BRANCH=${{ github.ref }} 
+    #       HEAD_SHA=${{ github.event.pull_request.head.sha }}
+    #     cache-from: |
+    #       ${{ env.IMAGE_CACHETAG }}
+    #       ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+    #       ${{ env.BASE_BRANCH_CACHETAG }}
+    #     tags: ${{ env.REGRESS_CACHETAG }}
 
-  regress-roxie:
-    runs-on: ubuntu-20.04
-    name: Regression roxie job
-    needs: [ build-and-setup ]
-    steps:
-    - name: Regression suite roxie
-      run: docker run --name 'smoketest-regress-roxie' $REGRESS_CACHETAG roxie
+  # regress-hthor:
+  #   runs-on: ubuntu-20.04
+  #   name: Regression hthor job
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - name: Regression suite hthor
+  #     run: docker run --name 'smoketest-regress-hthor' $REGRESS_CACHETAG hthor
 
+  # regress-thor:
+  #   runs-on: ubuntu-20.04
+  #   name: Regression thor job
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - name: Regression suite thor
+  #     run: docker run --name 'smoketest-regress-thor' $REGRESS_CACHETAG thor
+
+  # regress-roxie:
+  #   runs-on: ubuntu-20.04
+  #   name: Regression roxie job
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - name: Regression suite roxie
+  #     run: docker run --name 'smoketest-regress-roxie' $REGRESS_CACHETAG roxie
