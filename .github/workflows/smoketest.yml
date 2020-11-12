@@ -62,7 +62,7 @@ jobs:
         curl -s --output head/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/head/Dockerfile"
         curl -s --output head/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/head/ecl-test.json"
         chmod +x smoketest/getmajorminorbase.sh
-        echo ::set-output name=mmbase-tag::$(smoketest/getmajorminorbase.sh ${{ github.base_ref }})
+        echo ::set-output name=mmbase-tag::$(smoketest/getmajorminorbase.sh ${{ github.repository_owner }} ${{ github.base_ref }})
 
     - name: Set up Docker Buildx
       id: buildx
@@ -156,7 +156,6 @@ jobs:
         file: head/Dockerfile
         builder: ${{ steps.buildx.outputs.name }}
         push: true
-        target: regress-setup
         build-args: |
           BASE_IMAGE=${{ env.IMAGE_CACHETAG }}
           HEAD_IMAGE=${{ env.HEAD_BRANCH_CACHETAG }}

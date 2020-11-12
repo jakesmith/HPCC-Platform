@@ -1,9 +1,10 @@
-ARG BASE_IMAGE
 ARG HEAD_IMAGE
-FROM ${BASE_IMAGE} AS regress-setup
+ARG BASE_IMAGE
+FROM $HEAD_IMAGE AS head
+FROM $BASE_IMAGE
 
-COPY --from=${HEAD_IMAGE} --chown=hpcc:hpcc /hpcc-dev/hpccinstall /hpcc-dev/hpccinstall
-COPY --from=${HEAD_IMAGE} --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/regress /hpcc-dev/regress
+COPY --from=head --chown=hpcc:hpcc /hpcc-dev/hpccinstall /hpcc-dev/hpccinstall
+COPY --from=head --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/regress /hpcc-dev/regress
 
 WORKDIR /hpcc-dev/regress
 COPY ecl-test.json .

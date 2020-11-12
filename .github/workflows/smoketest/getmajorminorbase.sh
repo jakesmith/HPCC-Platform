@@ -1,12 +1,13 @@
 #!/bin/bash
 
-starttag=$1 # e.g. master or candidate-7.12.x
+repo=$1
+starttag=$2 # e.g. master or candidate-7.12.x
 
 # Aim is to find 1st tagged version of the input Major.Minor, e.g. community_7.12.0
 # If $starttag is master, will chose most recent Major.Minor
 
 if [ "$starttag" = "master" ]; then
-  result=$(git -c 'versionsort.suffix=-' ls-remote --exit-code --refs --sort='version:refname' --tags https://github.com/hpcc-systems/HPCC-Platform 'community_*.*.*' | tail -n 1 | sed -e 's/^.*\(community_.*\)$/\1/')
+  result=$(git -c 'versionsort.suffix=-' ls-remote --exit-code --refs --sort='version:refname' --tags https://github.com/$repo/HPCC-Platform 'community_*.*.*' | tail -n 1 | sed -e 's/^.*\(community_.*\)$/\1/')
 else
   # We don't have the branch yet, only the base_ref (e.g. candidate-7.12.x)
   # If we had the head repo, we could do: git describe --abbrev=0 --tags
