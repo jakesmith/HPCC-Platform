@@ -166,7 +166,10 @@ jobs:
           HEAD_REPO=${{ github.actor }} 
           HEAD_BRANCH=${{ github.ref }} 
           HEAD_SHA=${{ github.event.pull_request.head.sha }}
-        cache-from: ${{ env.IMAGE_CACHETAG }}
+        cache-from: |
+          ${{ env.IMAGE_CACHETAG }}
+          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+          ${{ env.BASE_BRANCH_CACHETAG }}
         tags: ${{ env.REGRESS_CACHETAG }}
 
   regress-hthor:
