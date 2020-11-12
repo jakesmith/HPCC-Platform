@@ -68,7 +68,7 @@ RUN echo new2 && cat system/jlib/CMakeFiles/jlib.dir/flags.make
 FROM major-minor-base-build AS base-branch-build
 
 ARG BASE_BRANCH=master
-ARG BASE_SHA=sha # NB: not used, but set to dirty cache if different
+ARG BASE_SHA=dummysha # NB: not used, but set to dirty cache if different
 WORKDIR /hpcc-dev/HPCC-Platform
 RUN git checkout ${BASE_BRANCH}
 RUN git submodule update --init --recursive
@@ -92,7 +92,7 @@ FROM base-branch-build AS head-branch-build
 
 ARG HEAD_BRANCH=master
 ARG HEAD_REPO=hpcc-systems
-ARG HEAD_SHA=sha # NB: not used, but set to dirty cache if different
+ARG HEAD_SHA=dummysha # NB: not used, but set to dirty cache if different
 WORKDIR /hpcc-dev/HPCC-Platform
 RUN git fetch --depth=1 https://github.com/${HEAD_REPO}/HPCC-Platform ${HEAD_BRANCH}:${HEAD_BRANCH}
 RUN git checkout ${HEAD_BRANCH}
