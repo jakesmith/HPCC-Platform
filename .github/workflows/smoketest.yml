@@ -1,4 +1,5 @@
 # This is a basic workflow to help you get started with Actions
+# NB: --build-arg's must be set for previous ARG's for future parts of multi-stage builds
 
 name: st-docker
 
@@ -14,11 +15,24 @@ on:
 
 jobs:
   build-and-setup:
-    runs-on: ubuntu-20.04
     name: A job to build and push docker
+    runs-on: ubuntu-20.04
+    env:
+      IMAGE_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-image
+      MM_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-major-minor-base
+      BASE_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
+      HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+      REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+
+#      IMAGE_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
+#      MM_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-major-minor-base
+#      BASE_BRANCH_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
+#      HEAD_BRANCH_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+#      REGRESS_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
     steps:
     - name: vars
+      id: vars
       run: |
         echo GITHUB_ACTOR is ${GITHUB_ACTOR}
         echo base_ref is ${{ github.base_ref }}
@@ -28,6 +42,7 @@ jobs:
         echo github.actor is ${{ github.actor }}
         echo github.repository_owner is ${{ github.repository_owner }}
         echo event - base.sha ${{ github.event.pull_request.base.sha }}
+        echo HEAD_BRANCH_CACHETAG - $HEAD_BRANCH_CACHETAG
 
 #    - name: Checkout
 #      uses: actions/checkout@v2
@@ -36,11 +51,19 @@ jobs:
 ##        submodules: recursive ## guessing, check
 
     - name: Download files # might be better as a tarball and 1 file download
+      id: dlfiles
       run: |
         mkdir -p smoketest
         curl -s --output smoketest/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/Dockerfile"
         curl -s --output smoketest/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/entrypoint.sh"
         curl -s --output smoketest/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/ecl-test.json"
+        curl -s --output smoketest/getmajorminorbase.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/getmajorminorbase.sh"
+        chmod +x smoketest/getmajorminorbase.sh
+        echo ::set-output name=mmbase-tag::$(smoketest/getmajorminorbase.sh ${{ github.base_ref }})
+
+    - name: read-output
+      run: |
+        echo mmbase-tag = ${{ steps.dlfiles.outputs.mmbase-tag }}
 
     - name: Set up Docker Buildx
       id: buildx
@@ -49,27 +72,124 @@ jobs:
     - name: Login to GitHub Container Registry
       uses: docker/login-action@v1 
       with:
+        registry: ghcr.io
         username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        password: ${{ secrets.CR_PAT }}
 
-        #docker pull ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image || true
+#        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+# NB: cache to registry (as smoketest-image), so others action runs can share
     - name: Build base image
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-image --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image smoketest/
+      uses: docker/build-push-action@v2
+      with:
+        context: smoketest
+        file: smoketest/Dockerfile
+        builder: ${{ steps.buildx.outputs.name }}
+        push: true
+        target: base-image
+        cache-from: ${{ env.IMAGE_CACHETAG }}
+        cache-to: type=inline
+        tags: ${{ env.IMAGE_CACHETAG }}
+
+    - name: Build major-minor base branch
+      uses: docker/build-push-action@v2
+      with:
+        context: smoketest
+        file: smoketest/Dockerfile
+        builder: ${{ steps.buildx.outputs.name }}
+        push: true
+        target: major-minor-base-build
+        build-args: |
+          BASE_REPO=${{ github.repository_owner }}
+          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
+        cache-from: |
+          ${{ env.IMAGE_CACHETAG }}
+          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+        cache-to: type=inline
+        tags: ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
 
     - name: Build base branch
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target base-branch-build --push --build-arg BASE_REPO=${{ github.repository_owner }} --build-arg BASE_BRANCH=${{ github.base_ref }} --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }} --cache-from type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} --cache-to type=registry,mode=max,ref=${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }} smoketest/
+      uses: docker/build-push-action@v2
+      with:
+        context: smoketest
+        file: smoketest/Dockerfile
+        builder: ${{ steps.buildx.outputs.name }}
+        push: true
+        target: base-branch-build
+        build-args: |
+          BASE_REPO=${{ github.repository_owner }}
+          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
+          BASE_BRANCH=${{ github.base_ref }} 
+          BASE_SHA=${{ github.event.pull_request.base.sha }} 
+        cache-from: |
+          ${{ env.IMAGE_CACHETAG }}
+          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+          ${{ env.BASE_BRANCH_CACHETAG }}
+        cache-to: type=inline
+        tags: ${{ env.BASE_BRANCH_CACHETAG }}
 
-    - name: Build pr branch
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target pr-branch-build --build-arg PR_REPO=${{ github.actor }} --build-arg PR_BRANCH=${{ github.ref }} --build-arg PR_SHA=${{ github.event.pull_request.head.sha }} -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-pr-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
+    - name: Build head branch
+      uses: docker/build-push-action@v2
+      with:
+        context: smoketest
+        file: smoketest/Dockerfile
+        builder: ${{ steps.buildx.outputs.name }}
+        push: true
+        target: head-branch-build
+        build-args: |
+          BASE_REPO=${{ github.repository_owner }}
+          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} 
+          BASE_BRANCH=${{ github.base_ref }} 
+          BASE_SHA=${{ github.event.pull_request.base.sha }} 
+          HEAD_REPO=${{ github.actor }} 
+          HEAD_BRANCH=${{ github.ref }} 
+          HEAD_SHA=${{ github.event.pull_request.head.sha }}
+        cache-from: |
+          ${{ env.IMAGE_CACHETAG }}
+          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+          ${{ env.BASE_BRANCH_CACHETAG }}
+        tags: ${{ env.HEAD_BRANCH_CACHETAG }}
 
-    - name: Regress setup
-      run: docker buildx build --builder=${{ steps.buildx.outputs.name }} --target regress-setup --push -t ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} smoketest/
+#    - name: Regress setup
+#      uses: docker/build-push-action@v2
+#      with:
+#        context: smoketest
+#        file: smoketest/Dockerfile
+#        builder: ${{ steps.buildx.outputs.name }}
+#        push: true
+#        target: regress-setup
+#        build-args: |
+#          BASE_REPO=${{ github.repository_owner }}
+#          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
+#          BASE_BRANCH=${{ github.base_ref }} 
+#          BASE_SHA=${{ github.event.pull_request.base.sha }} 
+#          HEAD_REPO=${{ github.actor }} 
+#          HEAD_BRANCH=${{ github.ref }} 
+#          HEAD_SHA=${{ github.event.pull_request.head.sha }}
+#        cache-from: ${{ env.IMAGE_CACHETAG }}
+#        tags: ${{ env.REGRESS_CACHETAG }}
 
-  regress-hthor:
-    runs-on: ubuntu-20.04
-    name: Regression hthor job
-    needs: [ build-and-setup ]
-    steps:
-    - name: Regression suite hthor
-      run: docker run --name 'smoketest-regress-hthor' ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }} hthor
+#  regress-hthor:
+#    runs-on: ubuntu-20.04
+#    name: Regression hthor job
+#    needs: [ build-and-setup ]
+#    steps:
+#    - name: Regression suite hthor
+#      run: docker run --name 'smoketest-regress-hthor' $REGRESS_CACHETAG hthor
+#
+#  regress-thor:
+#    runs-on: ubuntu-20.04
+#    name: Regression thor job
+#    needs: [ build-and-setup ]
+#    steps:
+#    - name: Regression suite thor
+#      run: docker run --name 'smoketest-regress-thor' $REGRESS_CACHETAG thor
+#
+#  regress-roxie:
+#    runs-on: ubuntu-20.04
+#    name: Regression roxie job
+#    needs: [ build-and-setup ]
+#    steps:
+#    - name: Regression suite roxie
+#      run: docker run --name 'smoketest-regress-roxie' $REGRESS_CACHETAG roxie
 
