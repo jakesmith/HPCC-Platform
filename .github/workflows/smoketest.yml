@@ -18,11 +18,17 @@ jobs:
     name: A job to build and push docker
     runs-on: ubuntu-20.04
     env:
-      IMAGE_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
-      MM_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-major-minor-base
-      BASE_BRANCH_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
-      HEAD_BRANCH_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
-      REGRESS_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+      IMAGE_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-image
+      MM_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-major-minor-base
+      BASE_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
+      HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+      REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+
+#      IMAGE_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
+#      MM_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-major-minor-base
+#      BASE_BRANCH_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
+#      HEAD_BRANCH_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+#      REGRESS_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
     steps:
     - name: vars
@@ -66,8 +72,11 @@ jobs:
     - name: Login to GitHub Container Registry
       uses: docker/login-action@v1 
       with:
+        registry: ghcr.io
         username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        password: ${{ secrets.CR_PAT }}
+
+#        password: ${{ secrets.DOCKERHUB_TOKEN }}
 
 # NB: cache to registry (as smoketest-image), so others action runs can share
     - name: Build base image
