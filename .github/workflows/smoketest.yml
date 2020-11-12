@@ -147,6 +147,7 @@ jobs:
           ${{ env.IMAGE_CACHETAG }}
           ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
           ${{ env.BASE_BRANCH_CACHETAG }}
+        cache-to: type=inline
         tags: ${{ env.HEAD_BRANCH_CACHETAG }}
 
     - name: Regress setup
@@ -162,27 +163,28 @@ jobs:
         tags: ${{ env.REGRESS_CACHETAG }}
 
 
-    # - name: Regress setup
-    #   uses: docker/build-push-action@v2
-    #   with:
-    #     context: smoketest
-    #     file: smoketest/Dockerfile
-    #     builder: ${{ steps.buildx.outputs.name }}
-    #     push: true
-    #     target: regress-setup
-    #     build-args: |
-    #       BASE_REPO=${{ github.repository_owner }}
-    #       MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
-    #       BASE_BRANCH=${{ github.base_ref }} 
-    #       BASE_SHA=${{ github.event.pull_request.base.sha }} 
-    #       HEAD_REPO=${{ github.actor }} 
-    #       HEAD_BRANCH=${{ github.ref }} 
-    #       HEAD_SHA=${{ github.event.pull_request.head.sha }}
-    #     cache-from: |
-    #       ${{ env.IMAGE_CACHETAG }}
-    #       ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-    #       ${{ env.BASE_BRANCH_CACHETAG }}
-    #     tags: ${{ env.REGRESS_CACHETAG }}
+    - name: Regress setup
+      uses: docker/build-push-action@v2
+      with:
+        context: smoketest
+        file: smoketest/Dockerfile
+        builder: ${{ steps.buildx.outputs.name }}
+        push: true
+        target: regress-setup
+        build-args: |
+          BASE_REPO=${{ github.repository_owner }}
+          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
+          BASE_BRANCH=${{ github.base_ref }} 
+          BASE_SHA=${{ github.event.pull_request.base.sha }} 
+          HEAD_REPO=${{ github.actor }} 
+          HEAD_BRANCH=${{ github.ref }} 
+          HEAD_SHA=${{ github.event.pull_request.head.sha }}
+        cache-from: |
+          ${{ env.IMAGE_CACHETAG }}
+          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+          ${{ env.BASE_BRANCH_CACHETAG }}
+          ${{ env.HEAD_BRANCH_CACHETAG }}
+        tags: ${{ env.REGRESS_CACHETAG }}_2
 
   # regress-hthor:
   #   runs-on: ubuntu-20.04
