@@ -1,0 +1,29 @@
+name: 'run regression test'
+description: 'run docker image for regression suite'
+inputs:
+  image:
+    description: 'regression docker image to run'
+    required: true
+  engine:
+    description: 'regression engine type to run'
+    required: true
+  query-pattern:
+    description: 'regression query pattern to run'
+    required: true
+outputs:
+  results:
+    description: 'TBD'
+runs:
+  using: 'composite'
+  steps:
+  - name: Login to GitHub Container Registry
+    uses: docker/login-action@v1 
+    with:
+      registry: ghcr.io
+      username: ${{ secrets.DOCKERHUB_USERNAME }}
+      password: ${{ secrets.CR_PAT }}
+
+  - name: Regression suite run
+    run: |
+      docker pull ${{ inputs.image }}
+      docker run --name 'smoketest-regress-roxie' ${{ inputs.image }} ${{ inputs.engine }} ${{ inputs.query-pattern }}
