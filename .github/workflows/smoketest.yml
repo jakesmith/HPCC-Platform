@@ -21,7 +21,7 @@ on:
 
 jobs:
   build-and-setup:
-    name: A job to build and push docker
+    name: Build platform and regress setup container
     runs-on: ubuntu-20.04
 
 #      IMAGE_CACHETAG: ${{ secrets.DOCKERHUB_USERNAME }}/smoketest-image
@@ -56,6 +56,7 @@ jobs:
         mkdir -p smoketest
         curl -s --output smoketest/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/Dockerfile"
         curl -s --output smoketest/entrypoint.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/entrypoint.sh"
+        chmod +x smoketest/entrypoint.sh
         curl -s --output smoketest/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/ecl-test.json"
         curl -s --output smoketest/getmajorminorbase.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/getmajorminorbase.sh"
         chmod +x smoketest/getmajorminorbase.sh
