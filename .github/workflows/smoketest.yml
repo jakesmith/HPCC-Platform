@@ -174,136 +174,104 @@ jobs:
 
   regress-hthor-i-q:
     runs-on: ubuntu-20.04
-    name: Regression hthor job i-q
     needs: [ build-and-setup ]
     steps:
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v1 
+    - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.CR_PAT }}
-
-    - name: Regression suite hthor
-      run: |
+    - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
         docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [i-q]*.ecl
 
   regress-hthor-r-z:
     runs-on: ubuntu-20.04
-    name: Regression hthor job r-z
     needs: [ build-and-setup ]
     steps:
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v1 
+    - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.CR_PAT }}
-
-    - name: Regression suite hthor
-      run: |
+    - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
         docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [r-z]*.ecl
 
   regress-thor-a-h:
     runs-on: ubuntu-20.04
-    name: Regression thor job a-h
     needs: [ build-and-setup ]
     steps:
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v1 
+    - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.CR_PAT }}
-
-    - name: Regression suite thor
-      run: |
+    - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
         docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [a-h]*.ecl
 
   regress-thor-i-q:
     runs-on: ubuntu-20.04
-    name: Regression thor job i-q
     needs: [ build-and-setup ]
     steps:
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v1 
+    - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.CR_PAT }}
-
-    - name: Regression suite thor
-      run: |
+    - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
         docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [i-q]*.ecl
 
   regress-thor-r-z:
     runs-on: ubuntu-20.04
-    name: Regression thor job r-z
     needs: [ build-and-setup ]
     steps:
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v1 
+    - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.CR_PAT }}
-
-    - name: Regression suite thor
-      run: |
+    - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
         docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [r-z]*.ecl
 
   regress-roxie-a-h:
     runs-on: ubuntu-20.04
-    name: Regression roxie job a-h
     needs: [ build-and-setup ]
     steps:
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v1 
+    - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.CR_PAT }}
-
-    - name: Regression suite roxie
-      run: |
+    - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
         docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [a-h]*.ecl
 
   regress-roxie-i-q:
     runs-on: ubuntu-20.04
-    name: Regression roxie job i-q
     needs: [ build-and-setup ]
     steps:
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v1 
+    - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.CR_PAT }}
-
-    - name: Regression suite roxie
-      run: |
+    - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
         docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [i-q]*.ecl
 
   regress-roxie-r-z:
     runs-on: ubuntu-20.04
-    name: Regression roxie job r-z
     needs: [ build-and-setup ]
     steps:
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v1 
+    - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.CR_PAT }}
-
-    - name: Regression suite roxie
-      run: |
+    - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
         docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [r-z]*.ecl
