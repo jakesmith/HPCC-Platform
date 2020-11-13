@@ -186,7 +186,7 @@ jobs:
     - name: Regression suite hthor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor '^[a-h]*.ecl'
+        docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [a-h]*.ecl
 
   regress-hthor-i-q:
     runs-on: ubuntu-20.04
@@ -203,7 +203,7 @@ jobs:
     - name: Regression suite hthor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor '^[i-q]*.ecl'
+        docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [i-q]*.ecl
 
   regress-hthor-r-z:
     runs-on: ubuntu-20.04
@@ -220,7 +220,7 @@ jobs:
     - name: Regression suite hthor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor '^[r-z]*.ecl'
+        docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [r-z]*.ecl
 
   regress-thor-a-h:
     runs-on: ubuntu-20.04
@@ -237,7 +237,7 @@ jobs:
     - name: Regression suite thor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor '^[a-h]*.ecl'
+        docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [a-h]*.ecl
 
   regress-thor-i-q:
     runs-on: ubuntu-20.04
@@ -254,7 +254,7 @@ jobs:
     - name: Regression suite thor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor '^[i-q]*.ecl'
+        docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [i-q]*.ecl
 
   regress-thor-r-z:
     runs-on: ubuntu-20.04
@@ -271,7 +271,7 @@ jobs:
     - name: Regression suite thor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor '^[r-z]*.ecl'
+        docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [r-z]*.ecl
 
   regress-roxie-a-h:
     runs-on: ubuntu-20.04
@@ -288,7 +288,7 @@ jobs:
     - name: Regression suite roxie
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie '^[a-h]*.ecl'
+        docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [a-h]*.ecl
 
   regress-roxie-i-q:
     runs-on: ubuntu-20.04
@@ -305,7 +305,7 @@ jobs:
     - name: Regression suite roxie
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie '^[i-q]*.ecl'
+        docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [i-q]*.ecl
 
   regress-roxie-r-z:
     runs-on: ubuntu-20.04
@@ -322,4 +322,4 @@ jobs:
     - name: Regression suite roxie
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie '^[r-z]*.ecl'
+        docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [r-z]*.ecl
