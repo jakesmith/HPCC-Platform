@@ -132,4 +132,4 @@ RUN /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv 
 
 COPY --chown=hpcc:hpcc entrypoint.sh .
 RUN chmod +x ./entrypoint.sh
-ENTRYPOINT [./entrypoint.sh]
+ENTRYPOINT [/hpcc-dev/regress/entrypoint.sh]
