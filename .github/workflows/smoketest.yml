@@ -5,8 +5,10 @@ env:
   IMAGE_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-image
   MM_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-major-minor-base
   BASE_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
-  HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
-  REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+  #HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+  #REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+  HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-head-branch-build:${{ github.head_ref }}_80cb0c1b170463067ea907a8908b602a20a8a82e
+  REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/smoketest-regress-setup:${{ github.head_ref }}_80cb0c1b170463067ea907a8908b602a20a8a82e
 
 on:
   # Trigger the workflow on push or pull request,
