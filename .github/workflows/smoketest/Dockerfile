@@ -130,6 +130,6 @@ COPY ecl-test.json .
 
 RUN /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && ./ecl-test setup"
 
-COPY --chown=hpcc:hpcc entrypoint.sh .
-RUN chmod +x ./entrypoint.sh
-ENTRYPOINT [/hpcc-dev/regress/entrypoint.sh]
+COPY --chown=hpcc:hpcc runregress.sh .
+RUN chmod +x ./runregress.sh
+ENTRYPOINT [/hpcc-dev/regress/runregress.sh]
