@@ -132,4 +132,4 @@ RUN /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv 
 
 COPY --chown=hpcc:hpcc runregress.sh .
 RUN chmod +x ./runregress.sh
-ENTRYPOINT [/hpcc-dev/regress/runregress.sh]
+ENTRYPOINT ["/hpcc-dev/regress/runregress.sh"]
