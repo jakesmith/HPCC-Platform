@@ -175,6 +175,13 @@ jobs:
     name: Regression hthor job a-h
     needs: [ build-and-setup ]
     steps:
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1 
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.CR_PAT }}
+
     - name: Regression suite hthor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -185,6 +192,13 @@ jobs:
     name: Regression hthor job i-q
     needs: [ build-and-setup ]
     steps:
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1 
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.CR_PAT }}
+
     - name: Regression suite hthor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -195,6 +209,13 @@ jobs:
     name: Regression hthor job r-z
     needs: [ build-and-setup ]
     steps:
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1 
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.CR_PAT }}
+
     - name: Regression suite hthor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -205,6 +226,13 @@ jobs:
     name: Regression thor job a-h
     needs: [ build-and-setup ]
     steps:
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1 
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.CR_PAT }}
+
     - name: Regression suite thor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -215,6 +243,13 @@ jobs:
     name: Regression thor job i-q
     needs: [ build-and-setup ]
     steps:
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1 
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.CR_PAT }}
+
     - name: Regression suite thor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -225,6 +260,13 @@ jobs:
     name: Regression thor job r-z
     needs: [ build-and-setup ]
     steps:
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1 
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.CR_PAT }}
+
     - name: Regression suite thor
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -235,6 +277,13 @@ jobs:
     name: Regression roxie job a-h
     needs: [ build-and-setup ]
     steps:
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1 
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.CR_PAT }}
+
     - name: Regression suite roxie
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -245,6 +294,13 @@ jobs:
     name: Regression roxie job i-q
     needs: [ build-and-setup ]
     steps:
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1 
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.CR_PAT }}
+
     - name: Regression suite roxie
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -255,6 +311,13 @@ jobs:
     name: Regression roxie job r-z
     needs: [ build-and-setup ]
     steps:
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v1 
+      with:
+        registry: ghcr.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.CR_PAT }}
+
     - name: Regression suite roxie
       run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
