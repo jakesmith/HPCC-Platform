@@ -131,4 +131,5 @@ COPY ecl-test.json .
 RUN /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && ./ecl-test setup"
 
 COPY entrypoint.sh .
+RUN chmod +x ./entrypoint.sh
 ENTRYPOINT [./entrypoint.sh]
