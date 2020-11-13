@@ -124,7 +124,8 @@ jobs:
           BASE_SHA=${{ github.event.pull_request.base.sha }} 
           HEAD_REPO=${{ github.actor }} 
           HEAD_BRANCH=${{ github.ref }} 
-          HEAD_SHA=${{ github.event.pull_request.head.sha }}
+          #HEAD_SHA=${{ github.event.pull_request.head.sha }}
+          HEAD_SHA=80cb0c1b170463067ea907a8908b602a20a8a82e
         cache-from: |
           ${{ env.IMAGE_CACHETAG }}
           ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
@@ -147,7 +148,8 @@ jobs:
           BASE_SHA=${{ github.event.pull_request.base.sha }} 
           HEAD_REPO=${{ github.actor }} 
           HEAD_BRANCH=${{ github.ref }} 
-          HEAD_SHA=${{ github.event.pull_request.head.sha }}
+          #HEAD_SHA=${{ github.event.pull_request.head.sha }}
+          HEAD_SHA=80cb0c1b170463067ea907a8908b602a20a8a82e
         cache-from: |
           ${{ env.IMAGE_CACHETAG }}
           ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
