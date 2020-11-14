@@ -16,10 +16,9 @@ RUN curl -sL https://deb.nodesource.com/setup_15.x | bash - && apt-get install -
 RUN groupadd -g 1000 hpcc && \
     useradd -s /bin/bash -r -m -N -c "hpcc runtime User" -u 999 -g hpcc hpcc && \
     passwd -l hpcc && \
-    mkdir /hpcc-dev && \
-    chown hpcc:hpcc /hpcc-dev && \
-    mkdir /hpcc-dev/hpccinstall && \
-    mkdir /hpcc-dev/build
+    mkdir -p /hpcc-dev/build && \
+    mkdir -p /hpcc-dev/hpccinstall && \
+    chown -R hpcc:hpcc /hpcc-dev 
 
 USER hpcc
 WORKDIR /hpcc-dev
