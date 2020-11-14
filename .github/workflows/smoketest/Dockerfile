@@ -21,6 +21,7 @@ RUN groupadd -g 1000 hpcc && \
     chown -R hpcc:hpcc /hpcc-dev 
 
 USER hpcc
+WORKDIR /hpcc-dev/build
 
 
 # STAGE - build master base
@@ -39,8 +40,7 @@ RUN cd HPCC-Platform && \
     cd /hpcc-dev/build && \
     cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
 
-RUN cd /hpcc-dev/build && \
-    if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi && \
+RUN if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi && \
     if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi && \
     if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi && \
     if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(nproc) azure-storage-cpplite; fi && \
@@ -62,8 +62,7 @@ RUN cd /hpcc-dev/HPCC-Platform && \
     cd /hpcc-dev/build && \
     cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
 
-RUN cd /hpcc-dev/build && \
-    make -j$(nproc)
+RUN make -j$(nproc)
 
 
 # STAGE - build head branch
@@ -79,8 +78,7 @@ RUN cd /hpcc-dev/HPCC-Platform && \
     cd /hpcc-dev/build && \
     cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
 
-RUN cd /hpcc-dev/build && \
-    make -j$(nproc) install
+RUN make -j$(nproc) install
 
 # For debugging image only
 #USER root
@@ -95,9 +93,9 @@ FROM base-image AS regress-setup
 
 COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/hpccinstall /hpcc-dev/hpccinstall
 COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/regress /hpcc-dev/regress
-COPY --chown=hpcc:hpcc runregress.sh .
+COPY --chown=hpcc:hpcc runregress.sh /hpcc-dev/regress/runregress.sh
 
 RUN /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && cd /hpcc-dev/regress && ./ecl-test setup"
 
-RUN chmod +x ./runregress.sh
+RUN chmod +x /hpcc-dev/regress/runregress.sh
 ENTRYPOINT ["/hpcc-dev/regress/runregress.sh"]
