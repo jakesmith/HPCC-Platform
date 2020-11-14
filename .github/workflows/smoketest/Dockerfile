@@ -2,7 +2,9 @@
 FROM ubuntu:20.04 AS base-image
 
 SHELL ["/bin/bash", "-c"]
-RUN apt-get update
+ARG DEBIAN_FRONTEND=noninteractive # Not using ENV, so not part of runtime image
+RUN TZ=Europe/London \
+    apt-get update
 
 # JCSMORE - would be interesting to retrieve pre-requisites, based on target platform, automatically
 # e.g. have wiki definitions formalized/parsable and fetch them from there
