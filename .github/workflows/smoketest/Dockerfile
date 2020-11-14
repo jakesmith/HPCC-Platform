@@ -37,7 +37,6 @@ ARG USE_CPPUNIT=0
 RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
 RUN cd HPCC-Platform && \
     git checkout ${MAJOR_MINOR_BASE} && \
-    cd HPCC-Platform && \
     git submodule update --init --recursive && \
     cd /hpcc-dev/build && \
     cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
