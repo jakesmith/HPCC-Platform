@@ -38,6 +38,7 @@ ARG BUILD_THREADS
 ARG BUILD_TYPE=RelWithDebInfo
 ARG USE_CPPUNIT=0
 
+RUN echo test
 RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
 RUN cd HPCC-Platform && git checkout ${MAJOR_MINOR_BASE}
 RUN cd HPCC-Platform && git submodule update --init --recursive
