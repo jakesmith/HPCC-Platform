@@ -16,7 +16,7 @@ on:
 #      - notmain
   pull_request:
     branches:
-      - master
+      - notmaster
 
 jobs:
   build-and-setup:
@@ -271,3 +271,9 @@ jobs:
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
         docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [r-z]*.ecl
+
+  unittests:
+    runs-on: ubuntu-20.04
+    needs: build-and-setup
+    steps:
+    -
