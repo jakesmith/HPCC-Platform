@@ -17,9 +17,12 @@ RUN groupadd -g 1000 hpcc && \
     useradd -s /bin/bash -r -m -N -c "hpcc runtime User" -u 999 -g hpcc hpcc && \
     passwd -l hpcc && \
     mkdir /hpcc-dev && \
-    chown hpcc:hpcc /hpcc-dev
+    chown hpcc:hpcc /hpcc-dev && \
+    mkdir /hpcc-dev/hpccinstall && \
+    mkdir /hpcc-dev/build
 
 USER hpcc
+WORKDIR /hpcc-dev
 
 
 # STAGE - build master base
@@ -32,12 +35,15 @@ ARG BUILD_TYPE=RelWithDebInfo
 ARG USE_CPPUNIT=0
 
 RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git
-RUN cd HPCC-Platform && git checkout ${MAJOR_MINOR_BASE}
-RUN cd HPCC-Platform && git submodule update --init --recursive
-RUN mkdir /hpcc-dev/hpccinstall && mkdir /hpcc-dev/build
-RUN cd /hpcc-dev/build cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+RUN cd HPCC-Platform && \
+    git checkout ${MAJOR_MINOR_BASE} && \
+    cd HPCC-Platform && \
+    git submodule update --init --recursive && \
+    cd /hpcc-dev/build && \
+    cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
 
-RUN if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi && \
+RUN cd /hpcc-dev/build && \
+    if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi && \
     if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi && \
     if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi && \
     if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(nproc) azure-storage-cpplite; fi && \
@@ -92,6 +98,7 @@ COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/hpccinstall /hpcc-dev/
 COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/regress /hpcc-dev/regress
 COPY --chown=hpcc:hpcc runregress.sh .
 
-RUN chmod +x ./runregress.sh && /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && cd /hpcc-dev/regress && ./ecl-test setup"
+RUN chmod +x ./runregress.sh && \
+    /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && cd /hpcc-dev/regress && ./ecl-test setup"
 
 ENTRYPOINT ["/hpcc-dev/regress/runregress.sh"]
