@@ -52,4 +52,6 @@ jobs:
     - name: make
       run: |
         cd ../build
+        make -j 3 || true
+        make
         make -j 3 package
