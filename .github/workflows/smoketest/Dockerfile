@@ -79,7 +79,8 @@ RUN cd /hpcc-dev/HPCC-Platform && \
     cd /hpcc-dev/build && \
     cmake /hpcc-dev/HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
 
-RUN make -j$(nproc) install
+RUN cd /hpcc-dev/build && \
+    make -j$(nproc) install
 
 # For debugging image only
 #USER root
@@ -96,7 +97,7 @@ COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/hpccinstall /hpcc-dev/
 COPY --from=head-branch-build --chown=hpcc:hpcc /hpcc-dev/HPCC-Platform/testing/regress /hpcc-dev/regress
 COPY --chown=hpcc:hpcc runregress.sh .
 
-RUN chmod +x ./runregress.sh && \
-    /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && cd /hpcc-dev/regress && ./ecl-test setup"
+RUN /bin/bash -c "source /hpcc-dev/hpccinstall/opt/HPCCSystems/sbin/hpcc_setenv && /hpcc-dev/hpccinstall/opt/HPCCSystems/etc/init.d/hpcc-init start && cd /hpcc-dev/regress && ./ecl-test setup"
 
+RUN chmod +x ./runregress.sh
 ENTRYPOINT ["/hpcc-dev/regress/runregress.sh"]
