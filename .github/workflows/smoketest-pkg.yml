@@ -87,6 +87,7 @@ jobs:
   setupjob:
     name: Regress setup job
     runs-on: ubuntu-20.04
+    needs: [ build-and-setup ]
 
     steps:
     - name: Cache base-branch
