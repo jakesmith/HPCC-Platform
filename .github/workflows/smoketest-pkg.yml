@@ -2,6 +2,9 @@
 
 name: st-docker
 on:
+env:
+  cacheversion: 1
+
   # Trigger the workflow on push or pull request,
   # but only for the main branch
 #  push:
@@ -29,19 +32,16 @@ jobs:
       id: base-branch-cache
       uses: actions/cache@v2
       with:
-        path: |
-          ./build
-        key: hpccbuild-basebranch
-        restore-keys: hpccbuild-basebranch
+        path: ./build
+        key: hpccbuild-basebranch-${{ env.cacheversion }}
          
     - name: Cache major-minor-base
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
       id: major-minor-base-cache
       uses: actions/cache@v2
       with:
-        path: |
-          ./build
-        key: hpccbuild-majorminorbase-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
+        path: ./build
+        key: hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
 
     - name: major-minor-base
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
@@ -49,7 +49,7 @@ jobs:
         git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ steps.setup.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform ./HPCC-Platform
         mkdir build
         cd build
-        cmake ../HPCC-Platform -Wno-dev  -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+        cmake ../HPCC-Platform -Wno-dev -DDESTDIR=$(cd ..; pwd)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
 
         # if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi
         # if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi
@@ -65,14 +65,11 @@ jobs:
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
       run: |
         cd HPCC-Platform
-        echo BEFORE
         git checkout ${{ github.base_ref }}
-        echo BEFORE2
         git submodule update --init --recursive
-        echo AFTER
         cd ../build 
-        cmake ../HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        make -j$(nproc) jlib datest
+        cmake ../HPCC-Platform -Wno-dev -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+        make -j$(nproc)
 
     - name: head-branch
       run: |
@@ -80,8 +77,8 @@ jobs:
         git checkout --recurse-submodules ${{ github.head_ref }}
         cd ../build
         cmake ../HPCC-Platform -Wno-dev -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        ls -lt ../
-        make -j$(nproc) jlib datest
+        make -j$(nproc)
+        make -j$(nproc) install
 
   setupjob:
     name: Regress setup job
@@ -95,8 +92,7 @@ jobs:
       with:
         path: |
           ./build
-        key: hpccbuild-basebranch
-        restore-keys: hpccbuild-basebranch
+        key: hpccbuild-basebranch-${{ env.cacheversion }}
          
     - name: Cache major-minor-base
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
@@ -105,7 +101,7 @@ jobs:
       with:
         path: |
           ./build
-        key: hpccbuild-majorminorbase-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
+        key: hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
 
     - name: regress setup
       run: |
