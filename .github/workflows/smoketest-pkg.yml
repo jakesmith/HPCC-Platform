@@ -59,7 +59,7 @@ jobs:
     - name: major-minor-base
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
       run: |
-        git clone --recurse-submodules --shallow-submodules --depth 1 --no-single-branch --branch ${{ steps.vars.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform.git
+        git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ steps.vars.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform.git
         mkdir build
         cd build
         cmake ../HPCC-Platform -Wno-dev -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
