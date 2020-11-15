@@ -30,7 +30,7 @@ jobs:
         echo github.repository_owner is ${{ github.repository_owner }}
         echo event - base.sha ${{ github.event.pull_request.base.sha }}
         echo HEAD_BRANCH_CACHETAG - ${{ env.HEAD_BRANCH_CACHETAG }}
-        if [ "${{ github.base_ref }}" = "master" ]; then echo ::set-output name=mmbase-tag::$(git -c 'versionsort.suffix=-' ls-remote --exit-code --refs --sort='version:refname' --tags https://github.com/${{ github.repository_owner }}/HPCC-Platform 'community_*.*.*' | tail -n 1 | sed -e 's/^.*\(community_.*\)$/\1/'); fi
+        if [ "${{ github.base_ref }}" = "master" ]; then echo test; fi
 
     - name: outvars
       run: |
