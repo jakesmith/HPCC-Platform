@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 1
+  cacheversion: 2
 
 on:
   # Trigger the workflow on push or pull request,
@@ -32,7 +32,9 @@ jobs:
       id: base-branch-cache
       uses: actions/cache@v2
       with:
-        path: ./build
+        path: |
+          ./build
+          ./HPCC-Platform
         key: hpccbuild-basebranch-${{ env.cacheversion }}
          
     - name: Cache major-minor-base
@@ -40,7 +42,9 @@ jobs:
       id: major-minor-base-cache
       uses: actions/cache@v2
       with:
-        path: ./build
+        path: |
+          ./build
+          ./HPCC-Platform
         key: hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
 
     - name: major-minor-base
