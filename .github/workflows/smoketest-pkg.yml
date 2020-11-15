@@ -86,7 +86,7 @@ jobs:
         path: |
           ./install
           ./HPCC-Platform/testing/regress
-        key: installsetup-${{ env.cacheversion }}
+        key: installsetup-${{ env.cacheversion }}-${{ github.sha }}
          
     - name: regress setup
       run: |
@@ -117,7 +117,7 @@ jobs:
         path: |
           ./install
           ./HPCC-Platform/testing/regress
-        key: installsetup-${{ env.cacheversion }}
+        key: installsetup-${{ env.cacheversion }}-${{ github.sha }}
          
     - name: regress run
       run: |
