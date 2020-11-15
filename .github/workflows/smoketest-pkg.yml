@@ -33,7 +33,7 @@ jobs:
     - name: setvar
       id: setvar
       run: |
-        echo ::set-output name=myvar::$(echo myvalue)
+        echo ::set-output name=myvar::$(if [ "${{ github.base_ref }}" = "master" ]; then echo myvalue; else echo somethingelse; fi)
 
         #echo ::set-output name=mmbase-tag::$(if [ "${{ github.base_ref }}" = "master" ]; then echo myvalue; fi)
         #bash -c "if [ \"${{ github.base_ref }}\" = \"master\" ]; then echo ::set-output name=mmbase-tag::myvalue; fi"
