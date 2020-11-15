@@ -19,7 +19,8 @@ jobs:
     steps:
     - name: vars
       id: vars
-      run: |
+      shell: bash
+      run:
         echo GITHUB_ACTOR is ${GITHUB_ACTOR}
         echo base_ref is ${{ github.base_ref }}
         echo head_ref is ${{ github.head_ref }}
