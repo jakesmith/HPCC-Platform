@@ -75,6 +75,7 @@ jobs:
     - name: base-branch
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
       run: |
+        ls -lt
         cd HPCC-Platform
         git checkout --recurse-submodules ${{ github.base_ref }} 
         cd ../build 
