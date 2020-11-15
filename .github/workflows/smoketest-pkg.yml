@@ -1,10 +1,10 @@
 # NB: --build-arg's must be set for previous ARG's for future parts of multi-stage builds
 
 name: st-docker
-on:
 env:
   cacheversion: 1
 
+on:
   # Trigger the workflow on push or pull request,
   # but only for the main branch
 #  push:
