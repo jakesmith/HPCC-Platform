@@ -43,7 +43,9 @@ jobs:
       with:
         path: |
           ./build
-        key: hpccbuild-basebranch-${{ github.repository_owner }}-${{ github.base_ref }}
+        key: hpccbuild-basebranch
+        restore-keys: hpccbuild-basebranch
+         
 
     - name: Cache major-minor-base
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
@@ -61,22 +63,24 @@ jobs:
         mkdir build
         cd build
         cmake ../HPCC-Platform -Wno-dev -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi
-        if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi
-        if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi
-        if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(nproc) azure-storage-cpplite; fi
-        if grep -q '^libbase58:' Makefile; then make -j$(nproc) libbase58; fi
-        if grep -q '^tbb:' Makefile; then make -j$(nproc) tbb; fi
-        if grep -q '^aeron_client:' Makefile; then make -j$(nproc) aeron_client; fi
-        if grep -q '^aeron_driver:' Makefile; then make -j$(nproc) aeron_driver; fi
-        if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
         make -j$(nproc) jlib
+
+        # if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi
+        # if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi
+        # if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi
+        # if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(nproc) azure-storage-cpplite; fi
+        # if grep -q '^libbase58:' Makefile; then make -j$(nproc) libbase58; fi
+        # if grep -q '^tbb:' Makefile; then make -j$(nproc) tbb; fi
+        # if grep -q '^aeron_client:' Makefile; then make -j$(nproc) aeron_client; fi
+        # if grep -q '^aeron_driver:' Makefile; then make -j$(nproc) aeron_driver; fi
+        # if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
 
     - name: base-branch
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
       run: |
         ls -lt
         cd HPCC-Platform
+        ls -alt
         git checkout --recurse-submodules ${{ github.base_ref }} 
         cd ../build 
         cmake ../HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
