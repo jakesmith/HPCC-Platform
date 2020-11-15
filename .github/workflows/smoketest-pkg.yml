@@ -30,16 +30,7 @@ jobs:
         echo github.repository_owner is ${{ github.repository_owner }}
         echo event - base.sha ${{ github.event.pull_request.base.sha }}
         echo HEAD_BRANCH_CACHETAG - ${{ env.HEAD_BRANCH_CACHETAG }}
-
-        if [ "${{ github.base_ref }}" = "master" ]; then \
-          echo ::set-output name=mmbase-tag::$(git -c 'versionsort.suffix=-' ls-remote --exit-code --refs --sort='version:refname' --tags https://github.com/${{ github.repository_owner }}/HPCC-Platform 'community_*.*.*' | tail -n 1 | sed -e 's/^.*\(community_.*\)$/\1/') \
-        else \
-          regex="candidate-[0-9]+\.[0-9]+\..*" \
-          if [[ ${{ github.base_ref }} =~ $regex ]]; then \
-            findstart=$(echo ${{ github.base_ref }} | sed -e 's/candidate-\([0-9]\+\)\.\([0-9]\+\)\..*$/\1 \2/' | awk '{ print $1*100 + $2 + 0.999 }') \
-            echo ::set-output name=mmbase-tag::$(git -c 'versionsort.suffix=-' ls-remote --exit-code --refs --sort='version:refname' --tags https://github.com/${{ github.repository_owner }}/HPCC-Platform 'community_*.*.*' | sed -e 's/^.*\(community_\)\([0-9]\+\)\.\([0-9]\+\)\.\([0-9]\+\)-\(.*\)$/\1 \2 \3 \4 \5/' | awk '{ if ($2*100+$3+$4/100 <= FINDSTART) { print "community_" $2 "." $3 "." $4 "-" $5 } }' FINDSTART=$findstart | tail -n 1) \
-          fi \
-        fi
+        if [ "${{ github.base_ref }}" = "master" ]; then echo ::set-output name=mmbase-tag::$(git -c 'versionsort.suffix=-' ls-remote --exit-code --refs --sort='version:refname' --tags https://github.com/${{ github.repository_owner }}/HPCC-Platform 'community_*.*.*' | tail -n 1 | sed -e 's/^.*\(community_.*\)$/\1/'); fi
 
     - name: outvars
       run: |
