@@ -31,6 +31,10 @@ jobs:
         echo HEAD_BRANCH_CACHETAG - ${{ env.HEAD_BRANCH_CACHETAG }}
         echo ::set-output name=mmbase-tag::$(smoketest/getmajorminorbase.sh ${{ github.repository_owner }} ${{ github.base_ref }})
 
+    - name: outvars
+      run: |
+        echo mmbase-tag is ${{ steps.vars.outputs.mmbase-tag }}
+        
     - name: Prerequisites
       run: |
         sudo apt-get update
