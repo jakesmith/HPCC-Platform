@@ -19,7 +19,6 @@ jobs:
     steps:
     - name: vars
       id: vars
-      shell: bash
       run:
         echo GITHUB_ACTOR is ${GITHUB_ACTOR}
         echo base_ref is ${{ github.base_ref }}
@@ -48,60 +47,60 @@ jobs:
       run: |
         echo mmbase-tag is ${{ steps.vars.outputs.mmbase-tag }}
 
-    - name: Prerequisites
-      run: |
-        sudo apt-get update
-        sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs
-        sudo apt-get install -yq libaprutil1-dev libiberty-dev libhiredis-dev libtbb-dev libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev git
+    # - name: Prerequisites
+    #   run: |
+    #     sudo apt-get update
+    #     sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs
+    #     sudo apt-get install -yq libaprutil1-dev libiberty-dev libhiredis-dev libtbb-dev libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev git
 
-    - name: Cache base-branch
-      id: base-branch-cache
-      uses: actions/cache@v2
-      with:
-        path: |
-          ./build
-        key: hpccbuild-basebranch-${{ github.repository_owner }}-${{ github.base_ref }}
+    # - name: Cache base-branch
+    #   id: base-branch-cache
+    #   uses: actions/cache@v2
+    #   with:
+    #     path: |
+    #       ./build
+    #     key: hpccbuild-basebranch-${{ github.repository_owner }}-${{ github.base_ref }}
 
-    - name: Cache major-minor-base
-      if: steps.base-branch-cache.outputs.cache-hit != 'true'
-      id: major-minor-base-cache
-      uses: actions/cache@v2
-      with:
-        path: |
-          ./build
-        key: hpccbuild-majorminorbase-${{ github.repository_owner }}-${{ steps.vars.outputs.mmbase-tag }}
+    # - name: Cache major-minor-base
+    #   if: steps.base-branch-cache.outputs.cache-hit != 'true'
+    #   id: major-minor-base-cache
+    #   uses: actions/cache@v2
+    #   with:
+    #     path: |
+    #       ./build
+    #     key: hpccbuild-majorminorbase-${{ github.repository_owner }}-${{ steps.vars.outputs.mmbase-tag }}
 
-    - name: major-minor-base
-      if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
-      run: |
-        git clone --recurse-submodules --shallow-submodules --depth 1 --no-single-branch --branch ${{ steps.vars.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform.git
-        mkdir build
-        cd build
-        cmake ../HPCC-Platform -Wno-dev -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi
-        if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi
-        if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi
-        if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(nproc) azure-storage-cpplite; fi
-        if grep -q '^libbase58:' Makefile; then make -j$(nproc) libbase58; fi
-        if grep -q '^tbb:' Makefile; then make -j$(nproc) tbb; fi
-        if grep -q '^aeron_client:' Makefile; then make -j$(nproc) aeron_client; fi
-        if grep -q '^aeron_driver:' Makefile; then make -j$(nproc) aeron_driver; fi
-        if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
-        make -j$(nproc) jlib
+    # - name: major-minor-base
+    #   if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
+    #   run: |
+    #     git clone --recurse-submodules --shallow-submodules --depth 1 --no-single-branch --branch ${{ steps.vars.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform.git
+    #     mkdir build
+    #     cd build
+    #     cmake ../HPCC-Platform -Wno-dev -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+    #     if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi
+    #     if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi
+    #     if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi
+    #     if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(nproc) azure-storage-cpplite; fi
+    #     if grep -q '^libbase58:' Makefile; then make -j$(nproc) libbase58; fi
+    #     if grep -q '^tbb:' Makefile; then make -j$(nproc) tbb; fi
+    #     if grep -q '^aeron_client:' Makefile; then make -j$(nproc) aeron_client; fi
+    #     if grep -q '^aeron_driver:' Makefile; then make -j$(nproc) aeron_driver; fi
+    #     if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
+    #     make -j$(nproc) jlib
 
-    - name: base-branch
-      if: steps.base-branch-cache.outputs.cache-hit != 'true'
-      run: |
-        cd HPCC-Platform
-        git checkout --recurse-submodules ${{ github.base_ref }} 
-        cd ../build 
-        cmake ../HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        make -j$(nproc) jlib
+    # - name: base-branch
+    #   if: steps.base-branch-cache.outputs.cache-hit != 'true'
+    #   run: |
+    #     cd HPCC-Platform
+    #     git checkout --recurse-submodules ${{ github.base_ref }} 
+    #     cd ../build 
+    #     cmake ../HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+    #     make -j$(nproc) jlib
 
-    - name: head-branch
-      run: |
-        cd HPCC-Platform
-        git checkout --recurse-submodules ${{ github.ref }}
-        cd ../build
-        cmake ../HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        make -j$(nproc) jlib
+    # - name: head-branch
+    #   run: |
+    #     cd HPCC-Platform
+    #     git checkout --recurse-submodules ${{ github.ref }}
+    #     cd ../build
+    #     cmake ../HPCC-Platform -Wno-dev -DDESTDIR=/hpcc-dev/hpccinstall -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+    #     make -j$(nproc) jlib
