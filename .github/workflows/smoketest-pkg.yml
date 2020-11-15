@@ -33,7 +33,7 @@ jobs:
     - name: setvar
       id: setvar
       run: |
-        echo ::set-output name=myvar::$(if [ "${{ github.base_ref }}" = "master" ]; then echo myvalue; else echo somethingelse; fi)
+        echo ::set-output name=myvar::$(if [ "${{ github.base_ref }}" = "master" ]; then git -c 'versionsort.suffix=-' ls-remote --exit-code --refs --sort='version:refname' --tags https://github.com/${{ github.repository_owner }}/HPCC-Platform 'community_*.*.*' | tail -n 1 | sed -e 's/^.*\(community_.*\)$/\1/'; else echo somethingelse; fi)
 
         #echo ::set-output name=mmbase-tag::$(if [ "${{ github.base_ref }}" = "master" ]; then echo myvalue; fi)
         #bash -c "if [ \"${{ github.base_ref }}\" = \"master\" ]; then echo ::set-output name=mmbase-tag::myvalue; fi"
