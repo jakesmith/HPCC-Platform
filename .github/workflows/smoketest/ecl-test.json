@@ -4,7 +4,7 @@
         "espIp" : "127.0.0.1",
         "espSocket": "8010",
         "dropzoneIp" : "127.0.0.1",
-        "dropzonePath" : "../install/var/lib/HPCCSystems/mydropzone/",
+        "dropzonePath" : "/hpcc-dev/hpccinstall/var/lib/HPCCSystems/mydropzone/",
         "espFileSprayService" : "FileSpray",
         "useSsl" : "False",
         "username": "regress",
@@ -16,8 +16,8 @@
         "archiveDir": "archives",
         "resultDir": "results",
         "zapDir":"zap",
-        "regressionDir": "../HPCCSystems-regression",
-        "logDir": "../HPCCSystems-regression/log",
+        "regressionDir": "/hpcc-dev/HPCCSystems-regression",
+        "logDir": "/hpcc-dev/HPCCSystems-regression/log",
         "Engines": [
             "hthor",
             "thor",
@@ -58,7 +58,7 @@
             "failOnLeaks"
         ],
         "setupExtraParams":{
-            "OriginalTextFilesOsPath" : "../install/opt/HPCCSystems/testing/regress",
+            "OriginalTextFilesOsPath" : "/hpcc-dev/hpccinstall/opt/HPCCSystems/testing/regress",
             "OriginalTextFilesIp" : "127.0.0.1"
         },
         "FileExclusion":[

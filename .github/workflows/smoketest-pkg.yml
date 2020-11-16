@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 6
+  cacheversion: 7
 
 on:
   # Trigger the workflow on push or pull request,
@@ -32,9 +32,7 @@ jobs:
       id: base-branch-cache
       uses: actions/cache@v2
       with:
-        path: |
-          ./build
-          ./HPCC-Platform
+        path: ./build
         key: hpccbuild-basebranch-${{ env.cacheversion }}
          
     - name: Cache major-minor-base
@@ -42,12 +40,10 @@ jobs:
       id: major-minor-base-cache
       uses: actions/cache@v2
       with:
-        path: |
-          ./build
-          ./HPCC-Platform
+        path: ./build
         key: hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
 
-    - name: major-minor-base
+    - name: major-minor-build
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
       run: |
         git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ steps.setup.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform ./HPCC-Platform
@@ -65,23 +61,47 @@ jobs:
         if grep -q '^aeron_driver_static:' Makefile; then make -j$(nproc) aeron_driver_static; fi
         if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi        
         du -sh . ../HPCC-Platform
+    
+    - name: base-branch-with-mmcache
+      if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit == 'true')
+      run: |
+        git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.base_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform ./HPCC-Platform
 
-    - name: base-branch
-      if: steps.base-branch-cache.outputs.cache-hit != 'true'
+    - name: base-branch-with-mmbuild
+      if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit != 'true')
       run: |
         cd HPCC-Platform
         git checkout ${{ github.base_ref }}
         git submodule update --init --recursive
-        cd ../build 
+
+    - name: base-branch-rest
+        cd build 
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         make -j$(nproc)
         du -sh . ../HPCC-Platform
 
-    - name: head-branch
+    - name: head-branch-with-bbcache
+      if: steps.base-branch-cache.outputs.cache-hit == 'true'
+      run: |
+        git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform ./HPCC-Platform
+        cd build
+        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+        make -j$(nproc)
+        make -j$(nproc) install
+
+    - name: head-branch-with-bbbuild
+      if: steps.base-branch-cache.outputs.cache-hit != 'true'
       run: |
         cd HPCC-Platform
         git checkout --recurse-submodules ${{ github.head_ref }}
         cd ../build
+        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+        make -j$(nproc)
+        make -j$(nproc) install
+
+    - name: head-branch-with-rest
+      run: |
+        cd build
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         make -j$(nproc)
         make -j$(nproc) install
@@ -95,20 +115,21 @@ jobs:
     #       ./HPCC-Platform/testing/regress
     #     key: installsetup-${{ env.cacheversion }}-${{ github.sha }}
          
-    - name: regress setup
-      run: |
-        source install/opt/HPCCSystems/sbin/hpcc_setenv
-        install/opt/HPCCSystems/etc/init.d/hpcc-init start
-        cd HPCC-Platform/testing/regress
-        cp ../../.github/workflows/smoketest/ecl-test.json .
-        ./ecl-test setup
-        tar -I zstd ../install-setup.tgz $(realpath .) $(realpath ../HPCC-Platform/testing/regress)
+    # - name: regress setup
+    #   run: |
+    #     source install/opt/HPCCSystems/sbin/hpcc_setenv
+    #     install/opt/HPCCSystems/etc/init.d/hpcc-init start
+    #     cd HPCC-Platform/testing/regress
+    #     cp ../../.github/workflows/smoketest-pkg/ecl-test.json .
+    #     cat ecl-test.json
+    #     ./ecl-test setup
+    #     tar -I zstd ../install-setup.tgz $(realpath install) $(realpath ../HPCC-Platform/testing/regress)
 
-    - name: upload artifact
-      uses: actions/upload-artifact@v2
-      with:
-        name: install-setup
-        path: install-setup.tgz
+    # - name: upload artifact
+    #   uses: actions/upload-artifact@v2
+    #   with:
+    #     name: install-setup
+    #     path: install-setup.tgz
     
     
 # NB: May want to upload (tgz?) as an artifact by this job,
