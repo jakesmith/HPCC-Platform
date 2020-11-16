@@ -116,21 +116,21 @@ jobs:
     #       ./HPCC-Platform/testing/regress
     #     key: installsetup-${{ env.cacheversion }}-${{ github.sha }}
          
-    # - name: regress setup
-    #   run: |
-    #     source install/opt/HPCCSystems/sbin/hpcc_setenv
-    #     install/opt/HPCCSystems/etc/init.d/hpcc-init start
-    #     cd HPCC-Platform/testing/regress
-    #     cp ../../.github/workflows/smoketest-pkg/ecl-test.json .
-    #     cat ecl-test.json
-    #     ./ecl-test setup
-    #     tar -I zstd ../install-setup.tgz $(realpath install) $(realpath ../HPCC-Platform/testing/regress)
+    - name: regress setup
+      run: |
+        source install/opt/HPCCSystems/sbin/hpcc_setenv
+        install/opt/HPCCSystems/etc/init.d/hpcc-init start
+        cd HPCC-Platform/testing/regress
+        cp ../../.github/workflows/smoketest-pkg/ecl-test.json .
+        cat ecl-test.json
+        ./ecl-test setup
+        tar -I zstd ../install-setup.tgz $(realpath install) $(realpath ../HPCC-Platform/testing/regress)
 
-    # - name: upload artifact
-    #   uses: actions/upload-artifact@v2
-    #   with:
-    #     name: install-setup
-    #     path: install-setup.tgz
+    - name: upload artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: install-setup
+        path: install-setup.tgz
     
     
 # NB: May want to upload (tgz?) as an artifact by this job,
