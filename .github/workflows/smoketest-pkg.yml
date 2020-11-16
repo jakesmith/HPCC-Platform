@@ -93,14 +93,19 @@ jobs:
           ./HPCC-Platform/testing/regress
         key: installsetup-${{ env.cacheversion }}-${{ github.sha }}
          
-    # - name: regress setup
-    #   run: |
-    #     cat install/etc//HPCCSystems/environment.conf
-    #     source install/opt/HPCCSystems/sbin/hpcc_setenv
+    - name: regress setup
+      run: |
+        cat install/etc//HPCCSystems/environment.conf
+        source install/opt/HPCCSystems/sbin/hpcc_setenv
     #     install/opt/HPCCSystems/etc/init.d/hpcc-init start
     #     cd HPCC-Platform/testing/regress
     #     cp ../../.github/workflow/smoketest/ecl-test.json .
     #     ./ecl-test setup
+
+# NB: May want to upload (tgz?) as an artifact by this job,
+# and download it in parallel instance of regress run.
+# Since it is not wanted as shared resource between different action exections,
+# and do not want it to consume part of the limited 5GB total repository cache.
 
   regress1:
     name: regress1
