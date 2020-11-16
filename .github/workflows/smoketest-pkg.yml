@@ -47,7 +47,7 @@ jobs:
     - name: major-minor-build
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
       run: |
-        git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ steps.setup.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform ./HPCC-Platform
+        git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ steps.setup.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         mkdir build
         cd build
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
@@ -66,7 +66,7 @@ jobs:
     - name: base-branch-with-mmcache
       if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit == 'true')
       run: |
-        git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.base_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform ./HPCC-Platform
+        git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.base_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
 
     - name: base-branch-with-mmbuild
       if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit != 'true')
@@ -84,12 +84,12 @@ jobs:
         du -sh . ../HPCC-Platform
 
     - name: head-branch-with-bbcache
-      #if: steps.base-branch-cache.outputs.cache-hit == 'true'
+      if: steps.base-branch-cache.outputs.cache-hit == 'true'
       run: |
         ls -lta
-        ls -lt HPCC-Platform
-        git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform ./HPCC-Platform
-        ls -lt HPCC-Platform
+        ls -lt HPCC-Platform || true
+        git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        ls -lt HPCC-Platform || true
         cd build
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         make -j$(nproc)
@@ -99,9 +99,10 @@ jobs:
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
       run: |
         ls -lta
-        ls -lt HPCC-Platform
+        ls -lt HPCC-Platform || true
         cd HPCC-Platform
         git checkout --recurse-submodules ${{ github.head_ref }}
+        ls -lt HPCC-Platform || true
         cd ../build
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         make -j$(nproc)
