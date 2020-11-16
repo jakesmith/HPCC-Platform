@@ -95,6 +95,7 @@ jobs:
          
     - name: regress setup
       run: |
+        cat install/etc/HPCC-Platform/environment.conf
         source install/opt/HPCCSystems/sbin/hpcc_setenv
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
         cd HPCC-Platform/testing/regress
