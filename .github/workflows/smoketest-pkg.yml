@@ -97,6 +97,8 @@ jobs:
       run: |
         cat install/etc//HPCCSystems/environment.conf
         source install/opt/HPCCSystems/sbin/hpcc_setenv
+        whoami
+        id -gn
     #     install/opt/HPCCSystems/etc/init.d/hpcc-init start
     #     cd HPCC-Platform/testing/regress
     #     cp ../../.github/workflow/smoketest/ecl-test.json .
