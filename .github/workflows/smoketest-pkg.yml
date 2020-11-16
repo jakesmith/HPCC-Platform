@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 3
+  cacheversion: 4
 
 on:
   # Trigger the workflow on push or pull request,
@@ -53,7 +53,7 @@ jobs:
         git clone --recurse-submodules --depth 1 --no-single-branch --branch ${{ steps.setup.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform ./HPCC-Platform
         mkdir build
         cd build
-        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DDESTDIR=$(cd ..; pwd)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DDRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi
         if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi
         if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi
@@ -62,7 +62,8 @@ jobs:
         if grep -q '^tbb:' Makefile; then make -j$(nproc) tbb; fi
         if grep -q '^aeron_client:' Makefile; then make -j$(nproc) aeron_client; fi
         if grep -q '^aeron_driver:' Makefile; then make -j$(nproc) aeron_driver; fi
-        if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
+        if grep -q '^aeron_driver_static:' Makefile; then make -j$(nproc) aeron_driver_static; fi
+        if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi        
 
     - name: base-branch
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
@@ -71,7 +72,7 @@ jobs:
         git checkout ${{ github.base_ref }}
         git submodule update --init --recursive
         cd ../build 
-        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DDRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         make -j$(nproc)
 
     - name: head-branch
@@ -79,7 +80,7 @@ jobs:
         cd HPCC-Platform
         git checkout --recurse-submodules ${{ github.head_ref }}
         cd ../build
-        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DDRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         make -j$(nproc)
         make -j$(nproc) install
     
@@ -125,6 +126,7 @@ jobs:
          
     - name: regress run
       run: |
+        cat install/etc/HPCC-Platform/environment.conf
         source install/opt/HPCCSystems/sbin/hpcc_setenv
         ./install/opt/HPCCSystems/etc/init.d/hpcc-init start
         cd HPCC-Platform/testing/regress
