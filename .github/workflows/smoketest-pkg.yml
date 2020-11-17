@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 8
+  cacheversion: 9
 
 on:
   # Trigger the workflow on push or pull request,
@@ -47,8 +47,12 @@ jobs:
     - name: major-minor-build
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
       run: |
+        echo pwd0 = $(pwd)
         git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ steps.setup.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        echo pwd = $(pwd)
+        echo home dir = $(realpath ~)
         cd HPCC-Platform
+        echo pwd2 = $(pwd)
         time git restore-mtime
         cd ..
         mkdir build
@@ -72,9 +76,7 @@ jobs:
         git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.base_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
 
     - name: base-branch-with-mmbuild
-      if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit != 'true')
-      run: |
-        cd HPCC-Platform
+      if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cachecd HPCC-Platform
         git checkout ${{ github.base_ref }}
         git submodule update -j 4 --init --recursive
 
@@ -112,7 +114,7 @@ jobs:
         echo pwddotdot = $(cd ..; pwd)
         echo pwddotdotrealpath = $(realpath ..)
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        make -j$(nproc)
+        make --debug=a -j$(nproc)
         make -j$(nproc) install
 
     # - name: Cache install and regress setup
