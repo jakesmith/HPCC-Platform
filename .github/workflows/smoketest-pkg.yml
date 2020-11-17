@@ -103,12 +103,16 @@ jobs:
         git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
         git submodule update -j 4 --init --recursive
-        du -sh ../build-base ../build
+        du -sh ../build-base
+        du -sh ../build || true
         echo BUILD-BASE (before copy)
         ls -lt ../build-base
         echo BUILD (before copy)
         ls -lt ../build
-        cp -rp ../build-base ../build
+        time cp -pr ../build-base ../build
+        echo BUILD (after copy)
+        ls -lt ../build
+        du -sh ../build || true
 
     - name: head-branch-with-bbbuild
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
@@ -121,7 +125,6 @@ jobs:
       run: |
         cd HPCC-Platform
         git restore-mtime
-        time cp -pr ../build-base ../build
         du -sh ../build-base ../build
         echo BUILD-BASE
         ls -lt ../build-base
