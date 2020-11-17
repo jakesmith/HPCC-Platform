@@ -55,7 +55,7 @@ jobs:
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
       run: |
         echo pwd = $(pwd)
-        git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ steps.setup.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        git clone -j 4 --recurse-submodules --branch ${{ steps.setup.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
         time git restore-mtime
         cd ..
@@ -81,7 +81,7 @@ jobs:
       if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit == 'true')
       run: |
         echo pwd0 = $(pwd)
-        git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.base_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        git clone -j 4 --recurse-submodules --branch ${{ github.base_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         time cp -rp ./build-mm ./build
 
     - name: base-branch-with-mmbuild
@@ -107,7 +107,7 @@ jobs:
       if: steps.base-branch-cache.outputs.cache-hit == 'true'
       run: |
         echo pwd0 = $(pwd)
-        git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
         git submodule update -j 4 --init --recursive
         cp -rp ../build-base ../build
