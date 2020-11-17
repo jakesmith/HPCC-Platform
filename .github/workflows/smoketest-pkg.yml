@@ -102,6 +102,9 @@ jobs:
       run: |
         git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
+        echo pre-checkout-head
+        git checkout HEAD
+        echo post-checkout-head
         git submodule update -j 4 --init --recursive
         du -sh ../build-base
         time cp -pr ../build-base ../build
