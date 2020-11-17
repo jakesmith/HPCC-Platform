@@ -29,6 +29,7 @@ jobs:
         sudo apt-get install git-restore-mtime
         echo ::set-output name=mmbase-tag::$(if [ "${{ github.base_ref }}" = "master" ]; then git -c 'versionsort.suffix=-' ls-remote --exit-code --refs --sort='version:refname' --tags https://github.com/${{ github.repository_owner }}/HPCC-Platform 'community_*.*.*' | tail -n 1 | sed -e 's/^.*\(community_.*\)$/\1/'; else if [[ "${{ github.base_ref }}" =~ candidate-[0-9]+\.[0-9]+\..* ]]; then findstart=$(echo "${{ github.base_ref }}" | sed -e 's/candidate-\([0-9]\+\)\.\([0-9]\+\)\..*$/\1 \2/' | awk '{ print $1*100 + $2 + 0.999 }'); git -c 'versionsort.suffix=-' ls-remote --exit-code --refs --sort='version:refname' --tags https://github.com/${{ github.repository_owner }}/HPCC-Platform 'community_*.*.*' | sed -e 's/^.*\(community_\)\([0-9]\+\)\.\([0-9]\+\)\.\([0-9]\+\)-\(.*\)$/\1 \2 \3 \4 \5/' | awk '{ if ($2*100+$3+$4/100 <= FINDSTART) { print "community_" $2 "." $3 "." $4 "-" $5 } }' FINDSTART=$findstart | tail -n 1; fi; fi)
         mkdir -p ~/work
+        cd ~/work
         rm -rf HPCC-Platform build install
 
     - name: Cache base-branch
