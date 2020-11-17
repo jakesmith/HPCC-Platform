@@ -13,6 +13,7 @@ on:
   pull_request:
     branches:
       - master
+      - candidate-7.12.x
 
 jobs:
   build-and-setup:
@@ -48,16 +49,14 @@ jobs:
     - name: major-minor-cached
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit == 'true'
       run: |
-        echo pwd = $(pwd)
         cp -rp ./build-mm ./build
 
     - name: major-minor-build
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
       run: |
-        echo pwd = $(pwd)
         git clone -j 4 --recurse-submodules --branch ${{ steps.setup.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
-        time git restore-mtime
+        git restore-mtime
         cd ..
         mkdir build
         cd build
@@ -72,22 +71,17 @@ jobs:
         # if grep -q '^aeron_driver:' Makefile; then make -j$(nproc) aeron_driver; fi
         # if grep -q '^aeron_driver_static:' Makefile; then make -j$(nproc) aeron_driver_static; fi
         # if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
-        make -j$(proc) jlib
         time cp -rp . ../build-mm
-        du -sh ../build-mm
-        echo pwd9 = $(pwd)
     
     - name: base-branch-with-mmcache
       if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit == 'true')
       run: |
-        echo pwd0 = $(pwd)
         git clone -j 4 --recurse-submodules --branch ${{ github.base_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         time cp -rp ./build-mm ./build
 
     - name: base-branch-with-mmbuild
       if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit != 'true')
       run: |
-        echo pwd0 = $(pwd)
         cd HPCC-Platform
         git checkout ${{ github.base_ref }}
         git submodule update -j 4 --init --recursive
@@ -96,17 +90,16 @@ jobs:
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
       run: |
         cd HPCC-Platform
-        time git restore-mtime
+        git restore-mtime
         cd ../build
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        make --debug=a -j$(nproc) jlib
-        cp -pr . ../build-base
+        make -j$(nproc)
+        time cp -pr . ../build-base
         du -sh ../build-base
 
     - name: head-branch-with-bbcache
       if: steps.base-branch-cache.outputs.cache-hit == 'true'
       run: |
-        echo pwd0 = $(pwd)
         git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
         git submodule update -j 4 --init --recursive
@@ -115,30 +108,20 @@ jobs:
     - name: head-branch-with-bbbuild
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
       run: |
-        echo pwd0 = $(pwd)
         cd HPCC-Platform
         git checkout ${{ github.head_ref }}
         git submodule update -j 4 --init --recursive
 
     - name: head-branch-with-rest
       run: |
-        echo pwd0 = $(pwd)
         cd HPCC-Platform
-        time git restore-mtime
-        echo contents of src
-        ls -ltR
+        git restore-mtime
         time cp -pr ../build-base ../build
         cd ../build
-        echo contents of build
-        ls -ltR
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        echo contents of build after cmake
-        ls -ltR
-        echo contents of src after cmake
-        ls -ltR ../HPCC-Platform
-        make --debug=a -j$(nproc) jlib
+        make -j$(nproc)
+        make -j$(nproc) install
         du -sh .
-#        make -j$(nproc) install
 
     # - name: Cache install and regress setup
     #   id: install-setup-cache
