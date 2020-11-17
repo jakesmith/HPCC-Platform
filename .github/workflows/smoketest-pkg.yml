@@ -101,28 +101,35 @@ jobs:
     - name: head-branch-with-bbcache
       if: steps.base-branch-cache.outputs.cache-hit == 'true'
       run: |
-        git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
-        cd HPCC-Platform
         echo pwd0 = $(pwd)
-        echo where = $(git symbolic-ref --short HEAD)
-        git submodule update -j 4 --init --recursive
+        ls -lta
+        echo homedir
+        ls -ltR ~
 
-    - name: head-branch-with-bbbuild
-      if: steps.base-branch-cache.outputs.cache-hit != 'true'
-      run: |
-        cd HPCC-Platform
-        echo pwd0 = $(pwd)
-        git checkout ${{ github.head_ref }}
-        git submodule update -j 4 --init --recursive
+        # git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        # cd HPCC-Platform
+        # echo pwd0 = $(pwd)
+        # echo where = $(git symbolic-ref --short HEAD)
+        # git submodule update -j 4 --init --recursive
 
-    - name: head-branch-with-rest
-      run: |
-        echo pwd0 = $(pwd)
-        cd HPCC-Platform
-        time git restore-mtime
-        cd ../build
-        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        make --debug=a -j$(nproc) jlib
+    # - name: head-branch-with-bbbuild
+    #   if: steps.base-branch-cache.outputs.cache-hit != 'true'
+    #   run: |
+    #     cd HPCC-Platform
+    #     echo pwd0 = $(pwd)
+    #     git checkout ${{ github.head_ref }}
+    #     git submodule update -j 4 --init --recursive
+
+    # - name: head-branch-with-rest
+    #   run: |
+    #     echo pwd0 = $(pwd)
+    #     ls -lta
+    #     cd HPCC-Platform
+    #     ls -lta
+    #     time git restore-mtime
+    #     cd ../build
+    #     cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(cd ..; pwd)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+    #     make --debug=a -j$(nproc) jlib
 
 #        make -j$(nproc) install
 
