@@ -92,6 +92,7 @@ jobs:
       if: steps.base-branch-cache.outputs.cache-hit == 'true'
       run: |
         git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        cd HPCC-Platform
         echo where = $(git symbolic-ref --short HEAD)
         git submodule update -j 4 --init --recursive
 
