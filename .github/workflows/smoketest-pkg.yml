@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 11
+  cacheversion: 12
 
 on:
   # Trigger the workflow on push or pull request,
@@ -45,6 +45,12 @@ jobs:
         path: ./build-mm
         key: hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
 
+    - name: major-minor-cached
+      if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit == 'true'
+      run: |
+        echo pwd = $(pwd)
+        cp -rp ./build-mm ./build
+
     - name: major-minor-build
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
       run: |
@@ -53,8 +59,8 @@ jobs:
         cd HPCC-Platform
         time git restore-mtime
         cd ..
-        mkdir build-mm
-        cd build-mm
+        mkdir build
+        cd build
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         # if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi
         # if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi
@@ -67,7 +73,8 @@ jobs:
         # if grep -q '^aeron_driver_static:' Makefile; then make -j$(nproc) aeron_driver_static; fi
         # if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
         make -j$(proc) jlib
-        du -sh .
+        time cp -rp . ../build-mm
+        du -sh ../build-mm
         echo pwd9 = $(pwd)
     
     - name: base-branch-with-mmcache
@@ -75,6 +82,7 @@ jobs:
       run: |
         echo pwd0 = $(pwd)
         git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.base_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        time cp -rp ./build-mm ./build
 
     - name: base-branch-with-mmbuild
       if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit != 'true')
@@ -89,11 +97,11 @@ jobs:
       run: |
         cd HPCC-Platform
         time git restore-mtime
-        cp -pr ../build-mm ../build-base
-        cd ../build-base
+        cd ../build
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         make --debug=a -j$(nproc) jlib
-        du -sh .
+        cp -pr . ../build-base
+        du -sh ../build-base
 
     - name: head-branch-with-bbcache
       if: steps.base-branch-cache.outputs.cache-hit == 'true'
@@ -102,6 +110,7 @@ jobs:
         git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
         git submodule update -j 4 --init --recursive
+        cp -rp ./build-base ./build
 
     - name: head-branch-with-bbbuild
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
@@ -116,8 +125,8 @@ jobs:
         echo pwd0 = $(pwd)
         cd HPCC-Platform
         time git restore-mtime
-        time cp -pr ../build-base ../build-head
-        cd ../build-head
+        time cp -pr ../build-base ../build
+        cd ../build
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         make --debug=a -j$(nproc) jlib
         du -sh .
