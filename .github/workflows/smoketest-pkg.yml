@@ -110,7 +110,7 @@ jobs:
         git clone -j 4 --recurse-submodules --depth 1 --no-single-branch --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
         git submodule update -j 4 --init --recursive
-        cp -rp ./build-base ./build
+        cp -rp ../build-base ../build
 
     - name: head-branch-with-bbbuild
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
