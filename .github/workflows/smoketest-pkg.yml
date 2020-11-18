@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 23
+  cacheversion: 24
 
 on:
   # Trigger the workflow on push or pull request,
@@ -51,7 +51,8 @@ jobs:
       if: steps.major-minor-base-cache.outputs.cache-hit == 'true'
       run: |
         cp -rp ./build-cache ./build
-        find HPCC-Platform-cache -type f | cpio -p -dumv ./HPCC-Platform
+        cd HPCC-Platform-cache
+        find . -type f | cpio -p -dumv ./HPCC-Platform
 
     - name: major-minor-build
       id: major-minor-build
@@ -78,7 +79,8 @@ jobs:
         cd ..
         ls -lt HPCC-Platform/system/aws/aws-sdk-cpp/aws-cpp-sdk-core/include/aws/core/SDKConfig.h
         time cp -rp ./build ./build-cache
-        find HPCC-Platform -newer ./build/premake-timestamp -type f | cpio -p -dum ./HPCC-Platform-cache
+        cd HPCC-Platform
+        find -name '.git*' -prune -o -newer ./build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
 
     - name: major-minor-build2
       id: major-minor-build2
