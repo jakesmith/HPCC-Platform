@@ -43,7 +43,9 @@ jobs:
       id: major-minor-base-cache
       uses: actions/cache@v2
       with:
-        path: ./build-mm
+        path: |
+          ./build-mm
+          ${{ steps.major-minor-build.outputs.newfiles }}
         key: hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
 
     - name: major-minor-cached
@@ -60,18 +62,22 @@ jobs:
         cd ..
         mkdir build
         cd build
+        touch premake-timestamp
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        # if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi
-        # if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi
-        # if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi
-        # if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(nproc) azure-storage-cpplite; fi
-        # if grep -q '^libbase58:' Makefile; then make -j$(nproc) libbase58; fi
-        # if grep -q '^tbb:' Makefile; then make -j$(nproc) tbb; fi
-        # if grep -q '^aeron_client:' Makefile; then make -j$(nproc) aeron_client; fi
-        # if grep -q '^aeron_driver:' Makefile; then make -j$(nproc) aeron_driver; fi
-        # if grep -q '^aeron_driver_static:' Makefile; then make -j$(nproc) aeron_driver_static; fi
-        # if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
-        time cp -rp . ../build-mm
+        if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi
+        if grep -q '^yaml:' Makefile; then make -j$(nproc) yaml; fi
+        if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi
+        if grep -q '^azure\-storage\-cpplite:' Makefile; then make -j$(nproc) azure-storage-cpplite; fi
+        if grep -q '^libbase58:' Makefile; then make -j$(nproc) libbase58; fi
+        if grep -q '^tbb:' Makefile; then make -j$(nproc) tbb; fi
+        if grep -q '^aeron_client:' Makefile; then make -j$(nproc) aeron_client; fi
+        if grep -q '^aeron_driver:' Makefile; then make -j$(nproc) aeron_driver; fi
+        if grep -q '^aeron_driver_static:' Makefile; then make -j$(nproc) aeron_driver_static; fi
+        if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
+        cd ..
+        echo ::set-output name=newfiles::$(find HPCC-Platform -newer ./build/premake-timestamp -type f)
+        echo newfiles = ${{ steps.major-minor-build.outputs.newfiles }}
+        time cp -rp ./build ./build-mm
     
     - name: base-branch-with-mmcache
       if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit == 'true')
@@ -82,6 +88,7 @@ jobs:
     - name: base-branch-with-mmbuild
       if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit != 'true')
       run: |
+        echo newfiles = ${{ steps.major-minor-build.outputs.newfiles }}
         cd HPCC-Platform
         git checkout ${{ github.base_ref }}
         git submodule update -j 4 --init --recursive
@@ -102,9 +109,6 @@ jobs:
       run: |
         git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
-        echo pre-checkout-head
-        git checkout HEAD
-        echo post-checkout-head
         git submodule update -j 4 --init --recursive
         du -sh ../build-base
         time cp -pr ../build-base ../build
