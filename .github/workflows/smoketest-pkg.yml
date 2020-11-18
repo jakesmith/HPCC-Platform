@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 13
+  cacheversion: 15
 
 on:
   # Trigger the workflow on push or pull request,
@@ -90,52 +90,52 @@ jobs:
       run: |
         echo newfiles = ${{ steps.major-minor-build.outputs.newfiles }}
         cd HPCC-Platform
-        git checkout ${{ github.base_ref }}
-        git submodule update -j 4 --init --recursive
+        # git checkout ${{ github.base_ref }}
+        # git submodule update -j 4 --init --recursive
 
-    - name: base-branch-rest
-      if: steps.base-branch-cache.outputs.cache-hit != 'true'
-      run: |
-        cd HPCC-Platform
-        git restore-mtime
-        cd ../build
-        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        make -j$(nproc)
-        time cp -pr . ../build-base
-        du -sh ../build-base
+    # - name: base-branch-rest
+    #   if: steps.base-branch-cache.outputs.cache-hit != 'true'
+    #   run: |
+    #     cd HPCC-Platform
+    #     git restore-mtime
+    #     cd ../build
+    #     cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+    #     make -j$(nproc)
+    #     time cp -pr . ../build-base
+    #     du -sh ../build-base
 
-    - name: head-branch-with-bbcache
-      if: steps.base-branch-cache.outputs.cache-hit == 'true'
-      run: |
-        git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
-        cd HPCC-Platform
-        git submodule update -j 4 --init --recursive
-        du -sh ../build-base
-        time cp -pr ../build-base ../build
-        ls -lt ../build
-        du -sh ../build ../build-base
+    # - name: head-branch-with-bbcache
+    #   if: steps.base-branch-cache.outputs.cache-hit == 'true'
+    #   run: |
+    #     git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+    #     cd HPCC-Platform
+    #     git submodule update -j 4 --init --recursive
+    #     du -sh ../build-base
+    #     time cp -pr ../build-base ../build
+    #     ls -lt ../build
+    #     du -sh ../build ../build-base
 
-    - name: head-branch-with-bbbuild
-      if: steps.base-branch-cache.outputs.cache-hit != 'true'
-      run: |
-        cd HPCC-Platform
-        git checkout ${{ github.head_ref }}
-        git submodule update -j 4 --init --recursive
+    # - name: head-branch-with-bbbuild
+    #   if: steps.base-branch-cache.outputs.cache-hit != 'true'
+    #   run: |
+    #     cd HPCC-Platform
+    #     git checkout ${{ github.head_ref }}
+    #     git submodule update -j 4 --init --recursive
 
-    - name: head-branch-with-rest
-      run: |
-        cd HPCC-Platform
-        git restore-mtime
-        du -sh ../build-base ../build
-        echo BUILD-BASE
-        ls -lt ../build-base
-        echo BUILD
-        ls -lt ../build
-        cd ../build
-        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        make -j$(nproc)
-        make -j$(nproc) install
-        du -sh .
+    # - name: head-branch-with-rest
+    #   run: |
+    #     cd HPCC-Platform
+    #     git restore-mtime
+    #     du -sh ../build-base ../build
+    #     echo BUILD-BASE
+    #     ls -lt ../build-base
+    #     echo BUILD
+    #     ls -lt ../build
+    #     cd ../build
+    #     cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DSUPPRESS_BUILD_CONFIG_H=On -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
+    #     make -j$(nproc)
+    #     make -j$(nproc) install
+    #     du -sh .
 
     # - name: Cache install and regress setup
     #   id: install-setup-cache
