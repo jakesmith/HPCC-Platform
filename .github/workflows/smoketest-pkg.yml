@@ -43,15 +43,15 @@ jobs:
       uses: actions/cache@v2
       with:
         path: |
-          ./build-mm
-          ${{ steps.major-minor-build.outputs.newfiles }}
+          ./build-cache
+          ./HPCC-Platform-cache
         key: hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
 
     - name: major-minor-cached
       if: steps.major-minor-base-cache.outputs.cache-hit == 'true'
       run: |
         ls -ltR
-        cp -rp ./build-mm ./build
+        cp -rp ./build-cache ./build
 
     - name: major-minor-build
       id: major-minor-build
@@ -78,20 +78,20 @@ jobs:
         cd ..
         mkdir -p HPCC-Platform/system/aws/aws-sdk-cpp/aws-cpp-sdk-core/include/aws/core
         touch HPCC-Platform/system/aws/aws-sdk-cpp/aws-cpp-sdk-core/include/aws/core/SDKConfig.h
-        echo ::set-output name=newfiles::$(find HPCC-Platform -newer ./build/premake-timestamp -type f)
-        time cp -rp ./build ./build-mm
+        time cp -rp ./build ./build-cache
+        find HPCC-Platform -newer ./build/premake-timestamp -type f | cpio -p -dum ./HPCC-Platform-cache
+        ls -ltR
 
     - name: major-minor-build2
       id: major-minor-build2
       run: |
-        echo newfiles = ${{ steps.major-minor-build.outputs.newfiles }}
         ls -ltR
 
     # - name: base-branch-with-mmcache
     #   if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit == 'true')
     #   run: |
     #     git clone -j 4 --recurse-submodules --branch ${{ github.base_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
-    #     time cp -rp ./build-mm ./build
+    #     time cp -rp ./build-cache ./build
 
     # - name: base-branch-with-mmbuild
     #   if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit != 'true')
