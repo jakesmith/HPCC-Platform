@@ -35,7 +35,9 @@ jobs:
       id: base-branch-cache
       uses: actions/cache@v2
       with:
-        path: ./buildbase-cache
+        path: |
+          ./buildbase-cache
+          ./HPCC-Platform-base-cache
         key: hpccbuild-basebranch-${{ env.cacheversion }}
          
     - name: Cache major-minor-base
