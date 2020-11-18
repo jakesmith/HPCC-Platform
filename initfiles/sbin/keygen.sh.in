@@ -35,7 +35,6 @@ if [ -e $PATH_HOME/.ssh/id_rsa.pub ]; then
         cat $PATH_HOME/.ssh/id_rsa.pub > $PATH_HOME/.ssh/authorized_keys
 fi
 
-echo chown -R $USER_NAME:$GROUP_NAME $PATH_HOME/.ssh
 chown -R $USER_NAME:$GROUP_NAME $PATH_HOME/.ssh
 
 echo "New SSH Keys have been created. Use your standard methods for Key distribution to distribute keys for user $USER_NAME located at $PATH_HOME/.ssh"
