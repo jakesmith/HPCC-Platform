@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 22
+  cacheversion: 23
 
 on:
   # Trigger the workflow on push or pull request,
