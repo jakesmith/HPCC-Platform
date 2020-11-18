@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 18
+  cacheversion: 20
 
 on:
   # Trigger the workflow on push or pull request,
@@ -84,7 +84,7 @@ jobs:
     - name: major-minor-build2
       id: major-minor-build2
       run: |
-  #     echo newfiles = ${{ steps.major-minor-build.outputs.newfiles }}
+        echo newfiles = ${{ steps.major-minor-build.outputs.newfiles }}
         ls -ltR
 
     # - name: base-branch-with-mmcache
