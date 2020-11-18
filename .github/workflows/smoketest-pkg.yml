@@ -51,6 +51,7 @@ jobs:
     - name: major-minor-cached
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit == 'true'
       run: |
+        ls -lt ./build-mm/HPCC-Platform
         cp -rp ./build-mm ./build
 
     - name: major-minor-build
@@ -77,12 +78,7 @@ jobs:
         # if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
         cd ..
         touch HPCC-Platform/system/aws/aws-sdk-cpp/aws-cpp-sdk-core/include/aws/core/SDKConfig.h
-        echo looking for newer files
-        find HPCC-Platform -newer ./build/premake-timestamp -type f
-        echo DONE looking for newer files
         echo ::set-output name=newfiles::$(find HPCC-Platform -newer ./build/premake-timestamp -type f)
-        echo ::set-output name=newfiles2::myvalue1
-        echo newfiles = ${{ steps.major-minor-build.outputs.newfiles }}
         time cp -rp ./build ./build-mm
     
     - name: base-branch-with-mmcache
