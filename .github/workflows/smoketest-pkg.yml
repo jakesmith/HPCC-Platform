@@ -49,13 +49,16 @@ jobs:
         key: hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
 
     - name: major-minor-cached
-      if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit == 'true'
+#      if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit == 'true'
+      if: steps.major-minor-base-cache.outputs.cache-hit == 'true'
       run: |
+        ls -lt HPCC-Platform/
         cp -rp ./build-mm ./build
 
     - name: major-minor-build
       id: major-minor-build
-      if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
+#      if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
+      if: steps.major-minor-base-cache.outputs.cache-hit != 'true'
       run: |
         git clone -j 4 --recurse-submodules --branch ${{ steps.setup.outputs.mmbase-tag }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
