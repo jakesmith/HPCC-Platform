@@ -21,6 +21,19 @@ jobs:
     runs-on: ubuntu-20.04
 
     steps:
+    - name: vars
+      id: vars
+      run: |
+        echo GITHUB_ACTOR is ${GITHUB_ACTOR}
+        echo base_ref is ${{ github.base_ref }}
+        echo head_ref is ${{ github.head_ref }}
+        echo ref is ${{ github.ref }}
+        echo sha is ${{ github.sha }}
+        echo github.actor is ${{ github.actor }}
+        echo github.repository_owner is ${{ github.repository_owner }}
+        echo event - base.sha ${{ github.event.pull_request.base.sha }}
+        echo HEAD_BRANCH_CACHETAG - $HEAD_BRANCH_CACHETAG
+
     - name: Prerequisites
       id: setup
       run: |
