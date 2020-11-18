@@ -50,7 +50,7 @@ jobs:
     - name: major-minor-cached
       if: steps.major-minor-base-cache.outputs.cache-hit == 'true'
       run: |
-        ls -lt HPCC-Platform/
+        ls -ltR
         cp -rp ./build-mm ./build
 
     - name: major-minor-build
