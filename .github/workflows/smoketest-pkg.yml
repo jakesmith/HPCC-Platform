@@ -80,7 +80,7 @@ jobs:
         git clone -j 4 --recurse-submodules --branch ${{ github.base_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         mv ./build-mm-cache ./build
         cd HPCC-Platform-mm-cache
-        find . -type f | cpio -p -dumv ../HPCC-Platform
+        find . -type f | cpio -p -dum ../HPCC-Platform
 
     - name: base-branch-with-mmbuild
       if: (steps.base-branch-cache.outputs.cache-hit != 'true') && (steps.major-minor-base-cache.outputs.cache-hit != 'true')
@@ -111,7 +111,8 @@ jobs:
         git submodule update -j 4 --init --recursive
         cd ..
         mv ./buildbase-cache ./build
-        du -sh ./build
+        cd HPCC-Platform-base-cache
+        find . -type f | cpio -p -dum ../HPCC-Platform
 
     - name: head-branch-with-bbbuild
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
