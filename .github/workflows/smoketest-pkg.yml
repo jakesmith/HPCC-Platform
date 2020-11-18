@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 17
+  cacheversion: 18
 
 on:
   # Trigger the workflow on push or pull request,
@@ -39,7 +39,7 @@ jobs:
     #     key: hpccbuild-basebranch-${{ env.cacheversion }}
          
     - name: Cache major-minor-base
-      if: steps.base-branch-cache.outputs.cache-hit != 'true'
+#      if: steps.base-branch-cache.outputs.cache-hit != 'true'
       id: major-minor-base-cache
       uses: actions/cache@v2
       with:
