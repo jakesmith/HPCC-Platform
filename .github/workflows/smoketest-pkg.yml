@@ -50,7 +50,10 @@ jobs:
         path: |
           ./buildbase-cache
           ./HPCC-Platform-base-cache
-        key: hpccbuild-basebranch-${{ env.cacheversion }}
+        key: hpccbuild-basebranch-${{ env.cacheversion }}-${{ github.event.pull_request.base.sha }}
+        restore-keys: |
+          hpccbuild-basebranch-${{ env.cacheversion }}
+          hpccbuild-basebranch-
          
     - name: Cache major-minor-base
       if: steps.base-branch-cache.outputs.cache-hit != 'true'
@@ -60,7 +63,11 @@ jobs:
         path: |
           ./build-mm-cache
           ./HPCC-Platform-mm-cache
-        key: hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ github.repository_owner }}-${{ steps.setup.outputs.mmbase-tag }}
+        key: hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ steps.setup.outputs.mmbase-tag }}
+        restore-keys: |
+          hpccbuild-majorminorbase-${{ env.cacheversion }}-${{ steps.setup.outputs.mmbase-tag }}
+
+  # perhaps restore-keys should also include e.g. major only prefix, e.g. hpccbuild-mm-7
 
     - name: major-minor-build
       if: steps.base-branch-cache.outputs.cache-hit != 'true' && steps.major-minor-base-cache.outputs.cache-hit != 'true'
