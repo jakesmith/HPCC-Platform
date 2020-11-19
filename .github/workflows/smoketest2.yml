@@ -16,7 +16,7 @@ on:
 #      - notmain
   pull_request:
     branches:
-      - n_master
+      - master
 
 jobs:
   build-and-setup:
@@ -81,7 +81,7 @@ jobs:
           --build-arg BASE_REPO=${{ github.repository_owner }} \
           --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
           --build-arg BASE_BRANCH=${{ github.base_ref }} \
-          --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} 
+          --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} \
           smoketest/
         docker push ${{ env.BASE_BRANCH_CACHETAG }}
 
