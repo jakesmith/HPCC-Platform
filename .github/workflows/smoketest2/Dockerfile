@@ -2,7 +2,7 @@
 FROM ubuntu:20.04 AS base-image
 
 SHELL ["/bin/bash", "-c"]
-ARG DEBIAN_FRONTEND=noninteractive # Not using ENV, so not part of runtime image
+ARG DEBIAN_FRONTEND=noninteractive
 RUN TZ=Europe/London \
     apt-get update
 
@@ -56,7 +56,7 @@ RUN if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi && \
 FROM major-minor-base-build AS base-branch-build
 
 ARG BASE_BRANCH=master
-ARG BASE_SHA=dummysha # NB: not used, but set to dirty cache if different
+ARG BASE_SHA=dummysha
 RUN cd /hpcc-dev/HPCC-Platform && \
     git checkout ${BASE_BRANCH} && \
     git submodule update --init --recursive && \
@@ -71,7 +71,7 @@ FROM base-branch-build AS head-branch-build
 
 ARG HEAD_BRANCH=master
 ARG HEAD_REPO=hpcc-systems
-ARG HEAD_SHA=dummysha # NB: not used, but set to dirty cache if different
+ARG HEAD_SHA=dummysha
 RUN cd /hpcc-dev/HPCC-Platform && \
     git fetch --depth=1 https://github.com/${HEAD_REPO}/HPCC-Platform ${HEAD_BRANCH}:${HEAD_BRANCH} && \
     git checkout ${HEAD_BRANCH} && \
