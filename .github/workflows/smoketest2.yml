@@ -110,7 +110,7 @@ jobs:
           --build-arg HEAD_REPO=${{ github.actor }} \
           --build-arg HEAD_BRANCH=${{ github.ref }} \
           --build-arg HEAD_SHA=${{ github.event.pull_request.head.sha }} \
-          smoketest\
+          smoketest/
         docker push ${{ env.REGRESS_CACHETAG }} 
 
   regress-hthor-a-h:
