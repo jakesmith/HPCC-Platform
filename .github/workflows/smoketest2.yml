@@ -62,12 +62,12 @@ jobs:
 
     - name: Build base image
       run: |
-        docker build --squash --pull -t ${{env.REGRESS_CACHETAG }} --target base-image smoketest/
+        docker build --pull -t ${{env.REGRESS_CACHETAG }} --target base-image smoketest/
         docker push ${{env.REGRESS_CACHETAG }}
 
     - name: Build major-minor base branch
       run: |
-        docker build --squash --pull -t ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }} \
+        docker build --pull -t ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }} \
           --target major-minor-base-build \
           --build-arg BASE_REPO=${{ github.repository_owner }} \
           --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
@@ -76,7 +76,7 @@ jobs:
 
     - name: Build base branch
       run: |
-        docker build --squash --pull -t ${{ env.BASE_BRANCH_CACHETAG }} \
+        docker build --pull -t ${{ env.BASE_BRANCH_CACHETAG }} \
           --target base-branch-build \
           --build-arg BASE_REPO=${{ github.repository_owner }} \
           --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
@@ -87,7 +87,7 @@ jobs:
 
     - name: Build head branch
       run: |
-        docker build --squash --pull -t ${{ env.HEAD_BRANCH_CACHETAG }} \
+        docker build --pull -t ${{ env.HEAD_BRANCH_CACHETAG }} \
           --target head-branch-build \
           --build-arg BASE_REPO=${{ github.repository_owner }} \
           --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
@@ -101,7 +101,7 @@ jobs:
 
     - name: Regress setup
       run: |
-        docker build --squash --pull -t ${{ env.REGRESS_CACHETAG }} \
+        docker build --pull -t ${{ env.REGRESS_CACHETAG }} \
           --target regress-setup \
           --build-arg BASE_REPO=${{ github.repository_owner }} \
           --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
