@@ -48,6 +48,7 @@ RUN if grep -q '^lz4:' Makefile; then make -j$(nproc) lz4; fi && \
     if grep -q '^tbb:' Makefile; then make -j$(nproc) tbb; fi && \
     if grep -q '^aeron_client:' Makefile; then make -j$(nproc) aeron_client; fi && \
     if grep -q '^aeron_driver:' Makefile; then make -j$(nproc) aeron_driver; fi && \
+    if grep -q '^aeron_driver_static:' Makefile; then make -j$(nproc) aeron_driver_static; fi && \
     if grep -q '^antlr3c:' Makefile; then make -j$(nproc) antlr3c; fi
 
 
