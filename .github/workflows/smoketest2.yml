@@ -2,11 +2,11 @@
 
 name: st-docker
 env:
-  IMAGE_CACHETAG: ghcr.io/${{ github.repository_owner }}/s2moketest-image
-  MM_CACHETAG: ghcr.io/${{ github.repository_owner }}/s2moketest-major-minor-base
-  BASE_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/s2moketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
-  HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/s2moketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
-  REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/s2moketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+  IMAGE_CACHETAG: ghcr.io/${{ github.repository_owner }}/s3moketest-image
+  MM_CACHETAG: ghcr.io/${{ github.repository_owner }}/s3moketest-major-minor-base
+  BASE_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/s3moketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
+  HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/s3moketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+  REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/s3moketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
 on:
   # Trigger the workflow on push or pull request,
@@ -16,7 +16,7 @@ on:
 #      - notmain
   pull_request:
     branches:
-      - n_master
+      - master
 
 jobs:
   build-and-setup:
@@ -61,99 +61,57 @@ jobs:
         password: ${{ secrets.CR_PAT }}
 
     - name: Build base image
-      uses: docker/build-push-action@v2
-      with:
-        context: smoketest2
-        file: smoketest2/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        push: true
-        target: base-image
-        cache-from: ${{ env.IMAGE_CACHETAG }}
-        cache-to: type=inline,mode=min
-        tags: ${{ env.IMAGE_CACHETAG }}
+      run: |
+        docker build --pull -t ${{env.REGRESS_CACHETAG }} --target base-image smoketest2/
+        docker build push ${{env.REGRESS_CACHETAG }}
 
     - name: Build major-minor base branch
-      uses: docker/build-push-action@v2
-      with:
-        context: smoketest2
-        file: smoketest2/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        push: true
-        target: major-minor-base-build
-        build-args: |
-          BASE_REPO=${{ github.repository_owner }}
-          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
-        cache-from: |
-          ${{ env.IMAGE_CACHETAG }}
-          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-        cache-to: type=inline,mode=min
-        tags: ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+      run: |
+        docker build --pull -t ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }} \
+          --target major-minor-base-build \
+          --build-arg BASE_REPO=${{ github.repository_owner }} \
+          --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
+          smoketest2/
+        docker build push ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
 
     - name: Build base branch
-      uses: docker/build-push-action@v2
-      with:
-        context: smoketest2
-        file: smoketest2/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        push: true
-        target: base-branch-build
-        build-args: |
-          BASE_REPO=${{ github.repository_owner }}
-          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
-          BASE_BRANCH=${{ github.base_ref }} 
-          BASE_SHA=${{ github.event.pull_request.base.sha }} 
-        cache-from: |
-          ${{ env.IMAGE_CACHETAG }}
-          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-          ${{ env.BASE_BRANCH_CACHETAG }}
-        cache-to: type=inline,mode=min
-        tags: ${{ env.BASE_BRANCH_CACHETAG }}
+      run: |
+        docker build --pull -t ${{ env.BASE_BRANCH_CACHETAG }} \
+          --target base-branch-build \
+          --build-arg BASE_REPO=${{ github.repository_owner }} \
+          --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
+          --build-arg BASE_BRANCH=${{ github.base_ref }} \
+          --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} 
+          smoketest2/
+        docker build push ${{ env.BASE_BRANCH_CACHETAG }}
 
     - name: Build head branch
-      uses: docker/build-push-action@v2
-      with:
-        context: smoketest2
-        file: smoketest2/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        push: true
-        target: head-branch-build
-        build-args: |
-          BASE_REPO=${{ github.repository_owner }}
-          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} 
-          BASE_BRANCH=${{ github.base_ref }} 
-          BASE_SHA=${{ github.event.pull_request.base.sha }} 
-          HEAD_REPO=${{ github.actor }} 
-          HEAD_BRANCH=${{ github.ref }} 
-          HEAD_SHA=${{ github.event.pull_request.head.sha }}
-        cache-from: |
-          ${{ env.IMAGE_CACHETAG }}
-          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-          ${{ env.BASE_BRANCH_CACHETAG }}
-        cache-to: type=inline,mode=min
-        tags: ${{ env.HEAD_BRANCH_CACHETAG }}
+      run: |
+        docker build --pull -t ${{ env.HEAD_BRANCH_CACHETAG }} \
+          --target head-branch-build \
+          --build-arg BASE_REPO=${{ github.repository_owner }} \
+          --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
+          --build-arg BASE_BRANCH=${{ github.base_ref }} \
+          --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} \
+          --build-arg HEAD_REPO=${{ github.actor }} \
+          --build-arg HEAD_BRANCH=${{ github.ref }} \
+          --build-arg HEAD_SHA=${{ github.event.pull_request.head.sha }} \
+          smoketest2/
+        docker push ${{ env.HEAD_BRANCH_CACHETAG }}
 
     - name: Regress setup
-      uses: docker/build-push-action@v2
-      with:
-        context: smoketest2
-        file: smoketest2/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        push: true
-        target: regress-setup
-        build-args: |
-          BASE_REPO=${{ github.repository_owner }}
-          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
-          BASE_BRANCH=${{ github.base_ref }} 
-          BASE_SHA=${{ github.event.pull_request.base.sha }} 
-          HEAD_REPO=${{ github.actor }} 
-          HEAD_BRANCH=${{ github.ref }} 
-          HEAD_SHA=${{ github.event.pull_request.head.sha }}
-        cache-from: |
-          ${{ env.IMAGE_CACHETAG }}
-          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-          ${{ env.BASE_BRANCH_CACHETAG }}
-          ${{ env.HEAD_BRANCH_CACHETAG }}
-        tags: ${{ env.REGRESS_CACHETAG }}
+      run: |
+        docker build --pull -t ${{ env.REGRESS_CACHETAG }} \
+          --target regress-setup \
+          --build-arg BASE_REPO=${{ github.repository_owner }} \
+          --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
+          --build-arg BASE_BRANCH=${{ github.base_ref }} \
+          --build-arg BASE_SHA=${{ github.event.pull_request.base.sha }} \
+          --build-arg HEAD_REPO=${{ github.actor }} \
+          --build-arg HEAD_BRANCH=${{ github.ref }} \
+          --build-arg HEAD_SHA=${{ github.event.pull_request.head.sha }} \
+          smoketest2\
+        docker push ${{ env.REGRESS_CACHETAG }} 
 
   regress-hthor-a-h:
     runs-on: ubuntu-20.04
