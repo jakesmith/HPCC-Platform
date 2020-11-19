@@ -16,7 +16,7 @@ on:
 #      - notmain
   pull_request:
     branches:
-      - notmaster
+      - master
 
 jobs:
   build-and-setup:
