@@ -276,4 +276,6 @@ jobs:
     runs-on: ubuntu-20.04
     needs: build-and-setup
     steps:
-    -
+    - run: |
+        docker pull ${{ env.REGRESS_CACHETAG }}
+        docker run --name 'smoketest-regress-roxie' --entrypoint /hpcc-dev/hpccinstall/opt/HPCCSystems/bin/unittests ${{ env.REGRESS_CACHETAG }}
