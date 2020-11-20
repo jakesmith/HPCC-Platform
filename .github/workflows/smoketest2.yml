@@ -62,7 +62,7 @@ jobs:
 
     - name: Build base image
       run: |
-        docker pull ${{env.IMAGE_CACHETAG }}
+        docker pull ${{env.IMAGE_CACHETAG }} || true
         docker build -t ${{env.IMAGE_CACHETAG }} --target base-image smoketest/
         docker push ${{env.IMAGE_CACHETAG }}
 
