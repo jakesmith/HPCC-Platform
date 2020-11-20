@@ -63,8 +63,7 @@ jobs:
     - name: get it
       run: |
         echo start
-        docker buildx build \
-          --build-arg BASE_REPO=jakesmith \
+        docker buildx build --build-arg BASE_REPO=jakesmith \
           --build-arg MAJOR_MINOR_BASE=community_7.12.6-rc1 \
           --build-arg BUILD_TYPE=RelWithDebInfo \
           --build-arg USE_CPPUNIT=1 \
@@ -76,7 +75,7 @@ jobs:
           --tag ghcr.io/jakesmith/s6oketest-head-branch-build:master-build-cli11_2d4142229f5dfa96f4eca21cd2ace2a470818108 \
           --target head-branch-build \
           --cache-from ghcr.io/jakesmith/s6oketest-image \
-          --cache-from ghcr.io/jakesmith/s6oketest-major-minor-base:community_7.12.6-rc1 
+          --cache-from ghcr.io/jakesmith/s6oketest-major-minor-base:community_7.12.6-rc1 \
           --cache-from ghcr.io/jakesmith/s6oketest-base-branch-build:master_1c739ae82b80989d29cde0acf296fc3175b06819 \
           --cache-to type=inline,mode=min --file smoketest/Dockerfile \
           --builder builder-build-and-setup-2 --push smoketest
