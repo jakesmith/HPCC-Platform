@@ -9,6 +9,13 @@ RUN TZ=Europe/London \
 # JCSMORE - would be interesting to retrieve pre-requisites, based on target platform, automatically
 # e.g. have wiki definitions formalized/parsable and fetch them from there
 
+RUN groupadd -g 1000 hpcc && \
+    useradd -s /bin/bash -r -m -N -c "hpcc runtime User" -u 999 -g hpcc hpcc && \
+    passwd -l hpcc && \
+    mkdir -p /hpcc-dev/build && \
+    mkdir -p /hpcc-dev/hpccinstall && \
+    chown -R hpcc:hpcc /hpcc-dev 
+
 RUN echo in build of base-image
 
 USER hpcc
