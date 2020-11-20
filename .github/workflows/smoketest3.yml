@@ -2,11 +2,11 @@
 
 name: st-docker
 env:
-  IMAGE_CACHETAG: ghcr.io/${{ github.repository_owner }}/s6oketest-image
-  MM_CACHETAG: ghcr.io/${{ github.repository_owner }}/s6oketest-major-minor-base
-  BASE_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/s6oketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
-  HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/s6oketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
-  REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/s6oketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+  IMAGE_CACHETAG: ghcr.io/${{ github.repository_owner }}/test1-image
+  MM_CACHETAG: ghcr.io/${{ github.repository_owner }}/test1-major-minor-base
+  BASE_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/test1-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
+  HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/test1-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+  REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/test1-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
 on:
   # Trigger the workflow on push or pull request,
@@ -16,7 +16,7 @@ on:
 #      - notmain
   pull_request:
     branches:
-      - n_master
+      - master
 
 jobs:
   build-and-setup:
@@ -41,7 +41,7 @@ jobs:
       id: dlfiles
       run: |
         mkdir -p smoketest
-        curl -s --output smoketest/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/Dockerfile"
+        curl -s --output smoketest/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest3/Dockerfile"
         curl -s --output smoketest/runregress.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/runregress.sh"
         chmod +x smoketest/runregress.sh
         curl -s --output smoketest/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/ecl-test.json"
