@@ -68,8 +68,8 @@ RUN make -j$(nproc)
 # STAGE - build head branch
 FROM base-branch-build AS head-branch-build
 
-ARG HEAD_BRANCH=master
 ARG HEAD_REPO=hpcc-systems
+ARG HEAD_BRANCH=master
 ARG HEAD_SHA=dummysha
 RUN cd /hpcc-dev/HPCC-Platform && \
     git fetch --depth=1 https://github.com/${HEAD_REPO}/HPCC-Platform ${HEAD_BRANCH}:${HEAD_BRANCH} && \

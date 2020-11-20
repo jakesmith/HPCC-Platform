@@ -2,11 +2,11 @@
 
 name: st-docker
 env:
-  IMAGE_CACHETAG: ghcr.io/${{ github.repository_owner }}/s2moketest-image
-  MM_CACHETAG: ghcr.io/${{ github.repository_owner }}/s2moketest-major-minor-base
-  BASE_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/s2moketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
-  HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/s2moketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
-  REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/s2moketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+  IMAGE_CACHETAG: ghcr.io/${{ github.repository_owner }}/s6oketest-image
+  MM_CACHETAG: ghcr.io/${{ github.repository_owner }}/s6oketest-major-minor-base
+  BASE_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/s6oketest-base-branch-build:${{ github.base_ref }}_${{ github.event.pull_request.base.sha }}
+  HEAD_BRANCH_CACHETAG: ghcr.io/${{ github.repository_owner }}/s6oketest-head-branch-build:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
+  REGRESS_CACHETAG: ghcr.io/${{ github.repository_owner }}/s6oketest-regress-setup:${{ github.head_ref }}_${{ github.event.pull_request.head.sha }}
 
 on:
   # Trigger the workflow on push or pull request,
@@ -102,10 +102,10 @@ jobs:
         build-args: |
           BASE_REPO=${{ github.repository_owner }}
           MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
-          BASE_BRANCH=${{ github.base_ref }} 
-          BASE_SHA=${{ github.event.pull_request.base.sha }} 
           BUILD_TYPE=RelWithDebInfo
           USE_CPPUNIT=1
+          BASE_BRANCH=${{ github.base_ref }} 
+          BASE_SHA=${{ github.event.pull_request.base.sha }} 
         cache-from: |
           ${{ env.IMAGE_CACHETAG }}
           ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
@@ -124,14 +124,13 @@ jobs:
         build-args: |
           BASE_REPO=${{ github.repository_owner }}
           MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} 
+          BUILD_TYPE=RelWithDebInfo
+          USE_CPPUNIT=1
           BASE_BRANCH=${{ github.base_ref }} 
           BASE_SHA=${{ github.event.pull_request.base.sha }} 
           HEAD_REPO=${{ github.actor }} 
           HEAD_BRANCH=${{ github.ref }} 
           HEAD_SHA=${{ github.event.pull_request.head.sha }}
-          BUILD_THREADS=0
-          BUILD_TYPE=RelWithDebInfo
-          USE_CPPUNIT=1
         cache-from: |
           ${{ env.IMAGE_CACHETAG }}
           ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
@@ -150,13 +149,13 @@ jobs:
         build-args: |
           BASE_REPO=${{ github.repository_owner }}
           MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
+          BUILD_TYPE=RelWithDebInfo
+          USE_CPPUNIT=1
           BASE_BRANCH=${{ github.base_ref }} 
           BASE_SHA=${{ github.event.pull_request.base.sha }} 
           HEAD_REPO=${{ github.actor }} 
           HEAD_BRANCH=${{ github.ref }} 
           HEAD_SHA=${{ github.event.pull_request.head.sha }}
-          BUILD_TYPE=RelWithDebInfo
-          USE_CPPUNIT=1
         cache-from: |
           ${{ env.IMAGE_CACHETAG }}
           ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
