@@ -31,7 +31,7 @@ ARG BASE_REPO=hpcc-systems
 ARG MAJOR_MINOR_BASE=community_7.0.0
 ARG BUILD_THREADS
 ARG BUILD_TYPE=RelWithDebInfo
-ARG USE_CPPUNIT=0
+ARG USE_CPPUNIT=1
 
 RUN git clone https://github.com/${BASE_REPO}/HPCC-Platform.git /hpcc-dev/HPCC-Platform && \
     cd /hpcc-dev/HPCC-Platform && \

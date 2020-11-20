@@ -62,8 +62,8 @@ jobs:
 
     - name: Build base image
       run: |
-        docker build --pull -t ${{env.REGRESS_CACHETAG }} --target base-image smoketest/
-        docker push ${{env.REGRESS_CACHETAG }}
+        docker build --pull -t ${{env.IMAGE_CACHETAG }} --target base-image smoketest/
+        docker push ${{env.IMAGE_CACHETAG }}
 
     - name: Build major-minor base branch
       run: |
