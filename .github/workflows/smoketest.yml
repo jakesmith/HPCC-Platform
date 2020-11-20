@@ -41,7 +41,7 @@ jobs:
       id: dlfiles
       run: |
         mkdir -p smoketest
-        curl -s --output smoketest/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/Dockerfile"
+        curl -s --output smoketest/Dockerfile "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/Dockerfile2"
         curl -s --output smoketest/runregress.sh "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/runregress.sh"
         chmod +x smoketest/runregress.sh
         curl -s --output smoketest/ecl-test.json "https://raw.githubusercontent.com/${{ github.repository_owner }}/HPCC-Platform/${{ github.sha }}/.github/workflows/smoketest/ecl-test.json"
