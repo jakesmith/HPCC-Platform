@@ -16,7 +16,7 @@ on:
 #      - notmain
   pull_request:
     branches:
-      - n_master
+      - master
 
 jobs:
   build-and-setup:
@@ -60,235 +60,239 @@ jobs:
         username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
 
-    - name: Build base image
-      uses: docker/build-push-action@v2
-      with:
-        context: smoketest
-        file: smoketest/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        push: true
-        target: base-image
-        cache-from: ${{ env.IMAGE_CACHETAG }}
-        cache-to: type=inline,mode=min
-        tags: ${{ env.IMAGE_CACHETAG }}
+    - name: get it
+      run: |
+        time docker pull ghcr.io/jakesmith/s6oketest-base-branch-build:master_1c739ae82b80989d29cde0acf296fc3175b06819 
 
-    - name: Build major-minor base branch
-      uses: docker/build-push-action@v2
-      with:
-        context: smoketest
-        file: smoketest/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        push: true
-        target: major-minor-base-build
-        build-args: |
-          BASE_REPO=${{ github.repository_owner }}
-          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
-          BUILD_TYPE=RelWithDebInfo
-          USE_CPPUNIT=1
-        cache-from: |
-          ${{ env.IMAGE_CACHETAG }}
-          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-        cache-to: type=inline,mode=min
-        tags: ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+  #   - name: Build base image
+  #     uses: docker/build-push-action@v2
+  #     with:
+  #       context: smoketest
+  #       file: smoketest/Dockerfile
+  #       builder: ${{ steps.buildx.outputs.name }}
+  #       push: true
+  #       target: base-image
+  #       cache-from: ${{ env.IMAGE_CACHETAG }}
+  #       cache-to: type=inline,mode=min
+  #       tags: ${{ env.IMAGE_CACHETAG }}
 
-    - name: Build base branch
-      uses: docker/build-push-action@v2
-      with:
-        context: smoketest
-        file: smoketest/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        push: true
-        target: base-branch-build
-        build-args: |
-          BASE_REPO=${{ github.repository_owner }}
-          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
-          BUILD_TYPE=RelWithDebInfo
-          USE_CPPUNIT=1
-          BASE_BRANCH=${{ github.base_ref }}
-          BASE_SHA=${{ github.event.pull_request.base.sha }}
-        cache-from: |
-          ${{ env.IMAGE_CACHETAG }}
-          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-          ${{ env.BASE_BRANCH_CACHETAG }}
-        cache-to: type=inline,mode=min
-        tags: ${{ env.BASE_BRANCH_CACHETAG }}
+  #   - name: Build major-minor base branch
+  #     uses: docker/build-push-action@v2
+  #     with:
+  #       context: smoketest
+  #       file: smoketest/Dockerfile
+  #       builder: ${{ steps.buildx.outputs.name }}
+  #       push: true
+  #       target: major-minor-base-build
+  #       build-args: |
+  #         BASE_REPO=${{ github.repository_owner }}
+  #         MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
+  #         BUILD_TYPE=RelWithDebInfo
+  #         USE_CPPUNIT=1
+  #       cache-from: |
+  #         ${{ env.IMAGE_CACHETAG }}
+  #         ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+  #       cache-to: type=inline,mode=min
+  #       tags: ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
 
-    - name: Build head branch
-      uses: docker/build-push-action@v2
-      with:
-        context: smoketest
-        file: smoketest/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        push: true
-        target: head-branch-build
-        build-args: |
-          BASE_REPO=${{ github.repository_owner }}
-          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
-          BUILD_TYPE=RelWithDebInfo
-          USE_CPPUNIT=1
-          BASE_BRANCH=${{ github.base_ref }}
-          BASE_SHA=${{ github.event.pull_request.base.sha }}
-          HEAD_REPO=${{ github.actor }}
-          HEAD_BRANCH=${{ github.ref }}
-          HEAD_SHA=${{ github.event.pull_request.head.sha }}
-        cache-from: |
-          ${{ env.IMAGE_CACHETAG }}
-          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-          ${{ env.BASE_BRANCH_CACHETAG }}
-        cache-to: type=inline,mode=min
-        tags: ${{ env.HEAD_BRANCH_CACHETAG }}
+  #   - name: Build base branch
+  #     uses: docker/build-push-action@v2
+  #     with:
+  #       context: smoketest
+  #       file: smoketest/Dockerfile
+  #       builder: ${{ steps.buildx.outputs.name }}
+  #       push: true
+  #       target: base-branch-build
+  #       build-args: |
+  #         BASE_REPO=${{ github.repository_owner }}
+  #         MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
+  #         BUILD_TYPE=RelWithDebInfo
+  #         USE_CPPUNIT=1
+  #         BASE_BRANCH=${{ github.base_ref }}
+  #         BASE_SHA=${{ github.event.pull_request.base.sha }}
+  #       cache-from: |
+  #         ${{ env.IMAGE_CACHETAG }}
+  #         ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+  #         ${{ env.BASE_BRANCH_CACHETAG }}
+  #       cache-to: type=inline,mode=min
+  #       tags: ${{ env.BASE_BRANCH_CACHETAG }}
 
-    - name: Regress setup
-      uses: docker/build-push-action@v2
-      with:
-        context: smoketest
-        file: smoketest/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        push: true
-        target: regress-setup
-        build-args: |
-          BASE_REPO=${{ github.repository_owner }}
-          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
-          BUILD_TYPE=RelWithDebInfo
-          USE_CPPUNIT=1
-          BASE_BRANCH=${{ github.base_ref }}
-          BASE_SHA=${{ github.event.pull_request.base.sha }}
-          HEAD_REPO=${{ github.actor }}
-          HEAD_BRANCH=${{ github.ref }}
-          HEAD_SHA=${{ github.event.pull_request.head.sha }}
-        cache-from: |
-          ${{ env.IMAGE_CACHETAG }}
-          ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
-          ${{ env.BASE_BRANCH_CACHETAG }}
-          ${{ env.HEAD_BRANCH_CACHETAG }}
-        tags: ${{ env.REGRESS_CACHETAG }}
+  #   - name: Build head branch
+  #     uses: docker/build-push-action@v2
+  #     with:
+  #       context: smoketest
+  #       file: smoketest/Dockerfile
+  #       builder: ${{ steps.buildx.outputs.name }}
+  #       push: true
+  #       target: head-branch-build
+  #       build-args: |
+  #         BASE_REPO=${{ github.repository_owner }}
+  #         MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
+  #         BUILD_TYPE=RelWithDebInfo
+  #         USE_CPPUNIT=1
+  #         BASE_BRANCH=${{ github.base_ref }}
+  #         BASE_SHA=${{ github.event.pull_request.base.sha }}
+  #         HEAD_REPO=${{ github.actor }}
+  #         HEAD_BRANCH=${{ github.ref }}
+  #         HEAD_SHA=${{ github.event.pull_request.head.sha }}
+  #       cache-from: |
+  #         ${{ env.IMAGE_CACHETAG }}
+  #         ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+  #         ${{ env.BASE_BRANCH_CACHETAG }}
+  #       cache-to: type=inline,mode=min
+  #       tags: ${{ env.HEAD_BRANCH_CACHETAG }}
 
-  regress-hthor-a-h:
-    runs-on: ubuntu-20.04
-    needs: [ build-and-setup ]
-    steps:
-    - uses: docker/login-action@v1 
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-    - run: |
-        docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [a-h]*.ecl
+  #   - name: Regress setup
+  #     uses: docker/build-push-action@v2
+  #     with:
+  #       context: smoketest
+  #       file: smoketest/Dockerfile
+  #       builder: ${{ steps.buildx.outputs.name }}
+  #       push: true
+  #       target: regress-setup
+  #       build-args: |
+  #         BASE_REPO=${{ github.repository_owner }}
+  #         MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
+  #         BUILD_TYPE=RelWithDebInfo
+  #         USE_CPPUNIT=1
+  #         BASE_BRANCH=${{ github.base_ref }}
+  #         BASE_SHA=${{ github.event.pull_request.base.sha }}
+  #         HEAD_REPO=${{ github.actor }}
+  #         HEAD_BRANCH=${{ github.ref }}
+  #         HEAD_SHA=${{ github.event.pull_request.head.sha }}
+  #       cache-from: |
+  #         ${{ env.IMAGE_CACHETAG }}
+  #         ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+  #         ${{ env.BASE_BRANCH_CACHETAG }}
+  #         ${{ env.HEAD_BRANCH_CACHETAG }}
+  #       tags: ${{ env.REGRESS_CACHETAG }}
 
-  regress-hthor-i-q:
-    runs-on: ubuntu-20.04
-    needs: [ build-and-setup ]
-    steps:
-    - uses: docker/login-action@v1 
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-    - run: |
-        docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [i-q]*.ecl
+  # regress-hthor-a-h:
+  #   runs-on: ubuntu-20.04
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - uses: docker/login-action@v1 
+  #     with:
+  #       registry: ghcr.io
+  #       username: ${{ github.repository_owner }}
+  #       password: ${{ secrets.CR_PAT }}
+  #   - run: |
+  #       docker pull ${{ env.REGRESS_CACHETAG }}
+  #       docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [a-h]*.ecl
 
-  regress-hthor-r-z:
-    runs-on: ubuntu-20.04
-    needs: [ build-and-setup ]
-    steps:
-    - uses: docker/login-action@v1 
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-    - run: |
-        docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [r-z]*.ecl
+  # regress-hthor-i-q:
+  #   runs-on: ubuntu-20.04
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - uses: docker/login-action@v1 
+  #     with:
+  #       registry: ghcr.io
+  #       username: ${{ github.repository_owner }}
+  #       password: ${{ secrets.CR_PAT }}
+  #   - run: |
+  #       docker pull ${{ env.REGRESS_CACHETAG }}
+  #       docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [i-q]*.ecl
 
-  regress-thor-a-h:
-    runs-on: ubuntu-20.04
-    needs: [ build-and-setup ]
-    steps:
-    - uses: docker/login-action@v1 
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-    - run: |
-        docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [a-h]*.ecl
+  # regress-hthor-r-z:
+  #   runs-on: ubuntu-20.04
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - uses: docker/login-action@v1 
+  #     with:
+  #       registry: ghcr.io
+  #       username: ${{ github.repository_owner }}
+  #       password: ${{ secrets.CR_PAT }}
+  #   - run: |
+  #       docker pull ${{ env.REGRESS_CACHETAG }}
+  #       docker run --name 'smoketest-regress-hthor' ${{ env.REGRESS_CACHETAG }} hthor [r-z]*.ecl
 
-  regress-thor-i-q:
-    runs-on: ubuntu-20.04
-    needs: [ build-and-setup ]
-    steps:
-    - uses: docker/login-action@v1 
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-    - run: |
-        docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [i-q]*.ecl
+  # regress-thor-a-h:
+  #   runs-on: ubuntu-20.04
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - uses: docker/login-action@v1 
+  #     with:
+  #       registry: ghcr.io
+  #       username: ${{ github.repository_owner }}
+  #       password: ${{ secrets.CR_PAT }}
+  #   - run: |
+  #       docker pull ${{ env.REGRESS_CACHETAG }}
+  #       docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [a-h]*.ecl
 
-  regress-thor-r-z:
-    runs-on: ubuntu-20.04
-    needs: [ build-and-setup ]
-    steps:
-    - uses: docker/login-action@v1 
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-    - run: |
-        docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [r-z]*.ecl
+  # regress-thor-i-q:
+  #   runs-on: ubuntu-20.04
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - uses: docker/login-action@v1 
+  #     with:
+  #       registry: ghcr.io
+  #       username: ${{ github.repository_owner }}
+  #       password: ${{ secrets.CR_PAT }}
+  #   - run: |
+  #       docker pull ${{ env.REGRESS_CACHETAG }}
+  #       docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [i-q]*.ecl
 
-  regress-roxie-a-h:
-    runs-on: ubuntu-20.04
-    needs: [ build-and-setup ]
-    steps:
-    - uses: docker/login-action@v1 
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-    - run: |
-        docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [a-h]*.ecl
+  # regress-thor-r-z:
+  #   runs-on: ubuntu-20.04
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - uses: docker/login-action@v1 
+  #     with:
+  #       registry: ghcr.io
+  #       username: ${{ github.repository_owner }}
+  #       password: ${{ secrets.CR_PAT }}
+  #   - run: |
+  #       docker pull ${{ env.REGRESS_CACHETAG }}
+  #       docker run --name 'smoketest-regress-thor' ${{ env.REGRESS_CACHETAG }} thor [r-z]*.ecl
 
-  regress-roxie-i-q:
-    runs-on: ubuntu-20.04
-    needs: [ build-and-setup ]
-    steps:
-    - uses: docker/login-action@v1 
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-    - run: |
-        docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [i-q]*.ecl
+  # regress-roxie-a-h:
+  #   runs-on: ubuntu-20.04
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - uses: docker/login-action@v1 
+  #     with:
+  #       registry: ghcr.io
+  #       username: ${{ github.repository_owner }}
+  #       password: ${{ secrets.CR_PAT }}
+  #   - run: |
+  #       docker pull ${{ env.REGRESS_CACHETAG }}
+  #       docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [a-h]*.ecl
 
-  regress-roxie-r-z:
-    runs-on: ubuntu-20.04
-    needs: [ build-and-setup ]
-    steps:
-    - uses: docker/login-action@v1 
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-    - run: |
-        docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [r-z]*.ecl
+  # regress-roxie-i-q:
+  #   runs-on: ubuntu-20.04
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - uses: docker/login-action@v1 
+  #     with:
+  #       registry: ghcr.io
+  #       username: ${{ github.repository_owner }}
+  #       password: ${{ secrets.CR_PAT }}
+  #   - run: |
+  #       docker pull ${{ env.REGRESS_CACHETAG }}
+  #       docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [i-q]*.ecl
 
-  unittests:
-    runs-on: ubuntu-20.04
-    needs: build-and-setup
-    steps:
-    - uses: docker/login-action@v1
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.CR_PAT }}
-    - run: |
-        docker pull ${{ env.REGRESS_CACHETAG }}
-        docker run --name 'smoketest-unittests' --entrypoint /hpcc-dev/hpccinstall/opt/HPCCSystems/bin/unittests ${{ env.REGRESS_CACHETAG }}
+  # regress-roxie-r-z:
+  #   runs-on: ubuntu-20.04
+  #   needs: [ build-and-setup ]
+  #   steps:
+  #   - uses: docker/login-action@v1 
+  #     with:
+  #       registry: ghcr.io
+  #       username: ${{ github.repository_owner }}
+  #       password: ${{ secrets.CR_PAT }}
+  #   - run: |
+  #       docker pull ${{ env.REGRESS_CACHETAG }}
+  #       docker run --name 'smoketest-regress-roxie' ${{ env.REGRESS_CACHETAG }} roxie [r-z]*.ecl
+
+  # unittests:
+  #   runs-on: ubuntu-20.04
+  #   needs: build-and-setup
+  #   steps:
+  #   - uses: docker/login-action@v1
+  #     with:
+  #       registry: ghcr.io
+  #       username: ${{ github.repository_owner }}
+  #       password: ${{ secrets.CR_PAT }}
+  #   - run: |
+  #       docker pull ${{ env.REGRESS_CACHETAG }}
+  #       docker run --name 'smoketest-unittests' --entrypoint /hpcc-dev/hpccinstall/opt/HPCCSystems/bin/unittests ${{ env.REGRESS_CACHETAG }}
