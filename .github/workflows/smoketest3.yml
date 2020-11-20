@@ -104,8 +104,8 @@ jobs:
           MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
           BUILD_TYPE=RelWithDebInfo
           USE_CPPUNIT=1
-          BASE_BRANCH=${{ github.base_ref }} 
-          BASE_SHA=${{ github.event.pull_request.base.sha }} 
+          BASE_BRANCH=${{ github.base_ref }}
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
         cache-from: |
           ${{ env.IMAGE_CACHETAG }}
           ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
@@ -123,13 +123,13 @@ jobs:
         target: head-branch-build
         build-args: |
           BASE_REPO=${{ github.repository_owner }}
-          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} 
+          MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
           BUILD_TYPE=RelWithDebInfo
           USE_CPPUNIT=1
-          BASE_BRANCH=${{ github.base_ref }} 
-          BASE_SHA=${{ github.event.pull_request.base.sha }} 
-          HEAD_REPO=${{ github.actor }} 
-          HEAD_BRANCH=${{ github.ref }} 
+          BASE_BRANCH=${{ github.base_ref }}
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          HEAD_REPO=${{ github.actor }}
+          HEAD_BRANCH=${{ github.ref }}
           HEAD_SHA=${{ github.event.pull_request.head.sha }}
         cache-from: |
           ${{ env.IMAGE_CACHETAG }}
@@ -151,10 +151,10 @@ jobs:
           MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }}
           BUILD_TYPE=RelWithDebInfo
           USE_CPPUNIT=1
-          BASE_BRANCH=${{ github.base_ref }} 
-          BASE_SHA=${{ github.event.pull_request.base.sha }} 
-          HEAD_REPO=${{ github.actor }} 
-          HEAD_BRANCH=${{ github.ref }} 
+          BASE_BRANCH=${{ github.base_ref }}
+          BASE_SHA=${{ github.event.pull_request.base.sha }}
+          HEAD_REPO=${{ github.actor }}
+          HEAD_BRANCH=${{ github.ref }}
           HEAD_SHA=${{ github.event.pull_request.head.sha }}
         cache-from: |
           ${{ env.IMAGE_CACHETAG }}
