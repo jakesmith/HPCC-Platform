@@ -29,7 +29,6 @@ FROM base-image AS major-minor-base-build
 
 ARG BASE_REPO=hpcc-systems
 ARG MAJOR_MINOR_BASE=community_7.0.0
-ARG BUILD_THREADS
 ARG BUILD_TYPE=RelWithDebInfo
 ARG USE_CPPUNIT=0
 
