@@ -57,17 +57,19 @@ jobs:
       uses: docker/login-action@v1 
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
 
     - name: Build base image
       run: |
-        docker build --pull -t ${{env.IMAGE_CACHETAG }} --target base-image smoketest/
+        docker pull ${{env.IMAGE_CACHETAG }}
+        docker build -t ${{env.IMAGE_CACHETAG }} --target base-image smoketest/
         docker push ${{env.IMAGE_CACHETAG }}
 
     - name: Build major-minor base branch
       run: |
-        docker build --pull -t ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }} \
+        docker pull ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }}
+        docker build -t ${{ env.MM_CACHETAG }}:${{ steps.dlfiles.outputs.mmbase-tag }} \
           --target major-minor-base-build \
           --build-arg BASE_REPO=${{ github.repository_owner }} \
           --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
@@ -76,7 +78,8 @@ jobs:
 
     - name: Build base branch
       run: |
-        docker build --pull -t ${{ env.BASE_BRANCH_CACHETAG }} \
+        docker pull ${{ env.BASE_BRANCH_CACHETAG }}
+        docker build -t ${{ env.BASE_BRANCH_CACHETAG }} \
           --target base-branch-build \
           --build-arg BASE_REPO=${{ github.repository_owner }} \
           --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
@@ -87,7 +90,8 @@ jobs:
 
     - name: Build head branch
       run: |
-        docker build --pull -t ${{ env.HEAD_BRANCH_CACHETAG }} \
+        docker pull ${{ env.HEAD_BRANCH_CACHETAG }}
+        docker build -t ${{ env.HEAD_BRANCH_CACHETAG }} \
           --target head-branch-build \
           --build-arg BASE_REPO=${{ github.repository_owner }} \
           --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
@@ -101,7 +105,8 @@ jobs:
 
     - name: Regress setup
       run: |
-        docker build --pull -t ${{ env.REGRESS_CACHETAG }} \
+        docker pull ${{ env.REGRESS_CACHETAG }}
+        docker build -t ${{ env.REGRESS_CACHETAG }} \
           --target regress-setup \
           --build-arg BASE_REPO=${{ github.repository_owner }} \
           --build-arg MAJOR_MINOR_BASE=${{ steps.dlfiles.outputs.mmbase-tag }} \
@@ -120,7 +125,7 @@ jobs:
     - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -133,7 +138,7 @@ jobs:
     - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -146,7 +151,7 @@ jobs:
     - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -159,7 +164,7 @@ jobs:
     - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -172,7 +177,7 @@ jobs:
     - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -185,7 +190,7 @@ jobs:
     - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -198,7 +203,7 @@ jobs:
     - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -211,7 +216,7 @@ jobs:
     - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -224,7 +229,7 @@ jobs:
     - uses: docker/login-action@v1 
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
@@ -237,7 +242,7 @@ jobs:
     - uses: docker/login-action@v1
       with:
         registry: ghcr.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        username: ${{ github.repository_owner }}
         password: ${{ secrets.CR_PAT }}
     - run: |
         docker pull ${{ env.REGRESS_CACHETAG }}
