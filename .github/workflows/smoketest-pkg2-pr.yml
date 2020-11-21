@@ -7,8 +7,8 @@ env:
 on:
   pull_request:
     branches:
-      - master
-      - candidate-7.12.x
+      - n_master
+      - n_candidate-7.12.x
 
 jobs:
   build-and-setup:
@@ -44,6 +44,11 @@ jobs:
 # NB2: However, if this job (build) completes (and caches), but dependent
 # jobs fail (regress runs), potentially useful to rerun based on cache
 # Can test by forcing re-run
+
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
 
     - name: Cache build
       id: build
