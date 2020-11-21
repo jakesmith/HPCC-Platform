@@ -52,33 +52,41 @@ jobs:
         path: |
           ./build-cache
           ./HPCC-Platform-cache
-        key: hpccbuild-${{ github.sha }}-${{ env.cacheversion }}
+        key: hpccbuild-${{ env.cacheversion }}-${{ github.ref }}-${{ github.sha }}
         restore-keys: |
-          hpccbuild-${{ github.ref }}-${{ env.cacheversion }}
+          hpccbuild-${{ env.cacheversion }}-${{ github.ref }}
           hpccbuild-${{ env.cacheversion }}
 
       # Should add other restore keys e.g.:
       #   hpccbuild-7.12-
       #   hpccbuild-7.
 
-    - name: prep
-      run: |
-        git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
-        git restore-mtime
-         
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
+
     - name: prep-cache
       if: steps.build.outputs.cache-hit == 'true'
       run: |
-        mv ./build-cache ./build
-        cd HPCC-Platform-cache
+        echo current dir
+        ls -lt
+        echo dir ..
+        ls -lt ..
+        mv ../build-cache ../build
+        cd ../HPCC-Platform
+        git restore-mtime
+        cd ../HPCC-Platform-cache
         find . -type f | cpio -p -dum ../HPCC-Platform
 
     - name: prep-nocache
       run: |
-        mkdir build
+        mkdir ../build
+        cd ../HPCC-Platform
+        git restore-mtime
 
     - name: build
       run: |
-        cd build
+        cd ../build
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         make -j$(nproc) jlib
