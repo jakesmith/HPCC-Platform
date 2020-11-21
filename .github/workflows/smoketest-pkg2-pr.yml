@@ -45,6 +45,11 @@ jobs:
 # jobs fail (regress runs), potentially useful to rerun based on cache
 # Can test by forcing re-run
 
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
+
     - name: Cache build
       id: build
       uses: actions/cache@v2
@@ -61,21 +66,20 @@ jobs:
       #   hpccbuild-7.12-
       #   hpccbuild-7.
 
-    - name: prep
-      run: |
-        git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
-        git restore-mtime
-         
     - name: prep-cache
       if: steps.build.outputs.cache-hit == 'true'
       run: |
         mv ./build-cache ./build
+        cd HPCC-Platform
+        git restore-mtime
         cd HPCC-Platform-cache
         find . -type f | cpio -p -dum ../HPCC-Platform
 
     - name: prep-nocache
       run: |
         mkdir build
+        cd HPCC-Platform
+        git restore-mtime
 
     - name: build
       run: |
