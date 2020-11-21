@@ -55,7 +55,7 @@ jobs:
     - name: build
       if: steps.build.outputs.cache-hit != 'true'
       run: |
-        cd HPCC-Platform
+        ls -lt
         git restore-mtime
         cd ..
         mkdir build
@@ -67,4 +67,3 @@ jobs:
         cp -rp ./build ./build-cache
         cd HPCC-Platform
         find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
-

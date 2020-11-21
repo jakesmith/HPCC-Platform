@@ -7,8 +7,8 @@ env:
 on:
   pull_request:
     branches:
-      - master
-      - candidate-7.12.x
+      - n_master
+      - n_candidate-7.12.x
 
 jobs:
   build-and-setup:
