@@ -63,13 +63,18 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Restore mtime
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        pwd
+        git restore-mtime
+
     - name: Cache hit prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
       run: |
-        pwd
         mv ../build-cache ../build
-        git restore-mtime
         cd ../HPCC-Platform-cache
+        ls -laR
         find . -type f | cpio -p -dum ../HPCC-Platform
 
     - name: Cache miss prep
@@ -83,7 +88,6 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         pwd
-        git restore-mtime
         cd ../build
         touch premake-timestamp
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
@@ -91,7 +95,8 @@ jobs:
         if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi
         cd ..
         cp -rp ./build ./build-cache
+        mkdir -p HPCC-Platform-cache
         cd HPCC-Platform
         find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
         cd ..
-        ls -lt
+        ls -ltR HPCC-Platform-cache
