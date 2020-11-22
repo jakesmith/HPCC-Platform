@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 32
+  cacheversion: 33
 
 on:
   push:
@@ -46,6 +46,7 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         pwd
+        ls -lt ../build-cache
         echo ::set-output name=cache-exists::$(if [ -d ~/work/HPCC-Platform/build-cache ]; then echo true; else echo false; fi)
         
     - name: Prerequisites
@@ -111,13 +112,10 @@ jobs:
         ls -lt system/jlib/CMakeFiles/jlib.dir
         echo ===============================
 
-        # make --debug=a -j$(nproc) jlib
-        # if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi
-        # cd ..
-        # cp -rp ./build ./build-cache
-        # mkdir -p HPCC-Platform-cache
-        # cd HPCC-Platform
-        # find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
-        # cd ..
-        # ls -ltR HPCC-Platform-cache
-        # ls -lt ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
+        make --debug=a -j$(nproc) jlib
+         cd ..
+        cp -rp ./build ./build-cache
+        mkdir -p HPCC-Platform-cache
+        cd HPCC-Platform
+        find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
+        ls -lt system/jlib/CMakeFiles/jlib.dir
