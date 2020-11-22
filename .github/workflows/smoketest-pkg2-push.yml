@@ -117,6 +117,16 @@ jobs:
         cd HPCC-Platform
         find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
         echo ===============================
-        echo THE CONTENTS AF END
+        echo THE CONTENTS AT END ../build
         echo ===============================
-        if [ -d system/jlib/CMakeFiles/jlib.dir ]; then ls -lt system/jlib/CMakeFiles/jlib.dir; else echo system/jlib/CMakeFiles/jlib.dir not present; fi
+        if [ -d ../build/system/jlib/CMakeFiles/jlib.dir ]; then ls -lt ../build/system/jlib/CMakeFiles/jlib.dir; else echo ../build/system/jlib/CMakeFiles/jlib.dir not present; fi
+        echo ===============================
+        echo THE CONTENTS AT END ../build-cache
+        echo ===============================
+        if [ -d ../build-cache/system/jlib/CMakeFiles/jlib.dir ]; then ls -lt ../build-cache/system/jlib/CMakeFiles/jlib.dir; else echo ../build-cache/system/jlib/CMakeFiles/jlib.dir not present; fi
+        echo ===============================
+        echo THE CONTENTS AT END ~work/HPCC-Platform/...
+        echo ===============================
+        if [ -d ~/work/HPCC-Platform/build-cache ]; then ls -lt ~/work/HPCC-Platform/build-cache; else echo ~/work/HPCC-Platform/build-cache not present; fi
+        if [ -d ~/work/HPCC-Platform/HPCC-Platform-cache ]; then ls -lt ~/work/HPCC-Platform/HPCC-Platform-cache; else echo ~/work/HPCC-Platform/HPCC-Platform-cache not present; fi
+
