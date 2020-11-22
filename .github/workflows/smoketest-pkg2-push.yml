@@ -74,7 +74,8 @@ jobs:
       run: |
         mv ../build-cache ../build
         cd ../HPCC-Platform-cache
-        ls -laR
+        ls -laR ../build ../HPCC-Platform-cache
+        ls ../
         find . -type f | cpio -p -dum ../HPCC-Platform
 
     - name: Cache miss prep
