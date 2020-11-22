@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 35
+  cacheversion: 36
 
 on:
   push:
@@ -70,7 +70,6 @@ jobs:
         pwd
         git restore-mtime
         git submodule foreach --recursive git restore-mtime
-        find . -name '.git*' | xargs rm -rf
 
     - name: Cache hit prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
@@ -83,6 +82,9 @@ jobs:
         find . -type f | cpio -p -dum ../HPCC-Platform
         echo content of ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
         ls -lt ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
+        echo delete .git...
+        find . -name '.git*' | xargs rm -rf
+        echo delete done
 
     - name: Cache miss prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
