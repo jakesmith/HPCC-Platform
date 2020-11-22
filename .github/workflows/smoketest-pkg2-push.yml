@@ -72,11 +72,13 @@ jobs:
     - name: Cache hit prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
       run: |
+        pwd
         mv ../build-cache ../build
         cd ../HPCC-Platform-cache
         ls -laR ../build ../HPCC-Platform-cache
         ls ../
         find . -type f | cpio -p -dum ../HPCC-Platform
+        ls -lt ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
 
     - name: Cache miss prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
@@ -101,3 +103,4 @@ jobs:
         find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
         cd ..
         ls -ltR HPCC-Platform-cache
+        ls -lt ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
