@@ -95,19 +95,18 @@ jobs:
         echo ===============================
         echo BEFORE CMAKE
         echo ===============================
-        ls -lt ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
+        ls -lt system/jlib/CMakeFiles/jlib.dir
+        echo ===============================
         touch premake-timestamp
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         echo ===============================
-        echo AFTER CMAKE
-        echo ===============================
-        ls -lt ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
-        echo ===============================
-        echo THE CONTENTS OF build DIRECTORY
-        echo ===============================
-        ls -ltR
-        echo ===============================
         echo THE CONTENTS OF build [relative] dir
+        echo ===============================
+        ls -lt system/jlib/CMakeFiles/jlib.dir
+        echo ===============================
+        make -j$(nproc) jlib
+        echo ===============================
+        echo THE CONTENTS AFTER MAKE OF build [relative] dir 
         echo ===============================
         ls -lt system/jlib/CMakeFiles/jlib.dir
         echo ===============================
