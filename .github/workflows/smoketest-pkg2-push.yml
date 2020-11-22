@@ -70,6 +70,7 @@ jobs:
         pwd
         git restore-mtime
         git submodule foreach --recursive git restore-mtime
+        find . -name '.git*' | xargs rm -rf
 
     - name: Cache hit prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
