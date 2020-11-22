@@ -29,7 +29,7 @@ jobs:
         echo event - base.sha ${{ github.event.pull_request.base.sha }}
         echo HEAD_BRANCH_CACHETAG - $HEAD_BRANCH_CACHETAG
 
-    - name: Cache build
+    - name: Fetch cache
       id: cache
       uses: actions/cache@v2
       with:
@@ -47,7 +47,6 @@ jobs:
       run: |
         pwd
         echo ::set-output name=cache-exists::$(if [ -d ~/work/HPCC-Platform/build-cache ]; then echo true; else echo false; fi)
-        ls -lt ~/work/HPCC-Platform/
         
     - name: Prerequisites
       if: steps.cache.outputs.cache-hit != 'true'
@@ -80,8 +79,8 @@ jobs:
         echo Cache miss
         mkdir ../build
         
-    - name: build2
-      if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
+    - name: Build
+      if: steps.cache.outputs.cache-hit != 'true'
       run: |
         pwd
         git restore-mtime
