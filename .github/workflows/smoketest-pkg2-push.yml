@@ -91,7 +91,7 @@ jobs:
         cd ../build
         touch premake-timestamp
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
-        make -j$(nproc) jlib
+        make --debug=a -j$(nproc) jlib
         if grep -q '^aws\-sdk\-cpp:' Makefile; then make -j$(nproc) aws-sdk-cpp; fi
         cd ..
         cp -rp ./build ./build-cache
