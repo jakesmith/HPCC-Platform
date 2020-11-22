@@ -46,7 +46,8 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         pwd
-        if [ -d ../build-cache/system/jlib/CMakeFiles/jlib.dir ]; then echo realpath=$(../build-cache/system/jlib/CMakeFiles/jlib.dir); ls -lt ../build-cache/system/jlib/CMakeFiles/jlib.dir; else echo ../build-cache/system/jlib/CMakeFiles/jlib.dir not present; fi
+        if [ -d ../build-cache/system/jlib/CMakeFiles/jlib.dir ]; then echo realpath=$(../build-cache/system/jlib/CMakeFiles/jlib.dir); else echo ../build-cache/system/jlib/CMakeFiles/jlib.dir not present; fi
+        if [ -d ../build-cache/system/jlib/CMakeFiles/jlib.dir ]; then ls -lt ../build-cache/system/jlib/CMakeFiles/jlib.dir; else echo ../build-cache/system/jlib/CMakeFiles/jlib.dir not present; fi
         echo ::set-output name=cache-exists::$(if [ -d ~/work/HPCC-Platform/build-cache ]; then echo true; else echo false; fi)
         
     - name: Prerequisites
