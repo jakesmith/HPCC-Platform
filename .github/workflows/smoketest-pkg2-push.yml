@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 34
+  cacheversion: 35
 
 on:
   push:
@@ -46,7 +46,7 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         pwd
-        if [ -d ../build-cache ]; then ls -lt ../build-cache; else echo build-cache not present; fi
+        if [ -d ../build-cache/system/jlib/CMakeFiles/jlib.dir ]; then ls -lt ../build-cache/system/jlib/CMakeFiles/jlib.dir; else echo ../build-cache/system/jlib/CMakeFiles/jlib.dir not present; fi
         echo ::set-output name=cache-exists::$(if [ -d ~/work/HPCC-Platform/build-cache ]; then echo true; else echo false; fi)
         
     - name: Prerequisites
@@ -69,16 +69,18 @@ jobs:
       run: |
         pwd
         git restore-mtime
+        git submodule foreach --recursive git restore-mtime
 
     - name: Cache hit prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
       run: |
         pwd
         mv ../build-cache ../build
+        echo content of ../build-cache/system/jlib/CMakeFiles/jlib.dir
+        ls -lt ../build/system/jlib/CMakeFiles/jlib.dir
         cd ../HPCC-Platform-cache
-        ls -laR ../build ../HPCC-Platform-cache
-        ls ../
         find . -type f | cpio -p -dum ../HPCC-Platform
+        echo content of ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
         ls -lt ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
 
     - name: Cache miss prep
@@ -101,7 +103,7 @@ jobs:
         touch premake-timestamp
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0"
         echo ===============================
-        echo THE CONTENTS OF build [relative] dir
+        echo AFTER CMAKE
         echo ===============================
         if [ -d system/jlib/CMakeFiles/jlib.dir ]; then ls -lt system/jlib/CMakeFiles/jlib.dir; else echo system/jlib/CMakeFiles/jlib.dir not present; fi
         echo ===============================
