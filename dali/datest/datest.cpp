@@ -3361,7 +3361,7 @@ int main(int argc, char* argv[])
     printf("BUILD_VERSION_MINOR=%u\n", BUILD_VERSION_MINOR);
     printf("BUILD_VERSION_POINT=%u\n", BUILD_VERSION_POINT);
     printf("BUILD_TAG=%s\n", BUILD_TAG);
-    printf("BUILD_TAG repeated4 =%s\n", BUILD_TAG);
+    printf("BUILD_TAG repeated5 =%s\n", BUILD_TAG);
 
     return 0;
 
