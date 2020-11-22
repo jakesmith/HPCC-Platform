@@ -46,7 +46,7 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
         pwd
-        if [ -d ../build-cache ]; then ls -lt ../build-cache; else echo build-cache not present; fi)
+        if [ -d ../build-cache ]; then ls -lt ../build-cache; else echo build-cache not present; fi
         echo ::set-output name=cache-exists::$(if [ -d ~/work/HPCC-Platform/build-cache ]; then echo true; else echo false; fi)
         
     - name: Prerequisites
