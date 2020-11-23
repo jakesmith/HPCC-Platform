@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 40
+  cacheversion: 41
 
 on:
   push:
@@ -34,8 +34,8 @@ jobs:
       uses: actions/cache@v2
       with:
         path: |
-          ~/work/HPCC-Platform/build-cache
-          ~/work/HPCC-Platform/HPCC-Platform-cache
+          ./build-cache
+          ./HPCC-Platform-cache
         key: hpccbuild-${{ env.cacheversion }}-${{ github.ref }}-${{ github.sha }}
         restore-keys: |
           hpccbuild-${{ env.cacheversion }}-${{ github.ref }}
@@ -44,7 +44,11 @@ jobs:
     - name: Check cache
       id: check-cache
       run: |
-        echo ::set-output name=cache-exists::$(if [ -d ~/work/HPCC-Platform/build-cache ]; then echo true; else echo false; fi)
+        pwd
+        echo ::set-output name=cache-exists::$(if [ -d ./build-cache ]; then echo true; else echo false; fi)
+        if [ -d ./build-cache ]; then \
+          stat ./build-cache ./HPCC-Platform-cache; \
+        fi
         
     - name: Prerequisites
       run: |
