@@ -111,7 +111,7 @@ jobs:
 
     - name: Build2
       run: |
-        echo '# test' >> smoketest-pkg2-push.yml
+        echo '# test' >> .github/workflows/smoketest-pkg2-push.yml
         git config --global user.email "you@example.com"
         git config --global user.name "Your Name"
         git commit -a -m wip
