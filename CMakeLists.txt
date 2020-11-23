@@ -82,9 +82,7 @@ enable_testing()
 set(HPCC_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(CMAKE_MODULE_PATH "${HPCC_SOURCE_DIR}/cmake_modules/")
 
-if(NOT SUPPRESS_BUILD_CONFIG_H)
-    include(${HPCC_SOURCE_DIR}/version.cmake)
-endif()
+include(${HPCC_SOURCE_DIR}/version.cmake)
 
 ###
 ## Build Level
@@ -339,16 +337,18 @@ endif(TOP_LEVEL_PROJECT)
 ## Run file configuration to set build tag along with install lines for generated
 ## config files.
 ###
-set(BUILD_TAG "${projname}_${version}-${stagever}")
-if(USE_GIT_DESCRIBE OR CHECK_GIT_TAG)
-    FETCH_GIT_TAG(${CMAKE_SOURCE_DIR} ${projname}_${version} GIT_BUILD_TAG)
-    message("-- Git tag is '${GIT_BUILD_TAG}'")
-    if(NOT "${GIT_BUILD_TAG}" STREQUAL "${BUILD_TAG}")
-        if(CHECK_GIT_TAG)
-            message(FATAL_ERROR "Git tag '${GIT_BUILD_TAG}' does not match source version '${BUILD_TAG}'")
-        else()
-            if(NOT "${GIT_BUILD_TAG}" STREQUAL "") # probably means being built from a tarball...
-                set(BUILD_TAG "${BUILD_TAG}[${GIT_BUILD_TAG}]")
+if(NOT BUILD_TAG)
+    set(BUILD_TAG "${projname}_${version}-${stagever}")
+    if(USE_GIT_DESCRIBE OR CHECK_GIT_TAG)
+        FETCH_GIT_TAG(${CMAKE_SOURCE_DIR} ${projname}_${version} GIT_BUILD_TAG)
+        message("-- Git tag is '${GIT_BUILD_TAG}'")
+        if(NOT "${GIT_BUILD_TAG}" STREQUAL "${BUILD_TAG}")
+            if(CHECK_GIT_TAG)
+                message(FATAL_ERROR "Git tag '${GIT_BUILD_TAG}' does not match source version '${BUILD_TAG}'")
+            else()
+                if(NOT "${GIT_BUILD_TAG}" STREQUAL "") # probably means being built from a tarball...
+                    set(BUILD_TAG "${BUILD_TAG}[${GIT_BUILD_TAG}]")
+                endif()
             endif()
         endif()
     endif()
@@ -358,9 +358,7 @@ if(NOT "${BASE_BUILD_TAG}" STREQUAL "")
     set(BASE_BUILD_TAG "${BUILD_TAG}")
 endif()
 message("-- Base build tag is '${BASE_BUILD_TAG}'")
-if(NOT SUPPRESS_BUILD_CONFIG_H)
-    configure_file(${HPCC_SOURCE_DIR}/build-config.h.cmake "build-config.h")
-endif()
+configure_file(${HPCC_SOURCE_DIR}/build-config.h.cmake "build-config.h")
 
 if(USE_SHLIBDEPS)
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
