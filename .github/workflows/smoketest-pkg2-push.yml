@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 36
+  cacheversion: 37
 
 on:
   push:
