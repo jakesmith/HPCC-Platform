@@ -45,9 +45,9 @@ jobs:
       id: check-cache
       run: |
         pwd
-        echo ::set-output name=cache-exists::$(if [ -d ./build-cache ]; then echo true; else echo false; fi)
-        if [ -d ./build-cache ]; then \
-          stat ./build-cache ./HPCC-Platform-cache; \
+        echo ::set-output name=cache-exists::$(if [ -d ../build-cache ]; then echo true; else echo false; fi)
+        if [ -d ../build-cache ]; then \
+          stat ../build-cache ../HPCC-Platform-cache; \
         fi
         
     - name: Prerequisites
