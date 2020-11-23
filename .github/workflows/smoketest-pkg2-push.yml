@@ -2,7 +2,7 @@
 
 name: st-docker
 env:
-  cacheversion: 41
+  cacheversion: 42
 
 on:
   push:
@@ -58,11 +58,11 @@ jobs:
         sudo apt-get install -yq libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
         sudo apt-get install git-restore-mtime
 
-    # - name: Checkout
-    #   if: steps.cache.outputs.cache-hit != 'true'
-    #   uses: actions/checkout@v2
-    #   with:
-    #     submodules: recursive
+    - name: Checkout
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
 
     # - name: Restore mtime
     #   if: steps.cache.outputs.cache-hit != 'true'
@@ -95,10 +95,12 @@ jobs:
     #     cd HPCC-Platform
     #     find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
 
+
+        # git clone -j 4 --recurse-submodules https://github.com/jakesmith/HPCC-Platform
+        # cd HPCC-Platform
+
     - name: Build
       run: |
-        git clone -j 4 --recurse-submodules https://github.com/jakesmith/HPCC-Platform
-        cd HPCC-Platform
         git restore-mtime
         git submodule foreach --recursive git restore-mtime
         cd ..
