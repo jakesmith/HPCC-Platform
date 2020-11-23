@@ -82,13 +82,14 @@ jobs:
         cd ../HPCC-Platform-cache
         find . -type f | cpio -p -dum ../HPCC-Platform
         echo content of ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
-        cd ../HPCC-Platform
-        echo delete .git...
-        find . -name '.git*'
-        find . -name '.git*' | xargs rm -rf
-        echo delete done
-        echo content of ~/work/HPCC-Platform/
-        ls -lt ~/work/HPCC-Platform/
+        ls -lt ~/work/HPCC-Platform/build/system/jlib/CMakeFiles/jlib.dir
+        # cd ../HPCC-Platform
+        # echo delete .git...
+        # find . -name '.git*'
+        # find . -name '.git*' | xargs rm -rf
+        # echo delete done
+        # echo content of ~/work/HPCC-Platform/
+        # ls -lt ~/work/HPCC-Platform/
 
     - name: Cache miss prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
@@ -96,6 +97,7 @@ jobs:
         pwd
         echo Cache miss
         mkdir ../build
+        mkdir ../HPCC-Platform-cache
         
     - name: Build
       if: steps.cache.outputs.cache-hit != 'true'
@@ -117,7 +119,6 @@ jobs:
         echo ===============================
         cd ..
         cp -rp ./build ./build-cache
-        mkdir -p HPCC-Platform-cache
         cd HPCC-Platform
         find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
         echo ===============================
