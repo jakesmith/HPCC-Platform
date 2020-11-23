@@ -43,12 +43,10 @@ jobs:
          
     - name: Check cache
       id: check-cache
-      if: steps.cache.outputs.cache-hit != 'true'
       run: |
         echo ::set-output name=cache-exists::$(if [ -d ~/work/HPCC-Platform/build-cache ]; then echo true; else echo false; fi)
         
     - name: Prerequisites
-      if: steps.cache.outputs.cache-hit != 'true'
       run: |
         pwd
         sudo apt-get update
