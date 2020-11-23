@@ -95,7 +95,7 @@ jobs:
 
     - name: Build
       run: |
-        git clone -j 4 --recurse-submodules --branch ${{ github.ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        git clone -j 4 --recurse-submodules https://github.com/${{ github.repository_owner }}/HPCC-Platform
         cd HPCC-Platform
         git restore-mtime
         git submodule foreach --recursive git restore-mtime
@@ -113,7 +113,7 @@ jobs:
         rm -rf build
         rm -rf HPCC-Platform
         # next
-        git clone -j 4 --recurse-submodules --branch ${{ github.ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        git clone -j 4 --recurse-submodules https://github.com/${{ github.repository_owner }}/HPCC-Platform
         echo '# test' >> .github/workflows/smoketest-pkg2-push.yml
         git config --global user.email "you@example.com"
         git config --global user.name "Your Name"
