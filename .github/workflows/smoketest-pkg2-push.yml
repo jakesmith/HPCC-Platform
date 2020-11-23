@@ -56,31 +56,31 @@ jobs:
         sudo apt-get install -yq libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
         sudo apt-get install git-restore-mtime
 
-    - name: Checkout
-      if: steps.cache.outputs.cache-hit != 'true'
-      uses: actions/checkout@v2
-      with:
-        submodules: recursive
+    # - name: Checkout
+    #   if: steps.cache.outputs.cache-hit != 'true'
+    #   uses: actions/checkout@v2
+    #   with:
+    #     submodules: recursive
 
-    - name: Restore mtime
-      if: steps.cache.outputs.cache-hit != 'true'
-      run: |
-        git restore-mtime
-        git submodule foreach --recursive git restore-mtime
+    # - name: Restore mtime
+    #   if: steps.cache.outputs.cache-hit != 'true'
+    #   run: |
+    #     git restore-mtime
+    #     git submodule foreach --recursive git restore-mtime
 
-    - name: Cache hit prep
-      if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
-      run: |
-        cp -rp ../build-cache ../build
-        cd ../HPCC-Platform-cache
-        find . -type f | cpio -p -dum ../HPCC-Platform
+    # - name: Cache hit prep
+    #   if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
+    #   run: |
+    #     cp -rp ../build-cache ../build
+    #     cd ../HPCC-Platform-cache
+    #     find . -type f | cpio -p -dum ../HPCC-Platform
 
-    - name: Cache miss prep
-      if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
-      run: |
-        echo Cache miss
-        mkdir ../build
-        mkdir ../HPCC-Platform-cache
+    # - name: Cache miss prep
+    #   if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
+    #   run: |
+    #     echo Cache miss
+    #     mkdir ../build
+    #     mkdir ../HPCC-Platform-cache
         
     # - name: Build
     #   if: steps.cache.outputs.cache-hit != 'true'
@@ -95,26 +95,25 @@ jobs:
 
     - name: Build
       run: |
+        git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
+        cd HPCC-Platform
+        git restore-mtime
+        git submodule foreach --recursive git restore-mtime
+        mkdir ../build
+        mkdir ../HPCC-Platform-cache
         cd ../build
         touch premake-timestamp
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0" -DBUILD_TAG="smoketest"
         make -j$(nproc) jlib
         cd ..
-        rm -rf ./build-cache
+        rm -rf ./build-cache        
         cp -rp ./build ./build-cache
         cd HPCC-Platform
         find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
         rm -rf build
         rm -rf HPCC-Platform
-
-    - name: Checkout2
-      if: steps.cache.outputs.cache-hit != 'true'
-      uses: actions/checkout@v2
-      with:
-        submodules: recursive
-
-    - name: Build2
-      run: |
+        # next
+        git clone -j 4 --recurse-submodules --branch ${{ github.head_ref }} https://github.com/${{ github.repository_owner }}/HPCC-Platform
         echo '# test' >> .github/workflows/smoketest-pkg2-push.yml
         git config --global user.email "you@example.com"
         git config --global user.name "Your Name"
@@ -128,3 +127,5 @@ jobs:
         touch premake-timestamp
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0" -DBUILD_TAG="smoketest"
         make -j$(nproc) jlib
+        rm -rf build
+        rm -rf HPCC-Platform
