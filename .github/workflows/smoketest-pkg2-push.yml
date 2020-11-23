@@ -35,8 +35,8 @@ jobs:
       uses: actions/cache@v2
       with:
         path: |
-          ../build-cache
-          ../HPCC-Platform-cache
+          build-cache
+          HPCC-Platform-cache
         key: hpccbuild-${{ env.cacheversion }}-${{ github.ref }}-${{ github.sha }}
         restore-keys: |
           hpccbuild-${{ env.cacheversion }}-${{ github.ref }}
@@ -46,9 +46,9 @@ jobs:
       id: check-cache
       run: |
         pwd
-        echo ::set-output name=cache-exists::$(if [ -d ../build-cache ]; then echo true; else echo false; fi)
-        if [ -d ../build-cache ]; then \
-          stat ../build-cache ../HPCC-Platform-cache; \
+        echo ::set-output name=cache-exists::$(if [ -d build-cache ]; then echo true; else echo false; fi)
+        if [ -d build-cache ]; then \
+          stat build-cache HPCC-Platform-cache; \
         fi
         
     - name: Prerequisites
@@ -63,6 +63,7 @@ jobs:
       uses: actions/checkout@v2
       with:
         submodules: recursive
+        path: src
 
     # - name: Restore mtime
     #   if: steps.cache.outputs.cache-hit != 'true'
@@ -101,29 +102,31 @@ jobs:
 
     - name: Build
       run: |
+        cd src
         git restore-mtime
         git submodule foreach --recursive git restore-mtime
-        if [ -d ./build-cache ]; then \
+        cd ..
+        if [ -d build-cache ]; then \
           echo copying existing cache; \
-          cp -rp ./build-cache ./build; \
-          mv ./build-cache ./build-cache-0; \
-          cd ./HPCC-Platform-cache; \
-          find . -type f | cpio -p -dum ../HPCC-Platform; \
+          cp -rp build-cache build; \
+          mv build-cache build-cache-0; \
+          cd HPCC-Platform-cache; \
+          find . -type f | cpio -p -dum ../src; \
           cd ..; \
-          mv ./HPCC-Platform-cache ./HPCC-Platform-cache-0; \
+          mv HPCC-Platform-cache HPCC-Platform-cache-0; \
         else \
           echo Creating cache directories; \
-          mkdir ./build; \
+          mkdir build; \
           rm -rf HPCC-Platform-cache; \
         fi
-        cd ./build
+        cd build
         touch premake-timestamp
-        cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0" -DBUILD_TAG="smoketest"
+        cmake ../src -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0" -DBUILD_TAG="smoketest"
         make -j$(nproc) jlib
         cd ..
-        cp -rp ./build ./build-cache
-        mkdir ./HPCC-Platform-cache
-        cd HPCC-Platform
+        cp -rp build build-cache
+        mkdir HPCC-Platform-cache
+        cd src
         find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
 
     # - name: Build
