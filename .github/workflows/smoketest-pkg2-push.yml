@@ -99,17 +99,17 @@ jobs:
         git submodule foreach --recursive git restore-mtime
         cd ..
         if [ -d ./build-cache ]; then \
-          echo copying existing cache \
-          cp -rp ./build-cache ./build \
-          mv ./build-cache ./build-cache-0 \
-          cd ./HPCC-Platform-cache \
-          find . -type f | cpio -p -dum ../HPCC-Platform \
-          cd .. \
-          mv ./HPCC-Platform-cache ./HPCC-Platform-cache-0 \
+          echo copying existing cache; \
+          cp -rp ./build-cache ./build; \
+          mv ./build-cache ./build-cache-0; \
+          cd ./HPCC-Platform-cache; \
+          find . -type f | cpio -p -dum ../HPCC-Platform; \
+          cd ..; \
+          mv ./HPCC-Platform-cache ./HPCC-Platform-cache-0; \
         else \
-          echo Creating cache directories \
-          mkdir ./build \
-          rm -rf HPCC-Platform-cache \
+          echo Creating cache directories; \
+          mkdir ./build; \
+          rm -rf HPCC-Platform-cache; \
         fi
         cd ./build
         touch premake-timestamp
