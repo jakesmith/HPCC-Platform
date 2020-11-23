@@ -97,19 +97,23 @@ jobs:
         cd HPCC-Platform
         git restore-mtime
         git submodule foreach --recursive git restore-mtime
-        mkdir ../build
-        mkdir ../HPCC-Platform-cache
+        mkdir -p ../build-cache
+        mkdir -p ../HPCC-Platform-cache
+        cp -rp ../build-cache ../build
+        mv ../build-cache ../build-cache-1st
+        cd ../HPCC-Platform-cache
+        find . -type f | cpio -p -dum ../HPCC-Platform
         cd ../build
+        mv ../HPCC-Platform-cache ../HPCC-Platform-cache-1st
         touch premake-timestamp
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0" -DBUILD_TAG="smoketest"
         make -j$(nproc) jlib
         cd ..
-        rm -rf ./build-cache        
         cp -rp ./build ./build-cache
         cd HPCC-Platform
         find -name '.git*' -prune -o -newer ../build/premake-timestamp -type f -print | cpio -p -dum ../HPCC-Platform-cache
-        rm -rf build
-        rm -rf HPCC-Platform
+        mv build build-1st
+        mv HPCC-Platform HPCC-Platform-1st
         # next
         git clone -j 4 --recurse-submodules https://github.com/${{ github.repository_owner }}/HPCC-Platform
         echo '# test' >> .github/workflows/smoketest-pkg2-push.yml
@@ -118,13 +122,11 @@ jobs:
         git commit -a -m wip
         git restore-mtime
         git submodule foreach --recursive git restore-mtime
-        cd ../HPCC-Platform-cache
+        cd ../HPCC-Platform-cache-1st
         find . -type f | cpio -p -dum ../HPCC-Platform
-        cp -rp ../build-cache ../build
+        cp -rp ../build-cache-1st ../build
         cd ../build
         touch premake-timestamp
         cmake ../HPCC-Platform -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install  -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT} -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0" -DBUILD_TAG="smoketest"
         make -j$(nproc) jlib
-        rm -rf build
-        rm -rf HPCC-Platform
 
