@@ -28,6 +28,7 @@ jobs:
         echo github.repository_owner is ${{ github.repository_owner }}
         echo event - base.sha ${{ github.event.pull_request.base.sha }}
         echo HEAD_BRANCH_CACHETAG - $HEAD_BRANCH_CACHETAG
+        echo github.workspace = ${{ github.workspace }}
 
     - name: Fetch cache
       id: cache
@@ -102,7 +103,6 @@ jobs:
       run: |
         git restore-mtime
         git submodule foreach --recursive git restore-mtime
-        cd ..
         if [ -d ./build-cache ]; then \
           echo copying existing cache; \
           cp -rp ./build-cache ./build; \
