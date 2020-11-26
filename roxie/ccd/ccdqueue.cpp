@@ -1397,7 +1397,7 @@ public:
                 unsigned delay = 0;
                 for (unsigned subChannel = 0; subChannel < mySubChannel; subChannel++)
                     delay += getIbytiDelay(header.subChannels[subChannel].getIpAddress());
-                unsigned start;
+                unsigned start = 0;
                 if (traceRoxiePackets)
                 {
                     StringBuffer x;
