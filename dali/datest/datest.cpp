@@ -3372,7 +3372,6 @@ int main(int argc, char* argv[])
         return 0;
 #endif
         
-
 // Non dali tests
 #if defined(TEST_THREADS)
         TestMemThreads(); // doesn't terminate

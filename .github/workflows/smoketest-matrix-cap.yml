@@ -1,0 +1,309 @@
+# NB: --build-arg's must be set for previous ARG's for future parts of multi-stage builds
+
+name: smoketest-push
+env:
+  cacheversion: 58
+
+on:
+  push:
+    branches:
+      - "master"
+      - "candidate-*"
+      - "!candidate-7.6.*"
+      - "!candidate-7.4.*"
+      - "!candidate-7.2.*"
+      - "!candidate-7.0.*"
+      - "!candidate-6.*"
+    paths-ignore:
+      - "devdoc/**"
+      - "docs/**"
+      - "helm/**"
+      - "clienttools/**"
+
+  pull_request:
+    branches:
+      - "master"
+      - "candidate-*"
+      - "!candidate-7.6.*"
+      - "!candidate-7.4.*"
+      - "!candidate-7.2.*"
+      - "!candidate-7.0.*"
+      - "!candidate-6.*"
+    paths-ignore:
+      - "devdoc/**"
+      - "docs/**"
+      - "helm/**"
+      - "clienttools/**"
+
+jobs:
+  build-and-setup:
+    name: Build platform and regress setup container
+    runs-on: ubuntu-20.04
+    timeout-minutes: 120
+
+    steps:
+    - name: vars
+      id: vars
+      run: |
+        echo base_ref is ${{ github.base_ref }}
+        echo head_ref is ${{ github.head_ref }}
+        echo ref is ${{ github.ref }}
+        echo sha is ${{ github.sha }}
+        echo github.actor is ${{ github.actor }}
+        echo github.repository = ${{ github.repository }}
+        echo github.repository_owner is ${{ github.repository_owner }}
+        echo pull_request.head.sha ${{ github.event.pull_request.head.sha }}
+        echo pull_request.base.sha ${{ github.event.pull_request.base.sha }}
+        echo github.workspace = ${{ github.workspace }}
+        echo github.action = ${{ github.action }}
+        echo github.event_name = ${{ github.event_name }}
+        echo ::set-output name=branch::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.head_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
+        echo ::set-output name=base_ref::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.base_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
+        echo ::set-output name=sha::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.event.pull_request.head.sha }}; else echo ${{ github.sha }}; fi)
+
+    - name: Fetch cache
+      id: cache
+      uses: actions/cache@v2
+      with:
+        path: |
+          build-cache
+          src-cache
+        key: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}-${{ steps.vars.outputs.sha }}
+        restore-keys: |
+          hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}
+          hpccbuild-${{ env.cacheversion }}-
+
+      # ^^^ Perhaps should add other restore keys e.g.:
+      #   hpccbuild-7.12-
+      #   hpccbuild-7.
+
+    # NB: actions/cache does not set cache-hit to true if restore-keys used.
+    # So here we check if a cache was restored, and set a separate variable 'cache-exists' if it does.
+    - name: Check cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      id: check-cache
+      run: |
+        echo ::set-output name=cache-exists::$(if [[ -d build-cache ]]; then echo true; else echo false; fi)
+        if [[ -d build-cache ]]; then \
+          stat build-cache src-cache; \
+          du -sh build-cache src-cache; \
+        fi
+
+    # Fetch dependencies, and clone sources in parallel to save time
+    # NB: we don't use actions/checkout because ... (I forget why!)
+    - name: Dependencies
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        sudo apt-get update && sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev \
+          libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs libaprutil1-dev libiberty-dev libhiredis-dev \
+          libtbb-dev git libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev \
+          libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
+
+    # On a cache hit (NB: whether exact via key or via a restore-key),
+    # if SHA of cache can be found:
+    # - mv cache into place (build-cache->build)
+    # - checkout source @ SHA
+    # - copy src-cache files into place
+    # - touch all files so that 'old' [before original make timestamp], i.e. so behind objects in cache
+    # - checkout pr branch - ensuring only pr files that differ are updated (and hence will rebuild)
+    # - list updated files (for tracing only)
+    # when SHA not found (e.g. because of squashing) - assume cache miss
+    # - checkout PR branch fully (all new files), causing a full rebuild
+    - name: Cache hit prep
+      if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
+      run: |
+        echo Attempting to use existing cache
+        echo Fetching base branch: ${{ steps.vars.outputs.branch }}
+        git clone --branch ${{ steps.vars.outputs.branch }} -n https://github.com/${{ github.repository_owner }}/HPCC-Platform src
+        mv build-cache build
+        cd src
+        if [[ "commit" == "$(git cat-file -t $(cat ../build/cache-sha))" ]]; then \
+          echo Checking out cache SHA: $(cat ../build/cache-sha); \
+          git checkout $(cat ../build/cache-sha); \
+        else \
+          echo git diff failed \(SHA $(cat ../build/cache-sha) missing?\). Using base_ref; \
+          git checkout ${{ steps.vars.outputs.base_ref }}; \
+        fi
+        git submodule update --init --recursive -j 4
+        cd ../src-cache
+        echo Cached source tree files:
+        find . -type f
+        echo ================
+        find . -type f | cpio -p -dum ../src
+        cd ../src
+        find . -type f -exec touch -r ../build/cache-timestamp {} +
+        git checkout ${{ steps.vars.outputs.branch }}
+        git submodule update --init --recursive -j 4
+        echo Changed files \(from SHA: $(cat ../build/cache-sha)\):
+        find -name '.git*' -prune -o -newer ../build/cache-timestamp -type f -print
+
+    - name: Cache miss checkout 
+      if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
+        path: src
+
+    - name: Cache miss prep
+      if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
+      run: |
+        rm -rf build src-cache
+        mkdir build
+        mkdir src-cache
+
+    # All sources are older the objects that are about to be made,
+    # cache-timestamp created on cache-miss.
+    # Subsequent cache hit builds use this timestamp to ensure all sources are marked 'old',
+    # except those changed between the cache SHA and the SHA being built.
+    - name: Build
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        cd build
+        if [[ ! -f cache-timestamp ]]; then touch cache-timestamp; fi
+        touch ../cmake-timestamp
+        cmake ../src -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=0 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=1 -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0" -DBUILD_TAG="smoketest"
+        make -j$(nproc)
+
+    - name: Build install
+      if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+      run: |
+        cd build
+        make -j$(nproc) install
+
+    # Cache contains:
+    # - make binaries (build-cache)
+    # - Any sources written since cache-timestamp within the source dir (src-cache) (e.g. AWS writes a config header)
+    # - cache-timestamp, timestamp of cache-miss build. All files except diffs set to this time, ensuring no existing binaries are rebuilt
+    # - cache-sha, the SHA of the commit built. On a cache-hit, used to find changed files and ensure they are only ones rebuilt.
+    - name: Prepare cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      run: |
+        echo ${{ steps.vars.outputs.sha }} > build/cache-sha
+        mv build build-cache
+        cd src
+        find -name '.git*' -prune -o -newer ../cmake-timestamp -type f -print | cpio -p -dum ../src-cache
+        cd ..
+
+    # - alter stock ecl-test.json, to point to install dir (using jq)
+    # - create a clean copy of the install directory (for later reuse)
+    # - rm hpcc-data from copy (the post-setup hpcc-data will be moved in when done)
+    - name: Prepare install artifact
+      if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+      run: |
+        jq --arg installdir "${{ github.workspace }}/install" \
+          '.Regress.dropzonePath = $installdir + .Regress.dropzonePath | .Regress.setupExtraParams.OriginalTextFilesOsPath = $installdir + .Regress.setupExtraParams.OriginalTextFilesOsPath | .Regress.regressionDir = $installdir + "/regress" | .Regress.logDir = $installdir + "/regress/log"' \
+          install/opt/HPCCSystems/testing/regress/ecl-test.json > ecl-test.json
+        mv -f ecl-test.json install/opt/HPCCSystems/testing/regress/ecl-test.json
+        mkdir copy
+        cp -rp install copy/
+        rm -rf copy/install/var/lib/HPCCSystems/hpcc-data
+
+    - name: Run regression suite setup
+      if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+      run: |
+        source install/opt/HPCCSystems/sbin/hpcc_setenv
+        install/opt/HPCCSystems/etc/init.d/hpcc-init start
+        cd install/opt/HPCCSystems/testing/regress
+        ./ecl-test setup --pq 2
+        ${{ github.workspace }}/install/opt/HPCCSystems/etc/init.d/hpcc-init stop
+
+    - name: logs-on-failure-or-cancellation
+      if: ${{ failure() || cancelled() }}
+      uses: actions/upload-artifact@v2
+      with:
+        name: alllogs
+        path: |
+          install/var/log/HPCCSystems
+          regress/
+
+    # - mv hpcc-data into copy of install
+    # - copy sub-actions into install dir (so everything under install/)
+    # - create tarball of install for artifact uploading
+    - name: Finalize install artifact
+      if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+      run: |
+        mv install/var/lib/HPCCSystems/hpcc-data copy/install/var/lib/HPCCSystems/
+        cd copy
+        tar --zstd -cf ../install.tgz install 
+
+    - name: Upload install artifact
+      if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+      uses: actions/upload-artifact@v2
+      with:
+        name: installsetup-artifact
+        path: install.tgz
+
+
+  # Matrix of jobs run in parallel once build+setup above completes successfully.
+  # All use the post-setup install.tgz artifact, that contains binaries and setup state
+  # Break each engine run into 3 sets for speed
+  # NB: each regression suite job, runs these steps:
+  # - installs dependencies (probably too many for runtime)
+  # - Starts HPCC
+  # - Runs regression suite with params { engine, queries }
+  # TODO: needs to process results, capture report, to be assembled by workflow when all jobs done
+  regression-jobs:
+    if: github.event_name == 'pull_request'
+    needs: [ build-and-setup ]
+    timeout-minutes: 15
+    runs-on: ubuntu-20.04
+    strategy:
+      fail-fast: true
+      matrix:
+        engine: ['hthor', 'thor', 'roxie']
+        querypat: ['a-h', 'i-q', 'r-z']
+    steps:
+    - name: Prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs libaprutil1-dev libiberty-dev libhiredis-dev libtbb-dev git
+        sudo apt-get install -yq libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
+
+    - uses: actions/download-artifact@v2
+      with:
+        name: installsetup-artifact
+
+    - name: run
+      shell: bash
+      run: |
+        tar --zstd -xf install.tgz
+        source install/opt/HPCCSystems/sbin/hpcc_setenv
+        install/opt/HPCCSystems/etc/init.d/hpcc-init start
+        cd install/opt/HPCCSystems/testing/regress
+        ./ecl-test query --pq 2 --target ${{ matrix.engine }} --excludeclass embedded,3rdparty,spray "[${{ matrix.querypat }}]*.ecl"
+        grep Failure: ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
+        grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
+        if [[ "$(grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log)" -gt 0 ]]; then exit 1; fi
+
+    - name: logs-on-failure
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@v2
+      with:
+        name: regress-fail-logs-${{ matrix.engine }}-${{ matrix.querypat }}
+        path: |
+          install/var/log/HPCCSystems
+          regress/
+
+
+  # NB: this doesn't really need the post-setup data files included in install.tgz
+  # but as this is relatively quick, it probably doesn't matter
+  unittests:
+    if: github.event_name == 'pull_request'
+    needs: build-and-setup
+    timeout-minutes: 10
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs libaprutil1-dev libiberty-dev libhiredis-dev libtbb-dev git
+        sudo apt-get install -yq libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
+
+    - uses: actions/download-artifact@v2
+      with:
+        name: installsetup-artifact
+
+    - name: run
+      run: |
+        tar --zstd -xf install.tgz
+        install/opt/HPCCSystems/bin/unittests

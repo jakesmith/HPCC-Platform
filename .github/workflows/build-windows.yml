@@ -22,6 +22,7 @@ on:
 
 jobs:
   build:
+    if: github.repository == 'hpcc-systems/HPCC-Platform'
     runs-on: windows-latest
     steps:
       - name: Display build summary
