@@ -7,13 +7,13 @@ env:
 on:
   push:
     branches:
-      - "master"
-      - "candidate-*"
-      - "!candidate-7.6.*"
-      - "!candidate-7.4.*"
-      - "!candidate-7.2.*"
-      - "!candidate-7.0.*"
-      - "!candidate-6.*"
+      - "n_master"
+      # - "candidate-*"
+      # - "!candidate-7.6.*"
+      # - "!candidate-7.4.*"
+      # - "!candidate-7.2.*"
+      # - "!candidate-7.0.*"
+      # - "!candidate-6.*"
     paths-ignore:
       - "devdoc/**"
       - "docs/**"
@@ -22,13 +22,13 @@ on:
 
   pull_request:
     branches:
-      - "master"
-      - "candidate-*"
-      - "!candidate-7.6.*"
-      - "!candidate-7.4.*"
-      - "!candidate-7.2.*"
-      - "!candidate-7.0.*"
-      - "!candidate-6.*"
+      - "n_master"
+      # - "candidate-*"
+      # - "!candidate-7.6.*"
+      # - "!candidate-7.4.*"
+      # - "!candidate-7.2.*"
+      # - "!candidate-7.0.*"
+      # - "!candidate-6.*"
     paths-ignore:
       - "devdoc/**"
       - "docs/**"
@@ -208,15 +208,8 @@ jobs:
         cd ${{ github.workspace }}
         install/opt/HPCCSystems/etc/init.d/hpcc-init stop
 
-    - name: logs-on-failure
-      if: ${{ failure() }}
-      uses: actions/upload-artifact@v2
-      with:
-        name: alllogs
-        path: install/var/log/HPCCSystems
-
-    - name: logs-on-cancellation
-      if: ${{ cancelled() }}
+    - name: logs-on-failure-or-failure
+      if: ${{ failure() || cancelled() }}
       uses: actions/upload-artifact@v2
       with:
         name: alllogs
@@ -229,8 +222,6 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
       run: |
         mv install/var/lib/HPCCSystems/hpcc-data copy/install/var/lib/HPCCSystems/
-        mkdir copy/install/actions
-        cp -r src/.github/workflows/regress copy/install/actions/
         cd copy
         tar --zstd -cf ../install.tgz install 
 
@@ -241,191 +232,24 @@ jobs:
         name: installsetup-artifact
         path: install.tgz
 
-  # All jobs below run in parallel once build+setup above completes successfully.
+
+  # Matrix of jobs run in parallel once build+setup above completes successfully.
   # All use the post-setup install.tgz artifact, that contains binaries and setup state
   # Break each engine run into 3 sets for speed
-  # NB: each regression suite job, runs a sub-action (./install/actions/regress), which
+  # NB: each regression suite job, runs these steps:
   # - installs dependencies (probably too many for runtime)
   # - Starts HPCC
   # - Runs regression suite with params { engine, queries }
   # TODO: needs to process results, capture report, to be assembled by workflow when all jobs done
-  regress-hthor-a-h:
+  regression-jobs:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-20.04
-    timeout-minutes: 60
     needs: [ build-and-setup ]
-
-    steps:
-    - uses: actions/download-artifact@v2
-      with:
-        name: installsetup-artifact
-
-    - name: Extract artifact
-      run: tar --zstd -xf install.tgz
-
-    - uses: ./install/actions/regress
-      with:
-        engine: hthor
-        queries: "[a-h]*.ecl"
-
-  regress-hthor-i-q:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-20.04
-    timeout-minutes: 60
-    needs: [ build-and-setup ]
-
-    steps:
-    - uses: actions/download-artifact@v2
-      with:
-        name: installsetup-artifact
-
-    - name: Extract artifact
-      run: tar --zstd -xf install.tgz
-
-    - uses: ./install/actions/regress
-      with:
-        engine: hthor
-        queries: "[i-q]*.ecl"
-
-  regress-hthor-r-z:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-20.04
-    timeout-minutes: 60
-    needs: [ build-and-setup ]
-
-    steps:
-    - uses: actions/download-artifact@v2
-      with:
-        name: installsetup-artifact
-
-    - name: Extract artifact
-      run: tar --zstd -xf install.tgz
-
-    - uses: ./install/actions/regress
-      with:
-        engine: hthor
-        queries: "[r-z]*.ecl"
-
-  regress-thor-a-h:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-20.04
-    timeout-minutes: 60
-    needs: [ build-and-setup ]
-
-    steps:
-    - uses: actions/download-artifact@v2
-      with:
-        name: installsetup-artifact
-
-    - name: Extract artifact
-      run: tar --zstd -xf install.tgz
-
-    - uses: ./install/actions/regress
-      with:
-        engine: thor
-        queries: "[a-h]*.ecl"
-
-  regress-thor-i-q:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-20.04
-    timeout-minutes: 60
-    needs: [ build-and-setup ]
-
-    steps:
-    - uses: actions/download-artifact@v2
-      with:
-        name: installsetup-artifact
-
-    - name: Extract artifact
-      run: tar --zstd -xf install.tgz
-
-    - uses: ./install/actions/regress
-      with:
-        engine: thor
-        queries: "[i-q]*.ecl"
-
-  regress-thor-r-z:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-20.04
-    timeout-minutes: 60
-    needs: [ build-and-setup ]
-
-    steps:
-    - uses: actions/download-artifact@v2
-      with:
-        name: installsetup-artifact
-
-    - name: Extract artifact
-      run: tar --zstd -xf install.tgz
-
-    - uses: ./install/actions/regress
-      with:
-        engine: thor
-        queries: "[r-z]*.ecl"
-
-  regress-roxie-a-h:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-20.04
-    timeout-minutes: 60
-    needs: [ build-and-setup ]
-
-    steps:
-    - uses: actions/download-artifact@v2
-      with:
-        name: installsetup-artifact
-
-    - name: Extract artifact
-      run: tar --zstd -xf install.tgz
-
-    - uses: ./install/actions/regress
-      with:
-        engine: roxie
-        queries: "[a-h]*.ecl"
-
-  regress-roxie-i-q:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-20.04
-    timeout-minutes: 60
-    needs: [ build-and-setup ]
-
-    steps:
-    - uses: actions/download-artifact@v2
-      with:
-        name: installsetup-artifact
-
-    - name: Extract artifact
-      run: tar --zstd -xf install.tgz
-
-    - uses: ./install/actions/regress
-      with:
-        engine: roxie
-        queries: "[i-q]*.ecl"
-
-  regress-roxie-r-z:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-20.04
-    timeout-minutes: 60
-    needs: [ build-and-setup ]
-
-    steps:
-    - uses: actions/download-artifact@v2
-      with:
-        name: installsetup-artifact
-
-    - name: Extract artifact
-      run: tar --zstd -xf install.tgz
-
-    - uses: ./install/actions/regress
-      with:
-        engine: roxie
-        queries: "[r-z]*.ecl"
-
-  # NB: this doesn't really need the post-setup binaries included in install.tgz
-  # but as this is relatively quick, it probably doesn't matter
-  unittests:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-20.04
-    needs: build-and-setup
+    strategy:
+      fail-fast: true
+      matrix:
+        engine: ['hthor', 'thor', 'roxie']
+        querypat: ['a-h', 'i-q', 'r-z']
     steps:
     - name: Prerequisites
       run: |
@@ -437,9 +261,34 @@ jobs:
       with:
         name: installsetup-artifact
 
-    - name: Extract artifact
-      run: tar --zstd -xf install.tgz
+    - name: run
+      shell: bash
+      run: |
+        tar --zstd -xf install.tgz
+        source install/opt/HPCCSystems/sbin/hpcc_setenv
+        install/opt/HPCCSystems/etc/init.d/hpcc-init start
+        cd install/opt/HPCCSystems/testing/regress
+        ./ecl-test query --pq 2 --target ${{ matrix.engine }} --excludeclass embedded,3rdparty,spray "[${{ matrix.querypat }}]*.ecl"
+
+
+  # NB: this doesn't really need the post-setup data files included in install.tgz
+  # but as this is relatively quick, it probably doesn't matter
+  unittests:
+    if: github.event_name == 'pull_request'
+    needs: build-and-setup
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs libaprutil1-dev libiberty-dev libhiredis-dev libtbb-dev git
+        sudo apt-get install -yq libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
+
+    - uses: actions/download-artifact@v2
+      with:
+        name: installsetup-artifact
 
     - name: run
       run: |
+        tar --zstd -xf install.tgz
         install/opt/HPCCSystems/bin/unittests

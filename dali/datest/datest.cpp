@@ -3372,6 +3372,7 @@ int main(int argc, char* argv[])
         return 0;
 #endif
         
+        PROGLOG("Test1");
 
 // Non dali tests
 #if defined(TEST_THREADS)
