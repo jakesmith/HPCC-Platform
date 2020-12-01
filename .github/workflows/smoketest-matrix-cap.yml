@@ -62,7 +62,7 @@ jobs:
         echo ::set-output name=sha::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.event.pull_request.head.sha }}; else echo ${{ github.sha }}; fi)
         locale
         sudo update-locale LANG=en_US.UTF8
-        locale
+        bash -c "locale"
 
     - name: Fetch cache
       id: cache
@@ -86,7 +86,10 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       id: check-cache
       run: |
+        echo local in runner shell
         locale
+        echo local in separate bash shell
+        bash -c "locale"
         echo ::set-output name=cache-exists::$(if [[ -d build-cache ]]; then echo true; else echo false; fi)
         if [[ -d build-cache ]]; then \
           stat build-cache src-cache; \
