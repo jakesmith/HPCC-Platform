@@ -60,6 +60,9 @@ jobs:
         echo ::set-output name=branch::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.head_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
         echo ::set-output name=base_ref::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.base_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
         echo ::set-output name=sha::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.event.pull_request.head.sha }}; else echo ${{ github.sha }}; fi)
+        locale
+        sudo update-locale LANG=en_US.UTF8
+        locale
 
     - name: Fetch cache
       id: cache
@@ -83,6 +86,7 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       id: check-cache
       run: |
+        locale
         echo ::set-output name=cache-exists::$(if [[ -d build-cache ]]; then echo true; else echo false; fi)
         if [[ -d build-cache ]]; then \
           stat build-cache src-cache; \
