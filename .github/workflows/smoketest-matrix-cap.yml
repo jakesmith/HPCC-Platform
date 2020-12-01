@@ -42,14 +42,6 @@ jobs:
     timeout-minutes: 120
 
     steps:
-    - name: SetLocale
-      run: |
-        #sudo localectl set-locale LANG="en_US.UTF-8"
-        export LANG="en_US.UTF-8"
-        sudo update-locale
-        locale
-        exit 1
- 
     - name: vars
       id: vars
       run: |
@@ -68,10 +60,6 @@ jobs:
         echo ::set-output name=branch::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.head_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
         echo ::set-output name=base_ref::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.base_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
         echo ::set-output name=sha::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.event.pull_request.head.sha }}; else echo ${{ github.sha }}; fi)
-        locale
-        sudo apt-get install language-pack-en language-pack-en-base
-        sudo update-locale LANG=en_US.UTF-8
-        bash -c "locale"
 
     - name: Fetch cache
       id: cache
@@ -95,10 +83,6 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       id: check-cache
       run: |
-        echo local in runner shell
-        locale
-        echo local in separate bash shell
-        bash -c "locale"
         echo ::set-output name=cache-exists::$(if [[ -d build-cache ]]; then echo true; else echo false; fi)
         if [[ -d build-cache ]]; then \
           stat build-cache src-cache; \
@@ -219,6 +203,9 @@ jobs:
     - name: Run regression suite setup
       if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
       run: |
+        export LANG="en_US.UTF-8"
+        sudo update-locale
+        locale
         source install/opt/HPCCSystems/sbin/hpcc_setenv
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
         mkdir -p regress
@@ -286,6 +273,9 @@ jobs:
     - name: run
       shell: bash
       run: |
+        export LANG="en_US.UTF-8"
+        sudo update-locale
+        locale
         tar --zstd -xf install.tgz
         source install/opt/HPCCSystems/sbin/hpcc_setenv
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
@@ -325,5 +315,8 @@ jobs:
 
     - name: run
       run: |
+        export LANG="en_US.UTF-8"
+        sudo update-locale
+        locale
         tar --zstd -xf install.tgz
         install/opt/HPCCSystems/bin/unittests
