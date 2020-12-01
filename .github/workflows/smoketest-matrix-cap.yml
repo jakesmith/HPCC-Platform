@@ -61,7 +61,8 @@ jobs:
         echo ::set-output name=base_ref::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.base_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
         echo ::set-output name=sha::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.event.pull_request.head.sha }}; else echo ${{ github.sha }}; fi)
         locale
-        sudo update-locale LANG=en_US.UTF8
+        sudo apt-get install language-pack-en language-pack-en-base
+        sudo update-locale LANG=en_US.UTF-8
         bash -c "locale"
 
     - name: Fetch cache
@@ -98,6 +99,7 @@ jobs:
 
     # Fetch dependencies, and clone sources in parallel to save time
     # NB: we don't use actions/checkout because ... (I forget why!)
+    # JCSMORE - we should have a released list of build-time dependencies in our source tree, that this uses, that is kept up-to-date
     - name: Dependencies
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
