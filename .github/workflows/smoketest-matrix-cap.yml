@@ -197,6 +197,7 @@ jobs:
         mkdir copy
         cp -rp install copy/
         rm -rf copy/install/var/lib/HPCCSystems/hpcc-data
+        rm -rf copy/install/var/lib/HPCCSystems/queries
 
     - name: Run regression suite setup
       if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
@@ -224,6 +225,7 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
       run: |
         mv install/var/lib/HPCCSystems/hpcc-data copy/install/var/lib/HPCCSystems/
+        mv install/var/lib/HPCCSystems/queries copy/install/var/lib/HPCCSystems/
         cd copy
         tar --zstd -cf ../install.tgz install 
 
