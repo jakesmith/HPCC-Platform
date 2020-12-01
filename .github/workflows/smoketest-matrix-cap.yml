@@ -190,8 +190,8 @@ jobs:
     - name: Prepare install artifact
       if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
       run: |
-        jq --arg installdir "${{ github.workspace }}/install" \
-          '.Regress.dropzonePath = $installdir + .Regress.dropzonePath | .Regress.setupExtraParams.OriginalTextFilesOsPath = $installdir + .Regress.setupExtraParams.OriginalTextFilesOsPath | .Regress.regressionDir = $installdir + "/regress" | .Regress.logDir = $installdir + "/regress/log"' \
+        jq --arg rootdir "${{ github.workspace }}" \
+          '.Regress.dropzonePath = $rootdir + "/install" + .Regress.dropzonePath | .Regress.setupExtraParams.OriginalTextFilesOsPath = $rootdir + "/install" + .Regress.setupExtraParams.OriginalTextFilesOsPath | .Regress.regressionDir = $rootdir + "/regress" | .Regress.logDir = $rootdir + "/regress/log"' \
           install/opt/HPCCSystems/testing/regress/ecl-test.json > ecl-test.json
         mv -f ecl-test.json install/opt/HPCCSystems/testing/regress/ecl-test.json
         mkdir copy
@@ -203,6 +203,7 @@ jobs:
       run: |
         source install/opt/HPCCSystems/sbin/hpcc_setenv
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
+        mkdir -p regress
         cd install/opt/HPCCSystems/testing/regress
         ./ecl-test setup --pq 2
         ${{ github.workspace }}/install/opt/HPCCSystems/etc/init.d/hpcc-init stop
