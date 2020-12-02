@@ -18,9 +18,10 @@
 //class=embedded
 //class=python2
 
-HPCCBaseDir := 'default' : STORED('HPCCBaseDir');
-
+import ^ as root;
 import python;
+HPCCBaseDir := #IFDEFINED(root.HPCCBaseDir, '/opt/HPCCSystems/');
+
 string pcat(string a, string b) := IMPORT(Python, HPCCBaseDir + 'examples/embed/python_cat.cat':time);
 pcat('Hello ', 'world!');
 
