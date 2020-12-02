@@ -154,7 +154,6 @@ class ECLFile:
             for extraDName, extraDVal in args.setupExtraD.items():
                 extraDVal = extraDVal.strip()
                 optDs = ["-D"+extraDName+"='"+extraDVal+"'"]
-                print(optDs)
                 self.processKeyValPairs(optDs,  self.optDHash)
             pass
 
