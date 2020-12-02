@@ -18,8 +18,10 @@
 //class=embedded
 //class=python3
 
+HPCCBaseDir := 'default' : STORED('HPCCBaseDir');
+
 import python3;
-string pcat(string a, string b) := IMPORT(Python3, '/opt/HPCCSystems/examples/embed/python_cat.cat':time);
+string pcat(string a, string b) := IMPORT(Python3, HPCCBaseDir + 'examples/embed/python_cat.cat':time);
 pcat('Hello ', 'world!');
 
 integer padd(integer a, integer b) := EMBED(Python3 :time)

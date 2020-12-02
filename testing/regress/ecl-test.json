@@ -59,7 +59,8 @@
         ],
         "setupExtraParams":{
             "OriginalTextFilesOsPath" : "/opt/HPCCSystems/testing/regress",
-            "OriginalTextFilesIp" : "127.0.0.1"
+            "OriginalTextFilesIp" : "127.0.0.1",
+            "HPCCBaseDir" : "/opt/HPCCSystems/"
         },
         "FileExclusion":[
             "*_blahblah.ecl"

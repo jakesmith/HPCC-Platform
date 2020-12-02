@@ -18,8 +18,10 @@
 //class=embedded
 //class=3rdparty
 
+HPCCBaseDir := 'default' : STORED('HPCCBaseDir');
+
 import java;
-string jcat(string a, string b) := IMPORT(java, 'JavaCat.cat:(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;' : classpath('/opt/HPCCSystems/classes'));
+string jcat(string a, string b) := IMPORT(java, 'JavaCat.cat:(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;' : classpath(HPCCBaseDir + 'classes'));
 
 integer jadd(integer a, integer b) := IMPORT(java, 'JavaCat.add:(II)I');
 integer jaddl(integer a, integer b) := IMPORT(java, 'JavaCat.addL:(II)J');
