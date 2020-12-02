@@ -39,24 +39,12 @@ jobs:
   build-and-setup:
     name: Build platform and regress setup container
     runs-on: ubuntu-20.04
-    timeout-minutes: 120
+    timeout-minutes: 120 # Generous, typical build time is < 60
 
     steps:
     - name: vars
       id: vars
       run: |
-        echo base_ref is ${{ github.base_ref }}
-        echo head_ref is ${{ github.head_ref }}
-        echo ref is ${{ github.ref }}
-        echo sha is ${{ github.sha }}
-        echo github.actor is ${{ github.actor }}
-        echo github.repository = ${{ github.repository }}
-        echo github.repository_owner is ${{ github.repository_owner }}
-        echo pull_request.head.sha ${{ github.event.pull_request.head.sha }}
-        echo pull_request.base.sha ${{ github.event.pull_request.base.sha }}
-        echo github.workspace = ${{ github.workspace }}
-        echo github.action = ${{ github.action }}
-        echo github.event_name = ${{ github.event_name }}
         echo ::set-output name=branch::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.head_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
         echo ::set-output name=base_ref::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.base_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
         echo ::set-output name=sha::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.event.pull_request.head.sha }}; else echo ${{ github.sha }}; fi)
@@ -76,6 +64,19 @@ jobs:
       # ^^^ Perhaps should add other restore keys e.g.:
       #   hpccbuild-7.12-
       #   hpccbuild-7.
+
+    - name: tracing
+      run: |
+        echo "Branch   = ${{ steps.vars.outputs.branch}}"
+        echo "Base ref = ${{ steps.vars.outputs.base_ref}}"
+        echo "SHA      = ${{ steps.vars.outputs.sha}}"
+        echo "Action   = ${{ github.action }}"
+        echo "Event    = ${{ github.event_name }}"
+        if [[ "${{ github.event_name }}" = 'pull_request' ]]; then \
+          echo "PR base_ref = ${{ github.base_ref }}"; \
+          echo "PR head_ref = ${{ github.head_ref }}"; \
+          echo "PR base SHA = ${{ github.event.pull_request.base.sha }}"; \
+        fi
 
     # NB: actions/cache does not set cache-hit to true if restore-keys used.
     # So here we check if a cache was restored, and set a separate variable 'cache-exists' if it does.
@@ -280,7 +281,7 @@ jobs:
         source install/opt/HPCCSystems/sbin/hpcc_setenv
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
         cd install/opt/HPCCSystems/testing/regress
-        ./ecl-test query --pq 2 --target ${{ matrix.engine }} --excludeclass 3rdparty,spray "[${{ matrix.querypat }}]*.ecl"
+        ./ecl-test query --pq 2 --target ${{ matrix.engine }} --excludeclass python2,3rdparty,spray "[${{ matrix.querypat }}]*.ecl"
         grep Failure: ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
         grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
         if [[ "$(grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log)" -gt 0 ]]; then exit 1; fi
