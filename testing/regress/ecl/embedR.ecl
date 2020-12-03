@@ -16,6 +16,7 @@
 ############################################################################## */
 
 //class=embedded
+//class=embeddedR
 //class=3rdparty
 
 IMPORT R;
