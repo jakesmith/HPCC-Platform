@@ -48,6 +48,8 @@ jobs:
           echo ::set-output name=sha::${{ github.event.pull_request.head.sha }}; \
           echo ::set-output name=base_ref::${{ github.base_ref }}; \
           versioned=$(echo ${{ github.base_ref }} | sed -E -n 's/^.*-([0-9]+)\.([0-9]+)\.([0-9]+|x)(-[0-9]+|).*$/\1 \2 \3 \4/p'); \
+          echo base_ref = ${{ github.base_ref }}
+          echo versioned=${versioned}; \
           if [[ -z "${versioned}" ]]; then \
             IFS=' ' read major minor point cand <<< $versioned; \
             echo ::set-output name=base-major-restore-key::hpccbuild-${{ env.cacheversion }}-${ $major }.${ $minor }. ;\
