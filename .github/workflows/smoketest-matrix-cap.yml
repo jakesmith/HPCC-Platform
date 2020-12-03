@@ -1,6 +1,4 @@
-# NB: --build-arg's must be set for previous ARG's for future parts of multi-stage builds
-
-name: smoketest-push
+name: smoketest
 env:
   cacheversion: 58
 
@@ -265,7 +263,6 @@ jobs:
         sudo apt-get update
         sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs libaprutil1-dev libiberty-dev libhiredis-dev libtbb-dev git
         sudo apt-get install -yq libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
-        sudo apt-get r-base-dev
         sudo apt-get install default-jre
 
     - uses: actions/download-artifact@v2
@@ -309,7 +306,6 @@ jobs:
         sudo apt-get update
         sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs libaprutil1-dev libiberty-dev libhiredis-dev libtbb-dev git
         sudo apt-get install -yq libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
-        sudo apt-get install default-jre
 
     - uses: actions/download-artifact@v2
       with:
