@@ -255,10 +255,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: ['hthor']
-        querypat: ['embed*']
-        #engine: ['hthor', 'thor', 'roxie']
-        #querypat: ['a-h', 'i-q', 'r-z']
+        engine: ['hthor', 'thor', 'roxie']
+        querypat: ['[a-h]*', '[i-q]*', '[r-z]*']
     steps:
     - name: Prerequisites
       id: prerequisites
