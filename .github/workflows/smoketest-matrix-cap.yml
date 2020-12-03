@@ -47,7 +47,7 @@ jobs:
     - name: set
       id: prerequisites
       run: |
-        echo ::set-output matrix-querypat=$(printf "%q" ${{ matrix.querypat }})
+        echo ::set-output name=matrix-querypat::$(printf "%q" ${{ matrix.querypat }})
 
     - name: read
       run: |
