@@ -151,8 +151,6 @@ jobs:
         mkdir build
         mkdir src-cache
 
-    - uses: actions/setup-r@v1
-
     # All sources are older the objects that are about to be made,
     # cache-timestamp created on cache-miss.
     # Subsequent cache hit builds use this timestamp to ensure all sources are marked 'old',
