@@ -206,7 +206,6 @@ jobs:
       run: |
         export LANG="en_US.UTF-8"
         sudo update-locale
-        locale
         source install/opt/HPCCSystems/sbin/hpcc_setenv
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
         mkdir -p regress
@@ -266,6 +265,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs libaprutil1-dev libiberty-dev libhiredis-dev libtbb-dev git
         sudo apt-get install -yq libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
+        sudo apt-get r-base-dev
+        sudo apt-get install default-jre
 
     - uses: actions/download-artifact@v2
       with:
@@ -276,7 +277,6 @@ jobs:
       run: |
         export LANG="en_US.UTF-8"
         sudo update-locale
-        locale
         tar --zstd -xf install.tgz
         source install/opt/HPCCSystems/sbin/hpcc_setenv
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
@@ -309,6 +309,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs libaprutil1-dev libiberty-dev libhiredis-dev libtbb-dev git
         sudo apt-get install -yq libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
+        sudo apt-get install default-jre
 
     - uses: actions/download-artifact@v2
       with:
@@ -318,6 +319,5 @@ jobs:
       run: |
         export LANG="en_US.UTF-8"
         sudo update-locale
-        locale
         tar --zstd -xf install.tgz
         install/opt/HPCCSystems/bin/unittests
