@@ -34,6 +34,38 @@ on:
       - "clienttools/**"
 
 jobs:
+  testing1:
+    name: test
+    runs-on: ubuntu-20.04
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: ['hthor']
+        querypat: ['embed*']
+
+    steps:
+    - name: set
+      id: prerequisites
+      run: |
+        echo ::set-output matrix-querypat=$(printf "%q" ${{ matrix.querypat }})
+
+    - name: read
+      run: |
+        echo maxtrix-querypat original = ${{ maxrix.querypat }}
+        echo maxtrix-querypat = ${{ steps.prerequisites.outputs.matrix-querypat }}
+        mkdir test
+        echo hello > test/hello
+        exit 1
+
+    - name: logs-on-failure
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@v2
+      with:
+        name: test-fail-logs-${{ matrix.engine }}-${{ steps.prerequisites.outputs.matrix-querypat }}
+        path: |
+          test/
+
+
   build-and-setup:
     name: Build platform and regress setup container
     runs-on: ubuntu-20.04
