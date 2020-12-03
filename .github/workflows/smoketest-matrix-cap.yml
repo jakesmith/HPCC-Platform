@@ -1,6 +1,6 @@
 name: smoketest
 env:
-  cacheversion: 58
+  cacheversion: 1
 
 on:
   push:
@@ -261,6 +261,7 @@ jobs:
         #querypat: ['a-h', 'i-q', 'r-z']
     steps:
     - name: Prerequisites
+      id: prerequisites
       run: |
         echo ::set-output matrix-querypat=$(printf "%q" ${{ matrix.querypat }})
         sudo apt-get update
@@ -290,7 +291,7 @@ jobs:
       if: ${{ failure() }}
       uses: actions/upload-artifact@v2
       with:
-        name: regress-fail-logs-${{ matrix.engine }}-$(printf "%q" ${{ matrix.querypat }})
+        name: regress-fail-logs-${{ matrix.engine }}-${{ steps.prerequisites.outputs.matrix-querypat }}
         path: |
           install/var/log/HPCCSystems
           regress/
