@@ -51,6 +51,7 @@ jobs:
           echo base_ref = ${{ github.base_ref }}
           echo versioned=${versioned}; \
           if [[ -z "${versioned}" ]]; then \
+            echo matched version = ${versioned}; \
             IFS=' ' read major minor point cand <<< $versioned; \
             echo ::set-output name=base-major-restore-key::hpccbuild-${{ env.cacheversion }}-${ $major }.${ $minor }. ;\
             echo ::set-output name=base-minor-restore-key::hpccbuild-${{ env.cacheversion }}-${ $major }. ;\
@@ -80,8 +81,6 @@ jobs:
       run: |
         echo "Branch     = ${{ steps.vars.outputs.branch }}"
         echo "Base ref   = ${{ steps.vars.outputs.base_ref }}"
-        echo "Base major = ${{ steps.vars.outputs.base-major }}"
-        echo "Base minor = ${{ steps.vars.outputs.base-minor }}"
         echo "SHA        = ${{ steps.vars.outputs.sha}}"
         echo "Action     = ${{ github.action }}"
         echo "Event      = ${{ github.event_name }}"
