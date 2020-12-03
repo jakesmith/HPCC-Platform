@@ -51,7 +51,7 @@ jobs:
 
     - name: read
       run: |
-        echo maxtrix-querypat original = ${{ maxrix.querypat }}
+        echo maxtrix-querypat original = ${{ matrix.querypat }}
         echo maxtrix-querypat = ${{ steps.prerequisites.outputs.matrix-querypat }}
         mkdir test
         echo hello > test/hello
