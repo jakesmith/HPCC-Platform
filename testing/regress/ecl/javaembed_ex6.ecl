@@ -16,6 +16,7 @@
 ############################################################################## */
 
 //class=embedded
+//class=embedded-java
 //class=3rdparty
 
 import java;

@@ -16,7 +16,9 @@
 ############################################################################## */
 
 //class=embedded
+//class=embedded-java
 //class=3rdparty
+
 IMPORT Java;
 
 unsigned persister(integer initial) := EMBED(Java : persist('workunit'))
