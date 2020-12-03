@@ -3363,6 +3363,8 @@ int main(int argc, char* argv[])
         StringBuffer lf;
         openLogFile(lf, cmd.toLowerCase().append(".log").str());
 
+ PROGLOG("Test1");
+
 #if defined(TEST_MEMTHREADS)
         printf("start...\n");
         TestMemThread2 t("test");

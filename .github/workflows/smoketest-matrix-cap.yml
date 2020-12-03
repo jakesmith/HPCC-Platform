@@ -49,10 +49,7 @@ jobs:
           echo ::set-output name=base_ref::${{ github.base_ref }}; \
           versioned=$(echo ${{ github.base_ref }} | sed -E -n 's/^(.*)-([0-9]+)\.([0-9]+)\.([0-9]+|x)(-[0-9]+|).*$/\1 \2 \3 \4 \5/p'); \
           if [[ "${versioned}" ]]; then \
-            echo matched version = ${versioned}; \
             IFS=' ' read prefix major minor point cand <<< ${versioned}; \
-            echo "name=base-major-restore-key::hpccbuild-${{ env.cacheversion }}-${prefix}-${major}.${minor}." ;\
-            echo "name=base-minor-restore-key::hpccbuild-${{ env.cacheversion }}-${prefix}-${major}." ;\
             echo ::set-output name=base-major-restore-key::hpccbuild-${{ env.cacheversion }}-${prefix}-${major}.${minor}. ;\
             echo ::set-output name=base-minor-restore-key::hpccbuild-${{ env.cacheversion }}-${prefix}-${major}. ;\
           fi; \
@@ -274,9 +271,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: ['hthor']
+        engine: ['hthor', 'thor', 'roxie']
         querypat: ['java*']
-#        engine: ['hthor', 'thor', 'roxie']
 #        querypat: ['[a-h]*', '[i-q]*', '[r-z]*']
     steps:
     - name: Prerequisites
@@ -300,6 +296,8 @@ jobs:
         source install/opt/HPCCSystems/sbin/hpcc_setenv
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
         cd install/opt/HPCCSystems/testing/regress
+        java --version
+        javac --version
         ./ecl-test query --pq 2 --target ${{ matrix.engine }} --excludeclass python2,embedded-r,embedded-js,3rdpartyservice,spray "${{ matrix.querypat }}.ecl"
         grep Failure: ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
         if [[ "$(grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log)" -gt 0 ]]; then exit 1; fi
@@ -311,6 +309,7 @@ jobs:
         name: regress-fail-logs-${{ matrix.engine }}-${{ steps.prerequisites.outputs.matrix-querypat }}
         path: |
           install/var/log/HPCCSystems
+          install/var/lib/HPCCSystems
           regress/
 
 
