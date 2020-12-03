@@ -151,6 +151,8 @@ jobs:
         mkdir build
         mkdir src-cache
 
+    - uses: actions/setup-r@v1
+
     # All sources are older the objects that are about to be made,
     # cache-timestamp created on cache-miss.
     # Subsequent cache hit builds use this timestamp to ensure all sources are marked 'old',
@@ -255,8 +257,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: ['hthor', 'thor', 'roxie']
-        querypat: ['a-h', 'i-q', 'r-z']
+        engine: ['hthor']
+        querypat: ['embed']
+        #engine: ['hthor', 'thor', 'roxie']
+        #querypat: ['a-h', 'i-q', 'r-z']
     steps:
     - name: Prerequisites
       run: |
@@ -268,6 +272,8 @@ jobs:
     - uses: actions/download-artifact@v2
       with:
         name: installsetup-artifact
+
+    - uses: actions/setup-r@v1
 
     - name: run
       shell: bash
