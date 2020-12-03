@@ -47,11 +47,11 @@ jobs:
           echo ::set-output name=branch::${{ github.head_ref }}; \
           echo ::set-output name=sha::${{ github.event.pull_request.head.sha }}; \
           echo ::set-output name=base_ref::${{ github.base_ref }}; \
-          versioned=$(echo ${{ github.base_ref }} | sed -E -n 's/^([0-9]+)\.([0-9]+)\.([0-9]+|x)(-[0-9]+|).*$/\1 \2 \3 \4/p'); \
+          versioned=$(echo ${{ github.base_ref }} | sed -E -n 's/^.*-([0-9]+)\.([0-9]+)\.([0-9]+|x)(-[0-9]+|).*$/\1 \2 \3 \4/p'); \
           if [[ -z "${versioned}" ]]; then \
             IFS=' ' read major minor point cand <<< $versioned; \
-            echo ::set-output name=base_major::$major; \
-            echo ::set-output name=base_minor::$minor; \
+            echo ::set-output name=base-major-restore-key::hpccbuild-${{ env.cacheversion }}-${ $major }.${ $minor }. ;\
+            echo ::set-output name=base-minor-restore-key::hpccbuild-${{ env.cacheversion }}-${ $major }. ;\
           fi; \
         else \
           echo ::set-output name=branch::${GITHUB_REF#refs/heads/}; \
@@ -60,8 +60,6 @@ jobs:
         fi
 
     # NB: restore-keys set to e.g. hpccbuild-1-7.12.10, hpccbuild-1-7.12, hpccbuild-1-7, hpccbuild-1-
-    # If base is master, major will be set to master, and intermediate key will be duplicated, but that does not matter
-    # e.g. hpccbuild-1-master, hpccbuild-1-master., hpccbuild-1-master., hpccbuild-1-
     - name: Fetch cache
       id: cache
       uses: actions/cache@v2
@@ -72,16 +70,16 @@ jobs:
         key: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}-${{ steps.vars.outputs.sha }}
         restore-keys: |
           hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}
-          hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_major }}.${{ steps.vars.outputs.base_minor }}.
-          hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_major }}.
+          ${{ steps.vars.outputs.base-major-restore-key }}
+          ${{ steps.vars.outputs.base-minor-restore-key }}
           hpccbuild-${{ env.cacheversion }}-
 
     - name: tracing
       run: |
         echo "Branch     = ${{ steps.vars.outputs.branch }}"
         echo "Base ref   = ${{ steps.vars.outputs.base_ref }}"
-        echo "Base major = ${{ steps.vars.outputs.base_major }}"
-        echo "Base minor = ${{ steps.vars.outputs.base_minor }}"
+        echo "Base major = ${{ steps.vars.outputs.base-major }}"
+        echo "Base minor = ${{ steps.vars.outputs.base-minor }}"
         echo "SHA        = ${{ steps.vars.outputs.sha}}"
         echo "Action     = ${{ github.action }}"
         echo "Event      = ${{ github.event_name }}"
@@ -91,8 +89,8 @@ jobs:
           echo "PR base SHA = ${{ github.event.pull_request.base.sha }}"; \
         fi
         echo restore-key1: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}
-        echo restore-key2: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_major }}.${{ steps.vars.outputs.base_minor }}.
-        echo restore-key3: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_major }}.
+        echo restore-key2: ${{ steps.vars.outputs.base-major-restore-key }}
+        echo restore-key3: ${{ steps.vars.outputs.base-minor-restore-key }}
         echo restore-key4: hpccbuild-${{ env.cacheversion }}-
         exit 1
 
