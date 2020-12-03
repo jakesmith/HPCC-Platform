@@ -43,10 +43,25 @@ jobs:
     - name: vars
       id: vars
       run: |
-        echo ::set-output name=branch::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.head_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
-        echo ::set-output name=base_ref::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.base_ref }}; else echo ${GITHUB_REF#refs/heads/}; fi)
-        echo ::set-output name=sha::$(if [[ "${{ github.event_name }}" = 'pull_request' ]]; then echo ${{ github.event.pull_request.head.sha }}; else echo ${{ github.sha }}; fi)
+        if [[ "${{ github.event_name }}" = 'pull_request' ]]; then \
+          echo ::set-output name=branch::${{ github.head_ref }}; \
+          echo ::set-output name=sha::${{ github.event.pull_request.head.sha }}; \
+          echo ::set-output name=base_ref::${{ github.base_ref }}; \
+          versioned=$(echo ${{ github.base_ref }} | sed -E -n 's/^([0-9]+)\.([0-9]+)\.([0-9]+|x)(-[0-9]+|).*$/\1 \2 \3 \4/p'; \
+          if [[ -z "${versioned}" ]]; then \
+            IFS=' ' read major minor point cand <<< $versioned; \
+            echo ::set-output name=base_major::$major; \
+            echo ::set-output name=base_minor::$minor; \
+          fi; \
+        else \
+          echo ::set-output name=branch::${GITHUB_REF#refs/heads/}; \
+          echo ::set-output name=sha::${{ github.sha }}; \
+          echo ::set-output name=base_ref::${GITHUB_REF#refs/heads/}; \
+        fi
 
+    # NB: restore-keys set to e.g. hpccbuild-1-7.12.10, hpccbuild-1-7.12, hpccbuild-1-7, hpccbuild-1-
+    # If base is master, major will be set to master, and intermediate key will be duplicated, but that does not matter
+    # e.g. hpccbuild-1-master, hpccbuild-1-master., hpccbuild-1-master., hpccbuild-1-
     - name: Fetch cache
       id: cache
       uses: actions/cache@v2
@@ -57,24 +72,29 @@ jobs:
         key: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}-${{ steps.vars.outputs.sha }}
         restore-keys: |
           hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}
+          hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_major }}.${{ steps.vars.outputs.base_minor }}.
+          hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_major }}.
           hpccbuild-${{ env.cacheversion }}-
-
-      # ^^^ Perhaps should add other restore keys e.g.:
-      #   hpccbuild-7.12-
-      #   hpccbuild-7.
 
     - name: tracing
       run: |
-        echo "Branch   = ${{ steps.vars.outputs.branch}}"
-        echo "Base ref = ${{ steps.vars.outputs.base_ref}}"
-        echo "SHA      = ${{ steps.vars.outputs.sha}}"
-        echo "Action   = ${{ github.action }}"
-        echo "Event    = ${{ github.event_name }}"
+        echo "Branch     = ${{ steps.vars.outputs.branch }}"
+        echo "Base ref   = ${{ steps.vars.outputs.base_ref }}"
+        echo "Base major = ${{ steps.vars.outputs.base_major }}"
+        echo "Base minor = ${{ steps.vars.outputs.base_minor }}"
+        echo "SHA        = ${{ steps.vars.outputs.sha}}"
+        echo "Action     = ${{ github.action }}"
+        echo "Event      = ${{ github.event_name }}"
         if [[ "${{ github.event_name }}" = 'pull_request' ]]; then \
           echo "PR base_ref = ${{ github.base_ref }}"; \
           echo "PR head_ref = ${{ github.head_ref }}"; \
           echo "PR base SHA = ${{ github.event.pull_request.base.sha }}"; \
         fi
+        echo restore-key1: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}
+        echo restore-key2: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_major }}.${{ steps.vars.outputs.base_minor }}.
+        echo restore-key3: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_major }}.
+        echo restore-key4: hpccbuild-${{ env.cacheversion }}-
+        exit 1
 
     # NB: actions/cache does not set cache-hit to true if restore-keys used.
     # So here we check if a cache was restored, and set a separate variable 'cache-exists' if it does.
@@ -98,6 +118,7 @@ jobs:
           libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs libaprutil1-dev libiberty-dev libhiredis-dev \
           libtbb-dev git libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev \
           libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
+        sudo apt-get install default-jre
 
     # On a cache hit (NB: whether exact via key or via a restore-key),
     # if SHA of cache can be found:
@@ -255,8 +276,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: ['hthor', 'thor', 'roxie']
-        querypat: ['[a-h]*', '[i-q]*', '[r-z]*']
+        engine: ['hthor']
+        querypat: ['java*']
+#        engine: ['hthor', 'thor', 'roxie']
+#        querypat: ['[a-h]*', '[i-q]*', '[r-z]*']
     steps:
     - name: Prerequisites
       id: prerequisites
@@ -281,7 +304,6 @@ jobs:
         cd install/opt/HPCCSystems/testing/regress
         ./ecl-test query --pq 2 --target ${{ matrix.engine }} --excludeclass python2,embedded-r,embedded-js,3rdpartyservice,spray "${{ matrix.querypat }}.ecl"
         grep Failure: ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
-        grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
         if [[ "$(grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log)" -gt 0 ]]; then exit 1; fi
 
     - name: logs-on-failure
