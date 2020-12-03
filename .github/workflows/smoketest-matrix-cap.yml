@@ -280,7 +280,7 @@ jobs:
         source install/opt/HPCCSystems/sbin/hpcc_setenv
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
         cd install/opt/HPCCSystems/testing/regress
-        ./ecl-test query --pq 2 --target ${{ matrix.engine }} --excludeclass python2,embeddedr,3rdpartyservice,spray "[${{ matrix.querypat }}]*.ecl"
+        ./ecl-test query --pq 2 --target ${{ matrix.engine }} --excludeclass python2,embedded-r,embedded-js,3rdpartyservice,spray "[${{ matrix.querypat }}]*.ecl"
         grep Failure: ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
         grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
         if [[ "$(grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log)" -gt 0 ]]; then exit 1; fi

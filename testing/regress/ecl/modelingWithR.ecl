@@ -16,7 +16,7 @@
 ############################################################################## */
 
 //class=embedded
-//class=embeddedR
+//class=embedded-r
 //class=3rdparty
 
 // The following script uses embeded R code to train some models on data passed to R
