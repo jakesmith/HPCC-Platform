@@ -93,7 +93,6 @@ jobs:
         echo restore-key2: ${{ steps.vars.outputs.base-major-restore-key }}
         echo restore-key3: ${{ steps.vars.outputs.base-minor-restore-key }}
         echo restore-key4: hpccbuild-${{ env.cacheversion }}-
-        exit 1
 
     # NB: actions/cache does not set cache-hit to true if restore-keys used.
     # So here we check if a cache was restored, and set a separate variable 'cache-exists' if it does.
