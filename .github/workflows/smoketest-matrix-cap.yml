@@ -34,38 +34,6 @@ on:
       - "clienttools/**"
 
 jobs:
-  testing1:
-    name: test
-    runs-on: ubuntu-20.04
-    strategy:
-      fail-fast: false
-      matrix:
-        engine: ['hthor']
-        querypat: ['embed*']
-
-    steps:
-    - name: set
-      id: prerequisites
-      run: |
-        echo ::set-output name=matrix-querypat::$(echo ${{ matrix.querypat }} | tr -c "[:alnum:]" _)
-
-    - name: read
-      run: |
-        echo maxtrix-querypat original = ${{ matrix.querypat }}
-        echo maxtrix-querypat = ${{ steps.prerequisites.outputs.matrix-querypat }}
-        mkdir test
-        echo hello > test/hello
-        exit 1
-
-    - name: logs-on-failure
-      if: ${{ failure() }}
-      uses: actions/upload-artifact@v2
-      with:
-        name: test-fail-logs-${{ matrix.engine }}-${{ steps.prerequisites.outputs.matrix-querypat }}
-        path: |
-          test/
-
-
   build-and-setup:
     name: Build platform and regress setup container
     runs-on: ubuntu-20.04
@@ -295,7 +263,7 @@ jobs:
     - name: Prerequisites
       id: prerequisites
       run: |
-        echo ::set-output name=matrix-querypat::$(echo ${{ matrix.querypat }} | tr -c "[:alnum:]" _)
+        echo ::set-output name=matrix-querypat::$(echo -n ${{ matrix.querypat }} | tr -c "[:alnum:]" _)
         sudo apt-get update
         sudo apt-get install -yq cmake bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev libapr1-dev nodejs libaprutil1-dev libiberty-dev libhiredis-dev libtbb-dev git
         sudo apt-get install -yq libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake libssl-dev
@@ -306,7 +274,6 @@ jobs:
         name: installsetup-artifact
 
     - name: run
-      shell: bash
       run: |
         export LANG="en_US.UTF-8"
         sudo update-locale
