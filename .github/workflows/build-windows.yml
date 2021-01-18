@@ -72,6 +72,11 @@ jobs:
       #   run: |
       #     $VCPKG_ROOT\vcpkg install --x-manifest-root ${{ github.workspace }}\HPCC-Platform --triplet x64-windows
 
+      - name: Install bison
+        working-directory: .
+        run: |
+          choco install winflexbison3 -y
+
       - name: Run CMake to install the dependencies specified in the vcpkg.json manifest, generate project file and build the project
         uses: lukka/run-cmake@v3
         with:
