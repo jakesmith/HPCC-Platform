@@ -1,9 +1,8 @@
 name: Check win32 compiles
-env:
-  cacheversion: 8
-  VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/vcpkgs-cache,readwrite'  
-  VCPKG_FEATURE_FLAGS: "manifest"
-  OUR_VCPKG_TRIPLET: x64-windows
+# env:
+#   VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/../vcpkgs-cache,readwrite'  
+#   VCPKG_FEATURE_FLAGS: "manifest"
+#   OUR_VCPKG_TRIPLET: x64-windows
 on:
   pull_request:
     branches:
@@ -57,9 +56,9 @@ jobs:
         uses: lukka/run-vcpkg@v6
         with:
           setupOnly: true
-          additionalCachedPaths: "${{ github.workspace }}\vcpkgs-cache"
+          additionalCachedPaths: "${{ github.workspace }}/../vcpkgs-cache"
           vcpkgTriplet: x64-windows
-          vcpkgDirectory: ${{ github.workspace }}\tools\vcpkg
+          vcpkgDirectory: ${{ github.workspace }}/tools/vcpkg
           #vcpkgArguments: ""
       # Now that vcpkg is installed, it is being used to run with the desired arguments.
       - name: tracing2
@@ -83,7 +82,8 @@ jobs:
           useVcpkgToolchainFile: true
           buildWithCMake: true
           cmakeBuildType: "RelWithDebInfo"
-          #cmakeGenerator: "VS16Win64"
+          cmakeGenerator: "VS16Win64"
+          cmakeAppendedArgs: "-DUSE_OPENLDAP=0 -DUSE_ICU=0 -DUSE_LIBXSLT=1 -DUSE_CBLAS=0 -DUSE_ZLIB=1 -DUSE_LIBARCHIVE=0 -DUSE_BOOST_REGEX=0 -DUSE_OPENSSL=1 -DUSE_APR=0 -DUSE_AZURE=0 -DUSE_AWS=0 -DWSSQL_SERVICE=0 -DUSE_PYTHON3=0 -DUSE_PYTHON2=0 -DUSE_CASSANDRA=0 -DUSE_TBB=0 -DUSE_JAVA=0 -DUSE_NATIVE_LIBRARIES=1 -DINCLUDE_CONFIG_MANAGER=0 -DINCLUDE_TREEVIEW=0 -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE"
 
       # - name: Windows compilation
       #   working-directory: .
