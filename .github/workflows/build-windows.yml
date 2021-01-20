@@ -1,4 +1,8 @@
 name: Check win32 compiles
+env:
+  vcpkgCommitId: "c0020eb4e5f1a297b8514a03deaf58e90652257b" # NB: should be updated...
+  vcpkgTriplet: "x64-windows"
+  
 # env:
 #   VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/../vcpkgs-cache,readwrite'  
 #   VCPKG_FEATURE_FLAGS: "manifest"
@@ -35,10 +39,13 @@ jobs:
     needs: pre_job
     if: ${{ needs.pre_job.outputs.should_skip != 'true' }}
     runs-on: windows-latest
+    env:
+      buildDir: '${{ github.workspace }}/b/vcpkg_submod_manifest'
     steps:
       - name: tracing0
         run: |
           echo github.workspace = ${{ github.workspace }}
+          echo runner.workspace = ${{ runner.workspace }}
       
       - name: Check out source code
         uses: actions/checkout@v2
@@ -46,21 +53,25 @@ jobs:
           submodules: true
       - name: tracing
         run: |
-          # echo VCPKG_BINARY_SOURCES = $ENV:VCPKG_BINARY_SOURCES
           echo vcpkgDirectory = ${{ github.workspace }}\tools\vcpkg
-          # echo VCPKG_FEATURE_FLAGS = $ENV:VCPKG_FEATURE_FLAGS
-          # echo OUR_VCPKG_TRIPLET = $ENV:OUR_VCPKG_TRIPLET
+          echo vcpkg.json = ${{ format('{0}/vcpkg.json', github.workspace) }}
   # Restore from cache the previously built ports. If cache-miss, download and build vcpkg (aka "bootstrap vcpkg").
       - name: Restore from cache and install vcpkg
+        id: runvcpkg
         # Download and build vcpkg, without installing any port. If content is cached already, it is a no-op.
         uses: lukka/run-vcpkg@v6
         with:
           setupOnly: true
           # additionalCachedPaths: "${{ github.workspace }}/../vcpkgs-cache"
-          vcpkgTriplet: x64-windows
-          vcpkgDirectory: ${{ github.workspace }}\tools\vcpkg
-          #vcpkgArguments: ""
-      # Now that vcpkg is installed, it is being used to run with the desired arguments.
+          vcpkgDirectory: '${{ runner.workspace }}/b/vcpkg'
+          vcpkgGitCommitId: '${{ env.vcpkgCommitId }}'
+          # Ensure the cache key changes any time the content of the manifest file changes.
+          appendedCacheKey: ${{ hashFiles(format('{0}/vcpkg.json', github.workspace)) }}
+          vcpkgTriplet: ${{ env.vcpkgTriplet }}
+          # Ensure the vcpkg artifacts are cached, they are generated in the 'CMAKE_BINARY_DIR/vcpkg_installed'.
+          additionalCachedPaths: ${{ env.buildDir }}
+      - name: Prints output of run-vcpkg's action
+        run: echo "root='${{ steps.runvcpkg.outputs.RUNVCPKG_VCPKG_ROOT_OUT }}', triplet='${{ steps.runvcpkg.outputs.RUNVCPKG_VCPKG_TRIPLET_OUT }}'"      # Now that vcpkg is installed, it is being used to run with the desired arguments.
       - name: tracing2
         run: |
           echo VCPKG_ROOT = $ENV:VCPKG_ROOT
@@ -82,9 +93,9 @@ jobs:
         with:
           cmakeListsOrSettingsJson: CMakeListsTxtAdvanced
           cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
-          buildDirectory: "${{ github.workspace }}/../build"
           # This input tells run-cmake to consume the vcpkg.cmake toolchain file set by run-vcpkg.
           useVcpkgToolchainFile: true
+          buildDirectory: '${{ env.buildDir }}'
           cmakeBuildType: "RelWithDebInfo"
           cmakeGenerator: "VS16Win64"
           cmakeAppendedArgs: "-DUSE_OPENLDAP=0 -DUSE_ICU=0 -DUSE_LIBXSLT=1 -DUSE_CBLAS=0 -DUSE_ZLIB=1 -DUSE_LIBARCHIVE=0 -DUSE_BOOST_REGEX=0 -DUSE_OPENSSL=1 -DUSE_APR=0 -DUSE_AZURE=0 -DUSE_AWS=0 -DWSSQL_SERVICE=0 -DUSE_PYTHON3=0 -DUSE_PYTHON2=0 -DUSE_CASSANDRA=0 -DUSE_TBB=0 -DUSE_JAVA=0 -DUSE_NATIVE_LIBRARIES=1 -DINCLUDE_CONFIG_MANAGER=0 -DINCLUDE_TREEVIEW=0 -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE"
