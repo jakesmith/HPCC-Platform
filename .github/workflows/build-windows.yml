@@ -104,7 +104,7 @@ jobs:
 
       - name: Windows compilation
         run: |
-          cd ${{ github.workspace }}/../build
+          cd '${{ env.buildDir }}'
           cmake --build . --config Debug --target ALL_BUILD -- /maxcpucount:3
           
       # - name: Windows compilation
