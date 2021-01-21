@@ -1,0 +1,32 @@
+name: cmaketest
+env:
+  cacheversion: 1
+
+on:
+  pull_request:
+    branches:
+      - "master"
+      - "candidate-*"
+      - "!candidate-7.6.*"
+      - "!candidate-7.4.*"
+      - "!candidate-7.2.*"
+      - "!candidate-7.0.*"
+      - "!candidate-6.*"
+
+jobs:
+  job1:
+    name: job1
+    runs-on: ubuntu-20.04
+
+    steps:
+    - name: cmake
+      run: |
+        mkdir -p cmake/build
+        mkdir -p cmake/src
+        wget https://raw.githubusercontent.com/jakesmith/HPCC-Platform/test2/.github/workflows/cmaketest/CMakeLists.txt -O ./cmake/src/CMakeLists.txt
+        cd cmake/build
+        echo "===== 1st cmake"
+        cmake ../src
+        echo "===== 2nd cmake"
+        cmake ../src
+        echo "===== end"
