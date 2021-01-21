@@ -24,12 +24,14 @@ jobs:
         mkdir -p cmake/build
         mkdir -p cmake/src
         wget https://raw.githubusercontent.com/jakesmith/HPCC-Platform/test2/.github/workflows/cmaketest/CMakeLists.txt -O ./cmake/src/CMakeLists.txt
+        wget https://raw.githubusercontent.com/jakesmith/HPCC-Platform/test2/.github/workflows/cmaketest/atest.cpp -O ./cmake/src/atest.cpp
         cd cmake/build
-        echo "===== 1st cmake"
+        echo "===== 1st cmake+make"
         cmake ../src
+        make -j 2
         echo >> ../src/CMakeLists.txt
-        echo "message(\"-- Auto Detecting Packaging type\")" >> ../src/CMakeLists.txt
+        echo "message(\"hello\")" >> ../src/CMakeLists.txt
         echo >> ../src/CMakeLists.txt
-        echo "===== 2nd cmake"
-        cmake ../src
+        echo "===== 2nd make"
+        make -j 2
         echo "===== end"
