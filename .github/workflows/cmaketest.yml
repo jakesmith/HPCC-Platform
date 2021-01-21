@@ -27,6 +27,9 @@ jobs:
         cd cmake/build
         echo "===== 1st cmake"
         cmake ../src
+        echo >> ../src/CMakeLists.txt
+        echo "message(\"-- Auto Detecting Packaging type\")" >> ../src/CMakeLists.txt
+        echo >> ../src/CMakeLists.txt
         echo "===== 2nd cmake"
         cmake ../src
         echo "===== end"
