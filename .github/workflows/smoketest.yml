@@ -206,6 +206,14 @@ jobs:
         git submodule update --init --recursive --jobs 4
         echo Changed files \(from SHA: $(cat ../build/cache-sha)\):
         find -name '.git*' -prune -o -newer ../build/cache-timestamp -type f -print
+        echo JTHREAD contents
+        cat system/jlib/jthread.cpp
+        echo JTHREAD.cpp stat
+        stat system/jlib/jthread.cpp
+        echo JTHREAD.cpp.o stat
+        stat ../build/system/jlib/CMakeFiles/jlib.dir/jthread.cpp.o
+        echo touching jthread.cpp
+        touch system/jlib/jthread.cpp
 
     - name: Cache miss checkout
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
