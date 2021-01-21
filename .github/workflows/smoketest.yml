@@ -191,7 +191,7 @@ jobs:
         echo Fetching branch: ${{ steps.vars.outputs.branch }}
         git clone --branch ${{ steps.vars.outputs.branch }} -n https://github.com/${{ steps.vars.outputs.repository }} src
         cd src
-        if [[ -n "${{ secrets.SMOKETEST_SKIP_CACHE }}" ]] || [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]; then \
+        if [[ -z "${{ secrets.SMOKETEST_SKIP_CACHE }}" ]] && [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]; then \
           mv ../build-cache ../build ; \
           echo Checking out cache SHA: $(cat ../build/cache-sha); \
           git checkout $(cat ../build/cache-sha); \
