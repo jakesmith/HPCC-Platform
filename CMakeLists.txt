@@ -521,3 +521,5 @@ add_custom_target(localinstall
     )
 
 include(CPack)
+
+message("test1")
