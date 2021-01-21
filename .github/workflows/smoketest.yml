@@ -60,7 +60,7 @@ jobs:
           paths_ignore: '["clienttools/**", "devdoc/**", "dockerfiles/**", "docs/**", "helm/**" ]'
 
   build-and-setup:
-    name: Build platform and regress setup container
+    name: Build platform and regress setup
     needs: check-skip
     if: ${{ needs.check-skip.outputs.should_skip != 'true' }}
     runs-on: ubuntu-20.04
@@ -95,6 +95,7 @@ jobs:
         else \
           echo ::set-output name=repository::$(echo -n ${{ github.actor }}/ ; echo -n ${{ github.repository }} | sed -E -n 's@^[^/]+/(.+)$@\1@p'); \
         fi
+        # should this(^^^^) be <repository_owner>/<repository> instead?
 
     # NB: restore-keys set to e.g. hpccbuild-1-7.12.10, hpccbuild-1-7.12, hpccbuild-1-7, hpccbuild-1-
     - name: Fetch cache
@@ -121,6 +122,10 @@ jobs:
         echo "Actor      = ${{ github.actor }}"
         echo "github.repository = ${{ github.repository }}"
         echo "repository = ${{ steps.vars.outputs.repository }}"
+        echo "repository_owner = ${{ github.repository_owner }}"
+        echo "github.workspace = ${{ github.workspace }}"
+        echo "runner.workspace = ${{ runner.workspace }}"
+
         if [[ "${{ github.event_name }}" = 'pull_request' ]]; then \
           echo "PR base_ref = ${{ github.base_ref }}"; \
           echo "PR head_ref = ${{ github.head_ref }}"; \
@@ -185,36 +190,35 @@ jobs:
         echo Attempting to use existing cache
         echo Fetching branch: ${{ steps.vars.outputs.branch }}
         git clone --branch ${{ steps.vars.outputs.branch }} -n https://github.com/${{ steps.vars.outputs.repository }} src
-        mv build-cache build
         cd src
-        if [[ "commit" == "$(git cat-file -t $(cat ../build/cache-sha))" ]]; then \
+        if [[ -n "${{ secrets.SMOKETEST_SKIP_CACHE }}" ]] || [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]; then \
+          mv ../build-cache ../build ; \
           echo Checking out cache SHA: $(cat ../build/cache-sha); \
           git checkout $(cat ../build/cache-sha); \
+          git submodule update --init --recursive --jobs 4 ; \
+          cd ../src-cache; \
+          echo "Cached source tree files:" ; \
+          find . -type f; \
+          echo ================ ; \
+          find . -type f | cpio -p -dum ../src ; \
+          cd ../src; \
+          find . -type f -exec touch -r ../build/cache-timestamp {} + ; \
+          git checkout ${{ steps.vars.outputs.branch }} ;\
+          git submodule update --init --recursive --jobs 4 ; \
+          echo Changed files \(from SHA: $(cat ../build/cache-sha)\): ; \
+          find -name '.git*' -prune -o -newer ../build/cache-timestamp -type f -print ; \
         else \
-          echo git diff failed \(SHA $(cat ../build/cache-sha) missing?\). Using base_ref; \
-          git checkout ${{ steps.vars.outputs.base_ref }}; \
+          if [[ -n "${{ secrets.SMOKETEST_SKIP_CACHE }}" ]]; then \
+            echo "Cache skipped - SMOKETEST_SKIP_CACHE = ${{ secrets.SMOKETEST_SKIP_CACHE }}" ; \
+          else \
+            echo git diff failed \(SHA $(cat ../build-cache/cache-sha) missing?\). Using base_ref; \
+          fi; \
+          rm -rf ../build-cache ../src-cache ; \
+          mkdir ../build ; \
+          mkdir ../src-cache ; \
+          git checkout ${{ steps.vars.outputs.branch }} ; \
+          git submodule update --init --recursive --jobs 4 ; \
         fi
-        git submodule update --init --recursive --jobs 4
-        cd ../src-cache
-        echo Cached source tree files:
-        find . -type f
-        echo ================
-        find . -type f | cpio -p -dum ../src
-        cd ../src
-        find . -type f -exec touch -r ../build/cache-timestamp {} +
-        git checkout ${{ steps.vars.outputs.branch }}
-        git submodule update --init --recursive --jobs 4
-        echo Changed files \(from SHA: $(cat ../build/cache-sha)\):
-        find -name '.git*' -prune -o -newer ../build/cache-timestamp -type f -print
-        echo JTHREAD contents
-        cat system/jlib/jthread.cpp
-        echo JTHREAD.cpp stat
-        stat system/jlib/jthread.cpp
-        echo JTHREAD.cpp.o stat
-        stat ../build/system/jlib/CMakeFiles/jlib.dir/jthread.cpp.o
-        echo touching jthread.cpp
-        touch system/jlib/jthread.cpp
-
     - name: Cache miss checkout
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
       uses: actions/checkout@v2
@@ -241,6 +245,16 @@ jobs:
         touch ../cmake-timestamp
         ../cmake/cmake ../src -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=1 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=1 -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0" -DBUILD_TAG="smoketest"
         make -j$(nproc) install
+
+    - name: build-logs-artifact
+      if: ${{ failure() }}
+      uses: actions/upload-artifact@v2
+      with:
+        name: build-logs
+        path: |
+          build/CMakeCache.txt
+          build/CMakeFiles/CMakeOutput.log
+          build/CMakeFiles/CMakeError.log
 
     # Cache contains:
     # - make binaries (build-cache)
@@ -273,3 +287,158 @@ jobs:
         rm -rf copy/install/var/lib/HPCCSystems/hpcc-data
         rm -rf copy/install/var/lib/HPCCSystems/queries
 
+    - name: Run regression suite setup
+      if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+      run: |
+        export LANG="en_US.UTF-8"
+        sudo update-locale
+        source install/opt/HPCCSystems/sbin/hpcc_setenv
+        install/opt/HPCCSystems/etc/init.d/hpcc-init start
+        mkdir -p regress
+        cd install/opt/HPCCSystems/testing/regress
+        ./ecl-test setup --pq 2 --generateStackTrace
+        ${{ github.workspace }}/install/opt/HPCCSystems/etc/init.d/hpcc-init stop
+
+    - name: regression-setup-logs-artifact
+      if: ${{ failure() || cancelled() }}
+      uses: actions/upload-artifact@v2
+      with:
+        name: regress-setup-logs
+        path: |
+          install/var/log/HPCCSystems
+          regress/
+
+    # - mv regression suite setup created data from hpcc-data and queries into copy of install
+    # - create tarball of install for artifact uploading
+    - name: Finalize install artifact
+      if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+      run: |
+        mv install/var/lib/HPCCSystems/hpcc-data copy/install/var/lib/HPCCSystems/
+        mv install/var/lib/HPCCSystems/queries copy/install/var/lib/HPCCSystems/
+        cd copy
+        tar --zstd -cf ../install.tgz install
+
+    - name: Upload install artifact
+      if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+      uses: actions/upload-artifact@v2
+      with:
+        name: installsetup-artifact
+        path: |
+          install.tgz
+
+  # Matrix of jobs run in parallel once build+setup above completes successfully.
+  # All use the post-setup install.tgz artifact, that contains binaries and setup state
+  # Break each engine run into sets for speed
+  # NB: each regression suite job, runs these steps:
+  # - installs dependencies (probably too many for runtime)
+  # - Starts HPCC
+  # - Runs regression suite with params { engine, match[pattern,exclude] }
+  # TODO: needs to process results, capture report, to be assembled by workflow when all jobs done
+  regression-jobs:
+    needs: build-and-setup
+    if: needs.build-and-setup.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+    timeout-minutes: 30
+    runs-on: ubuntu-20.04
+    strategy:
+      fail-fast: true
+      matrix:
+        engine: ['hthor', 'thor', 'roxie']
+        match:
+        - pattern: '[a-d]*.ecl'
+        - pattern: '[e-h]*.ecl'
+        - pattern: '[i-l]*.ecl'
+        - pattern: '[m-q]*.ecl'
+        - pattern: '[r-u]*.ecl'
+          exclude: teststdlibrary.ecl
+        - pattern: '[v-z]*.ecl'
+        include:
+        - engine: 'hthor'
+          match:
+            pattern: teststdlibrary.ecl
+        - engine: 'thor'
+          match:
+            pattern: teststdlibrary.ecl
+        - engine: 'roxie'
+          match:
+            pattern: teststdlibrary.ecl
+
+    steps:
+    - uses: actions/download-artifact@v2
+      with:
+        name: installsetup-artifact
+
+    - name: vars
+      id: vars
+      run: |
+        echo ::set-output name=matrix-setname::$(echo -n ${{ matrix.match.pattern }} | tr -c "[:alnum:]" _)
+
+    - name: Prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get -yq install bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev \
+          zlib1g-dev libboost-regex-dev libarchive-dev libv8-dev default-jdk libapr1-dev libaprutil1-dev libiberty-dev \
+          libhiredis-dev libtbb-dev libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev \
+          default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake \
+          libssl-dev
+
+    - name: run
+      run: |
+        export LANG="en_US.UTF-8"
+        sudo update-locale
+        tar --zstd -xf install.tgz
+        source install/opt/HPCCSystems/sbin/hpcc_setenv
+        install/opt/HPCCSystems/etc/init.d/hpcc-init start
+        cd install/opt/HPCCSystems/testing/regress
+
+        (cd ecl; ls ${{ matrix.match.pattern }}) > matches.tmp
+        echo queries are:
+        cat matches.tmp
+        if [[ -z "${{ matrix.match.exclude }}" ]]; then \
+          queries="$(cat matches.tmp | tr '\n' ' ')"; \
+        else \
+          queries="$(cd ecl; ls ${{ matrix.match.exclude }} | grep -v -f - ../matches.tmp | tr '\n' ' ')"; \
+        fi
+        echo queries after exclude: ${queries}
+
+        ./ecl-test query --pq 2 --target ${{ matrix.engine }} --excludeclass python2,embedded-r,embedded-js,3rdpartyservice,spray --generateStackTrace ${queries}
+        grep Failure: ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
+        if [[ "$(grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log)" -gt 0 ]]; then exit 1; fi
+
+    - name: regression-run-logs-artifact
+      if: ${{ failure() || cancelled() }}
+      uses: actions/upload-artifact@v2
+      with:
+        name: regression-run-logs-${{ matrix.engine }}-${{ steps.vars.outputs.matrix-setname }}
+        path: |
+          install/var/log/HPCCSystems
+          regress/
+        if-no-files-found: error
+
+
+  # NB: this doesn't really need the post-setup data files included in install.tgz
+  # but as this is relatively quick and in parallel with others, it probably doesn't matter
+  unittests:
+    needs: build-and-setup
+    if: needs.build-and-setup.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
+    timeout-minutes: 10
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/download-artifact@v2
+      with:
+        name: installsetup-artifact
+
+    - name: Prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get -yq install bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev \
+          zlib1g-dev libboost-regex-dev libarchive-dev libv8-dev default-jdk libapr1-dev libaprutil1-dev libiberty-dev \
+          libhiredis-dev libtbb-dev libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev \
+          default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake \
+          libssl-dev
+
+    - name: run
+      run: |
+        export LANG="en_US.UTF-8"
+        sudo update-locale
+        tar --zstd -xf install.tgz
+        install/opt/HPCCSystems/bin/unittests
