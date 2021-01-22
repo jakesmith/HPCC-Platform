@@ -142,10 +142,15 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true'
       id: check-cache
       run: |
-        echo ::set-output name=cache-exists::$(if [[ -d build-cache ]]; then echo true; else echo false; fi)
-        if [[ -d build-cache ]]; then \
-          stat build-cache src-cache; \
-          du -sh build-cache src-cache; \
+        if [[ -n "${{ secrets.SMOKETEST_SKIP_CACHE }}" ]]; then \
+          echo "Cache found, but ignored because SMOKETEST_SKIP_CACHE set" ;\
+          rm -rf build-cache src-cache; \
+        else
+          echo ::set-output name=cache-exists::$(if [[ -d build-cache ]]; then echo true; else echo false; fi) ;\
+          if [[ -d build-cache ]]; then \
+            stat build-cache src-cache; \
+            du -sh build-cache src-cache; \
+          fi ;\
         fi
 
     - name: Dependencies20.04
@@ -191,7 +196,7 @@ jobs:
         echo Fetching branch: ${{ steps.vars.outputs.branch }}
         git clone --branch ${{ steps.vars.outputs.branch }} -n https://github.com/${{ steps.vars.outputs.repository }} src
         cd src
-        if [[ -z "${{ secrets.SMOKETEST_SKIP_CACHE }}" ]] && [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]; then \
+        if [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]; then \
           mv ../build-cache ../build ; \
           echo Checking out cache SHA: $(cat ../build/cache-sha); \
           git checkout $(cat ../build/cache-sha); \
@@ -208,10 +213,7 @@ jobs:
           echo Changed files \(from SHA: $(cat ../build/cache-sha)\): ; \
           find -name '.git*' -prune -o -newer ../build/cache-timestamp -type f -print ; \
         else \
-          if [[ -n "${{ secrets.SMOKETEST_SKIP_CACHE }}" ]]; then \
-            echo "Cache skipped - SMOKETEST_SKIP_CACHE = ${{ secrets.SMOKETEST_SKIP_CACHE }}" ; \
-          else \
-            echo git diff failed \(SHA $(cat ../build-cache/cache-sha) missing?\). Using base_ref; \
+          echo git diff failed \(SHA $(cat ../build-cache/cache-sha) missing?\). Using base_ref; \
           fi; \
           rm -rf ../build-cache ../src-cache ; \
           mkdir ../build ; \
