@@ -3358,7 +3358,7 @@ int main(int argc, char* argv[])
     EnableSEHtoExceptionMapping();
 
     try {
- PROGLOG("here1");
+ PROGLOG("here2");
 
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
