@@ -25,4 +25,8 @@ jobs:
     - name: step1
       run: |
         echo this is a test
-        ${{ github.workspace }}/src/.github/workflows/timeoutcmd 8 sleep 30
+        sleep 30 &
+        thepid=$!
+        sleep 2
+        kill -SIGINT -${thepid}
+        #${{ github.workspace }}/src/.github/workflows/timeoutcmd 8 sleep 30
