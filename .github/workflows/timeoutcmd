@@ -13,8 +13,8 @@ stopit()
 { 
   echo "TIMEOUT: ${cmd} took > ${timeout} seconds"
   echo "sending SIGINT"
-  ps aux
-  kill -SIGINT -$$
+  echo kill -INT -- -$$
+  kill -INT -- -$$
 }
 
 sleep ${timeout}
