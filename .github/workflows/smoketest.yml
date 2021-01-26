@@ -29,6 +29,8 @@ jobs:
         thepid=$!
         sleep 2
         echo thepid=${thepid}
+        echo thispid=$$
+        ps -o pid,pgid,args
         ps aux | grep sleep
         kill -SIGINT -${thepid}
         ps aux | grep sleep
