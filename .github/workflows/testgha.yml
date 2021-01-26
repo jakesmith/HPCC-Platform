@@ -17,7 +17,12 @@ jobs:
     runs-on: ubuntu-20.04
 
     steps:
+    - name: checkout
+      uses: actions/checkout@v2
+      with:
+        #submodules: recursive
+        path: src
     - name: step1
       run: |
         echo this is a test
-        ((trap "echo hello" EXIT; sleep 300) & wait)
+        ${{ github.workspace }}/src/.github/workflows/timeoutcmd 8 sleep 300
