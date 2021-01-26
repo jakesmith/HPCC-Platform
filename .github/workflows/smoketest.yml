@@ -28,9 +28,9 @@ jobs:
         echo this is a test
         #${{ github.workspace }}/src/.github/workflows/testkill
 
-        sh -c '(sleep 200 & sleep 200 & sleep 200) & /bin/kill -s TERM -$!
+        sh -c '(sleep 200 & sleep 200 & sleep 200) & /bin/kill -s TERM -$!'
         echo here
-        
+
         # sleep 30 &
         # thepid=$!
         # sleep 2
