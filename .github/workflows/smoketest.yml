@@ -296,7 +296,7 @@ jobs:
     - name: Run regression suite setup
       if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
       env:
-        regresssetup-timeout: 10
+        regress-setup-timeout: 10
       timeout-minutes: env.regress-setup-timeout
       run: |
         export LANG="en_US.UTF-8"
