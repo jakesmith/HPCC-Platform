@@ -26,26 +26,5 @@ jobs:
     - name: step1
       run: |
         echo this is a test
-        #${{ github.workspace }}/src/.github/workflows/testkill
-
-        ls -lt /bin/kill
-        which sh
-        which bash
-        #bash -c '(sleep 200 & sleep 200 & sleep 200) & /bin/kill -s TERM -$!'
-        # sh -c '(sleep 2 & echo test2) & (echo pid=$! & kill -TERM -$!)'
-
-        #sh -c 'set -m (sleep 200 & sleep 200 & sleep 200) & /bin/kill -s TERM -$!'        
-        sh -c 'set -m (sleep 200 & echo test3) & (echo pid=$! & kill TERM -$!)'
-        echo here
-
-        # sleep 30 &
-        # thepid=$!
-        # sleep 2
-        # echo thepid=${thepid}
-        # echo thispid=$$
-        # ps -o pid,pgid,args
-        # ps aux | grep sleep
-        # echo kill -INT -- -${thepid}
-        # kill -INT -- -${thepid}
-        # ps aux | grep sleep
+        bash -c 'set -m; sleep 5 & mypid=$!; sleep 2; kill -INT -- -$mypid; echo after kill; wait'
         # #${{ github.workspace }}/src/.github/workflows/timeoutcmd 8 sleep 30
