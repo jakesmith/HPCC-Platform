@@ -27,4 +27,4 @@ jobs:
       run: |
         echo this is a test
         bash -c 'set -m; sleep 5 & mypid=$!; sleep 2; kill -INT -- -$mypid; echo after kill; wait'
-        # #${{ github.workspace }}/src/.github/workflows/timeoutcmd 8 sleep 30
+        ${{ github.workspace }}/src/.github/workflows/timeoutcmd 8 sleep 30
