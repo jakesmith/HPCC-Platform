@@ -278,12 +278,12 @@ jobs:
       run: |
         # configure ecl-test.json with correct paths
         jq --arg rootdir "${{ github.workspace }}" \
-          '.Regress.dropzonePath = $rootdir + "/install" + .Regress.dropzonePath |\
-           .Regress.setupExtraParams.OriginalTextFilesOsPath = $rootdir + "/install" + .Regress.setupExtraParams.OriginalTextFilesOsPath |\
-           .Regress.setupExtraDParams.HPCCBaseDir = $rootdir + "/install" + .Regress.setupExtraDParams.HPCCBaseDir |\
-           .Regress.regressionDir = $rootdir + "/regress" |\
-           .Regress.maxAttemptCount = "1" |\
-           .Regress.logDir = $rootdir + "/regress/log"' \
+          '.Regress.dropzonePath = $rootdir + "/install" + .Regress.dropzonePath |' \
+          '.Regress.setupExtraParams.OriginalTextFilesOsPath = $rootdir + "/install" + .Regress.setupExtraParams.OriginalTextFilesOsPath |' \
+          '.Regress.setupExtraDParams.HPCCBaseDir = $rootdir + "/install" + .Regress.setupExtraDParams.HPCCBaseDir |' \
+          '.Regress.regressionDir = $rootdir + "/regress" |' \
+          '.Regress.maxAttemptCount = "1" |' \
+          '.Regress.logDir = $rootdir + "/regress/log"' \
           install/opt/HPCCSystems/testing/regress/ecl-test.json > ecl-test.json
         mv -f ecl-test.json install/opt/HPCCSystems/testing/regress/ecl-test.json
         # configure environment.xml to slavesPerNode=2, channelsPerNode=1
