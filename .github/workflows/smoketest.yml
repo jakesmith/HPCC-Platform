@@ -32,7 +32,7 @@ jobs:
         which sh
         which bash
         #bash -c '(sleep 200 & sleep 200 & sleep 200) & /bin/kill -s TERM -$!'
-        sh -c 'echo test1'
+        sh -c 'sleep 2 & echo test2'
         echo here
 
         # sleep 30 &
