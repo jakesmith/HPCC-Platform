@@ -1,0 +1,21 @@
+#!/bin/bash
+
+timeout=$1
+shift
+cmd=$@
+
+echo "timeout: ${timeout}"
+echo "cmd    : ${cmd}"
+
+eval ${cmd} &
+
+stopit()
+{ 
+  echo "TIMEOUT: ${cmd} took > ${timeout} seconds"
+  echo "sending SIGINT"
+  kill -SIGINT -$$
+}
+
+sleep ${timeout}
+stopit
+wait
