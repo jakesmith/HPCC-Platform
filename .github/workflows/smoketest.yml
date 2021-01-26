@@ -29,6 +29,7 @@ jobs:
         thepid=$!
         sleep 2
         echo thepid=${thepid}
-        ps aux
+        ps aux | grep sleep
         kill -SIGINT -${thepid}
+        ps aux | grep sleep
         #${{ github.workspace }}/src/.github/workflows/timeoutcmd 8 sleep 30
