@@ -295,7 +295,9 @@ jobs:
 
     - name: Run regression suite setup
       if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
-      timeout-minutes: 10
+      env:
+        regresssetup-timeout: 10
+      timeout-minutes: env.regress-setup-timeout
       run: |
         export LANG="en_US.UTF-8"
         sudo update-locale
@@ -303,7 +305,7 @@ jobs:
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
         mkdir -p regress
         cd install/opt/HPCCSystems/testing/regress
-        ${{ github.workspace }}/src/.github/workflows/timeoutcmd $((${{ env.regress-timeout }} - 2) \
+        ${{ github.workspace }}/src/.github/workflows/timeoutcmd $((${{ env.regress-setup-timeout }} - 2) \
           ./ecl-test setup --pq 2 --generateStackTrace
         ${{ github.workspace }}/install/opt/HPCCSystems/etc/init.d/hpcc-init stop
 
@@ -347,7 +349,7 @@ jobs:
       regress-timeout: 30
     needs: build-and-setup
     if: needs.build-and-setup.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
-    timeout-minutes: ${{ env.regress-timeout }}
+    timeout-minutes: env.regress-timeout
     runs-on: ubuntu-20.04
     strategy:
       fail-fast: true
