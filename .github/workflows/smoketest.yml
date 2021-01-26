@@ -295,9 +295,7 @@ jobs:
 
     - name: Run regression suite setup
       if: steps.cache.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
-      env:
-        regress-setup-timeout: 10
-      timeout-minutes: env.regress-setup-timeout
+      timeout-minutes: 10
       run: |
         export LANG="en_US.UTF-8"
         sudo update-locale
@@ -305,7 +303,7 @@ jobs:
         install/opt/HPCCSystems/etc/init.d/hpcc-init start
         mkdir -p regress
         cd install/opt/HPCCSystems/testing/regress
-        ${{ github.workspace }}/src/.github/workflows/timeoutcmd $((${{ env.regress-setup-timeout }} - 2) \
+        ${{ github.workspace }}/src/.github/workflows/timeoutcmd 8 \
           ./ecl-test setup --pq 2 --generateStackTrace
         ${{ github.workspace }}/install/opt/HPCCSystems/etc/init.d/hpcc-init stop
 
@@ -345,11 +343,9 @@ jobs:
   # - Runs regression suite with params { engine, match[pattern,exclude] }
   # TODO: needs to process results, capture report, to be assembled by workflow when all jobs done
   regression-jobs:
-    env:
-      regress-timeout: 30
     needs: build-and-setup
     if: needs.build-and-setup.outputs.cache-hit != 'true' && github.event_name == 'pull_request'
-    timeout-minutes: env.regress-timeout
+    timeout-minutes: 30
     runs-on: ubuntu-20.04
     strategy:
       fail-fast: true
@@ -412,7 +408,7 @@ jobs:
         fi
         echo queries after exclude: ${queries}
 
-        ${{ github.workspace }}/src/.github/workflows/timeoutcmd $((${{ env.regress-timeout }} - 2) \
+        ${{ github.workspace }}/src/.github/workflows/timeoutcmd 28 \
           ./ecl-test-timeout query --pq 2 --target ${{ matrix.engine }} --excludeclass python2,embedded-r,embedded-js,3rdpartyservice,spray --generateStackTrace ${queries}
         grep Failure: ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
         if [[ "$(grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log)" -gt 0 ]]; then exit 1; fi
