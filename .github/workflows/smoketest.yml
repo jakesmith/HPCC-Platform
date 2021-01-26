@@ -31,7 +31,8 @@ jobs:
         ls -lt /bin/kill
         which sh
         which bash
-        bash -c '(sleep 200 & sleep 200 & sleep 200) & /bin/kill -s TERM -$!'
+        #bash -c '(sleep 200 & sleep 200 & sleep 200) & /bin/kill -s TERM -$!'
+        sh -c 'echo test1'
         echo here
 
         # sleep 30 &
