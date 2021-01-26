@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# examples of how to kill a process group
+# (using sh -c '...' instead of a shell script)
+
+# kill: -<num>: No such process
+sh -c '
+(sleep 200 & sleep 200 & sleep 200) &
+/bin/kill -s TERM -$!
+'
+
+# in Terminal.app 
+# job control is enabled by default
+(sleep 200 & sleep 200 & sleep 200) &
+/bin/kill -s TERM -$!
+
+
+# enable job control
+sh -c '
+set -m 
+(sleep 200 & sleep 200 & sleep 200) &
+/bin/kill -s TERM -$!
+'
+
+# make sure pid == pgid
+# note that the script gets killed as well
+sh -c '
+echo pid $$
+trap "trap - EXIT; echo pid $$ was killed" EXIT
+(sleep 200 & sleep 200 & sleep 200) &
+IFS=" " read -r pgid <<EOF
+$(ps -p $! -o pgid=)
+EOF
+sleep 5
+/bin/kill -s TERM -${pgid}
+sleep 5
+echo pid $$ was not killed
+'
+
+# use a pseudo-terminal (pty) to avoid killing the script
+# note the use of -$$ instead of -$!
+sh -c '
+echo pid $$
+script -q /dev/null sh -c '\''
+trap "" HUP
+(sleep 200 & sleep 200 & sleep 200) &
+sleep 5
+/bin/kill -s TERM -$$
+'\''
+sleep 5
+echo pid $$ was not killed
+'
+
