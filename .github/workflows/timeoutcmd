@@ -9,7 +9,7 @@ cmd=$@
 echo "timeout: ${timeout}"
 echo "cmd    : ${cmd}"
 
-eval ${cmd} &
+eval "${cmd}" &
 cmdpid=$!
 
 stopit()
@@ -20,6 +20,8 @@ stopit()
   kill -INT -- -$cmdpid;
 }
 
-sleep ${timeout}
-stopit
-wait
+( sleep ${timeout} ; stopit; ) &
+timeoutpid=$!
+
+wait $cmdpid
+kill $timeoutpid >& /dev/null
