@@ -283,6 +283,7 @@ jobs:
         mv -f ecl-test.json install/opt/HPCCSystems/testing/regress/ecl-test.json
         # configure environment.xml to slavesPerNode=2, channelsPerNode=1
         xmlstarlet ed -L -u 'Environment/Software/ThorCluster/@slavesPerNode' -v 2 -u 'Environment/Software/ThorCluster/@channelsPerSlave' -v 1 install/etc/HPCCSystems/environment.xml
+        cp ${{ github.workspace }}/src/.github/workflows/timeoutcmd install/opt/HPCCSystems/bin/
         mkdir copy
         cp -rp install copy/
         rm -rf copy/install/var/lib/HPCCSystems/hpcc-data
@@ -299,7 +300,7 @@ jobs:
         mkdir -p regress
         cd install/opt/HPCCSystems/testing/regress
         # force regression suite to timeout after 8 minutes, so it captures ZAP report of any inflight hung queries
-        ${{ github.workspace }}/src/.github/workflows/timeoutcmd $((8 * 60)) \
+        timeoutcmd $((8 * 60)) \
           ./ecl-test setup --pq 2 --generateStackTrace
         ${{ github.workspace }}/install/opt/HPCCSystems/etc/init.d/hpcc-init stop
 
@@ -405,7 +406,7 @@ jobs:
         echo queries after exclude: ${queries}
 
         # force regression suite to timeout after 28 minutes, so it captures ZAP report of any inflight hung queries
-        ${{ github.workspace }}/src/.github/workflows/timeoutcmd $((1 * 60)) \
+        timeoutcmd $((1 * 60)) \
           ./ecl-test-timeout query --pq 2 --target ${{ matrix.engine }} --excludeclass python2,embedded-r,embedded-js,3rdpartyservice,spray --generateStackTrace ${queries}
         grep Failure: ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log
         if [[ "$(grep -oP '(?<=^Failure: )[0-9]+$' ${{ github.workspace }}/regress/log/${{ matrix.engine }}.*.log)" -gt 0 ]]; then exit 1; fi
