@@ -107,8 +107,9 @@ jobs:
         cd src
         git init
         git remote add origin https://github.com/jakesmith/HPCC-Platform        
-        echo timing: git fetch -n origin --depth 1
-        time git fetch -n origin --depth 1
+        echo timing: git fetch -q -n origin --depth 1
+        time git fetch -q -n origin --depth 1
+        time git checkout ${{ steps.vars.outputs.sha}}
     - name: test2
       run: |
         rm -rf src
@@ -116,8 +117,9 @@ jobs:
         cd src
         git init
         git remote add origin https://github.com/jakesmith/HPCC-Platform        
-        echo timing: git fetch -n origin --depth 30
-        time git fetch -n origin --depth 30
+        echo timing: git fetch -q -n origin --depth 30
+        time git fetch -q -n origin --depth 30
+        time git checkout ${{ steps.vars.outputs.sha}}
     - name: test3
       run: |        
         rm -rf src
@@ -125,8 +127,9 @@ jobs:
         cd src
         git init
         git remote add origin https://github.com/jakesmith/HPCC-Platform        
-        echo timing: git fetch -n origin
-        time git fetch -n origin
+        echo timing: git fetch -q -n origin
+        time git fetch -q -n origin
+        time git checkout ${{ steps.vars.outputs.sha}}
     - name: test4
       run: |        
         rm -rf src
@@ -135,13 +138,15 @@ jobs:
         git init
         git remote add origin https://github.com/jakesmith/HPCC-Platform        
         git remote add upstream https://github.com/hpcc-systems/HPCC-Platform        
-        echo timing: git fetch -n --multiple -j 2 --depth 1 origin upstream
-        time git fetch -n --multiple -j 2 --depth 1 origin upstream
+        echo timing: git fetch -q -n --multiple -j 2 --depth 1 origin upstream
+        time git fetch -q -n --multiple -j 2 --depth 1 origin upstream
+        time git checkout ${{ steps.vars.outputs.sha}}
     - name: test5
       run: |        
         rm -rf src
         echo timing: clone --branch ${{ steps.vars.outputs.branch }} -n https://github.com/${{ steps.vars.outputs.repository }} src
         time git clone --branch ${{ steps.vars.outputs.branch }} -n https://github.com/${{ steps.vars.outputs.repository }} src
+        time git checkout ${{ steps.vars.outputs.sha}}
         
         # git clone --branch ${{ steps.vars.outputs.branch }} -n https://github.com/${{ steps.vars.outputs.repository }} src
         # if [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]; then \
