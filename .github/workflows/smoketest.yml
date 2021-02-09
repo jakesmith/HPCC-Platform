@@ -109,8 +109,8 @@ jobs:
         cd src
         git init
         git remote add origin https://github.com/jakesmith/HPCC-Platform        
-        echo timing: git fetch origin --depth 1
-        time git fetch origin --depth 1
+        echo timing: git fetch -n origin --depth 1
+        time git fetch -n origin --depth 1
     - name: test2
       run: |
         rm -rf src
@@ -118,8 +118,8 @@ jobs:
         cd src
         git init
         git remote add origin https://github.com/jakesmith/HPCC-Platform        
-        echo timing: git fetch origin --depth 30
-        time git fetch origin --depth 30
+        echo timing: git fetch -n origin --depth 30
+        time git fetch -n origin --depth 30
     - name: test3
       run: |        
         rm -rf src
@@ -127,8 +127,8 @@ jobs:
         cd src
         git init
         git remote add origin https://github.com/jakesmith/HPCC-Platform        
-        echo timing: git fetch origin
-        time git fetch origin
+        echo timing: git fetch -n origin
+        time git fetch -n origin
     - name: test4
       run: |        
         rm -rf src
@@ -137,8 +137,8 @@ jobs:
         git init
         git remote add origin https://github.com/jakesmith/HPCC-Platform        
         git remote add upstream https://github.com/hpcc-systems/HPCC-Platform        
-        echo timing: git fetch --multiple -j 2 --depth 1 origin upstream
-        time git fetch --multiple -j 2 --depth 1 origin upstream
+        echo timing: git fetch -n --multiple -j 2 --depth 1 origin upstream
+        time git fetch -n --multiple -j 2 --depth 1 origin upstream
     - name: test5
       run: |        
         rm -rf src
