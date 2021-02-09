@@ -50,8 +50,6 @@ jobs:
     name: Build platform and regress setup
     runs-on: ubuntu-20.04
     timeout-minutes: 120 # Generous, typical build time from clean is < 60
-    outputs:
-      cache-hit: ${{ steps.cache.outputs.cache-hit }}
 
     steps:
     - name: vars
