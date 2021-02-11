@@ -340,8 +340,17 @@ class EclccCompileThread : implements IPooledThread, implements IErrorReporter, 
         eclccCmd.append(" --timings --xml");
         eclccCmd.append(" --nostdinc");
         eclccCmd.append(" --metacache=");
-        VStringBuffer logfile("%s.eclcc.log", workunit->queryWuid());
+
+#ifdef _CONTAINERIZED
+        eclccCmd.append(" --nologfile");
+#else
+        StringBuffer logfile;
+        envGetConfigurationDirectory("log","eclccserver", globals->queryProp("@name"), logfile);
+        addPathSepChar(logfile);
+        logfile.append(workunit->queryWuid()).append(".eclcc.log");
         eclccCmd.appendf(" --logfile=%s", logfile.str());
+#endif
+
         if (syntaxCheck)
             eclccCmd.appendf(" -syntax");
 
@@ -440,7 +449,9 @@ class EclccCompileThread : implements IPooledThread, implements IErrorReporter, 
                 createUNCFilename(realdllfilename.str(), dllurl);
                 unsigned crc = crc_file(realdllfilename.str());
                 Owned<IWUQuery> query = workunit->updateQuery();
+#ifndef _CONTAINERIZED
                 associateLocalFile(query, FileTypeLog, logfile, "Compiler log", 0);
+#endif
                 associateLocalFile(query, FileTypeDll, realdllfilename, "Workunit DLL", crc);
                 queryDllServer().registerDll(realdllname.str(), "Workunit DLL", dllurl.str());
                 workunit->commit();
@@ -448,9 +459,11 @@ class EclccCompileThread : implements IPooledThread, implements IErrorReporter, 
             }
             else
             {
+#ifndef _CONTAINERIZED
                 Owned<IWUQuery> query = workunit->updateQuery();
                 associateLocalFile(query, FileTypeLog, logfile, "Compiler log", 0);
                 workunit->commit();
+#endif
                 return false;
             }
         }
