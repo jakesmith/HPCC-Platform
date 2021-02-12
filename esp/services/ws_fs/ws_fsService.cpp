@@ -2214,8 +2214,38 @@ bool CFileSprayEx::onReplicate(IEspContext &context, IEspReplicate &req, IEspRep
     return true;
 }
 
+void CFileSprayEx::getDropZoneInfoByDestGroup(double clientVersion, const char* destGroup, const char* destFileIn, StringBuffer& destFileOut, StringBuffer& umask)
+{
+#ifdef _CONTAINERIZED
+    const bool isDestAbsolutePath = isAbsolutePath(destFileIn);
+    VStringBuffer pname("storage/planes[@isDropZone='true'][@name='%s']",destGroup);
+    Owned<IPropertyTreeIterator> planes = queryGlobalConfig().getElements(pname.str());
+    ForEach(*planes)
+    {
+        IPropertyTree & plane = planes->query();
+        StringBuffer fullDropZoneDir(plane.queryProp("@prefix"));
+        addPathSepChar(fullDropZoneDir);
+        if (isDestAbsolutePath)
+        {
+            if (strncmp(fullDropZoneDir, destFileIn, fullDropZoneDir.length())==0)
+                destFileOut.set(destFileIn);
+            else
+                continue;
+        }
+        else
+        {
+            destFileOut.set(fullDropZoneDir).append(destFileIn);
+        }
+        plane.getProp("@umask", umask);
+        return;
+    }
+    throw MakeStringException(ECLWATCH_DROP_ZONE_NOT_FOUND, "No drop zone configured for %s:%s", destGroup, destFileIn);
+#endif
+}
+
 void CFileSprayEx::getDropZoneInfoByIP(double clientVersion, const char* ip, const char* destFileIn, StringBuffer& destFileOut, StringBuffer& umask)
 {
+#ifndef _CONTAINERIZED
     if (destFileIn && *destFileIn)
         destFileOut.set(destFileIn);
 
@@ -2302,6 +2332,9 @@ void CFileSprayEx::getDropZoneInfoByIP(double clientVersion, const char* ip, con
         else
             LOG(MCdebugInfo, unknownJob, "No valid drop zone found for network address '%s'. Check your system drop zone configuration.", ip);
     }
+#else
+    throw MakeStringException(-1, "Internal error: CFileSprayEx::getDropZoneInfoByIP should not be called in containerized environment");
+#endif
 }
 
 static StringBuffer & expandLogicalAsPhysical(StringBuffer & target, const char * name, const char * separator)
@@ -2335,6 +2368,7 @@ bool CFileSprayEx::onDespray(IEspContext &context, IEspDespray &req, IEspDespray
         PROGLOG("Despray %s", srcname);
         double version = context.getClientVersion();
         const char* destip = req.getDestIP();
+        const char* destGroup = req.getDestGroup();
         StringBuffer destPath;
         StringBuffer implicitDestFile;
         const char* destfile = getStandardPosixPath(destPath, req.getDestPath()).str();
@@ -2379,7 +2413,11 @@ bool CFileSprayEx::onDespray(IEspContext &context, IEspDespray &req, IEspDespray
                 throw MakeStringException(ECLWATCH_INVALID_INPUT, "Despray %s: cannot resolve destination network IP from %s.", srcname, destip);
 
             StringBuffer destfileWithPath, umask;
+#ifdef _CONTAINERIZED
+            getDropZoneInfoByDestGroup(version, destGroup, destfile, destfileWithPath, umask);
+#else
             getDropZoneInfoByIP(version, destip, destfile, destfileWithPath, umask);
+#endif
             //Ensure the filename is dependent on the file part if parts are being preserved
             if (preserveFileParts && !strstr(destfileWithPath, "$P$"))
                 destfileWithPath.append("._$P$_of_$N$");

@@ -56,8 +56,8 @@ Owned<IDFUengine> engine;
 void usage()
 {
     printf("Usage:\n");
-    printf("  DFUSERVER DALISERVERS=<ip> QUEUE=<q-name>          -- starts DFU Server\n\n");
-    printf("  DFUSERVER DALISERVERS=<ip> STOP=1 QUEUE=<q-name>   -- stops DFU Server\n\n");
+    printf("  dfuserver daliservers=<ip> queue=<q-name>          -- starts DFU Server\n\n");
+    printf("  dfuserver daliservers=<ip> stop=1 queue=<q-name>   -- stops DFU Server\n\n");
 }
 
 
@@ -68,6 +68,7 @@ static bool exitDFUserver()
     return false;
 }
 
+#ifndef _CONTAINERIZED
 inline void XF(IPropertyTree &pt,const char *p,IProperties &from,const char *fp)
 {
     const char * v = from.queryProp(fp);
@@ -95,7 +96,20 @@ IPropertyTree *readOldIni()
     }
     return ret;
 }
+#endif
 
+static constexpr const char * defaultYaml = R"!!(
+version: "1.0"
+dfuserver:
+  daliServers: dali
+  enableSNMP: false
+  enableSysLog: true
+  name: dfuserver
+  queue: dfuserver_queue
+  monitorqueue: dfuserver_monitor_queue
+  monitorinterval: 900
+  transferBufferSize: 65536
+)!!";
 
 int main(int argc, const char *argv[])
 {
@@ -113,48 +127,56 @@ int main(int argc, const char *argv[])
 
     NoQuickEditSection xxx;
 
-    Owned<IFile> file = createIFile("dfuserver.xml");
-    if (file->exists())
-        globals.setown(createPTreeFromXMLFile("dfuserver.xml", ipt_caseInsensitive));
-    else
-        globals.setown(readOldIni());
-
-    for (unsigned i=1;i<(unsigned)argc;i++) {
-        const char *arg = argv[i];
-        StringBuffer prop("@");
-        StringBuffer val;
-        while (*arg && *arg != '=')
-            prop.append(*arg++);
-        if (*arg) {
-            arg++;
-            while (isspace(*arg))
-                arg++;
-            val.append(arg);
-            prop.clip();
-            val.clip();
-            if (prop.length()>1)
-                globals->setProp(prop.str(), val.str());
-        }
+    try
+    {
+        globals.setown(loadConfiguration(defaultYaml, argv, "dfuserver", "DFUSERVER", "dfuserver.xml", nullptr));
     }
-    StringBuffer daliServer;
-    StringBuffer queue;
-    if (!globals->getProp("@DALISERVERS", daliServer)||!globals->getProp("@QUEUE", queue)) {
-        usage();
-        globals.clear();
-        releaseAtoms();
+    catch (IException * e)
+    {
+        UERRLOG(e);
+        e->Release();
         return 1;
     }
+    catch(...)
+    {
+        OERRLOG("Failed to load configuration");
+        return 1;
+    }
+
+    StringBuffer daliServer;
+    StringBuffer queue;
+    if (!globals->getProp("@daliServers", daliServer))
+        globals->getProp("@DALISERVERS", daliServer);
+    if (0==daliServer.length())
+    {
+        PROGLOG("daliservers not specified in dfuserver.xml");
+        return 1;
+    }
+    if (!globals->getProp("@QUEUE", queue))
+        globals->getProp("@queue", queue);
+    if (0==queue.length())
+    {
+        PROGLOG("queue not specified in dfuserver.xml");
+        return 1;
+    }
+
     Owned<IFile> sentinelFile;
-    bool stop = globals->getPropInt("@STOP",0)!=0;
+    bool stop = globals->getPropInt("@stop", globals->getPropInt("@STOP",0))!=0;
     if (!stop) {
         sentinelFile.setown(createSentinelTarget());
         removeSentinelFile(sentinelFile);
+    }
+    const char* name = globals->queryProp("@name");
+#ifdef _CONTAINERIZED
+    setupContainerizedLogMsgHandler();
+#else
+    if (!stop)
+    {
         Owned<IComponentLogFileCreator> lf = createComponentLogFileCreator(globals, "dfuserver");
         lf->setMaxDetail(1000);
         fileMsgHandler = lf->beginLogging();
     }
     StringBuffer ftslogdir;
-    const char* name = globals->queryProp("@name");
     if (getConfigurationDirectory(globals->queryPropTree("Directories"),"log","ftslave",name,ftslogdir)) // NB instance deliberately dfuserver's
         setFtSlaveLogDir(ftslogdir.str());
     setRemoteSpawnSSH(
@@ -164,6 +186,7 @@ int main(int argc, const char *argv[])
         globals->getPropInt("SSH/@SSHtimeout",0),
         globals->getPropInt("SSH/@SSHretries",3),
         "run_");
+#endif
     bool enableSNMP = globals->getPropInt("@enableSNMP")!=0;
     CSDSServerStatus *serverstatus=NULL;
     Owned<IReplicateServer> replserver;
@@ -222,7 +245,10 @@ int main(int argc, const char *argv[])
             if (!*q)
                 break;
         }
-        q = globals->queryProp("@MONITORQUEUE");
+        if (globals->hasProp("@monitorqueue"))
+            q = globals->queryProp("@monitorqueue");
+        else
+            q = globals->queryProp("@MONITORQUEUE");
         if (q&&*q) {
             if (stop) {
                 stopDFUserver(q);
@@ -230,10 +256,14 @@ int main(int argc, const char *argv[])
             else {
                 IPropertyTree *t=serverstatus->queryProperties()->addPropTree("MonitorQueue",createPTree());
                 t->setProp("@name",q);
-                engine->startMonitor(q,serverstatus,globals->getPropInt("@MONITORINTERVAL",60)*1000);
+                int monitorInterval = globals->getPropInt("@monitorinterval", globals->getPropInt("@MONITORINTERVAL", 60));
+                engine->startMonitor(q,serverstatus,monitorInterval*1000);
             }
         }
-        q = globals->queryProp("@REPLICATEQUEUE");
+        if (globals->hasProp("@replicatequeue"))
+            q = globals->queryProp("@replicatequeue");
+        else
+            q = globals->queryProp("@REPLICATEQUEUE");
         if (q&&*q) {
             if (stop) {
                 // TBD?

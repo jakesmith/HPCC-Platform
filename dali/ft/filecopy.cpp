@@ -2911,6 +2911,10 @@ const char * FileSprayer::querySplitPrefix()
 
 const char * FileSprayer::querySlaveExecutable(const IpAddress &ip, StringBuffer &ret) const
 {
+#ifdef _CONTAINERIZED
+    ret.append("/opt/HPCCSystems/bin/run_ftslave");
+    return ret.str();
+#else
     const char * slave = queryFixedSlave();
     try {
         queryFtSlaveExecutable(ip, ret);
@@ -2925,6 +2929,7 @@ const char * FileSprayer::querySlaveExecutable(const IpAddress &ip, StringBuffer
     if (slave)
         ret.append(slave);
     return ret.str();
+#endif
 }
 
 
@@ -3491,7 +3496,11 @@ bool FileSprayer::usePullOperation() const
     if (!calcedPullPush)
     {
         calcedPullPush = true;
+#ifdef _CONTAINERIZED
+        cachedUsePull = true;
+#else
         cachedUsePull = calcUsePull();
+#endif
     }
     return cachedUsePull;
 }

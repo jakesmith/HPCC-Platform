@@ -457,11 +457,24 @@ class CDFUengine: public CInterface, implements IDFUengine
         const char * isDotDotString = strstr(pfilePath, dotDotString);
         if ((isDotDotString != nullptr) || (isDotString != nullptr))
             throwError3(DFTERR_InvalidFilePath, pfilePath, dotDotString, dotString);
-
-        Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-        Owned<IConstEnvironment> env = factory->openEnvironment();
         StringBuffer netaddress;
         filename.queryIP().getIpText(netaddress);
+
+#ifdef _CONTAINERIZED
+        VStringBuffer pname("storage/planes[@isDropZone='true']");
+        Owned<IPropertyTreeIterator> planes = queryGlobalConfig().getElements(pname.str());
+        ForEach(*planes)
+        {
+            IPropertyTree & plane = planes->query();
+            const char * destGroup = plane.queryProp("@name");
+            StringBuffer fullDropZoneDir(plane.queryProp("@prefix"));
+            if (strncmp(fullDropZoneDir, pfilePath, fullDropZoneDir.length())==0)
+                return;
+        }
+        throwError2(DFTERR_NoMatchingDropzonePath, netaddress.str(), pfilePath);
+#else
+        Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
+        Owned<IConstEnvironment> env = factory->openEnvironment();
 
         Owned<IConstDropZoneInfo> dropZone = env->getDropZoneByAddressPath(netaddress.str(), pfilePath);
         if (!dropZone)
@@ -482,6 +495,7 @@ class CDFUengine: public CInterface, implements IDFUengine
                 , (dropZone->isECLWatchVisible() ? "" : "not ")
                 );
         }
+#endif
 #endif
     }
 

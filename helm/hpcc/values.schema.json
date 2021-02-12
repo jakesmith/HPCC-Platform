@@ -155,6 +155,44 @@
         ]
       }
     },
+    "dfuserver": {
+      "description": "dfuserver process",
+      "type": "array",
+      "items": {
+        "allOf": [
+          {
+            "name": {
+              "type": "string",
+              "description": "The name of the dfuserver process"
+            },
+            "disabled": {
+              "type": "boolean"
+            },
+            "enableSNMP": {
+              "type": "boolean",
+              "description": ""
+            },
+            "enableSysLog": {
+              "description": "",
+              "type": "boolean"
+            },
+            "queue": {
+              "description": "",
+              "type": "string"
+            },
+            "monitorqueue": {
+              "description": "",
+              "type": "string"
+            },
+            "monitorinterval": {
+              "description": "",
+              "type": "integer"
+            },
+            "required": [ "name" ]
+          }
+        ]
+      }
+    },
     "roxie": {
       "description": "eclagent process",
       "type": "array",
@@ -363,6 +401,14 @@
           "description": "a list of labels associated with this plane, e.g. lz, data. NB: if blank/unset, treated as if 'data'",
           "type": "array",
           "items": { "type": "string" }
+        },
+        "isDropZone" : {
+          "description": "true if data plane is dropzone",
+          "type": "boolean"
+        },
+        "umask" : {
+          "description": "file creation mask (used by despray)",
+          "type" : "string"
         }
       },
       "required": [ "name", "prefix" ],
