@@ -72,6 +72,8 @@ spec:
 {{- end }}
 {{ include "hpcc.addSecretVolumes" (dict "root" $ "categories" (list "system" ) ) | indent 6 }}
 ---
+{{- $storage := ($.Values.storage | default dict) -}}
+{{- $daliStorage := ($storage.daliStorage | default dict) }}
 kind: ConfigMap 
 apiVersion: v1 
 metadata:
@@ -81,6 +83,7 @@ data:
     version: 1.0
     dali:
 {{ toYaml (omit $dali "logging" "services") | indent 6 }}
+      dataPath: {{ include "hpcc.getVolumeMountPrefix" (dict "root" $ "name" ($daliStorage.plane | default "dalistorage-pvc") "path" "dalistorage" "me" $daliStorage) }}
 {{- include "hpcc.generateLoggingConfig" $commonCtx | indent 6 }}
 {{ include "hpcc.generateVaultConfig" (dict "root" $ "categories" (list "system" ) ) | indent 6 }}
     global:
@@ -102,7 +105,7 @@ kind: ConfigMap
 {{- end }}
 
 {{- if $sasha.storage }}
-{{- if (not $sasha.storage.existingClaim) }}
+{{- if and (not $sasha.storage.existingClaim) (not $sasha.storage.plane) }}
 {{ include "hpcc.addPVC" (dict "root" $ "name" (printf "sasha-%s" $sashaName) "me" $sasha.storage) }}
 {{- end }}
 ---
