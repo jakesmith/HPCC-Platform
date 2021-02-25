@@ -100,6 +100,17 @@ cost:
 {{- end -}}
 
 {{/*
+generate dfuserver queues
+*/}}
+{{- define "hpcc.generateConfigDfuQueues" -}}
+ {{- if not .disabled -}}
+{{- range $queue := .root.Values.dfuserver }}
+- name: {{ printf "%s.dfuserver" $queue.name | quote }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Generate local logging info, merged with global
 Pass in dict with root and me
 */}}

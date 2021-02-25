@@ -38,6 +38,14 @@ IPropertyTree * queryStoragePlane(const char * name)
     return global.queryPropTree(xpath);
 }
 
+IPropertyTreeIterator * queryDropZonePlanesIterator(const char * name)
+{
+    VStringBuffer xpath("storage/planes[@isDropZone='true']");
+    if (!isEmptyString(name))
+        xpath.appendf("[@name='%s']", name);
+    return queryGlobalConfig().getElements(xpath);
+}
+
 //Cloned for now - export and use from elsewhere
 
 static void copyPropIfMissing(IPropertyTree & target, const char * targetName, IPropertyTree & source, const char * sourceName)

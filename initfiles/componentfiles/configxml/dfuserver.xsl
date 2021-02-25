@@ -47,7 +47,7 @@
                <xsl:value-of select="@name"/>
             </xsl:attribute> 
 
-            <xsl:attribute name="daliservers"> <xsl:call-template name="getDaliServers">
+            <xsl:attribute name="daliServers"> <xsl:call-template name="getDaliServers">
                     <xsl:with-param name="daliServer" select="@daliServers"/>
                 </xsl:call-template>            
             </xsl:attribute>

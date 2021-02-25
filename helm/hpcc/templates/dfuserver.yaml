@@ -8,7 +8,8 @@ data:
     dfuserver:
 {{ toYaml (omit .me "logging") | indent 6 }}
 {{- include "hpcc.generateLoggingConfig" . | indent 6 }}
-{{ include "hpcc.generateVaultConfig" (dict "root" .root "categories" .categories ) | indent 6 }}
+      dfuQueues:
+{{- include "hpcc.generateConfigDfuQueues" . | indent 6}}
     global:
 {{ include "hpcc.generateGlobalConfigMap" .root | indent 6 }}
 {{- end -}}

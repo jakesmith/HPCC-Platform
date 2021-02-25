@@ -48,6 +48,7 @@ test multiclusteradd with replicate
 #include "dfurun.hpp"
 #include "eventqueue.hpp"
 #include "wujobq.hpp"
+#include "dameta.hpp"
 
 #define SDS_CONNECT_TIMEOUT (5*60*100)
 
@@ -457,22 +458,20 @@ class CDFUengine: public CInterface, implements IDFUengine
         const char * isDotDotString = strstr(pfilePath, dotDotString);
         if ((isDotDotString != nullptr) || (isDotString != nullptr))
             throwError3(DFTERR_InvalidFilePath, pfilePath, dotDotString, dotString);
-        StringBuffer netaddress;
-        filename.queryIP().getIpText(netaddress);
 
 #ifdef _CONTAINERIZED
-        VStringBuffer pname("storage/planes[@isDropZone='true']");
-        Owned<IPropertyTreeIterator> planes = queryGlobalConfig().getElements(pname.str());
+        Owned<IPropertyTreeIterator> planes = queryDropZonePlanesIterator();
         ForEach(*planes)
         {
             IPropertyTree & plane = planes->query();
-            const char * destGroup = plane.queryProp("@name");
             StringBuffer fullDropZoneDir(plane.queryProp("@prefix"));
             if (strncmp(fullDropZoneDir, pfilePath, fullDropZoneDir.length())==0)
                 return;
         }
-        throwError2(DFTERR_NoMatchingDropzonePath, netaddress.str(), pfilePath);
+        throwError1(DFTERR_NoMatchingDropzonePlane, pfilePath);
 #else
+        StringBuffer netaddress;
+        filename.queryIP().getIpText(netaddress);
         Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
         Owned<IConstEnvironment> env = factory->openEnvironment();
 

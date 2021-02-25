@@ -44,6 +44,7 @@
 #include "jprop.hpp"
 
 #include "dfuerror.hpp"
+#include "daqueue.hpp"
 
 static Owned<IPropertyTree> globals;
 ILogMsgHandler * fileMsgHandler;
@@ -56,8 +57,8 @@ Owned<IDFUengine> engine;
 void usage()
 {
     printf("Usage:\n");
-    printf("  dfuserver daliservers=<ip> queue=<q-name>          -- starts DFU Server\n\n");
-    printf("  dfuserver daliservers=<ip> stop=1 queue=<q-name>   -- stops DFU Server\n\n");
+    printf("  dfuserver --daliServers=<ip> --queue=<q-name>          -- starts DFU Server\n\n");
+    printf("  dfuserver --daliServers=<ip> --queue=<q-name> --stop=1 -- stops DFU Server\n\n");
 }
 
 
@@ -101,14 +102,11 @@ IPropertyTree *readOldIni()
 static constexpr const char * defaultYaml = R"!!(
 version: "1.0"
 dfuserver:
-  daliServers: dali
-  enableSNMP: false
-  enableSysLog: true
   name: dfuserver
-  queue: dfuserver_queue
   monitorqueue: dfuserver_monitor_queue
   monitorinterval: 900
   transferBufferSize: 65536
+  maxJobs: 1
 )!!";
 
 int main(int argc, const char *argv[])
@@ -133,7 +131,7 @@ int main(int argc, const char *argv[])
     }
     catch (IException * e)
     {
-        UERRLOG(e);
+        OERRLOG(e);
         e->Release();
         return 1;
     }
@@ -143,30 +141,23 @@ int main(int argc, const char *argv[])
         return 1;
     }
 
-    StringBuffer daliServer;
-    StringBuffer queue;
-    if (!globals->getProp("@daliServers", daliServer))
-        globals->getProp("@DALISERVERS", daliServer);
-    if (0==daliServer.length())
+    StringBuffer name, daliServers;
+    if (!globals->getProp("@daliServers", daliServers))
     {
-        PROGLOG("daliservers not specified in dfuserver.xml");
+        PROGLOG("daliServers not specified in configuration");
         return 1;
     }
-    if (!globals->getProp("@QUEUE", queue))
-        globals->getProp("@queue", queue);
-    if (0==queue.length())
+    if (!globals->getProp("@name", name))
     {
-        PROGLOG("queue not specified in dfuserver.xml");
+        PROGLOG("name not specified in configuration");
         return 1;
     }
-
     Owned<IFile> sentinelFile;
-    bool stop = globals->getPropInt("@stop", globals->getPropInt("@STOP",0))!=0;
+    bool stop = globals->getPropBool("@stop", false);
     if (!stop) {
         sentinelFile.setown(createSentinelTarget());
         removeSentinelFile(sentinelFile);
     }
-    const char* name = globals->queryProp("@name");
 #ifdef _CONTAINERIZED
     setupContainerizedLogMsgHandler();
 #else
@@ -187,11 +178,10 @@ int main(int argc, const char *argv[])
         globals->getPropInt("SSH/@SSHretries",3),
         "run_");
 #endif
-    bool enableSNMP = globals->getPropInt("@enableSNMP")!=0;
     CSDSServerStatus *serverstatus=NULL;
     Owned<IReplicateServer> replserver;
     try {
-        Owned<IGroup> serverGroup = createIGroupRetry(daliServer.str(),DALI_SERVER_PORT);
+        Owned<IGroup> serverGroup = createIGroupRetry(daliServers,DALI_SERVER_PORT);
         initClientProcess(serverGroup, DCR_DfuServer, 0, NULL, NULL, stop?(1000*30):MP_WAIT_FOREVER);
 
         if(!stop)
@@ -212,7 +202,15 @@ int main(int argc, const char *argv[])
             IPropertyTree * config = nullptr;
             installDefaultFileHooks(config);
         }
-        const char *q = queue.str();
+        StringBuffer queue;
+        const char *q;
+#ifndef _CONTAINERIZED
+        if (!globals->getProp("@queue", queue))
+        {
+            PROGLOG("queue not specified  in configuration");
+            return 1;
+        }
+        q = queue.str();
         for (;;) {
             StringBuffer subq;
             const char *comma = strchr(q,',');
@@ -245,26 +243,53 @@ int main(int argc, const char *argv[])
             if (!*q)
                 break;
         }
-        if (globals->hasProp("@monitorqueue"))
-            q = globals->queryProp("@monitorqueue");
-        else
-            q = globals->queryProp("@MONITORQUEUE");
-        if (q&&*q) {
+#else
+        Owned<IPropertyTreeIterator> dfuQueues= globals->getElements("dfuQueues");
+        unsigned maxJobs = globals->getPropInt("@maxJobs", 1);
+        DBGLOG("Owned<IPropertyTreeIterator> dfuQueues= globals->getElements('dfuQueues');");
+        ForEach(*dfuQueues)
+        {
+            IPropertyTree & dfuQueue = dfuQueues->query();
+            const char * queue = dfuQueue.queryProp("@name");
+            StringBuffer mask;
+            mask.appendf("Queue[@name=\"%s\"][1]",queue);
+            if (!stop)
+            {
+                IPropertyTree *t=serverstatus->queryProperties()->queryPropTree(mask.str());
+                if (t)
+                    t->setPropInt("@num",t->getPropInt("@num",0)+maxJobs);
+                else
+                {
+                    t = createPTree();
+                    t->setProp("@name",queue);
+                    t->setPropInt("@num", maxJobs);
+                    serverstatus->queryProperties()->addPropTree("Queue",t);
+                }
+                serverstatus->commitProperties();
+            }
+            if (stop)
+                stopDFUserver(queue);
+            else
+            {
+                engine->setDefaultTransferBufferSize((size32_t)globals->getPropInt("@transferBufferSize"));
+                engine->startListener(queue,serverstatus);
+            }
+        }
+#endif
+        q = globals->queryProp("@monitorqueue");
+        if (!isEmptyString(q)) {
             if (stop) {
                 stopDFUserver(q);
             }
             else {
                 IPropertyTree *t=serverstatus->queryProperties()->addPropTree("MonitorQueue",createPTree());
                 t->setProp("@name",q);
-                int monitorInterval = globals->getPropInt("@monitorinterval", globals->getPropInt("@MONITORINTERVAL", 60));
+                int monitorInterval = globals->getPropInt("@monitorinterval", 60);
                 engine->startMonitor(q,serverstatus,monitorInterval*1000);
             }
         }
-        if (globals->hasProp("@replicatequeue"))
-            q = globals->queryProp("@replicatequeue");
-        else
-            q = globals->queryProp("@REPLICATEQUEUE");
-        if (q&&*q) {
+        q = globals->queryProp("@replicatequeue");
+        if (!isEmptyString(q)) {
             if (stop) {
                 // TBD?
             }

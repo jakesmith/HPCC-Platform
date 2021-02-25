@@ -168,17 +168,8 @@
             "disabled": {
               "type": "boolean"
             },
-            "enableSNMP": {
-              "type": "boolean",
-              "description": ""
-            },
-            "enableSysLog": {
-              "description": "",
-              "type": "boolean"
-            },
-            "queue": {
-              "description": "",
-              "type": "string"
+            "maxJobs": {
+              "type": "integer"
             },
             "monitorqueue": {
               "description": "",

@@ -26,6 +26,7 @@
 #include "exception_util.hpp"
 #include "portlist.h"
 #include "daqueue.hpp"
+#include "dameta.hpp"
 
 const char* MSG_FAILED_GET_ENVIRONMENT_INFO = "Failed to get environment information.";
 
@@ -1676,41 +1677,34 @@ void CTpWrapper::getTpDropZones(double clientVersion, const char* name, bool ECL
 {
 
 #ifdef _CONTAINERIZED
-    IPropertyTree * storage = queryGlobalConfig().queryPropTree("storage");
-    if (storage)
+    Owned<IPropertyTreeIterator> planes = queryDropZonePlanesIterator(name);
+    ForEach(*planes)
     {
-        StringBuffer pname("planes[@isDropZone='true']");
-        if (name && *name)
-            pname.appendf("[@name='%s']", name);
-        Owned<IPropertyTreeIterator> planes = storage->getElements(pname.str());
-        ForEach(*planes)
-        {
-            IPropertyTree & plane = planes->query();
-            const char * dropzonename = plane.queryProp("@name");
-            if (isEmptyString(dropzonename))
-                continue;
-            const char * prefix = plane.queryProp("@prefix");
-            StringBuffer path(prefix);
-            Owned<IEspTpDropZone> dropZone = createTpDropZone();
-            dropZone->setName(dropzonename);
-            dropZone->setDescription(""); //TODO
-            dropZone->setPath(path);
-            dropZone->setBuild("");
-            dropZone->setECLWatchVisible(true);
-            StringBuffer networkAddress;
-            IArrayOf<IEspTpMachine> tpMachines;
-            Owned<IEspTpMachine> machine = createTpMachine();
-            IpAddress ipAddr;
-            ipAddr.ipset("localhost");
-            ipAddr.getIpText(networkAddress);
-            machine->setNetaddress(networkAddress.str());
-            machine->setConfigNetaddress("localhost");
-            machine->setDirectory(path);
-            machine->setOS(getPathSepChar(path) == '/' ? MachineOsLinux : MachineOsW2K);
-            tpMachines.append(*machine.getLink());
-            dropZone->setTpMachines(tpMachines);
-            list.append(*dropZone.getLink());
-        }
+        IPropertyTree & plane = planes->query();
+        const char * dropzonename = plane.queryProp("@name");
+        if (isEmptyString(dropzonename))
+            continue;
+        const char * prefix = plane.queryProp("@prefix");
+        StringBuffer path(prefix);
+        Owned<IEspTpDropZone> dropZone = createTpDropZone();
+        dropZone->setName(dropzonename);
+        dropZone->setDescription(""); //TODO
+        dropZone->setPath(path);
+        dropZone->setBuild("");
+        dropZone->setECLWatchVisible(true);
+        StringBuffer networkAddress;
+        IArrayOf<IEspTpMachine> tpMachines;
+        Owned<IEspTpMachine> machine = createTpMachine();
+        IpAddress ipAddr;
+        ipAddr.ipset("localhost");
+        ipAddr.getIpText(networkAddress);
+        machine->setNetaddress(networkAddress.str());
+        machine->setConfigNetaddress("localhost");
+        machine->setDirectory(path);
+        machine->setOS(getPathSepChar(path) == '/' ? MachineOsLinux : MachineOsW2K);
+        tpMachines.append(*machine.getLink());
+        dropZone->setTpMachines(tpMachines);
+        list.append(*dropZone.getLink());
     }
 #else
     Owned<IEnvironmentFactory> envFactory = getEnvironmentFactory(true);

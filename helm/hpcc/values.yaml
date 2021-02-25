@@ -250,7 +250,8 @@ sasha:
     #user: sasha
 
 dfuserver:
-- name: dfuserver
+- name: mydfuserver
+  maxJobs: 1
 
 eclagent:
 - name: hthor
@@ -385,7 +386,7 @@ roxie:
 thor:
 - name: thor
   prefix: thor
-  numWorkers: 2
+  numWorkers: 4
   maxJobs: 4
   maxGraphs: 2
   #managerResources:

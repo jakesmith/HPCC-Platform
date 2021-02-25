@@ -2912,7 +2912,7 @@ const char * FileSprayer::querySplitPrefix()
 const char * FileSprayer::querySlaveExecutable(const IpAddress &ip, StringBuffer &ret) const
 {
 #ifdef _CONTAINERIZED
-    ret.append("/opt/HPCCSystems/bin/run_ftslave");
+    ret.append("run_ftslave");
     return ret.str();
 #else
     const char * slave = queryFixedSlave();

@@ -58,5 +58,6 @@ constexpr ResolveOptions operator &(ResolveOptions l, ResolveOptions r) { return
  */
 
 extern da_decl IPropertyTree * resolveLogicalFilenameFromDali(const char * filename, IUserDescriptor * user, ResolveOptions options);
+extern da_decl IPropertyTreeIterator * queryDropZonePlanesIterator(const char * name = nullptr);
 
 #endif
