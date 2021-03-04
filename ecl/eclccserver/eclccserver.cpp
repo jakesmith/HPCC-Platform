@@ -342,7 +342,9 @@ class EclccCompileThread : implements IPooledThread, implements IErrorReporter, 
         eclccCmd.append(" --metacache=");
 
 #ifdef _CONTAINERIZED
-        eclccCmd.append(" --nologfile");
+        /* stderr is reserved for actual errors, and is consumed by this (parent) process
+         * stdout is unused and will be captured by container logging mechanism */
+        eclccCmd.append(" --logToStdOut");
 #else
         StringBuffer logfile;
         envGetConfigurationDirectory("log","eclccserver", globals->queryProp("@name"), logfile);
