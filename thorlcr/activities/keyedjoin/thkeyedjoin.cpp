@@ -47,7 +47,9 @@ class CKeyedJoinMaster : public CMasterActivity
     // CMap contains mappings and lists of parts for each slave
     class CMap
     {
+        CKeyedJoinMaster &activity;
     public:
+        CMap(CKeyedJoinMaster &_activity) : activity(_activity) {}
         std::vector<unsigned> allParts;
         std::vector<std::vector<unsigned>> slavePartMap; // vector of slave parts (IPartDescriptor's slavePartMap[<slave>] serialized to each slave)
         std::vector<unsigned> partToSlave; // vector mapping part index to slave (sent to all slaves)
@@ -112,6 +114,8 @@ class CKeyedJoinMaster : public CMasterActivity
             unsigned numParts = fileDesc->numParts();
             unsigned nextGroupStartPos = 0;
 
+            bool assumePrimary = activity.getOptBool(THOROPT_KJ_ASSUME_PRIMARY);
+
             for (unsigned p=0; p<numParts; p++)
             {
                 IPartDescriptor *part = fileDesc->queryPart(p);
@@ -149,7 +153,8 @@ class CKeyedJoinMaster : public CMasterActivity
                          * Add them to local parts list if found.
                          */
                         unsigned mappedPos = NotFound;
-                        for (unsigned c=0; c<part->numCopies(); c++)
+                        unsigned copies = assumePrimary ? 1 : part->numCopies();
+                        for (unsigned c = 0; c < copies; c++)
                         {
                             INode *partNode = part->queryNode(c);
                             unsigned partCopy = p | (c << partBits);
@@ -162,8 +167,13 @@ class CKeyedJoinMaster : public CMasterActivity
                                 {
                                     RemoteFilename rfn;
                                     part->getFilename(c, rfn);
-                                    Owned<IFile> file = createIFile(rfn);
-                                    if (file->exists()) // skip if copy doesn't exist
+                                    bool exists = assumePrimary;
+                                    if (!assumePrimary)
+                                    {
+                                        Owned<IFile> file = createIFile(rfn);
+                                        exists = file->exists(); // skip if copy doesn't exist
+                                    }
+                                    if (exists)
                                     {
                                         /* NB: If there's >1 slave per node (e.g. slavesPerNode>1) then there are multiple matching node's in the dfsGroup
                                         * Which means a copy of a part may already be assigned to a cluster slave map. This check avoid handling it again if it has.
@@ -246,7 +256,7 @@ class CKeyedJoinMaster : public CMasterActivity
         }
     };
 
-    CMap indexMap, dataMap;
+    CMap indexMap(this), dataMap(this);
 
 
 public:
