@@ -83,7 +83,7 @@ data:
     version: 1.0
     dali:
 {{ toYaml (omit $dali "logging" "services") | indent 6 }}
-      dataPath: {{ include "hpcc.getVolumeMountPrefix" (dict "root" $ "name" ($daliStorage.plane | default "dalistorage-pvc") "path" "dalistorage" "me" $daliStorage) }}
+      dataPath: {{ include "hpcc.getVolumeMountPrefix" (dict "root" $ "me" $daliStorage "path" "dalistorage") }}
 {{- include "hpcc.generateLoggingConfig" $commonCtx | indent 6 }}
 {{ include "hpcc.generateVaultConfig" (dict "root" $ "categories" (list "system" ) ) | indent 6 }}
     global:
@@ -131,7 +131,7 @@ spec:
 {{- if (and (not $daliStorage.existingClaim) (not $daliStorage.plane)) }}
 {{- $services := (.services | default dict) -}}
 {{- $modeForCoalescer := (hasKey $services "coalescer") | ternary "ReadWriteOnce" "ReadWriteMany" -}}
-{{- include "hpcc.addPVC" (dict "root" $ "name" "dalistorage-pvc" "mode" $modeForCoalescer "me" $daliStorage) -}}
+{{- include "hpcc.addPVC" (dict "root" $ "name" "dalistorage" "mode" $modeForCoalescer "me" $daliStorage) -}}
 {{- end }}
 {{- end }}
 {{- end }}
