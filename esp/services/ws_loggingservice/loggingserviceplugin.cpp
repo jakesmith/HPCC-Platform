@@ -30,7 +30,7 @@ extern "C"
     // Change the function names when we stick with dynamic loading.
     ESP_FACTORY IEspService * esp_service_factory(const char *name, const char* type, IPropertyTree *cfg, const char *process)
     {
-        if (strieq(type, "WsLoggingService"))
+        if (strieq(type, "WsLoggingService") || strieq(type, "ws_loggingservice"))
         {
             CWsLoggingServiceEx* loggingservice = new CWsLoggingServiceEx;
             loggingservice->init(name, type, cfg, process);
