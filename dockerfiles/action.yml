@@ -19,6 +19,9 @@ inputs:
   build_label:
     description: 'The docker version tag'
     required: false
+  docker_repo:
+    description: 'The name of the docker repositor to pull and push to/from'
+    required: false
   latest:
     description: 'Set to 1 to also tag as latest when maturity is release'
     required: false

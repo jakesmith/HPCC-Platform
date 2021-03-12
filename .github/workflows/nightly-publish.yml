@@ -3,8 +3,8 @@ name: Nightly master build and publish
 # or any of the weekly tag names starting 'master'
 on:
   schedule:
-#    - cron:  '15 * * * *'
-    - cron:  '0 22 * * *'
+    - cron:  '20 * * * *'
+#    - cron:  '0 22 * * *'
 
 jobs:
   build:
@@ -23,6 +23,7 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
           build_label: "master-${{ steps.date.outputs.date }}"
+          docker_repo: "jakesmith0"
 
       # - name: Notify on failure
       #   uses: hpcc-systems/action-send-mail@v2
