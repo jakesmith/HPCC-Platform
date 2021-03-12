@@ -3,8 +3,8 @@ name: Nightly master build and publish
 # or any of the weekly tag names starting 'master'
 on:
   schedule:
-    - cron:  '15 * * * *'
-#    - cron:  '0 22 * * *'
+#    - cron:  '15 * * * *'
+    - cron:  '0 22 * * *'
 
 jobs:
   build:
