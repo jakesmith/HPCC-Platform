@@ -16,6 +16,9 @@ inputs:
   build_type:
     description: 'The build type - Debug, RelWithDebInfo, or Release'
     required: false
+  build_label:
+    description: 'The docker version tag'
+    required: false
   latest:
     description: 'Set to 1 to also tag as latest when maturity is release'
     required: false
