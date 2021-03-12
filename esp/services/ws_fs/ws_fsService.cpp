@@ -41,6 +41,7 @@
 #include "exception_util.hpp"
 #include "LogicFileWrapper.hpp"
 #include "dameta.hpp"
+#include "daqueue.hpp"
 
 #define DFU_WU_URL          "DfuWorkunitsAccess"
 #define DFU_EX_URL          "DfuExceptionsAccess"
@@ -156,17 +157,20 @@ void CFileSprayEx::init(IPropertyTree *cfg, const char *process, const char *ser
 
     directories.set(cfg->queryPropTree("Software/Directories"));
 #else
-    Owned<IPropertyTreeIterator> dfuQueues= queryComponentConfig().getElements("dfuQueues");
+    Owned<IPropertyTreeIterator> dfuQueues = queryComponentConfig().getElements("dfuQueues");
     ForEach(*dfuQueues)
     {
         IPropertyTree & dfuQueue = dfuQueues->query();
-        const char * queue = dfuQueue.queryProp("@name");
-        m_QueueLabel.append(queue);
-        // TODO: not sure how multiple queues would be handled.  (There is no way to select the queue in EclWatch.)
-        // - just use the first one for now
-        break;
+        const char * dfuName = dfuQueue.queryProp("@name");
+        if (!isEmptyString(dfuName))
+        {
+            getDfuQueueName(m_QueueLabel, dfuName);
+            getDfuMonitorQueueName(m_MonitorQueueLabel, dfuName);
+            // TODO: not sure how multiple queues would be handled.  (There is no way to select the queue in EclWatch.)
+            // - just use the first one for now
+            break;
+        }
     }
-    m_MonitorQueueLabel.set("dfuqueue_monitor_queue");
 #endif
     DBGLOG("queueLabel=%s", m_QueueLabel.str());
     DBGLOG("monitorQueueLabel=%s", m_MonitorQueueLabel.str());
@@ -2231,9 +2235,8 @@ bool CFileSprayEx::onReplicate(IEspContext &context, IEspReplicate &req, IEspRep
 
 void CFileSprayEx::getDropZoneInfoByDestPlane(double clientVersion, const char* destGroup, const char* destFileIn, StringBuffer& destFileOut, StringBuffer& umask)
 {
-#ifdef _CONTAINERIZED
     const bool isDestAbsolutePath = isAbsolutePath(destFileIn);
-    Owned<IPropertyTreeIterator> planes = queryDropZonePlanesIterator(destGroup);
+    Owned<IPropertyTreeIterator> planes = getDropZonePlanesIterator(destGroup);
     ForEach(*planes)
     {
         IPropertyTree & plane = planes->query();
@@ -2253,8 +2256,7 @@ void CFileSprayEx::getDropZoneInfoByDestPlane(double clientVersion, const char* 
         plane.getProp("@umask", umask);
         return;
     }
-    throw MakeStringException(ECLWATCH_DROP_ZONE_NOT_FOUND, "No drop zone configured for %s:%s", destGroup, destFileIn);
-#endif
+    throw makeStringExceptionV(ECLWATCH_DROP_ZONE_NOT_FOUND, "No drop zone configured for %s:%s", destGroup, destFileIn);
 }
 
 void CFileSprayEx::getDropZoneInfoByIP(double clientVersion, const char* ip, const char* destFileIn, StringBuffer& destFileOut, StringBuffer& umask)

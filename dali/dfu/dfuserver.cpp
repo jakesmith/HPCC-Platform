@@ -103,7 +103,6 @@ static constexpr const char * defaultYaml = R"!!(
 version: "1.0"
 dfuserver:
   name: dfuserver
-  monitorqueue: dfuserver_monitor_queue
   monitorinterval: 900
   transferBufferSize: 65536
   maxJobs: 1
@@ -202,15 +201,14 @@ int main(int argc, const char *argv[])
             IPropertyTree * config = nullptr;
             installDefaultFileHooks(config);
         }
-        StringBuffer queue;
-        const char *q;
+        StringBuffer queue, monitorqueue;
 #ifndef _CONTAINERIZED
         if (!globals->getProp("@queue", queue))
         {
             PROGLOG("queue not specified  in configuration");
             return 1;
         }
-        q = queue.str();
+        const char *q = queue.str();
         for (;;) {
             StringBuffer subq;
             const char *comma = strchr(q,',');
@@ -243,58 +241,59 @@ int main(int argc, const char *argv[])
             if (!*q)
                 break;
         }
+        globals->getProp("@monitorqueue", monitorqueue);
 #else
-        Owned<IPropertyTreeIterator> dfuQueues= globals->getElements("dfuQueues");
+        getDfuQueueName(queue, name);
         unsigned maxJobs = globals->getPropInt("@maxJobs", 1);
-        DBGLOG("Owned<IPropertyTreeIterator> dfuQueues= globals->getElements('dfuQueues');");
-        ForEach(*dfuQueues)
+        if (maxJobs<1)
         {
-            IPropertyTree & dfuQueue = dfuQueues->query();
-            const char * queue = dfuQueue.queryProp("@name");
-            StringBuffer mask;
-            mask.appendf("Queue[@name=\"%s\"][1]",queue);
-            if (!stop)
+            OERRLOG("maxJobs is %u", maxJobs);
+            return 1;                       
+        }
+        VStringBuffer mask("Queue[@name=\"%s\"][1]", queue.str());
+        if (!stop)
+        {
+            if (serverstatus->queryProperties()->queryPropTree(mask.str()))
             {
-                IPropertyTree *t=serverstatus->queryProperties()->queryPropTree(mask.str());
-                if (t)
-                    t->setPropInt("@num",t->getPropInt("@num",0)+maxJobs);
-                else
-                {
-                    t = createPTree();
-                    t->setProp("@name",queue);
-                    t->setPropInt("@num", maxJobs);
-                    serverstatus->queryProperties()->addPropTree("Queue",t);
-                }
-                serverstatus->commitProperties();
+                OERRLOG("Queue already active: %s", queue.str());
+                return 1;
             }
-            if (stop)
-                stopDFUserver(queue);
             else
             {
-                engine->setDefaultTransferBufferSize((size32_t)globals->getPropInt("@transferBufferSize"));
-                engine->startListener(queue,serverstatus);
+                IPropertyTree *t = createPTree();
+                t->setProp("@name",queue);
+                t->setPropInt("@num", maxJobs);
+                serverstatus->queryProperties()->addPropTree("Queue",t);
             }
+            serverstatus->commitProperties();
+            engine->setDefaultTransferBufferSize((size32_t)globals->getPropInt("@transferBufferSize"));
+            for (unsigned i=0; i<maxJobs; i++)
+                engine->startListener(queue,serverstatus);
         }
+        else
+            stopDFUserver(queue);
+        getDfuMonitorQueueName(monitorqueue, name);
 #endif
-        q = globals->queryProp("@monitorqueue");
-        if (!isEmptyString(q)) {
+        if (monitorqueue.length()>0)
+        {
             if (stop) {
-                stopDFUserver(q);
+                stopDFUserver(monitorqueue);
             }
             else {
                 IPropertyTree *t=serverstatus->queryProperties()->addPropTree("MonitorQueue",createPTree());
-                t->setProp("@name",q);
+                t->setProp("@name",monitorqueue);
                 int monitorInterval = globals->getPropInt("@monitorinterval", 60);
-                engine->startMonitor(q,serverstatus,monitorInterval*1000);
+                engine->startMonitor(monitorqueue,serverstatus,monitorInterval*1000);
             }
         }
-        q = globals->queryProp("@replicatequeue");
-        if (!isEmptyString(q)) {
+        const char *replicatequeue = globals->queryProp("@replicatequeue");
+        if (!isEmptyString(replicatequeue))
+        {
             if (stop) {
                 // TBD?
             }
             else {
-                replserver.setown(createReplicateServer(q));
+                replserver.setown(createReplicateServer(replicatequeue));
                 replserver->runServer();
             }
         }
@@ -308,6 +307,10 @@ int main(int argc, const char *argv[])
             engine->joinListeners();
             if (replserver.get())
                 replserver->stopServer();
+#if _CONTAINERIZED
+            stopDFUserver(queue); // are these necessary?
+            stopDFUserver(monitorqueue);
+#endif
             LOG(MCprogress, unknownJob, "Exiting");
         }
 

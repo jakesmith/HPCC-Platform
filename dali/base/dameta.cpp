@@ -38,7 +38,7 @@ IPropertyTree * queryStoragePlane(const char * name)
     return global.queryPropTree(xpath);
 }
 
-IPropertyTreeIterator * queryDropZonePlanesIterator(const char * name)
+IPropertyTreeIterator * getDropZonePlanesIterator(const char * name)
 {
     VStringBuffer xpath("storage/planes[@isDropZone='true']");
     if (!isEmptyString(name))

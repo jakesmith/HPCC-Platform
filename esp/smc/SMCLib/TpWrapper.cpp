@@ -1677,7 +1677,7 @@ void CTpWrapper::getTpDropZones(double clientVersion, const char* name, bool ECL
 {
 
 #ifdef _CONTAINERIZED
-    Owned<IPropertyTreeIterator> planes = queryDropZonePlanesIterator(name);
+    Owned<IPropertyTreeIterator> planes = getDropZonePlanesIterator(name);
     ForEach(*planes)
     {
         IPropertyTree & plane = planes->query();
@@ -1692,13 +1692,13 @@ void CTpWrapper::getTpDropZones(double clientVersion, const char* name, bool ECL
         dropZone->setPath(path);
         dropZone->setBuild("");
         dropZone->setECLWatchVisible(true);
-        StringBuffer networkAddress;
+        StringBuffer localHost;
         IArrayOf<IEspTpMachine> tpMachines;
         Owned<IEspTpMachine> machine = createTpMachine();
         IpAddress ipAddr;
         ipAddr.ipset("localhost");
-        ipAddr.getIpText(networkAddress);
-        machine->setNetaddress(networkAddress.str());
+        ipAddr.getIpText(localHost);
+        machine->setNetaddress(localHost.str());
         machine->setConfigNetaddress("localhost");
         machine->setDirectory(path);
         machine->setOS(getPathSepChar(path) == '/' ? MachineOsLinux : MachineOsW2K);

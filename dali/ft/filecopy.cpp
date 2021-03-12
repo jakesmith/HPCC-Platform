@@ -3496,11 +3496,7 @@ bool FileSprayer::usePullOperation() const
     if (!calcedPullPush)
     {
         calcedPullPush = true;
-#ifdef _CONTAINERIZED
-        cachedUsePull = true;
-#else
         cachedUsePull = calcUsePull();
-#endif
     }
     return cachedUsePull;
 }

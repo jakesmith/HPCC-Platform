@@ -100,12 +100,13 @@ cost:
 {{- end -}}
 
 {{/*
-generate dfuserver queues
+Generate dfuserver queues
+Pass in root
 */}}
 {{- define "hpcc.generateConfigDfuQueues" -}}
- {{- if not .disabled -}}
 {{- range $queue := .root.Values.dfuserver }}
-- name: {{ printf "%s.dfuserver" $queue.name | quote }}
+{{- if not .disabled }}
+- name: {{ .name }}
 {{- end -}}
 {{- end -}}
 {{- end -}}

@@ -459,19 +459,21 @@ class CDFUengine: public CInterface, implements IDFUengine
         if ((isDotDotString != nullptr) || (isDotString != nullptr))
             throwError3(DFTERR_InvalidFilePath, pfilePath, dotDotString, dotString);
 
+        StringBuffer netaddress;
+        filename.queryIP().getIpText(netaddress);
 #ifdef _CONTAINERIZED
-        Owned<IPropertyTreeIterator> planes = queryDropZonePlanesIterator();
+        Owned<IPropertyTreeIterator> planes = getDropZonePlanesIterator();
         ForEach(*planes)
         {
             IPropertyTree & plane = planes->query();
-            StringBuffer fullDropZoneDir(plane.queryProp("@prefix"));
-            if (strncmp(fullDropZoneDir, pfilePath, fullDropZoneDir.length())==0)
+            const char * fullDropZoneDir = plane.queryProp("@prefix");
+            assertex(fullDropZoneDir);
+            // note: for bare-metal drop-zones, will need to compare ip address
+            if (startsWith(pfilePath, fullDropZoneDir))
                 return;
         }
         throwError1(DFTERR_NoMatchingDropzonePlane, pfilePath);
 #else
-        StringBuffer netaddress;
-        filename.queryIP().getIpText(netaddress);
         Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
         Owned<IConstEnvironment> env = factory->openEnvironment();
 

@@ -171,14 +171,6 @@
             "maxJobs": {
               "type": "integer"
             },
-            "monitorqueue": {
-              "description": "",
-              "type": "string"
-            },
-            "monitorinterval": {
-              "description": "",
-              "type": "integer"
-            },
             "required": [ "name" ]
           }
         ]
