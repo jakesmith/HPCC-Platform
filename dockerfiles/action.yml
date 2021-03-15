@@ -29,5 +29,30 @@ outputs:
   tag:
     description: 'Is the tag, which was pushed'
 runs:
-  using: 'docker'
-  image: 'Dockerfile'
+  using: 'composite'
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+    - name: Build
+      uses: ./dockerfiles
+      with:
+        build_ver: ${{ inputs.build_ver }}
+        build_user: ${{ inputs.build_user }}
+        build_type: ${{ inputs.build_type }}
+        build_label: ${{ inputs.build_label }}
+        docker_repo: ${{ inputs.docker_repo }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+        latest: ${{ inputs.latest }}
+    - name: Notify on failure
+      uses: hpcc-systems/action-send-mail@v2
+      if: ${{ failure() }}
+      with:
+        server_address: smtp.gmail.com
+        server_port: 465
+        username: ${{secrets.GMAIL_USER}}
+        password: ${{secrets.GMAIL_PW}}
+        subject: Github Actions job result
+        body: Build job of ${{github.repository}} failed!
+        to: ${{secrets.GMAIL_RECIPIENTS}}
+        from: Github Actions
