@@ -385,10 +385,6 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "isDropZone" : {
-          "description": "true if data plane is dropzone",
-          "type": "boolean"
-        },
         "umask" : {
           "description": "file creation mask (used by despray)",
           "type" : "string"

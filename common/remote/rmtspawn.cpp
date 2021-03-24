@@ -141,11 +141,10 @@ ISocket * spawnRemoteChild(SpawnKind kind, const char * exe, const SocketEndpoin
         return NULL;
     }
 #ifdef _CONTAINERIZED
-    // TODO: In K8s, this won't work in production as there's only a pool of NUM_SLAVE_CONNECT_PORT (20) ports for all ftslave instances
     // TODO: replace with K8s job
     DWORD runcode;
     if (!invoke_program(cmd.str(), runcode, false))
-        throw MakeStringException(-1,"Error spawning %s", exe);
+        throw makeStringExceptionV(-1,"Error spawning %s", exe);
 #else
     if (SSHusername.isEmpty())
     {

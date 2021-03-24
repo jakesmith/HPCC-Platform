@@ -157,6 +157,8 @@ void CFileSprayEx::init(IPropertyTree *cfg, const char *process, const char *ser
 
     directories.set(cfg->queryPropTree("Software/Directories"));
 #else
+    // Using the first queue for now.
+    // TODO: Re-design support for multiple queues
     Owned<IPropertyTreeIterator> dfuQueues = queryComponentConfig().getElements("dfuQueues");
     ForEach(*dfuQueues)
     {
@@ -166,8 +168,6 @@ void CFileSprayEx::init(IPropertyTree *cfg, const char *process, const char *ser
         {
             getDfuQueueName(m_QueueLabel, dfuName);
             getDfuMonitorQueueName(m_MonitorQueueLabel, dfuName);
-            // TODO: not sure how multiple queues would be handled.  (There is no way to select the queue in EclWatch.)
-            // - just use the first one for now
             break;
         }
     }
@@ -2233,30 +2233,25 @@ bool CFileSprayEx::onReplicate(IEspContext &context, IEspReplicate &req, IEspRep
     return true;
 }
 
-void CFileSprayEx::getDropZoneInfoByDestPlane(double clientVersion, const char* destGroup, const char* destFileIn, StringBuffer& destFileOut, StringBuffer& umask)
+void CFileSprayEx::getDropZoneInfoByDestPlane(double clientVersion, const char* destPlane, const char* destFileIn, StringBuffer& destFileOut, StringBuffer& umask)
 {
-    const bool isDestAbsolutePath = isAbsolutePath(destFileIn);
-    Owned<IPropertyTreeIterator> planes = getDropZonePlanesIterator(destGroup);
-    ForEach(*planes)
+    Owned<IPropertyTree> plane = getDropZonePlane(destPlane);
+    if (!plane)
+        throw makeStringExceptionV(ECLWATCH_DROP_ZONE_NOT_FOUND, "No drop zone matching plane %s", destPlane);
+
+    StringBuffer fullDropZoneDir(plane->queryProp("@prefix"));
+    addPathSepChar(fullDropZoneDir);
+    if (isAbsolutePath(destFileIn))
     {
-        IPropertyTree & plane = planes->query();
-        StringBuffer fullDropZoneDir(plane.queryProp("@prefix"));
-        addPathSepChar(fullDropZoneDir);
-        if (isDestAbsolutePath)
-        {
-            if (strncmp(fullDropZoneDir, destFileIn, fullDropZoneDir.length())==0)
-                destFileOut.set(destFileIn);
-            else
-                continue;
-        }
-        else
-        {
-            destFileOut.set(fullDropZoneDir).append(destFileIn);
-        }
-        plane.getProp("@umask", umask);
-        return;
+        if (strncmp(fullDropZoneDir, destFileIn, fullDropZoneDir.length()))
+            throw makeStringExceptionV(ECLWATCH_DROP_ZONE_NOT_FOUND, "No drop zone configured for %s:%s", destPlane, destFileIn);
+        destFileOut.set(destFileIn);
     }
-    throw makeStringExceptionV(ECLWATCH_DROP_ZONE_NOT_FOUND, "No drop zone configured for %s:%s", destGroup, destFileIn);
+    else
+    {
+        destFileOut.append(destFileIn);
+    }
+    plane->getProp("@umask", umask);
 }
 
 void CFileSprayEx::getDropZoneInfoByIP(double clientVersion, const char* ip, const char* destFileIn, StringBuffer& destFileOut, StringBuffer& umask)
@@ -2349,7 +2344,7 @@ void CFileSprayEx::getDropZoneInfoByIP(double clientVersion, const char* ip, con
             LOG(MCdebugInfo, unknownJob, "No valid drop zone found for network address '%s'. Check your system drop zone configuration.", ip);
     }
 #else
-    throw MakeStringException(-1, "Internal error: CFileSprayEx::getDropZoneInfoByIP should not be called in containerized environment");
+    throw makeStringExceptionV(-1, "Internal error: CFileSprayEx::getDropZoneInfoByIP should not be called in containerized environment");
 #endif
 }
 
@@ -2384,7 +2379,6 @@ bool CFileSprayEx::onDespray(IEspContext &context, IEspDespray &req, IEspDespray
         PROGLOG("Despray %s", srcname);
         double version = context.getClientVersion();
         const char* destip = req.getDestIP();
-        const char* destGroup = req.getDestGroup();
         StringBuffer destPath;
         StringBuffer implicitDestFile;
         const char* destfile = getStandardPosixPath(destPath, req.getDestPath()).str();
@@ -2430,7 +2424,8 @@ bool CFileSprayEx::onDespray(IEspContext &context, IEspDespray &req, IEspDespray
 
             StringBuffer destfileWithPath, umask;
 #ifdef _CONTAINERIZED
-            getDropZoneInfoByDestPlane(version, destGroup, destfile, destfileWithPath, umask);
+            const char* destPlane = req.getDestGroup();
+            getDropZoneInfoByDestPlane(version, destPlane, destfile, destfileWithPath, umask);
 #else
             getDropZoneInfoByIP(version, destip, destfile, destfileWithPath, umask);
 #endif

@@ -26,7 +26,7 @@
 #include "exception_util.hpp"
 #include "portlist.h"
 #include "daqueue.hpp"
-#include "dameta.hpp"
+#include "dautils.hpp"
 
 const char* MSG_FAILED_GET_ENVIRONMENT_INFO = "Failed to get environment information.";
 
@@ -1665,7 +1665,6 @@ void CTpWrapper::getDropZoneMachineList(double clientVersion, bool ECLWatchVisib
     {
         IWARNLOG("Unknown Exception caught within CTpWrapper::getDropZoneMachineList");
     }
-    
 }
 
 //For a given dropzone or every dropzones (check ECLWatchVisible if needed), read: "@name",
@@ -1691,7 +1690,7 @@ void CTpWrapper::getTpDropZones(double clientVersion, const char* name, bool ECL
         dropZone->setDescription(""); //TODO
         dropZone->setPath(path);
         dropZone->setBuild("");
-        dropZone->setECLWatchVisible(true);
+        dropZone->setECLWatchVisible(plane.getPropBool("@eclWatchVisible", true));
         StringBuffer localHost;
         IArrayOf<IEspTpMachine> tpMachines;
         Owned<IEspTpMachine> machine = createTpMachine();

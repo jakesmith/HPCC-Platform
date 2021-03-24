@@ -103,7 +103,7 @@ static constexpr const char * defaultYaml = R"!!(
 version: "1.0"
 dfuserver:
   name: dfuserver
-  monitorinterval: 900
+  monitorInterval: 900
   transferBufferSize: 65536
   maxJobs: 1
 )!!";
@@ -152,7 +152,11 @@ int main(int argc, const char *argv[])
         return 1;
     }
     Owned<IFile> sentinelFile;
+#ifndef _CONTAINERIZED
     bool stop = globals->getPropBool("@stop", false);
+#else
+    bool stop = false; // In containerized, this is never true: queues stopped when container stopped
+#endif
     if (!stop) {
         sentinelFile.setown(createSentinelTarget());
         removeSentinelFile(sentinelFile);
@@ -201,11 +205,11 @@ int main(int argc, const char *argv[])
             IPropertyTree * config = nullptr;
             installDefaultFileHooks(config);
         }
-        StringBuffer queue, monitorqueue;
+        StringBuffer queue, monitorQueue;
 #ifndef _CONTAINERIZED
         if (!globals->getProp("@queue", queue))
         {
-            PROGLOG("queue not specified  in configuration");
+            PROGLOG("queue not specified in configuration");
             return 1;
         }
         const char *q = queue.str();
@@ -241,59 +245,54 @@ int main(int argc, const char *argv[])
             if (!*q)
                 break;
         }
-        globals->getProp("@monitorqueue", monitorqueue);
+        globals->getProp("@monitorQueue", monitorQueue);
 #else
         getDfuQueueName(queue, name);
         unsigned maxJobs = globals->getPropInt("@maxJobs", 1);
         if (maxJobs<1)
         {
             OERRLOG("maxJobs is %u", maxJobs);
-            return 1;                       
+            return 1;
         }
         VStringBuffer mask("Queue[@name=\"%s\"][1]", queue.str());
-        if (!stop)
+        if (serverstatus->queryProperties()->queryPropTree(mask.str()))
         {
-            if (serverstatus->queryProperties()->queryPropTree(mask.str()))
-            {
-                OERRLOG("Queue already active: %s", queue.str());
-                return 1;
-            }
-            else
-            {
-                IPropertyTree *t = createPTree();
-                t->setProp("@name",queue);
-                t->setPropInt("@num", maxJobs);
-                serverstatus->queryProperties()->addPropTree("Queue",t);
-            }
-            serverstatus->commitProperties();
-            engine->setDefaultTransferBufferSize((size32_t)globals->getPropInt("@transferBufferSize"));
-            for (unsigned i=0; i<maxJobs; i++)
-                engine->startListener(queue,serverstatus);
+            OERRLOG("Queue already active: %s", queue.str());
+            return 1;
         }
         else
-            stopDFUserver(queue);
-        getDfuMonitorQueueName(monitorqueue, name);
+        {
+            IPropertyTree *t = createPTree();
+            t->setProp("@name",queue);
+            t->setPropInt("@num", maxJobs);
+            serverstatus->queryProperties()->addPropTree("Queue",t);
+        }
+        serverstatus->commitProperties();
+        engine->setDefaultTransferBufferSize((size32_t)globals->getPropInt("@transferBufferSize"));
+        for (unsigned i=0; i<maxJobs; i++)
+            engine->startListener(queue,serverstatus);
+        getDfuMonitorQueueName(monitorQueue, name);
 #endif
-        if (monitorqueue.length()>0)
+        if (monitorQueue.length()>0)
         {
             if (stop) {
-                stopDFUserver(monitorqueue);
+                stopDFUserver(monitorQueue);
             }
             else {
-                IPropertyTree *t=serverstatus->queryProperties()->addPropTree("MonitorQueue",createPTree());
-                t->setProp("@name",monitorqueue);
-                int monitorInterval = globals->getPropInt("@monitorinterval", 60);
-                engine->startMonitor(monitorqueue,serverstatus,monitorInterval*1000);
+                IPropertyTree *t=serverstatus->queryProperties()->addPropTree("monitorQueue",createPTree());
+                t->setProp("@name",monitorQueue);
+                int monitorInterval = globals->getPropInt("@monitorInterval", 60);
+                engine->startMonitor(monitorQueue,serverstatus,monitorInterval*1000);
             }
         }
-        const char *replicatequeue = globals->queryProp("@replicatequeue");
-        if (!isEmptyString(replicatequeue))
+        const char *replicateQueue = globals->queryProp("@replicateQueue");
+        if (!isEmptyString(replicateQueue))
         {
             if (stop) {
                 // TBD?
             }
             else {
-                replserver.setown(createReplicateServer(replicatequeue));
+                replserver.setown(createReplicateServer(replicateQueue));
                 replserver->runServer();
             }
         }
@@ -307,10 +306,6 @@ int main(int argc, const char *argv[])
             engine->joinListeners();
             if (replserver.get())
                 replserver->stopServer();
-#if _CONTAINERIZED
-            stopDFUserver(queue); // are these necessary?
-            stopDFUserver(monitorqueue);
-#endif
             LOG(MCprogress, unknownJob, "Exiting");
         }
 

@@ -68,11 +68,11 @@
                <xsl:value-of select="@queue"/>
             </xsl:attribute> 
             
-            <xsl:attribute name="monitorqueue">
+            <xsl:attribute name="monitorQueue">
                <xsl:value-of select="@monitorqueue"/>
             </xsl:attribute> 
             
-            <xsl:attribute name="monitorinterval">
+            <xsl:attribute name="monitorInterval">
                <xsl:value-of select="@monitorinterval"/>
             </xsl:attribute> 
             

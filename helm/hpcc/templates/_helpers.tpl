@@ -79,7 +79,7 @@ storage:
   planes:
 {{- /*Generate entries for each data plane (removing the pvc).  Exclude the planes used for dlls and dali.*/ -}}
 {{- range $plane := $planes -}}
- {{- if or (not $plane.labels) (has "data" $plane.labels) }}
+ {{- if or (not $plane.labels) (or (has "data" $plane.labels) (has "lz" $plane.labels)) }}
   - name: {{ $plane.name | quote }}
 {{ toYaml (unset (unset (deepCopy $plane) "name") "pvc")| indent 4 }}
  {{- end }}
