@@ -254,19 +254,10 @@ int main(int argc, const char *argv[])
             OERRLOG("maxJobs is %u", maxJobs);
             return 1;
         }
-        VStringBuffer mask("Queue[@name=\"%s\"][1]", queue.str());
-        if (serverstatus->queryProperties()->queryPropTree(mask.str()))
-        {
-            OERRLOG("Queue already active: %s", queue.str());
-            return 1;
-        }
-        else
-        {
-            IPropertyTree *t = createPTree();
-            t->setProp("@name",queue);
-            t->setPropInt("@num", maxJobs);
-            serverstatus->queryProperties()->addPropTree("Queue",t);
-        }
+        IPropertyTree *t = createPTree();
+        t->setProp("@name",queue);
+        t->setPropInt("@num", maxJobs);
+        serverstatus->queryProperties()->addPropTree("Queue",t);
         serverstatus->commitProperties();
         engine->setDefaultTransferBufferSize((size32_t)globals->getPropInt("@transferBufferSize"));
         for (unsigned i=0; i<maxJobs; i++)

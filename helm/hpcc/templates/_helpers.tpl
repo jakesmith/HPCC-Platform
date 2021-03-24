@@ -105,7 +105,7 @@ Pass in root
 */}}
 {{- define "hpcc.generateConfigDfuQueues" -}}
 {{- range $queue := .root.Values.dfuserver }}
-{{- if not .disabled }}
+{{- if not $queue.disabled }}
 - name: {{ .name }}
 {{- end -}}
 {{- end -}}
@@ -150,17 +150,36 @@ Add ConfigMap volume for a component
 {{- end -}}
 
 {{/*
-Add data volume mount
-If any storage planes are defined that name pvcs they will be mounted
+Returns "true" if any labels in the list includeLabels is in the plane.labels
+Pass in plane and includeLabels
 */}}
-{{- define "hpcc.addDataVolumeMount" -}}
+{{- define "hpcc.doesStorageLabelsMatch" -}}
+{{- if .plane.labels -}}
+{{- $planeLabels := uniq .plane.labels -}}
+{{- $includeLabels := .includeLabels | uniq -}}
+{{- $planesLabelsCount := $planeLabels | len -}}
+{{- $includeLabelsCount := $includeLabels | len -}}
+{{- $bothLabelsCount := add $planesLabelsCount $includeLabelsCount -}}
+{{- $mergedCount := concat $planeLabels $includeLabels | uniq | len -}}
+{{- ne $bothLabelsCount $mergedCount | printf "%t" -}}
+{{- else -}}
+{{- printf "false" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Add volume mount
+Pass in root and includeLabels (optional)
+*/}}
+{{- define "hpcc.addVolumeMounts" -}}
 {{- /*Create local variables which always exist to avoid having to check if intermediate key values exist*/ -}}
 {{- $storage := (.root.Values.storage | default dict) -}}
 {{- $planes := ($storage.planes | default list) -}}
-{{- $dataStorage := ($storage.dataStorage | default dict) -}}
+{{- $includeLabels := .includeLabels | default list -}}
 {{- range $plane := $planes -}}
  {{- if $plane.pvc -}}
-  {{- if or (not $plane.labels) (has "data" $plane.labels) }}
+  {{- $matchedLabels := include "hpcc.doesStorageLabelsMatch" (dict "plane" $plane "includeLabels" $includeLabels) -}}
+  {{- if or (not $plane.labels) (eq $matchedLabels "true") }}
    {{- $num := int ( $plane.numDevices | default 1 ) -}}
    {{- if le $num 1 }}
 - name: {{ lower $plane.name }}-pv
@@ -174,6 +193,17 @@ If any storage planes are defined that name pvcs they will be mounted
   {{- end }}
  {{- end }}
 {{- end }}
+{{- end -}}
+
+{{/*
+Add data volume mount
+If any storage planes are defined that name pvcs they will be mounted
+*/}}
+{{- define "hpcc.addDataVolumeMount" -}}
+{{- $storage := (.root.Values.storage | default dict) -}}
+{{- $dataStorage := ($storage.dataStorage | default dict) -}}
+{{- $includeLabels :=  append (.includeLabels | default list) "data" | uniq -}}
+{{- include "hpcc.addVolumeMounts"  (dict "root" .root "includeLabels" $includeLabels) -}}
 {{- if (not $dataStorage.plane) }}
 - name: datastorage
   mountPath: "/var/lib/HPCCSystems/hpcc-data"
@@ -181,19 +211,18 @@ If any storage planes are defined that name pvcs they will be mounted
 {{- end -}}
 
 {{/*
-Add data volume
-Pass in dict with root
+Add volume
+Pass in root and includeLabels (optional)
 */}}
-{{- define "hpcc.addDataVolume" -}}
+{{- define "hpcc.addVolumes" -}}
 {{- /*Create local variables which always exist to avoid having to check if intermediate key values exist*/ -}}
 {{- $storage := (.root.Values.storage | default dict) -}}
 {{- $planes := ($storage.planes | default list) -}}
-{{- $dataStorage := ($storage.dataStorage | default dict) -}}
-{{- $daliStorage := ($storage.daliStorage | default dict) -}}
-{{- $dllStorage := ($storage.dllStorage | default dict) -}}
+{{- $includeLabels := .includeLabels -}}
 {{- range $plane := $planes -}}
  {{- if $plane.pvc -}}
-  {{- if or (not $plane.labels) (has "data" $plane.labels) }}
+  {{- $matchedLabels := include "hpcc.doesStorageLabelsMatch" (dict "plane" $plane "includeLabels" $includeLabels) -}}
+  {{- if or (not $plane.labels) (eq $matchedLabels "true") }}
    {{- $num := int ( $plane.numDevices | default 1 ) -}}
    {{- $pvc := $plane.pvc | required (printf "pvc for %s not supplied" $plane.name) }}
    {{- if le $num 1 }}
@@ -210,6 +239,17 @@ Pass in dict with root
   {{- end }}
  {{- end }}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Add data volume
+Pass in dict with root
+*/}}
+{{- define "hpcc.addDataVolume" -}}
+{{- $includeLabels :=  append (.includeLabels | default list) "data" | uniq -}}
+{{- include "hpcc.addVolumes" (dict "root" .root "includeLabels" $includeLabels) -}}
+{{- $storage := (.root.Values.storage | default dict) -}}
+{{- $dataStorage := ($storage.dataStorage | default dict) -}}
 {{- if (not $dataStorage.plane) }}
 - name: datastorage
   persistentVolumeClaim:

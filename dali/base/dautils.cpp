@@ -48,17 +48,18 @@
 #define MIN_REDIRECTION_LOAD_INTERVAL 1000
 
 
-#define LZ_PLANE_PATH "storage/planes[labels='lz']"
+constexpr char * lz_plane_path = "storage/planes[labels='lz']";
+
 IPropertyTreeIterator * getDropZonePlanesIterator(const char * name)
 {
-    VStringBuffer xpath(LZ_PLANE_PATH);
+    VStringBuffer xpath(lz_plane_path);
     if (!isEmptyString(name))
         xpath.appendf("[@name='%s']", name);
     return queryGlobalConfig().getElements(xpath);
 }
 IPropertyTree * getDropZonePlane(const char * name)
 {
-    VStringBuffer xpath(LZ_PLANE_PATH);
+    VStringBuffer xpath(lz_plane_path);
     if (!isEmptyString(name))
         xpath.appendf("[@name='%s']", name);
     return queryGlobalConfig().getPropTree(xpath);
