@@ -207,6 +207,10 @@ jobs:
         if [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]
         then
           mv ../build-cache ../build
+
+${{ github.base_ref }}
+          git remote add upstream  
+
           echo Checking out cache SHA: $(cat ../build/cache-sha)
           git checkout $(cat ../build/cache-sha)
           git submodule update --init --recursive --jobs 4
