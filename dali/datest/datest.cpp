@@ -3355,6 +3355,8 @@ int main(int argc, char* argv[])
     ReleaseAtomBlock rABlock;
     InitModuleObjects();
 
+    PROGLOG("test");
+
     EnableSEHtoExceptionMapping();
 
     try {
