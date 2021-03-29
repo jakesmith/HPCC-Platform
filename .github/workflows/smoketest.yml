@@ -203,9 +203,11 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
       run: |
         echo Attempting to use existing cache
-        echo Fetching branch: ${{ steps.vars.outputs.branch }}
-        git clone --branch ${{ steps.vars.outputs.branch }} -n https://github.com/${{ steps.vars.outputs.repository }} src
+        echo Cloning https://github.com/${{ steps.vars.outputs.repository }}
+        git clone -n https://github.com/${{ steps.vars.outputs.repository }} src
         cd src
+        git fetch origin +${{ github.ref }}
+        fetchSHA=$(git rev-parse --verify FETCH_HEAD)
         if [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]
         then
           mv ../build-cache ../build
@@ -219,8 +221,10 @@ jobs:
           find . -type f | cpio -p -dum ../src
           cd ../src
           find . -type f -exec touch -r ../build/cache-timestamp {} +
-          git checkout ${{ steps.vars.outputs.branch }}
+          git checkout ${fetchSHA}
           git submodule update --init --recursive --jobs 4
+          echo ls -lt testfile
+          ls -lt testfile || true
           echo Changed files \(from SHA: $(cat ../build/cache-sha)\):
           find -name '.git*' -prune -o -newer ../build/cache-timestamp -type f -print
         else
@@ -228,11 +232,12 @@ jobs:
           rm -rf ../build-cache ../src-cache
           mkdir ../build
           mkdir ../src-cache
-          echo ::set-output name=unusable::true # force cache miss
+          git checkout ${fetchSHA}
+          git submodule update --init --recursive --jobs 4
         fi
 
     - name: Cache miss checkout
-      if: steps.cache.outputs.cache-hit != 'true' && (steps.check-cache.outputs.cache-exists != 'true' || steps.cache-hit-prep.outputs.unusable)
+      if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
       uses: actions/checkout@v2
       with:
         submodules: recursive
