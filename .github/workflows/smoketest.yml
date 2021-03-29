@@ -86,6 +86,8 @@ jobs:
         echo git clone -n https://github.com/${{ steps.vars.outputs.repository }} src
         git clone -n https://github.com/${{ steps.vars.outputs.repository }} src
         cd src
+        echo git fetch origin +${{ github.ref }}
+        git fetch origin +${{ github.ref }}
         echo git checkout ${{ github.sha }} 
         git checkout ${{ github.sha }} 
         git log -n 2
