@@ -29,7 +29,7 @@
 
 name: smoketest
 env:
-  cacheversion: 1
+  cacheversion: 2
 
 on:
   pull_request:
@@ -106,7 +106,9 @@ jobs:
         then
           cd src
           git fetch origin +${{ github.ref }}
-          echo ::set-output name=sha::$(git rev-parse --verify FETCH_HEAD)
+          fetchSHA=$(git rev-parse --verify FETCH_HEAD)
+          echo "fetchSHA = ${fetchSHA}"
+          echo ::set-output name=sha::${fetchSHA}
         else
           echo ::set-output name=sha::${{ github.sha }}
         fi
@@ -166,9 +168,10 @@ jobs:
           echo "Cache found, but ignored because SMOKETEST_SKIP_CACHE set"
           rm -rf build-cache merge-patch src-cache
         else
-          echo ::set-output name=cache-exists::$(if [[ -d build-cache ]]; then echo true; else echo false; fi)
           if [[ -d build-cache ]]
           then
+            echo "Cache exists"
+            echo ::set-output name=cache-exists::true
             stat build-cache merge-patch src-cache
             du -sh build-cache merge-patch src-cache
           fi
@@ -293,11 +296,11 @@ jobs:
       run: |
         mv build build-cache
         cd src
-        echo base_ref_sha=$(git rev-parse origin/${{ github.base_ref }})
         base_ref_sha=$(git rev-parse origin/${{ github.base_ref }})
+        echo "base_ref_sha=${base_ref_sha}"
         echo ${base_ref_sha} > ../build-cache/cache-sha
         find -name '.git*' -prune -o -newer ../cmake-timestamp -type f -print | cpio -p -dum ../src-cache
         echo git diff ${base_ref_sha} ${{ steps.vars.outputs.sha }}
         git diff --name-only ${base_ref_sha} ${{ steps.vars.outputs.sha }}
-        git diff ${base_ref_sha} ${{ steps.vars.outputs.sha }} > merge-patch
+        git diff ${base_ref_sha} ${{ steps.vars.outputs.sha }} > ../merge-patch
 
