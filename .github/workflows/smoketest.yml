@@ -83,12 +83,13 @@ jobs:
 
     - name: blah
       run: |
+        echo git clone -n https://github.com/${{ steps.vars.outputs.repository }} src
+        git clone -n https://github.com/${{ steps.vars.outputs.repository }} src
+        cd src
+        echo git checkout ${{ github.sha }} 
+        git checkout ${{ github.sha }} 
         git log -n 2
         exit 0
-        echo Attempting to use existing cache
-        echo Fetching branch: ${{ steps.vars.outputs.branch }}
-        git clone --branch ${{ steps.vars.outputs.branch }} -n https://github.com/${{ steps.vars.outputs.repository }} src
-        cd src
         if [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]
         then
           mv ../build-cache ../build
