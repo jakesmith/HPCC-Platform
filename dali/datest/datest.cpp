@@ -3354,8 +3354,8 @@ int main(int argc, char* argv[])
 {
  
     PROGLOG("x");
-    ReleaseAtomBlock rABlock;
-    InitModuleObjects();
+    ReleaseAtomBlock rBBlock;
+    InitModuleObjects(); // should clash
 
     EnableSEHtoExceptionMapping();
 
