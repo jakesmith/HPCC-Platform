@@ -197,6 +197,7 @@ jobs:
     # 7) checkout pr branch - ensuring only pr files that differ are updated (and hence will rebuild)
     # 8) list updated files (for tracing only)
     - name: Cache hit prep
+      id: cache-hit-prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
       run: |
         echo Attempting to use existing cache
@@ -225,11 +226,11 @@ jobs:
           rm -rf ../build-cache ../src-cache
           mkdir ../build
           mkdir ../src-cache
-          git checkout ${{ steps.vars.outputs.branch }}
-          git submodule update --init --recursive --jobs 4
+          echo ::set-output name=unusable::true # force cache miss
         fi
+
     - name: Cache miss checkout
-      if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
+      if: steps.cache.outputs.cache-hit != 'true' && (steps.check-cache.outputs.cache-exists != 'true' || steps.cache-hit-prep.outputs.unusable)
       uses: actions/checkout@v2
       with:
         submodules: recursive
