@@ -3356,6 +3356,7 @@ int main(int argc, char* argv[])
     InitModuleObjects();
 
     /* test1 */
+    /* test2 */
 
     EnableSEHtoExceptionMapping();
 
