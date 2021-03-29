@@ -3351,7 +3351,7 @@ struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
 int main(int argc, char* argv[])
-{   
+{
     ReleaseAtomBlock rABlock;
     InitModuleObjects();
 
