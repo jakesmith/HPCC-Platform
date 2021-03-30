@@ -72,10 +72,15 @@ jobs:
     - name: vars
       id: vars
       run: |
+        echo Cloning https://github.com/${{ steps.vars.outputs.repository }}
+        git clone -n https://github.com/${{ steps.vars.outputs.repository }} src
+
         if [[ "${{ github.event_name }}" = 'pull_request' ]]
         then
+          cd src
+          git fetch origin +${{ github.ref }}
+          echo ::set-output name=sha::$(git rev-parse --verify FETCH_HEAD)
           echo ::set-output name=branch::${{ github.head_ref }}
-          echo ::set-output name=sha::${{ github.event.pull_request.head.sha }}
           echo ::set-output name=base_ref::${{ github.base_ref }}
           versioned=$(echo ${{ github.base_ref }} | sed -E -n 's/^(.*)-([0-9]+)\.([0-9]+)\.([0-9]+|x)(-[0-9]+|).*$/\1 \2 \3 \4 \5/p')
           if [[ "${versioned}" ]]
@@ -203,11 +208,7 @@ jobs:
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
       run: |
         echo Attempting to use existing cache
-        echo Cloning https://github.com/${{ steps.vars.outputs.repository }}
-        git clone -n https://github.com/${{ steps.vars.outputs.repository }} src
         cd src
-        git fetch origin +${{ github.ref }}
-        fetchSHA=$(git rev-parse --verify FETCH_HEAD)
         if [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]
         then
           mv ../build-cache ../build
@@ -221,7 +222,7 @@ jobs:
           find . -type f | cpio -p -dum ../src
           cd ../src
           find . -type f -exec touch -r ../build/cache-timestamp {} +
-          git checkout ${fetchSHA}
+          git checkout ${{ steps.vars.outputs.sha }}
           git submodule update --init --recursive --jobs 4
           echo ls -lt testfile
           ls -lt testfile || true
@@ -232,7 +233,7 @@ jobs:
           rm -rf ../build-cache ../src-cache
           mkdir ../build
           mkdir ../src-cache
-          git checkout ${fetchSHA}
+          git checkout ${{ steps.vars.outputs.sha }}
           git submodule update --init --recursive --jobs 4
         fi
 

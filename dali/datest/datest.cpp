@@ -3358,6 +3358,7 @@ int main(int argc, char* argv[])
     /* test1 */
     /* test2 */
     /* test5 */
+    /* test6 */
 
     EnableSEHtoExceptionMapping();
 
