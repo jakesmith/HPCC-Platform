@@ -69,7 +69,7 @@ jobs:
       cache-hit: ${{ steps.cache.outputs.cache-hit }}
 
     steps:
-    - name: vars
+    - name: Setup and git clone
       id: vars
       run: |
         if [[ "${{ github.event_name }}" = 'pull_request' ]]
@@ -296,7 +296,8 @@ jobs:
         mv build build-cache
         cd src
         find -name '.git*' -prune -o -newer ../cmake-timestamp -type f -print | cpio -p -dum ../src-cache
-        git diff ${base_ref_sha} ${{ github.base_ref }} > merge-patch
+        echo git diff ${base_ref_sha} origin/${{ github.base_ref }} > merge-patch
+        git diff ${base_ref_sha} origin/${{ github.base_ref }} > merge-patch
 
     # - alter stock ecl-test.json, to point to install dir (using jq)
     # - create a clean copy of the install directory (for later reuse)
