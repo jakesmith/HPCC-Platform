@@ -299,7 +299,8 @@ jobs:
         echo git diff ${base_ref_sha} origin/${{ github.base_ref }}
         git remote -v
         git branch -av
-        git diff ${base_ref_sha} origin/${{ github.base_ref }} > merge-patch
+        echo here1
+        #git diff ${base_ref_sha} origin/${{ github.base_ref }} > merge-patch
 
     # - alter stock ecl-test.json, to point to install dir (using jq)
     # - create a clean copy of the install directory (for later reuse)
