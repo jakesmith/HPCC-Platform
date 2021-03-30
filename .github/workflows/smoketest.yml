@@ -72,14 +72,8 @@ jobs:
     - name: vars
       id: vars
       run: |
-        echo Cloning https://github.com/${{ steps.vars.outputs.repository }}
-        git clone -n https://github.com/${{ steps.vars.outputs.repository }} src
-
         if [[ "${{ github.event_name }}" = 'pull_request' ]]
         then
-          cd src
-          git fetch origin +${{ github.ref }}
-          echo ::set-output name=sha::$(git rev-parse --verify FETCH_HEAD)
           echo ::set-output name=branch::${{ github.head_ref }}
           echo ::set-output name=base_ref::${{ github.base_ref }}
           versioned=$(echo ${{ github.base_ref }} | sed -E -n 's/^(.*)-([0-9]+)\.([0-9]+)\.([0-9]+|x)(-[0-9]+|).*$/\1 \2 \3 \4 \5/p')
@@ -94,14 +88,27 @@ jobs:
           fi
         else
           echo ::set-output name=branch::${GITHUB_REF#refs/heads/}
-          echo ::set-output name=sha::${{ github.sha }}
           echo ::set-output name=base_ref::${GITHUB_REF#refs/heads/}
         fi
+
         if [[ "${{ github.event.pull_request.head.repo.owner.login }}" = "${{ github.repository_owner }}" ]]
         then
-          echo ::set-output name=repository::${{ github.repository }}
+          repository=${{ github.repository }}
         else
-          echo ::set-output name=repository::$(echo -n ${{ github.event.pull_request.head.repo.owner.login }}/ ; echo -n ${{ github.repository }} | sed -E -n 's@^[^/]+/(.+)$@\1@p')
+          repository=$(echo -n ${{ github.event.pull_request.head.repo.owner.login }}/ ; echo -n ${{ github.repository }} | sed -E -n 's@^[^/]+/(.+)$@\1@p')
+        fi
+        echo ::set-output name=repository::${repository}
+
+        echo "Cloning https://github.com/${repository}"
+        git clone -n https://github.com/${repository} src
+
+        if [[ "${{ github.event_name }}" = 'pull_request' ]]
+        then
+          cd src
+          git fetch origin +${{ github.ref }}
+          echo ::set-output name=sha::$(git rev-parse --verify FETCH_HEAD)
+        else
+          echo ::set-output name=sha::${{ github.sha }}
         fi
 
     # NB: restore-keys set to e.g. hpccbuild-1-7.12.10, hpccbuild-1-7.12, hpccbuild-1-7, hpccbuild-1-
@@ -111,6 +118,7 @@ jobs:
       with:
         path: |
           build-cache
+          merge-patch
           src-cache
         key: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}-${{ steps.vars.outputs.sha }}
         restore-keys: |
@@ -142,10 +150,10 @@ jobs:
           echo "PR head_ref = ${{ github.head_ref }}"
           echo "PR base SHA = ${{ github.event.pull_request.base.sha }}"
         fi
-        echo restore-key1: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}
-        echo restore-key2: ${{ steps.vars.outputs.base-majorminor-restore-key }}
-        echo restore-key3: ${{ steps.vars.outputs.base-majoronly-restore-key }}
-        echo restore-key4: hpccbuild-${{ env.cacheversion }}-
+        echo "restore-key1: hpccbuild-${{ env.cacheversion }}-${{ steps.vars.outputs.base_ref }}"
+        echo "restore-key2: ${{ steps.vars.outputs.base-majorminor-restore-key }}"
+        echo "restore-key3: ${{ steps.vars.outputs.base-majoronly-restore-key }}"
+        echo "restore-key4: hpccbuild-${{ env.cacheversion }}-"
 
     # NB: actions/cache does not set cache-hit to true if restore-keys used.
     # So here we check if a cache was restored, and set a separate variable 'cache-exists' if it does.
@@ -156,13 +164,13 @@ jobs:
         if [[ -n "${{ secrets.SMOKETEST_SKIP_CACHE }}" ]]
         then
           echo "Cache found, but ignored because SMOKETEST_SKIP_CACHE set"
-          rm -rf build-cache src-cache
+          rm -rf build-cache merge-patch src-cache
         else
           echo ::set-output name=cache-exists::$(if [[ -d build-cache ]]; then echo true; else echo false; fi)
           if [[ -d build-cache ]]
           then
-            stat build-cache src-cache
-            du -sh build-cache src-cache
+            stat build-cache merge-patch src-cache
+            du -sh build-cache merge-patch src-cache
           fi
         fi
 
@@ -199,38 +207,39 @@ jobs:
     # 3) checkout source @ SHA
     #    - if it fails (because SHA can't be found), checkout base_ref
     # 4) get submodules
-    # 5) copy src-cache files into place
-    # 6) touch all files so that 'old' [before original make timestamp], i.e. so behind objects in cache
-    # 7) checkout pr branch - ensuring only pr files that differ are updated (and hence will rebuild)
-    # 8) list updated files (for tracing only)
+    # 5) apply git merge-patch
+    # 6) copy src-cache files into place
+    # 7) touch all files so that 'old' [before original make timestamp], i.e. so behind objects in cache
+    # 8) checkout pr branch - ensuring only pr files that differ are updated (and hence will rebuild)
+    # 9) list updated files (for tracing only)
     - name: Cache hit prep
       id: cache-hit-prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists == 'true'
       run: |
-        echo Attempting to use existing cache
+        echo "Attempting to use existing cache"
         cd src
         if [[ "commit" == "$(git cat-file -t $(cat ../build-cache/cache-sha))" ]]
         then
           mv ../build-cache ../build
-          echo Checking out cache SHA: $(cat ../build/cache-sha)
+          echo "Checking out cache SHA (cached github.base_ref SHA): $(cat ../build/cache-sha)"
           git checkout $(cat ../build/cache-sha)
           git submodule update --init --recursive --jobs 4
+          echo "Applying merge patch"
+          git apply merge-patch
           cd ../src-cache
           echo "Cached source tree files:"
           find . -type f
-          echo ================
+          echo "================"
           find . -type f | cpio -p -dum ../src
           cd ../src
           find . -type f -exec touch -r ../build/cache-timestamp {} +
           git checkout ${{ steps.vars.outputs.sha }}
           git submodule update --init --recursive --jobs 4
-          echo ls -lt testfile
-          ls -lt testfile || true
-          echo Changed files \(from SHA: $(cat ../build/cache-sha)\):
+          echo "Changed files (from SHA: $(cat ../build/cache-sha)):"
           find -name '.git*' -prune -o -newer ../build/cache-timestamp -type f -print
         else
-          echo git diff failed \(SHA $(cat ../build-cache/cache-sha) missing?\). Using base_ref
-          rm -rf ../build-cache ../src-cache
+          echo "git diff failed (SHA $(cat ../build-cache/cache-sha) missing?). Cache not used."
+          rm -rf ../build-cache ../merge-patch ../src-cache
           mkdir ../build
           mkdir ../src-cache
           git checkout ${{ steps.vars.outputs.sha }}
@@ -247,7 +256,7 @@ jobs:
     - name: Cache miss prep
       if: steps.cache.outputs.cache-hit != 'true' && steps.check-cache.outputs.cache-exists != 'true'
       run: |
-        rm -rf build src-cache
+        rm -rf build merge-patch src-cache
         mkdir build
         mkdir src-cache
 
@@ -282,10 +291,12 @@ jobs:
     - name: Prepare cache
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
-        echo ${{ steps.vars.outputs.sha }} > build/cache-sha
+        base_ref_sha=$(git rev-parse ${{ github.base_ref }})
+        echo ${base_ref_sha} > build/cache-sha
         mv build build-cache
         cd src
         find -name '.git*' -prune -o -newer ../cmake-timestamp -type f -print | cpio -p -dum ../src-cache
+        git diff ${base_ref_sha} ${{ github.base_ref }} > merge-patch
 
     # - alter stock ecl-test.json, to point to install dir (using jq)
     # - create a clean copy of the install directory (for later reuse)
