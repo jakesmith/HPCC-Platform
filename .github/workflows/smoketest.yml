@@ -291,7 +291,7 @@ jobs:
     - name: Prepare cache
       if: steps.cache.outputs.cache-hit != 'true'
       run: |
-        base_ref_sha=$(git rev-parse ${{ github.base_ref }})
+        base_ref_sha=$(cd src; $(git rev-parse ${{ github.base_ref }}))
         echo ${base_ref_sha} > build/cache-sha
         mv build build-cache
         cd src
