@@ -229,7 +229,7 @@ jobs:
           git checkout $(cat ../build/cache-sha)
           git submodule update --init --recursive --jobs 4
           echo "Applying merge patch"
-          git apply merge-patch
+          git apply ../merge-patch
           cd ../src-cache
           echo "Cached source tree files:"
           find . -type f
@@ -242,10 +242,12 @@ jobs:
           echo "Changed files (from SHA: $(cat ../build/cache-sha)):"
           find -name '.git*' -prune -o -newer ../build/cache-timestamp -type f -print
         else
-          echo "git diff failed (SHA $(cat ../build-cache/cache-sha) missing?). Cache not used."
-          rm -rf ../build-cache ../merge-patch ../src-cache
-          mkdir ../build
-          mkdir ../src-cache
+          cd ..
+          echo "git diff failed (SHA $(cat build-cache/cache-sha) missing?). Cache not used."
+          rm -rf build-cache merge-patch src-cache
+          mkdir build
+          mkdir src-cache
+          cd src
           git checkout ${{ steps.vars.outputs.sha }}
           git submodule update --init --recursive --jobs 4
         fi
