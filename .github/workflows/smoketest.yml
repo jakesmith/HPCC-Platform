@@ -193,6 +193,7 @@ jobs:
         mkdir cmake
         cd cmake
         cmake_version=$(cmake --version | head -n1 | awk '{ print $3 }')
+        echo "cmake_version = ${cmake_version}"
         if [[ ${cmake_version} == '3.19.1' ]]
         then
           echo "cmake 3.19.1 causes aws build failure, fetching and installing cmake 3.18.5"

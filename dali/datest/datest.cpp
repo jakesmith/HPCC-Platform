@@ -3342,6 +3342,7 @@ int main(int argc, char* argv[])
     /* v7 */
     /* v8 */
     /* v9 */
+    /* v10 */
 
     EnableSEHtoExceptionMapping();
 
