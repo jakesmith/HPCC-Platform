@@ -3344,6 +3344,7 @@ int main(int argc, char* argv[])
     /* v9 */
     /* v10 */
     /* v11 */
+    /* v11-2 */
 
     EnableSEHtoExceptionMapping();
 
