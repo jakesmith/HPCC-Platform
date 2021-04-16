@@ -1232,7 +1232,7 @@ Use to exclude parts of the config which are always allowed to change without ca
 e.g. a cache of secrets, with an auto reload/refresh mechanism, or 'replicas'.
 */}}
 {{- define "hpcc.filterConfig" }}
-{{- $universalExcludeList := list (printf "%s.replicas" .component) -}}{{/* is there a better place for this than here?*/}}
+{{- $universalExcludeList := list (printf "%s.vaults" .component) (printf "%s.replicas" .component) -}}{{/* is there a better place for this than here?*/}}
 {{- $config := fromYaml (include .configMapHelper .) -}}
 {{- $excludeKeyList := concat (splitList "," (.excludeKeys | default "")) $universalExcludeList -}}
 {{- $excludeYamlRegex := .excludeYamlRegex | default "" -}}
