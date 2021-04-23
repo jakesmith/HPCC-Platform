@@ -20,5 +20,14 @@ jobs:
         run: |
           echo "github.event_name ${{ github.event_name }}"
           echo "github.event_path ${{ github.event_path }}"
+          cat ${{ github.event_path }}
           echo "${{ toJson(github.event.pull_request.labels.*.name) }}"
+      - id: mylabel1
+        if: contains(github.event.pull_request.labels.*.name, 'mylabel1')
+        run: |
+          echo "Found Label match: mylabel1"
+      - id: mylabel2
+        if: contains(github.event.pull_request.labels.*.name, 'mylabel2')
+        run: |
+          echo "Found Label match: mylabel2"
 
