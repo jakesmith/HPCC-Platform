@@ -53,6 +53,10 @@ jobs:
     outputs:
       should_skip: ${{ steps.skip_check.outputs.should_skip }}
     steps:
+      - name: chk
+        run: |
+          echo "json : ${{ toJson(github.event.pull_request.labels.*.name) }}"
+          cat ${{ github.event_path }}
       - id: skip_check
         if: ${{ ! contains(github.event.pull_request.labels.*.name, 'forced-run') }}
         uses: hpcc-systems/skip-duplicate-actions@master
