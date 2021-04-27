@@ -791,6 +791,14 @@ Generate list of available services
 {{ end -}}
 {{ end -}}
 {{- end -}}
+{{- range $.Values.dafilesrv -}}
+  {{- if not .disabled -}}
+- name: {{ .name }}
+  type: dafilesrv
+  port: {{ .servicePort | default 7600 }}
+  certificate: {{ .certificate | default "local" }}
+  {{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

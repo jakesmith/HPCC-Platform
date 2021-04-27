@@ -6001,7 +6001,7 @@ void CWsDfuEx::dFUFileAccessCommon(IEspContext &context, const CDfsLogicalFileNa
     StringBuffer fileName;
     lfn.get(fileName, false, true);
     if (0 == fileName.length())
-         throw MakeStringException(ECLWATCH_INVALID_INPUT, "DFU File lookup: No Name defined. (requestId=%s, expirySecs=%u)", requestId, expirySecs);
+        throw MakeStringException(ECLWATCH_INVALID_INPUT, "DFU File lookup: No Name defined. (requestId=%s, expirySecs=%u)", requestId, expirySecs);
 
     StringBuffer userID;
     context.getUserID(userID);
@@ -6037,10 +6037,23 @@ void CWsDfuEx::dFUFileAccessCommon(IEspContext &context, const CDfsLogicalFileNa
     StringBuffer keyPairName;
     unsigned port;
     bool secure;
+#ifdef _CONTAINERIZED
+    /* NB: For now expect 1 dafilesrv in configuration only
+     * We could have multiple dafilesrv services with e.g. different specs./replicas etc. that
+     * serviced different planes. At the moment dafilesrv mounts all data planes.
+     */
+    Owned<IPropertyTreeIterator> dafilesrvServices = getComponentConfigSP()->getElements("services[@type='dafilesrv']");
+    if (!dafilesrvServices->first())
+        throw makeStringException(-1, "dafilesrv service not defined");
+    keyPairName.set(dafilesrvServices->query().queryProp("@certificate"));
+    secure = true;
+    port = getComponentConfigSP()->getPropInt("@dafilesrvPort", SECURE_DAFILESRV_PORT);
+#else
     getFileDafilesrvConfiguration(keyPairName, port, secure, fileName, groups);
-#ifdef _USE_OPENSSL
+# ifdef _USE_OPENSSL
     if (secure && keyPairName.isEmpty())
         throw makeStringExceptionV(-1, "No keyPairName is found for '%s' in environment settings: /EnvSettings/Keys/ClusterGroup.", cluster.str());
+# endif
 #endif
 
     IEspDFUFileAccessInfo &accessInfo = resp.updateAccessInfo();

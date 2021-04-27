@@ -19,6 +19,7 @@
 
 #include "jliball.hpp"
 #include "jflz.hpp"
+#include "jsecrets.hpp"
 #include "daclient.hpp"
 #include "dautils.hpp"
 #include "seclib.hpp"
@@ -488,6 +489,36 @@ IPropertyTree *createDFUFileMetaInfo(const char *fileName, IFileDescriptor *file
     if (getDaliLayoutInfo(binLayout, fileDesc->queryProperties()))
         metaInfo->setPropBin("binLayout", binLayout.length(), binLayout.toByteArray());
 
+#ifdef _CONTAINERIZED
+    /*
+     * NB: all published logical file groups will point to 'localhost'
+     * Clone and alter filedesc to point to dafilesrv service.
+     */
+    MemoryBuffer mb;
+    fileDesc->serialize(mb);
+    Owned<IFileDescriptor> fileDescCopy = deserializeFileDescriptor(mb);
+
+    /* NB: For now expect 1 dafilesrv in configuration only
+     * We could have multiple dafilesrv services with e.g. different specs./replicas etc. that
+     * serviced different planes. At the moment dafilesrv mounts all data planes.
+     */
+    Owned<IPropertyTreeIterator> dafilesrvServices = getComponentConfigSP()->getElements("services[@type='dafilesrv']");
+    if (!dafilesrvServices->first())
+        throw makeStringException(-1, "dafilesrv service not defined");
+    IPropertyTree &dafilesrv = dafilesrvServices->query();
+
+    SocketEndpointArray eps;
+    SocketEndpoint ep(dafilesrv.queryProp("@name"), dafilesrv.getPropInt("@port"));
+    eps.append(ep);
+    Owned<IGroup> grp = createIGroup(eps);
+
+    for (unsigned c=0; c<fileDescCopy->numClusters(); c++)
+        fileDescCopy->setClusterGroup(0, grp); // NB: setClusterGroup links 'grp'
+
+    metaInfo->setPropInt("version", DAFILESRV_METAINFOVERSION);
+    IPropertyTree *fileInfoTree = metaInfo->setPropTree("FileInfo");
+    fileDescCopy->serializeTree(*fileInfoTree);
+#else
     // file meta info
     INode *node1 = fileDesc->queryNode(0);
     SocketEndpoint ep = node1->endpoint();
@@ -504,6 +535,7 @@ IPropertyTree *createDFUFileMetaInfo(const char *fileName, IFileDescriptor *file
         IPropertyTree *fileInfoTree = metaInfo->setPropTree("FileInfo");
         fileDesc->serializeTree(*fileInfoTree);
     }
+#endif
     return metaInfo.getClear();
 }
 
@@ -518,15 +550,25 @@ StringBuffer &encodeDFUFileMeta(StringBuffer &metaInfoBlob, IPropertyTree *metaI
      * Should be part of the same configuration setup.
      */
 #ifdef _USE_OPENSSL
-    if (metaInfo->hasProp("keyPairName") && environment) // without it, meta data is not encrypted
+    if (metaInfo->hasProp("keyPairName") && (isContainerized() || environment)) // without it, meta data is not encrypted
     {
         MemoryBuffer metaInfoBlob;
         metaInfo->serialize(metaInfoBlob);
+        const char *keyPairName = metaInfo->queryProp("keyPairName"); // NB: in container mode, this is cert. name
 
-        const char *keyPairName = metaInfo->queryProp("keyPairName");
-        const char *privateKeyFName = environment->getPrivateKeyPath(keyPairName);
+        const char *privateKeyFName = nullptr;
+#ifdef _CONTAINERIZED
+        IPropertyTree *info = queryMtlsSecretInfo(keyPairName);
+        if (!info)
+            throw makeStringExceptionV(-1, "encodeDFUFileMeta: No '%s' MTLS certificate detected.", keyPairName);
+        privateKeyFName = info->queryProp("privatekey");
+        if (isEmptyString(privateKeyFName))
+            throw makeStringException(-1, "encodeDFUFileMeta: MTLS - private path missing");
+#else
+        privateKeyFName = environment->getPrivateKeyPath(keyPairName);
         if (isEmptyString(privateKeyFName))
             throw makeStringExceptionV(-1, "Key name '%s' is not found in environment settings: /EnvSettings/Keys/KeyPair.", keyPairName);
+#endif
         Owned<CLoadedKey> privateKey = loadPrivateKeyFromFile(privateKeyFName, nullptr);
         StringBuffer metaInfoSignature;
         digiSign(metaInfoSignature, metaInfoBlob.length(), metaInfoBlob.bytes(), *privateKey);

@@ -1,0 +1,82 @@
+{{/*
+Dafilesrv configmap
+Pass in dict with root and me
+*/}}
+{{- define "hpcc.dafilesrvConfigMap" -}}
+kind: ConfigMap 
+apiVersion: v1 
+metadata:
+  name: {{ .me.name }}-configmap 
+data:
+  {{ .me.name }}.yaml:
+    version: 1.0
+    dafilesrv:
+{{ toYaml (omit .me "logging") | indent 6 }}
+{{- include "hpcc.generateLoggingConfig" . | indent 6 }}
+    global:
+{{ include "hpcc.generateGlobalConfigMap" .root | indent 6 }}
+{{- end -}}
+
+
+{{ range $.Values.dafilesrv -}}
+{{- if not .disabled -}}
+{{- $commonCtx := dict "root" $ "me" . }}
+{{- $configSHA := include "hpcc.getConfigSHA" ($commonCtx | merge (dict "configMapHelper" "hpcc.dafilesrvConfigMap" "component" "dafilesrv" "excludeKeys" "global")) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .name | quote }}
+spec:
+  replicas: {{ .replicas | default 1 }}
+  selector:
+    matchLabels:
+      run: {{ .name | quote }}
+  template:
+    metadata:
+      labels:
+        run: {{ .name | quote }}
+      annotations:
+        checksum/config: {{ $configSHA }}
+    spec:
+      serviceAccountName: "hpcc-default"
+      initContainers:
+        {{- include "hpcc.checkDataMount" $commonCtx | indent 6 }}
+      containers:
+      - name: {{ .name | quote }}
+        workingDir: /var/lib/HPCCSystems
+        command: [ dafilesrv ] 
+        args: [
+                {{ include "hpcc.configArg" . }}
+              ]
+{{ include "hpcc.addSentinelProbes" . | indent 8 }}
+{{- include "hpcc.addSecurityContext" $commonCtx | indent 8 }}
+{{- include "hpcc.addResources" (dict "me" .resources) | indent 8 }}
+{{ include "hpcc.addImageAttrs" $commonCtx | indent 8 }}
+        volumeMounts:
+{{ include "hpcc.addConfigMapVolumeMount" . | indent 8 }}
+{{ include "hpcc.addDataVolumeMount" $commonCtx | indent 8 }}
+{{ include "hpcc.addCertificateVolumeMount" (dict "root" $ "name" .name "component" "dafilesrv" "external" false) | indent 8 }}
+      volumes:
+{{ include "hpcc.addConfigMapVolume" . | indent 6 }}
+{{ include "hpcc.addDataVolume" $commonCtx | indent 6 }}
+{{ include "hpcc.addCertificateVolume" (dict "root" $ "name" .name "component" "dafilesrv" "external" false) | indent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .name | quote }}
+spec:
+  ports:
+  - port: {{ .servicePort | default 7600 }}
+    protocol: TCP
+    targetPort: {{ .port | default 7600 }}
+  selector:
+    run: {{ .name | quote }}
+  type: "LoadBalancer"
+---
+kind: ConfigMap 
+{{ include "hpcc.generateConfig" ($commonCtx | merge (dict "configMapHelper" "hpcc.dafilesrvConfigMap")) }}
+---
+{{ include "hpcc.addCertificate" (dict "root" $ "name" .name "service" . "component" "dafilesrv" "external" false) }}
+{{- end }}
+{{- end }}

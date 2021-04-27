@@ -52,8 +52,36 @@ data:
 {{- $secretsCategories := ternary (list "storage" "esp" "codeSign" "codeVerify")  (list "storage" "esp") (eq $application "eclwatch") -}}
 {{- $includeStorageLabels := ternary (list "lz" "data" "") (list "data" "") (eq $application "eclwatch") -}}
 {{- $commonCtx := dict "root" $ "me" . "secretsCategories" $secretsCategories  "includeLabels" $includeStorageLabels -}}
-{{- $configSHA := include "hpcc.getConfigSHA" ($commonCtx | merge (dict "configMapHelper" "hpcc.espConfigMap" "component" "esp" "excludeKeys" "global,esp.services,esp.queues")) }}
-
+{{- $configSHA := include "hpcc.getConfigSHA" ($commonCtx | merge (dict "configMapHelper" "hpcc.espConfigMap" "component" "esp" "excludeKeys" "global,esp.services,esp.queues")) -}}
+{{- $public := .public | default false -}}
+{{- $dafilesrv := dict -}}
+{{- /* NB: <= 1 dafilesrv's are expected, this picks 1st. */ -}}
+{{- range $.Values.dafilesrv -}}
+ {{- if not $dafilesrv.name -}}
+  {{- $dafilesrv := merge $dafilesrv . -}}
+  {{- $certificate := .certificate | default "local" -}}
+  {{- /*
+    If dafilesrv's certificate setting do not match esp's ("public"/"local"), generate a certificate
+    Leave dafilesrv.certificate unset if "local" or "public", causing addCertificate to
+    use implicitly generated internal/external certificates.
+  */ -}}
+  {{- if $public -}}
+   {{- if not (eq $certificate "public") -}}
+    {{- $_ := set $dafilesrv "generateCertificate" true -}}
+    {{ if not (eq $certificate "local") -}}
+     {{- $_ := set $dafilesrv "certificate" $certificate -}}
+    {{- end -}}
+   {{- end -}}
+  {{- else -}}
+   {{ if not (eq $certificate "local") -}}
+    {{- $_ := set $dafilesrv "generateCertificate" true -}}
+    {{- if not (eq $certificate "public") -}}
+     {{- $_ := set $dafilesrv "certificate" $certificate -}}
+    {{- end -}}
+   {{- end -}}
+  {{- end -}}
+ {{- end -}}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -92,13 +120,19 @@ spec:
 {{ include "hpcc.addVolumeMounts" $commonCtx | indent 8 }}
 {{ include "hpcc.addDllVolumeMount" $commonCtx | indent 8 }}
 {{ include "hpcc.addSecretVolumeMounts" $commonCtx | indent 8 }}
-{{ include "hpcc.addCertificateVolumeMount" (dict "root" $ "component" $application "name" .name  "certificate" .certificate "external" (and (hasKey . "public") .public)) | indent 8 }}
+{{ include "hpcc.addCertificateVolumeMount" (dict "root" $ "component" $application "name" .name "certificate" .certificate "external" $public) | indent 8 }}
+{{- if $dafilesrv.generateCertificate }}
+{{ include "hpcc.addCertificateVolumeMount" (dict "root" $ "component" $application "name" (printf "%s-dafilesrv" .name) "certificate" $dafilesrv.certificate "external" false) | indent 8 }}
+{{- end }}
       volumes:
 {{ include "hpcc.addConfigMapVolume" . | indent 6 }}
 {{ include "hpcc.addVolumes" $commonCtx | indent 6 }}
 {{ include "hpcc.addDllVolume" $commonCtx | indent 6 }}
 {{ include "hpcc.addSecretVolumes" $commonCtx | indent 6 }}
-{{ include "hpcc.addCertificateVolume" (dict "root" $ "component" $application "name" .name "certificate" .certificate "external" (and (hasKey . "public") .public)) | indent 6 }}
+{{ include "hpcc.addCertificateVolume" (dict "root" $ "component" $application "name" .name "certificate" .certificate "external" $public) | indent 6 }}
+{{- if $dafilesrv.generateCertificate }}
+{{ include "hpcc.addCertificateVolume" (dict "root" $ "component" $application "name" (printf "%s-dafilesrv" .name) "certificate" $dafilesrv.certificate "external" false) | indent 6 }}
+{{- end }}
 ---
 kind: ConfigMap
 {{ include "hpcc.generateConfig" ($commonCtx | merge (dict "configMapHelper" "hpcc.espConfigMap")) }}
@@ -116,6 +150,9 @@ spec:
     run: {{ .name | quote }}
   type: {{ .public | ternary "LoadBalancer" "ClusterIP" }}
 ---
-{{ include "hpcc.addCertificate" (dict "root" $ "name" .name "service" . "component" $application "external" (and (hasKey . "public") .public)) }}
+{{ include "hpcc.addCertificate" (dict "root" $ "name" .name "service" . "component" $application "external" $public) }}
+{{- if $dafilesrv.generateCertificate }}
+{{ include "hpcc.addCertificate" (dict "root" $ "name" (printf "%s-dafilesrv" .name) "service" . "component" $application "external" false) }}
+{{- end }}
 {{- end }}
 {{- end }}

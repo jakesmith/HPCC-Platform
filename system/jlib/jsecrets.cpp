@@ -768,8 +768,8 @@ IPropertyTree *queryMtlsSecretInfo(const char *name)
 {
     if (isEmptyString(name))
         return nullptr;
-   CriticalBlock block(mtlsInfoCacheCS);
-   IPropertyTree *info = mtlsInfoCache->queryPropTree(name);
+    CriticalBlock block(mtlsInfoCacheCS);
+    IPropertyTree *info = mtlsInfoCache->queryPropTree(name);
     if (info)
         return info;
 
