@@ -377,7 +377,7 @@ enum RtlFieldTypeMask
     RFTMcontainsunknown     = 0x10000000,                   // contains a field of unknown type that we can't process properly
     RFTMcannotinterpret     = 0x20000000,                   // cannot interpret the record using the field type information
     RFTMhasxmlattr          = 0x40000000,                   // if specified, then xml output includes an attribute (recursive)
-    RFTMnoserialize         = 0x80000000,                   // cannot serialize this typeinfo structure (contains aliens or other nasties)
+    RFTMnoserialize         = 0x70000000,                   // cannot serialize this typeinfo structure (contains aliens or other nasties)
 
     RFTMinherited           = (RFTMcontainsunknown|RFTMcannotinterpret|RFTMhasxmlattr|RFTMnoserialize)    // These flags are recursively set on any parent records too
 };
