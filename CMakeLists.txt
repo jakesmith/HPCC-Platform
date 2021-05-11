@@ -69,6 +69,9 @@
 
 message ( STATUS "CC=$ENV{CC}" )
 
+message ( STATUS "CMAKE_COMPILER_IS_GNUCXX = ${CMAKE_COMPILER_IS_GNUCXX}" )
+message ( STATUS "CMAKE_COMPILER_IS_CLANGXX = ${CMAKE_COMPILER_IS_CLANGXX}" )
+message ( STATUS "Using compiler: ${CMAKE_CXX_COMPILER_ID} :: ${CMAKE_CXX_COMPILER_VERSION} :: ${CLANG_VERSION} :: ${APPLE_CLANG_VERSION}")
 project(hpccsystems-platform)
 
 # stupid workaround
@@ -76,6 +79,9 @@ message ( STATUS "Unsetting.." )
 unset ( ENV{CC} )
 unset ( ENV{CXX} )
 message ( STATUS "CC=$ENV{CC}" )
+message ( STATUS "CMAKE_COMPILER_IS_GNUCXX = ${CMAKE_COMPILER_IS_GNUCXX}" )
+message ( STATUS "CMAKE_COMPILER_IS_CLANGXX = ${CMAKE_COMPILER_IS_CLANGXX}" )
+message ( STATUS "Using compiler: ${CMAKE_CXX_COMPILER_ID} :: ${CMAKE_CXX_COMPILER_VERSION} :: ${CLANG_VERSION} :: ${APPLE_CLANG_VERSION}")
 
 cmake_minimum_required(VERSION 3.13.0)
 
