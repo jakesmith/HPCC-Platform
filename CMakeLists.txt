@@ -71,6 +71,9 @@ message ( STATUS "CC=$ENV{CC}" )
 
 project(hpccsystems-platform)
 
+# stupid workaround
+unset ( ENV{CC} )
+unset ( ENV{CXX} )
 message ( STATUS "CC=$ENV{CC}" )
 
 cmake_minimum_required(VERSION 3.13.0)
