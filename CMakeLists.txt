@@ -72,6 +72,7 @@ message ( STATUS "CC=$ENV{CC}" )
 project(hpccsystems-platform)
 
 # stupid workaround
+message ( STATUS "Unsetting.." )
 unset ( ENV{CC} )
 unset ( ENV{CXX} )
 message ( STATUS "CC=$ENV{CC}" )
