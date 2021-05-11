@@ -1,0 +1,82 @@
+name: test-compiler
+
+on:
+  pull_request:
+    branches:
+      - "master"
+      - "candidate-*"
+      - "!candidate-7.6.*"
+      - "!candidate-7.4.*"
+      - "!candidate-7.2.*"
+      - "!candidate-7.0.*"
+      - "!candidate-6.*"
+
+jobs:
+  build-and-setup:
+    name: Build platform and regress setup
+    runs-on: ubuntu-20.04
+
+    steps:
+
+    - name: tracing
+      run: |
+        echo "Action     = ${{ github.action }}"
+        echo "Event      = ${{ github.event_name }}"
+        echo "Actor      = ${{ github.actor }}"
+        echo "Ref        = ${{ github.ref }}"
+        echo "Sha        = ${{ github.sha }}"
+        echo "github.repository = ${{ github.repository }}"
+        echo "repository_owner = ${{ github.repository_owner }}"
+        echo "github.workspace = ${{ github.workspace }}"
+        echo "runner.workspace = ${{ runner.workspace }}"
+        echo "github.event.pull_request.head.repo.owner.login = ${{ github.event.pull_request.head.repo.owner.login }}"
+
+        if [[ "${{ github.event_name }}" = 'pull_request' ]]
+        then
+          echo "PR base_ref = ${{ github.base_ref }}"
+          echo "PR head_ref = ${{ github.head_ref }}"
+          echo "PR base SHA = ${{ github.event.pull_request.base.sha }}"
+        fi
+        echo "restore-key4: hpccbuild-${{ env.cacheversion }}-"
+
+    - name: Dependencies20.04
+      run: |
+        sudo apt-get update
+        sudo apt-get -yq install bison flex build-essential binutils-dev libldap2-dev libcppunit-dev libicu-dev libxslt1-dev \
+          zlib1g-dev libboost-regex-dev libarchive-dev libv8-dev default-jdk libapr1-dev libaprutil1-dev libiberty-dev \
+          libhiredis-dev libtbb-dev libxalan-c-dev libnuma-dev nodejs libevent-dev libatlas-base-dev libblas-dev python3-dev \
+          default-libmysqlclient-dev libsqlite3-dev libmemcached-dev libcurl4-openssl-dev pkg-config libtool autotools-dev automake \
+          libssl-dev xmlstarlet
+
+    # See: https://discourse.cmake.org/t/error-when-installing-targets-and-exports-in-3-19-1/2245/6
+    - name: cmake-3.19.1-workaround
+      run: |
+        mkdir cmake
+        cd cmake
+        cmake_version=$(cmake --version | head -n1 | awk '{ print $3 }')
+        echo "cmake_version = ${cmake_version}"
+        if [[ ${cmake_version} == '3.19.1' ]]
+        then
+          echo "cmake 3.19.1 causes aws build failure, fetching and installing cmake 3.18.5"
+          wget https://github.com/Kitware/CMake/releases/download/v3.18.5/cmake-3.18.5-Linux-x86_64.tar.gz
+          tar xpfz cmake-3.18.5-Linux-x86_64.tar.gz
+          ln -s  cmake-3.18.5-Linux-x86_64/bin/cmake ./cmake
+        else
+          ln -s `which cmake` ./cmake
+        fi
+
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        path: src
+
+    - name: Build
+      run: |
+        mkdir -p build
+        cd build
+        echo "1st cmake"
+        ../cmake/cmake ../src -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=1 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=1 -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0" -DBUILD_TAG="smoketest"
+        echo "2nd cmake"
+        ../cmake/cmake ../src -Wno-dev -DRUNTIME_USER=$(whoami) -DRUNTIME_GROUP=$(id -gn) -DDESTDIR=$(realpath ..)/install -DINCLUDE_PLUGINS=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DUSE_PYTHON2=0 -DUSE_PYTHON3=1 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=1 -DUSE_CASSANDRA=Off -DCMAKE_CXX_FLAGS="-DBUILD_TAG=\\\"dummytag\\\" -DBUILD_VERSION_MAJOR=1 -DBUILD_VERSION_MINOR=1 -DBUILD_VERSION_POINT=0" -DBUILD_TAG="smoketest"
+        #make -j$(nproc) install
+
