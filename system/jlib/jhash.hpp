@@ -20,8 +20,13 @@
 #ifndef JHASH_HPP
 #define JHASH_HPP
 
+#include <functional>
+#include <unordered_map>
+#include <utility>
+
 #include "platform.h"
 #include <stdio.h>
+#include "jdebug.hpp" // for get_cycles_now()
 #include "jiface.hpp"
 #include "jobserve.hpp"
 #include "jiter.hpp"
@@ -597,5 +602,83 @@ public:
 
 };
 
+
+/* 
+ * A HT/Cache implementation whose items are only valid for a defined timeout period (default 30 secs)
+ * Example use:
+ *   CTimeLimitedCache<std::string, Owned<IPropertyTree>> myCache(10);
+ *   Owned<IPropertyTree> match;
+ *   verifyex( !myCache.get("tree1", match) );
+ *   myCache.add("tree1", createPTree("tree1"));
+ *   verifyex( nullptr != myCache.query("tree1") );
+ *   MilliSleep(11000); // sleep until "tree1" has expired
+ *   verifyex( nullptr == myCache.query("tree1") );
+ *
+ *   myCache.ensure("tree2", [](std::string key) { return createPTree(key.c_str()); });
+ *
+ * Keywords: cache,time,limit,hashtable,hash
+ */
+
+template <class KEYTYPE, class VALUETYPE>
+class jlib_decl CTimeLimitedCache
+{
+    static constexpr unsigned defaultCacheTimeoutMs = 30000;
+    typedef std::pair<cycle_t, VALUETYPE> CacheElement;
+    cycle_t timeoutPeriodCycles = 0;
+    std::unordered_map<KEYTYPE, CacheElement> ht;
+
+    CacheElement *getMatch(KEYTYPE key)
+    {
+        auto it = ht.find(key);
+        if (it == ht.end())
+            return nullptr;
+        if ((get_cycles_now() - it->second.first) > timeoutPeriodCycles) // NB: rollover is okay
+        {
+            ht.erase(it);
+            return nullptr;
+        }
+        return &it->second;
+    }
+
+public:
+    CTimeLimitedCache<KEYTYPE, VALUETYPE>(unsigned timeoutMs=defaultCacheTimeoutMs)
+    {
+        timeoutPeriodCycles = ((cycle_t)timeoutMs) * queryOneSecCycles() / 1000;
+    }
+    VALUETYPE *query(KEYTYPE key)
+    {
+        CacheElement *match = getMatch(key);
+        if (!match)
+            return nullptr;
+        return &match->second;
+    }
+    bool get(KEYTYPE key, VALUETYPE &result)
+    {
+        VALUETYPE *res = query(key);
+        if (!res)
+            return false;
+        result = *res;
+        return true;
+    }
+    VALUETYPE &add(KEYTYPE key, VALUETYPE val)
+    {
+        auto &ref = ht[key];
+        ref = std::make_pair(get_cycles_now(), val);
+        return ref.second;
+    }
+    VALUETYPE &ensure(KEYTYPE key, std::function<VALUETYPE (KEYTYPE k)> func)
+    {
+        VALUETYPE *res = query(key);
+        if (res)
+            return *res;
+        return add(key, func(key));
+    }
+    void kill()
+    {
+        // NB: std::unordered_map clear() does not free the map memory (or call dtors) until it is out of scope
+        std::unordered_map<KEYTYPE, CacheElement> empty;
+        empty.swap(ht);
+    }
+};
 
 #endif
