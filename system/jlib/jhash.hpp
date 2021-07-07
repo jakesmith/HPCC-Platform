@@ -627,7 +627,7 @@ class jlib_decl CTimeLimitedCache
     cycle_t timeoutPeriodCycles = 0;
     std::unordered_map<KEYTYPE, CacheElement> ht;
 
-    CacheElement *getMatch(KEYTYPE key)
+    CacheElement *getMatch(KEYTYPE key, bool touch)
     {
         auto it = ht.find(key);
         if (it == ht.end())
@@ -637,6 +637,8 @@ class jlib_decl CTimeLimitedCache
             ht.erase(it);
             return nullptr;
         }
+        if (touch)
+            it->second.first = get_cycles_now();
         return &it->second;
     }
 
@@ -645,16 +647,16 @@ public:
     {
         timeoutPeriodCycles = ((cycle_t)timeoutMs) * queryOneSecCycles() / 1000;
     }
-    VALUETYPE *query(KEYTYPE key)
+    VALUETYPE *query(KEYTYPE key, bool touch=false)
     {
-        CacheElement *match = getMatch(key);
+        CacheElement *match = getMatch(key, touch);
         if (!match)
             return nullptr;
         return &match->second;
     }
-    bool get(KEYTYPE key, VALUETYPE &result)
+    bool get(KEYTYPE key, VALUETYPE &result, bool touch=false)
     {
-        VALUETYPE *res = query(key);
+        VALUETYPE *res = query(key, touch);
         if (!res)
             return false;
         result = *res;

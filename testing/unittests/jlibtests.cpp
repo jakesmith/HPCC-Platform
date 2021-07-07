@@ -2597,9 +2597,12 @@ class HashTableTests : public CppUnit::TestFixture
             lookupHvSum += lookupHv;
         }
         CPPUNIT_ASSERT(inputHvSum == lookupHvSum);
-        MilliSleep(110);
-        // all should have expired
-        for (unsigned i=0; i<10; i++)
+        MilliSleep(50);
+        CPPUNIT_ASSERT(nullptr != cache.query(0, true)); // touch
+        MilliSleep(60);
+        // all except 0 that was touched should have expired
+        CPPUNIT_ASSERT(nullptr != cache.query(0));
+        for (unsigned i=1; i<10; i++)
             CPPUNIT_ASSERT(nullptr == cache.query(i));
     }
 };
