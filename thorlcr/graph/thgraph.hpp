@@ -829,7 +829,7 @@ protected:
     bool timeActivities;
     unsigned channelsPerSlave;
     unsigned numChannels;
-    unsigned maxActivityCores, globalMemoryMB, sharedMemoryMB;
+    unsigned maxActivityCores, queryMemoryMB;
     unsigned forceLogGraphIdMin, forceLogGraphIdMax;
     Owned<IContextLogger> logctx;
     Owned<IPerfMonHook> perfmonhook;
@@ -840,7 +840,7 @@ protected:
     bool usePackedAllocator;
     rank_t myNodeRank;
     Owned<IPropertyTree> graphXGMML;
-    unsigned memorySpillAtPercentage, sharedMemoryLimitPercentage;
+    unsigned memorySpillAtPercentage;
     CriticalSection sharedAllocatorCrit;
     Owned<IThorAllocator> sharedAllocator;
     bool jobEnded = false;
@@ -887,6 +887,7 @@ public:
     memsize_t getKeyBlobCacheSize() const { return keyBlobCacheBytes; }
 
     void init();
+    void applyMemorySettings(unsigned totalThorMemoryMB, const char *context);
     void setXGMML(IPropertyTree *_xgmml) { xgmml.set(_xgmml); }
     IPropertyTree *queryXGMML() { return xgmml; }
     IPropertyTree *queryGraphXGMML() const { return graphXGMML; }

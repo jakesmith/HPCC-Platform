@@ -825,16 +825,8 @@ int main( int argc, const char *argv[]  )
                 mmemSize = gmemSize; // default to same as slaves
         }
 
-        bool gmemAllowHugePages = globals->getPropBool("@heapUseHugePages", false);
-        gmemAllowHugePages = globals->getPropBool("@heapMasterUseHugePages", gmemAllowHugePages);
-        bool gmemAllowTransparentHugePages = globals->getPropBool("@heapUseTransparentHugePages", true);
-        bool gmemRetainMemory = globals->getPropBool("@heapRetainMemory", false);
-
         // if @masterMemorySize and @globalMemorySize unspecified gmemSize will be default based on h/w
         globals->setPropInt("@masterMemorySize", mmemSize);
-
-        PROGLOG("Global memory size = %d MB", mmemSize);
-        roxiemem::setTotalMemoryLimit(gmemAllowHugePages, gmemAllowTransparentHugePages, gmemRetainMemory, ((memsize_t)mmemSize) * 0x100000, 0, thorAllocSizes, NULL);
 
 #ifndef _CONTAINERIZED
         const char * overrideBaseDirectory = globals->queryProp("@thorDataDirectory");

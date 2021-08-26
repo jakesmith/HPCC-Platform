@@ -1686,7 +1686,15 @@ CJobSlave::CJobSlave(ISlaveWatchdog *_watchdog, IPropertyTree *_workUnitInfo, co
         pluginMap->loadFromList(pluginsList.str());
     }
     tmpHandler.setown(createTempHandler(true));
-    sharedAllocator.setown(::createThorAllocator(globalMemoryMB, sharedMemoryMB, numChannels, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
+
+    // NB: globalMemorySize has either been explicitly set, or based off resource limits, or h/w limits.
+    unsigned slaveMemoryMB = globals->getPropInt("@globalMemorySize"); // in MB
+    applyMemorySettings(slaveMemoryMB, "slave");
+
+    unsigned sharedMemoryLimitPercentage = (unsigned)getWorkUnitValueInt("globalMemoryLimitPC", globals->getPropInt("@sharedMemoryLimit", 90));
+    unsigned sharedMemoryMB = queryMemoryMB*sharedMemoryLimitPercentage/100;
+    PROGLOG("Shared memory = %d%%", sharedMemoryLimitPercentage);
+    sharedAllocator.setown(::createThorAllocator(queryMemoryMB, sharedMemoryMB, numChannels, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
 
     StringBuffer remoteCompressedOutput;
     getOpt("remoteCompressedOutput", remoteCompressedOutput);

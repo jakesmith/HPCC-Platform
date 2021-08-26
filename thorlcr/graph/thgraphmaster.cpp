@@ -1301,7 +1301,11 @@ CJobMaster::CJobMaster(IConstWorkUnit &_workunit, const char *graphName, ILoaded
     user.set(workunit->queryUser());
     token.append(_token.str());
     scope.append(_scope.str());
-    globalMemoryMB = globals->getPropInt("@masterMemorySize", globals->getPropInt("@globalMemorySize")); // in MB
+
+    // NB: masterMemorySize has either been explicitly set, or based off resource limits, or h/w limits.
+    unsigned masterMemoryMB = globals->getPropInt("@masterMemorySize"); // in MB
+    applyMemorySettings(masterMemoryMB, "master");
+
     numChannels = 1;
     init();
 
@@ -1347,7 +1351,7 @@ CJobMaster::CJobMaster(IConstWorkUnit &_workunit, const char *graphName, ILoaded
         plugin.getPluginName(name);
         loadPlugin(pluginMap, pluginsDir.str(), name.str());
     }
-    sharedAllocator.setown(::createThorAllocator(globalMemoryMB, 0, 1, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
+    sharedAllocator.setown(::createThorAllocator(queryMemoryMB, 0, 1, memorySpillAtPercentage, *logctx, crcChecking, usePackedAllocator));
     Owned<IMPServer> mpServer = getMPServer();
     CJobChannel *channel = addChannel(mpServer);
     channel->reservePortKind(TPORT_mp); 

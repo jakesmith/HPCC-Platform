@@ -1192,6 +1192,19 @@
           "type": "object",
           "additionalProperties": { "type": "string" }
         },
+        "memory": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The amount of overall resourced memory to dedicate to the query"
+            },
+            "thirdParties": {
+              "type": "string",
+              "description": "The amount of overall resource memory to reserve for 3rd party use"
+            }
+        },
         "managerResources": {
           "$ref": "#/definitions/resources"
         },

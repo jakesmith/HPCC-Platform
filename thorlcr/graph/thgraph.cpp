@@ -2714,7 +2714,7 @@ CJobBase::CJobBase(ILoadedDllEntry *_querySo, const char *_graphName) : querySo(
     maxDiskUsage = diskUsage = 0;
     dirty = true;
     aborted = false;
-    globalMemoryMB = globals->getPropInt("@globalMemorySize"); // in MB
+    queryMemoryMB = 0;
     channelsPerSlave = globals->getPropInt("@channelsPerSlave", 1);
     numChannels = channelsPerSlave;
     pluginMap = new SafePluginMap(&pluginCtx, true);
@@ -2738,6 +2738,51 @@ CJobBase::CJobBase(ILoadedDllEntry *_querySo, const char *_graphName) : querySo(
     graphXGMML.setown(graph->getXGMMLTree(false, false));
     if (!graphXGMML)
         throwUnexpected();
+}
+
+void CJobBase::applyMemorySettings(unsigned totalThorMemoryMB, const char *context)
+{
+    memorySpillAtPercentage = (unsigned)getWorkUnitValueInt("memorySpillAt", globals->getPropInt("@memorySpillAt", 80));
+    usePackedAllocator = 0 != getWorkUnitValueInt("THOR_PACKEDALLOCATOR", globals->getPropBool("@THOR_PACKEDALLOCATOR", true));
+    crcChecking = 0 != getWorkUnitValueInt("THOR_ROWCRC", globals->getPropBool("@THOR_ROWCRC", false));
+    failOnLeaks = getOptBool("failOnLeaks");
+
+    /* only "query" memory is actually used (if set configures Thor roxiemem limit)
+     * others are only advisory, but totalled and checked if within the total limit.
+     */
+    std::vector<std::string> memorySettings = { "query", "thirdparty" };
+    offset_t totalRequirements = 0;
+    for (auto &setting : memorySettings)
+    {
+        VStringBuffer workunitSettingName("memory.%s", setting.c_str());
+        StringBuffer memString;
+        getWorkUnitValue(workunitSettingName, memString);
+        if (0 == memString.length())
+        {
+            VStringBuffer globalSettingName("memory/@%s", setting.c_str());
+            globals->getProp(workunitSettingName, memString);
+        }
+        if (memString.length())
+        {
+            offset_t memBytes = friendlyStringToSize(memString);
+            if (streq("query", setting.c_str()))
+                queryMemoryMB = (unsigned)(memBytes / 0x100000);
+            totalRequirements += memBytes;
+        }
+    }
+    unsigned totalRequirementsMB = (unsigned)(totalRequirements / 0x100000);
+    if (totalRequirementsMB > totalThorMemoryMB)
+        throw makeStringExceptionV(0, "The total memory requirements of the query (%u MB) exceeds the %s memory limit (%u MB)", totalRequirementsMB, context, totalThorMemoryMB);
+    if (0 == queryMemoryMB)
+        queryMemoryMB = totalThorMemoryMB;
+
+    bool gmemAllowHugePages = globals->getPropBool("@heapUseHugePages", false);
+    gmemAllowHugePages = globals->getPropBool("@heapMasterUseHugePages", gmemAllowHugePages);
+    bool gmemAllowTransparentHugePages = globals->getPropBool("@heapUseTransparentHugePages", true);
+    bool gmemRetainMemory = globals->getPropBool("@heapRetainMemory", false);
+    roxiemem::setTotalMemoryLimit(gmemAllowHugePages, gmemAllowTransparentHugePages, gmemRetainMemory, ((memsize_t)queryMemoryMB) * 0x100000, 0, thorAllocSizes, NULL);
+
+    PROGLOG("Global memory size = %u MB, query memory = %u, memory spill at = %u%%", totalThorMemoryMB, queryMemoryMB, memorySpillAtPercentage);
 }
 
 void CJobBase::init()
@@ -2765,16 +2810,9 @@ void CJobBase::init()
     pausing = false;
     resumed = false;
 
-    crcChecking = 0 != getWorkUnitValueInt("THOR_ROWCRC", globals->getPropBool("@THOR_ROWCRC", false));
-    usePackedAllocator = 0 != getWorkUnitValueInt("THOR_PACKEDALLOCATOR", globals->getPropBool("@THOR_PACKEDALLOCATOR", true));
-    memorySpillAtPercentage = (unsigned)getWorkUnitValueInt("memorySpillAt", globals->getPropInt("@memorySpillAt", 80));
-    sharedMemoryLimitPercentage = (unsigned)getWorkUnitValueInt("globalMemoryLimitPC", globals->getPropInt("@sharedMemoryLimit", 90));
-    sharedMemoryMB = globalMemoryMB*sharedMemoryLimitPercentage/100;
-    failOnLeaks = getOptBool("failOnLeaks");
     maxLfnBlockTimeMins = getOptInt(THOROPT_MAXLFN_BLOCKTIME_MINS, DEFAULT_MAXLFN_BLOCKTIME_MINS);
     soapTraceLevel = getOptInt("soapTraceLevel", 1);
 
-    PROGLOG("Global memory size = %d MB, shared memory = %d%%, memory spill at = %d%%", globalMemoryMB, sharedMemoryLimitPercentage, memorySpillAtPercentage);
     StringBuffer tracing("maxActivityCores = ");
     if (maxActivityCores)
         tracing.append(maxActivityCores);
