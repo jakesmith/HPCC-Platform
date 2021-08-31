@@ -486,7 +486,7 @@ public:
         dst.append(eclText.get());
         return dst;
     }
-    virtual bool prepareContext(size32_t parentExtractSz, const byte *parentExtract, bool checkDependencies, bool shortCircuit, bool async, bool connectOnly);
+    virtual bool prepareContext(size32_t parentExtractSz, const byte *parentExtract, bool checkDependencies, bool shortCircuit, bool async);
     void createActivity();
     CActivityBase *queryActivity() { return activity; }
 //

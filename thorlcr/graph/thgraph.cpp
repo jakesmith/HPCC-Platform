@@ -625,165 +625,143 @@ bool CGraphElementBase::executeDependencies(size32_t parentExtractSz, const byte
     return true;
 }
 
-bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *parentExtract, bool checkDependencies, bool shortCircuit, bool async, bool connectOnly)
+bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *parentExtract, bool checkDependencies, bool shortCircuit, bool async)
 {
     try
     {
         bool create = true;
-        if (connectOnly)
+        bool _shortCircuit = shortCircuit;
+        Owned<IThorGraphDependencyIterator> deps = getDependsIterator();
+        bool depsDone = true;
+        ForEach(*deps)
         {
-            if (prepared)
-                return true;
-            ForEachItemIn(i, inputs)
+            CGraphDependency &dep = deps->query();
+            if (0 == dep.controlId && NotFound == owner->dependentSubGraphs.find(*dep.graph))
             {
-                if (!queryInput(i)->prepareContext(parentExtractSz, parentExtract, false, false, async, true))
+                owner->dependentSubGraphs.append(*dep.graph);
+                if (!dep.graph->isComplete())
+                    depsDone = false;
+            }
+        }
+        if (depsDone) _shortCircuit = false;
+        if (!depsDone && checkDependencies)
+        {
+            if (!executeDependencies(parentExtractSz, parentExtract, 0, async))
+                return false;
+        }
+        whichBranch = (unsigned)-1;
+        switch (getKind())
+        {
+            case TAKindexwrite:
+            case TAKdiskwrite:
+            case TAKcsvwrite:
+            case TAKxmlwrite:
+            case TAKjsonwrite:
+            case TAKspillwrite:
+                if (_shortCircuit) return true;
+                onCreate();
+                alreadyUpdated = checkUpdate();
+                if (alreadyUpdated)
+                    return false;
+                break;
+            case TAKchildif:
+            case TAKif:
+            case TAKifaction:
+            {
+                if (_shortCircuit) return true;
+                onCreate();
+                onStart(parentExtractSz, parentExtract);
+                IHThorIfArg *helper = (IHThorIfArg *)baseHelper.get();
+                whichBranch = helper->getCondition() ? 0 : 1;       // True argument precedes false...
+                /* NB - The executeDependencies code below is only needed if actionLinkInNewGraph=true, which is no longer the default
+                    * It should be removed, once we are positive there are no issues with in-line conditional actions
+                    */
+                if (TAKifaction == getKind())
+                {
+                    if (!executeDependencies(parentExtractSz, parentExtract, whichBranch+1, async)) //NB whenId 1 based
+                        return false;
+                    create = false;
+                }
+                break;
+            }
+            case TAKchildcase:
+            case TAKcase:
+            {
+                if (_shortCircuit) return true;
+                onCreate();
+                onStart(parentExtractSz, parentExtract);
+                IHThorCaseArg *helper = (IHThorCaseArg *)baseHelper.get();
+                whichBranch = helper->getBranch();
+                if (whichBranch >= inputs.ordinality())
+                    whichBranch = inputs.ordinality()-1;
+                break;
+            }
+            case TAKfilter:
+            case TAKfiltergroup:
+            case TAKfilterproject:
+            {
+                if (_shortCircuit) return true;
+                onCreate();
+                onStart(parentExtractSz, parentExtract);
+                switch (getKind())
+                {
+                    case TAKfilter:
+                        whichBranch = ((IHThorFilterArg *)baseHelper.get())->canMatchAny() ? 0 : 1;
+                        break;
+                    case TAKfiltergroup:
+                        whichBranch = ((IHThorFilterGroupArg *)baseHelper.get())->canMatchAny() ? 0 : 1;
+                        break;
+                    case TAKfilterproject:
+                        whichBranch = ((IHThorFilterProjectArg *)baseHelper.get())->canMatchAny() ? 0 : 1;
+                        break;
+                    default:
+                        break;
+                }
+                break;
+            }
+            case TAKsequential:
+            case TAKparallel:
+            {
+                /* NB - The executeDependencies code below is only needed if actionLinkInNewGraph=true, which is no longer the default
+                    * It should be removed, once we are positive there are no issues with in-line sequential/parallel activities
+                    */
+                for (unsigned s=1; s<=dependsOn.ordinality(); s++)
+                    executeDependencies(parentExtractSz, parentExtract, s, async);
+                create = false;
+                break;
+            }
+            case TAKwhen_dataset:
+            case TAKwhen_action:
+            {
+                if (!executeDependencies(parentExtractSz, parentExtract, WhenBeforeId, async))
+                    return false;
+                if (!executeDependencies(parentExtractSz, parentExtract, WhenParallelId, async))
+                    return false;
+                break;
+            }
+            default:
+                break;
+        }
+        if (isActivitySink(getKind()))
+        {
+            // Suppress executing internal sinks with 0 generated dependencies
+            if (queryXGMML().getPropBool("att[@name='_internal']/@value", false) && (0 == owner->queryDependents(id)))
+                return false;
+        }
+        if (checkDependencies && ((unsigned)-1 != whichBranch))
+        {
+            if (inputs.queryItem(whichBranch))
+            {
+                if (!queryInput(whichBranch)->prepareContext(parentExtractSz, parentExtract, true, false, async))
                     return false;
             }
-            create = false;
         }
         else
         {
-            bool _shortCircuit = shortCircuit;
-            Owned<IThorGraphDependencyIterator> deps = getDependsIterator();
-            bool depsDone = true;
-            ForEach(*deps)
+            ForEachItemIn(i, inputs)
             {
-                CGraphDependency &dep = deps->query();
-                if (0 == dep.controlId && NotFound == owner->dependentSubGraphs.find(*dep.graph))
-                {
-                    owner->dependentSubGraphs.append(*dep.graph);
-                    if (!dep.graph->isComplete())
-                        depsDone = false;
-                }
-            }
-            if (depsDone) _shortCircuit = false;
-            if (!depsDone && checkDependencies)
-            {
-                if (!executeDependencies(parentExtractSz, parentExtract, 0, async))
+                if (!queryInput(i)->prepareContext(parentExtractSz, parentExtract, checkDependencies, false, async))
                     return false;
-            }
-            whichBranch = (unsigned)-1;
-            switch (getKind())
-            {
-                case TAKindexwrite:
-                case TAKdiskwrite:
-                case TAKcsvwrite:
-                case TAKxmlwrite:
-                case TAKjsonwrite:
-                case TAKspillwrite:
-                    if (_shortCircuit) return true;
-                    onCreate();
-                    alreadyUpdated = checkUpdate();
-                    if (alreadyUpdated)
-                        return false;
-                    break;
-                case TAKchildif:
-                case TAKif:
-                case TAKifaction:
-                {
-                    if (_shortCircuit) return true;
-                    onCreate();
-                    onStart(parentExtractSz, parentExtract);
-                    IHThorIfArg *helper = (IHThorIfArg *)baseHelper.get();
-                    whichBranch = helper->getCondition() ? 0 : 1;       // True argument precedes false...
-                    /* NB - The executeDependencies code below is only needed if actionLinkInNewGraph=true, which is no longer the default
-                     * It should be removed, once we are positive there are no issues with in-line conditional actions
-                     */
-                    if (TAKifaction == getKind())
-                    {
-                        if (!executeDependencies(parentExtractSz, parentExtract, whichBranch+1, async)) //NB whenId 1 based
-                            return false;
-                        create = false;
-                    }
-                    break;
-                }
-                case TAKchildcase:
-                case TAKcase:
-                {
-                    if (_shortCircuit) return true;
-                    onCreate();
-                    onStart(parentExtractSz, parentExtract);
-                    IHThorCaseArg *helper = (IHThorCaseArg *)baseHelper.get();
-                    whichBranch = helper->getBranch();
-                    if (whichBranch >= inputs.ordinality())
-                        whichBranch = inputs.ordinality()-1;
-                    break;
-                }
-                case TAKfilter:
-                case TAKfiltergroup:
-                case TAKfilterproject:
-                {
-                    if (_shortCircuit) return true;
-                    onCreate();
-                    onStart(parentExtractSz, parentExtract);
-                    switch (getKind())
-                    {
-                        case TAKfilter:
-                            whichBranch = ((IHThorFilterArg *)baseHelper.get())->canMatchAny() ? 0 : 1;
-                            break;
-                        case TAKfiltergroup:
-                            whichBranch = ((IHThorFilterGroupArg *)baseHelper.get())->canMatchAny() ? 0 : 1;
-                            break;
-                        case TAKfilterproject:
-                            whichBranch = ((IHThorFilterProjectArg *)baseHelper.get())->canMatchAny() ? 0 : 1;
-                            break;
-                        default:
-                            break;
-                    }
-                    break;
-                }
-                case TAKsequential:
-                case TAKparallel:
-                {
-                    /* NB - The executeDependencies code below is only needed if actionLinkInNewGraph=true, which is no longer the default
-                     * It should be removed, once we are positive there are no issues with in-line sequential/parallel activities
-                     */
-                    for (unsigned s=1; s<=dependsOn.ordinality(); s++)
-                        executeDependencies(parentExtractSz, parentExtract, s, async);
-                    create = false;
-                    break;
-                }
-                case TAKwhen_dataset:
-                case TAKwhen_action:
-                {
-                    if (!executeDependencies(parentExtractSz, parentExtract, WhenBeforeId, async))
-                        return false;
-                    if (!executeDependencies(parentExtractSz, parentExtract, WhenParallelId, async))
-                        return false;
-                    break;
-                }
-                default:
-                    break;
-            }
-            if (isActivitySink(getKind()))
-            {
-                // Suppress executing internal sinks with 0 generated dependencies
-                if (queryXGMML().getPropBool("att[@name='_internal']/@value", false) && (0 == owner->queryDependents(id)))
-                    return false;
-            }
-            if (checkDependencies && ((unsigned)-1 != whichBranch))
-            {
-                if (inputs.queryItem(whichBranch))
-                {
-                    if (!queryInput(whichBranch)->prepareContext(parentExtractSz, parentExtract, true, false, async, connectOnly))
-                        return false;
-                }
-                ForEachItemIn(i, inputs)
-                {
-                    if (i != whichBranch)
-                    {
-                        if (!queryInput(i)->prepareContext(parentExtractSz, parentExtract, false, false, async, true))
-                            return false;
-                    }
-                }
-            }
-            else
-            {
-                ForEachItemIn(i, inputs)
-                {
-                    if (!queryInput(i)->prepareContext(parentExtractSz, parentExtract, checkDependencies, false, async, connectOnly))
-                        return false;
-                }
             }
         }
         if (create)
@@ -1529,7 +1507,7 @@ bool CGraphBase::prepare(size32_t parentExtractSz, const byte *parentExtract, bo
     ForEachItemIn(s, sinks)
     {
         CGraphElementBase &sink = sinks.item(s);
-        if (sink.prepareContext(parentExtractSz, parentExtract, checkDependencies, shortCircuit, async, false))
+        if (sink.prepareContext(parentExtractSz, parentExtract, checkDependencies, shortCircuit, async))
             needToExecute = true;
     }
     onCreate();
