@@ -639,6 +639,7 @@ bool CGraphElementBase::prepareContext(size32_t parentExtractSz, const byte *par
                 if (!queryInput(i)->prepareContext(parentExtractSz, parentExtract, false, false, async, true))
                     return false;
             }
+            create = false;
         }
         else
         {
