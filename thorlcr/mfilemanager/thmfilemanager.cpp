@@ -479,6 +479,10 @@ public:
             if (job.getOptBool("subDirPerFilePart"))
                 desc->queryProperties().setPropInt("@flags", static_cast<int>(FileDescriptorFlags::dirperpart));
 
+            // default to directory per part in containerized mode only for now
+            if (job.getOptBool("subDirPerFilePart", isContainerized()))
+                desc->queryProperties().setPropInt("@flags", static_cast<int>(FileDescriptorFlags::dirperpart));
+
             // if supporting different OS's in CLUSTER this should be checked where addCluster called
             DFD_OS os = DFD_OSdefault;
             EnvMachineOS thisOs = queryOS(groups.item(0).queryNode(0).endpoint());
