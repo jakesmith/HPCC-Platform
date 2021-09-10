@@ -283,6 +283,13 @@ interface IClusterInfo: extends IInterface  // used by IFileDescriptor and IDist
 
 };
 
+enum StoragePlaneOpts : unsigned
+{
+    none          = 0x00,
+    dirperpart    = 0x01
+};
+BITMASK_ENUM(StoragePlaneOpts);
+
 //I'm not sure if this should be used in place of an IGroup, probably as system gradually changes
 interface IStoragePlane: extends IInterface
 {
@@ -290,6 +297,7 @@ interface IStoragePlane: extends IInterface
     virtual unsigned numDevices() const = 0;
     virtual const char * queryHosts() const = 0;
     virtual const char * querySingleHost() const = 0;
+    virtual StoragePlaneOpts queryOptions() const = 0;
 };
 
 IClusterInfo *createClusterInfo(const char *grpname,                  // NULL if roxie label set

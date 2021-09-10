@@ -476,8 +476,6 @@ public:
             desc->queryProperties().setProp("@workunit", wuidStr.str());
             desc->queryProperties().setProp("@job", jobStr.str());
             desc->queryProperties().setProp("@owner", userStr.str());
-            if (job.getOptBool("subDirPerFilePart"))
-                desc->queryProperties().setPropInt("@flags", static_cast<int>(FileDescriptorFlags::dirperpart));
 
             // default to directory per part in containerized mode only for now
             if (job.getOptBool("subDirPerFilePart", isContainerized()))

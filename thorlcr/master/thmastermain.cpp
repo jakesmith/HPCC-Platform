@@ -894,6 +894,7 @@ int main( int argc, const char *argv[]  )
                 tempDirStr.append("temp");
             }
         }
+ PROGLOG("tempDirStr = %s", tempDirStr.str());
         globals->setProp("@thorTempDirectory", tempDirStr);
         logDiskSpace(); // Log before temp space is cleared
         StringBuffer tempPrefix("thtmp");
