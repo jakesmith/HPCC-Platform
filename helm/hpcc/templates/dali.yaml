@@ -26,7 +26,7 @@
 {{- $env := concat ($.Values.global.env | default list) (.env | default list) -}}
 {{- $commonCtx := dict "root" $ "me" $dali "env" $env }}
 {{- $sashaServices := $dali.services | default dict -}}
-{{- $daliSecretsCategories := list "system" }}
+{{- $daliSecretsCategories := list "system" "authn" }}
 {{- $tmpDaliScope := dict "aggregateSashaSecretsCategories" list "aggregateSashaAccess" list -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -102,7 +102,7 @@ spec:
   {{- if not $sasha.disabled -}}
    {{- $_ := set $sasha "name" $sashaName -}}
    {{- $sashaAccess := splitList " " (include "hpcc.getSashaServiceAccess" $sasha) -}}
-   {{- $sashaServiceSecretsCategories := append ((or (has "data" $sashaAccess) (has "dalidata" $sashaAccess)) | ternary (list "storage") list) "system" -}}
+   {{- $sashaServiceSecretsCategories := concat ((or (has "data" $sashaAccess) (has "dalidata" $sashaAccess)) | ternary (list "storage") list) $daliSecretsCategories -}}
    {{- $_ := set $tmpDaliScope "aggregateSashaAccess" ((concat $tmpDaliScope.aggregateSashaAccess $sashaAccess) | uniq) -}}
    {{- $_ := set $tmpDaliScope "aggregateSashaSecretsCategories" ((concat $tmpDaliScope.aggregateSashaSecretsCategories $sashaServiceSecretsCategories) | uniq) -}}
    {{- with ($sasha | merge (dict "access" $sashaAccess)) -}}
