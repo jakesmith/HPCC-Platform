@@ -1,0 +1,33 @@
+name: 'Publish HPCC Platform'
+description: 'Uses the git branch as the docker tag and pushes the container'
+inputs:
+  build_ver:
+    description: 'The label (git tag) for the version you would like to build and push'
+    required: false
+  build_user:
+    description: 'The owner of the HPCC-Platform repository'
+    required: false
+  username:
+    description: 'The login username for container registry'
+    required: true
+  registry:
+    description: 'The address of the container registry (default: ghcr.io)'
+    required: false
+  build_type:
+    description: 'The build type - Debug, RelWithDebInfo, or Release'
+    required: false
+  build_label:
+    description: 'The docker version tag'
+    required: false
+  docker_repo:
+    description: 'The name of the docker repository to pull and push to/from'
+    required: false
+  token:
+    description: 'github token'
+    required: true
+outputs:
+  tag:
+    description: 'Is the tag, which was pushed'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
