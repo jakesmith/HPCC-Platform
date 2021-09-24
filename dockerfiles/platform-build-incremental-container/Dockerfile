@@ -1,6 +1,6 @@
 ##############################################################################
 #
-#    HPCC SYSTEMS software Copyright (C) 2020 HPCC Systems®.
+#    HPCC SYSTEMS software Copyright (C) 2021 HPCC Systems®.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -17,42 +17,22 @@
 
 # Base container image that builds all HPCC platform components
 
-ARG BASE_VER=7.12
 ARG CR_USER=hpccsystems
 ARG CR_REPO=docker.io
-FROM ${CR_REPO}/${CR_USER}/platform-build-base:${BASE_VER}
+ARG PLATFORM_PRBASE_VER
+FROM ${CR_REPO}/${CR_USER}/platform-build:${PLATFORM_PRBASE_VER}
 
-RUN groupadd -g 10001 hpcc
-RUN useradd -s /bin/bash -r -m -N -c "hpcc runtime User" -u 10000 -g hpcc hpcc
-RUN passwd -l hpcc 
-
-RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.18.18/bin/linux/amd64/kubectl && chmod +x ./kubectl && mv ./kubectl /usr/local/bin
-
-WORKDIR /hpcc-dev
-RUN chown hpcc:hpcc /hpcc-dev
-
-# Runs as hpcc to fetch sources and build, to aid debugging containers as user hpcc
 USER hpcc
 
-ARG BUILD_USER=hpcc-systems
-RUN echo BUILD_USER is ${BUILD_USER}
-RUN git clone https://github.com/${BUILD_USER}/HPCC-Platform.git && \
-    cd HPCC-Platform && \
-    git submodule update --init --recursive
-
 WORKDIR /hpcc-dev/HPCC-Platform
-ARG BUILD_TAG=none
-RUN git fetch origin && \
-    git checkout ${BUILD_TAG} && \
-    git submodule update --init --recursive
+ARG GITHUB_PRREF
 
-WORKDIR /hpcc-dev
-RUN mkdir build
+RUN git remote -v
+RUN git fetch origin +${GITHUB_PRREF}
+RUN git checkout FETCH_HEAD
+RUN git submodule update --init --recursive
+
 WORKDIR /hpcc-dev/build
-
-ARG BUILD_TYPE=RelWithDebInfo
-ARG USE_CPPUNIT=1
-RUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DCONTAINERIZED=1 -DINCLUDE_PLUGINS=1 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT}
 
 ARG BUILD_THREADS
 RUN if [ -n "${BUILD_THREADS}" ] ; then echo ${BUILD_THREADS} > ~/build_threads; else echo $(nproc) > ~/build_threads ; fi
