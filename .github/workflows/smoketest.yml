@@ -381,14 +381,6 @@ jobs:
       fail-fast: true
       matrix:
         engine: ['hthor', 'thor', 'roxie']
-        match:
-        - pattern: '[a-d]*.ecl'
-        - pattern: '[e-h]*.ecl'
-        - pattern: '[i-l]*.ecl'
-        - pattern: '[m-q]*.ecl'
-        - pattern: '[r-u]*.ecl'
-          exclude: teststdlibrary.ecl
-        - pattern: '[v-z]*.ecl'
         include:
         - engine: 'hthor'
           match:
@@ -434,10 +426,11 @@ jobs:
         cat matches.tmp
         if [[ -z "${{ matrix.match.exclude }}" ]]
         then
-          queries="$(cat matches.tmp | tr '\n' ' ')"
+          _queries="$(cat matches.tmp | tr '\n' ' ')"
         else
-          queries="$(cd ecl; ls ${{ matrix.match.exclude }} | grep -v -f - ../matches.tmp | tr '\n' ' ')"
+          _queries="$(cd ecl; ls ${{ matrix.match.exclude }} | grep -v -f - ../matches.tmp | tr '\n' ' ')"
         fi
+        queries="${_queries} ${_queries} ${_queries}"
         echo queries after exclude: ${queries}
 
         # force regression suite to timeout after 28 minutes, so it captures ZAP report of any inflight hung queries
