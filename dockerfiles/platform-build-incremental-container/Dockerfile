@@ -27,7 +27,6 @@ USER hpcc
 WORKDIR /hpcc-dev/HPCC-Platform
 ARG GITHUB_PRREF
 
-RUN git remote -v
 RUN git fetch origin +${GITHUB_PRREF}
 RUN git checkout FETCH_HEAD
 RUN git submodule update --init --recursive
@@ -46,8 +45,3 @@ RUN make -j$(cat ~/build_threads)
 USER root
 
 RUN make -j$(cat ~hpcc/build_threads) install
-RUN mkdir /var/lib/HPCCSystems && chown hpcc:hpcc /var/lib/HPCCSystems
-RUN mkdir /var/log/HPCCSystems && chown hpcc:hpcc /var/log/HPCCSystems
-RUN mkdir /var/lock/HPCCSystems && chown hpcc:hpcc /var/lock/HPCCSystems
-RUN mkdir /var/run/HPCCSystems && chown hpcc:hpcc /var/run/HPCCSystems
-
