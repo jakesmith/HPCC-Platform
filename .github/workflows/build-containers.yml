@@ -25,7 +25,7 @@ jobs:
         uses: hpcc-systems/skip-duplicate-actions@master
         with:
           github_token: ${{ github.token }}
-          paths_ignore: '["clienttools/**", "devdoc/**", "dockerfiles/**", "docs/**", "helm/**", "initfiles/**" ]'
+          paths_ignore: '["clienttools/**", "devdoc/**", "docs/**", "helm/**", "initfiles/**" ]'
 
   build-images:
     needs: check-skip
