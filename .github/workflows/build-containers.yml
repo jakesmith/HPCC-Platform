@@ -81,14 +81,16 @@ jobs:
       - name: Check if PR-Base prebuilt
         id: check-images
         run: |
-          build_base_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build_base }}:${{ steps.vars.outputs.build_prbase_label }} > /dev/null ; echo $?)
+          build_base_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build_base }}:${{ steps.vars.outputs.base_ver }} > /dev/null ; echo $?)
           build_prbase_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }} > /dev/null ; echo $?)
           echo build_base_missing=${build_base_missing}
           echo build_prbase_missing=${build_prbase_missing}
           echo ::set-output name=build_base_missing::${build_base_missing}
           echo ::set-output name=build_prbase_missing::${build_prbase_missing}
          
+      # build base only if missing, and pr base image is missing, otherwise don't need it.
       - name: Build build base image
+        if: ${{ steps.check-images.outputs.build_base_missing == '1' && steps.check-images.outputs.build_prbase_missing == '1' }}
         uses: docker/build-push-action@v2
         with:
           context: dockerfiles/${{ steps.vars.outputs.platform_build_base }}
@@ -97,6 +99,7 @@ jobs:
             ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build_base }}:${{ steps.vars.outputs.base_ver }}
           push: true
 
+      # build base image if missing
       - name: Build PR-Base image 
         if: ${{ steps.check-images.outputs.build_prbase_missing == '1' }}
         uses: docker/build-push-action@v2
