@@ -42,9 +42,8 @@ jobs:
           # echo ::set-output name=cr_user::${{ github.repository_owner }}
           echo ::set-output name=container_registry::docker.io
           echo ::set-output name=cr_user::${{ secrets.DOCKER_USERNAME }}
-          echo ::set-output name=build_prbase_sha::${{ github.event.pull_request.base.sha }}
+          echo ::set-output name=build_prbase_sha::${{ github.sha }}
           echo ::set-output name=build_prbase_label::${{ github.base_ref }}
-          echo ::set-output name=build_pr_label::pr-${{ github.event.number }}-${{ github.sha }}
           echo ::set-output name=build_user::${{ github.actor }}
           echo ::set-output name=build_type::RelWithDebInfo
           echo ::set-output name=use_cppunit::1
@@ -55,20 +54,17 @@ jobs:
         run: |
           echo "Branch     = ${GITHUB_REF#refs/heads/}
           echo "Base ref   = ${GITHUB_REF#refs/heads/}
-          echo "SHA        = ${{ steps.vars.outputs.sha}}"
           echo "Action     = ${{ github.action }}"
           echo "Event      = ${{ github.event_name }}"
           echo "Actor      = ${{ github.actor }}"
           echo "Ref        = ${{ github.ref }}"
-          echo "base sha   = ${{ github.event.pull_request.base.sha }}"
           echo "Sha        = ${{ github.sha }}"
           echo "github.repository = ${{ github.repository }}"
           echo "repository_owner = ${{ github.repository_owner }}"
           echo "github.workspace = ${{ github.workspace }}"
           echo "runner.workspace = ${{ runner.workspace }}"
-          echo "github.event.pull_request.head.repo.owner.login = ${{ github.event.pull_request.head.repo.owner.login }}"
+          echo "build_prbase_sha = ${{ steps.vars.outputs.build_prbase_sha }}"
           echo "build_prbase_label = ${{ steps.vars.outputs.build_prbase_label }}"
-          echo "build_pr_label = ${{ steps.vars.outputs.build_pr_label }}"
 
       - name: Checkout PR
         uses: actions/checkout@v2
@@ -94,15 +90,12 @@ jobs:
         id: check-images
         run: |
           build_base_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build_base }}:${{ steps.vars.outputs.base_ver }} > /dev/null ; echo $?)
-          build_prbase_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }} > /dev/null ; echo $?)
           echo build_base_missing=${build_base_missing}
-          echo build_prbase_missing=${build_prbase_missing}
           echo ::set-output name=build_base_missing::${build_base_missing}
-          echo ::set-output name=build_prbase_missing::${build_prbase_missing}
          
       # build base only if missing, and pr base image is missing, otherwise don't need it.
       - name: HPCC build-base image
-        if: ${{ steps.check-images.outputs.build_base_missing == '1' && steps.check-images.outputs.build_prbase_missing == '1' }}
+        if: ${{ steps.check-images.outputs.build_base_missing == '1' }}
         uses: docker/build-push-action@v2
         with:
           context: dockerfiles/${{ steps.vars.outputs.platform_build_base }}
@@ -115,14 +108,13 @@ jobs:
 
       # build base image if missing
       - name: PR-Base image
-        if: ${{ steps.check-images.outputs.build_prbase_missing == '1' }}
         uses: docker/build-push-action@v2
         with:
           context: .
           file: ./dockerfiles/platform-build/Dockerfile
           builder: ${{ steps.buildx.outputs.name }}
           tags: |
-            ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }}
+            ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ steps.vars.outputs.build_prbase_sha }}
             ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-latest
           push: true
           build-args: |
