@@ -3336,7 +3336,7 @@ int main(int argc, char* argv[])
 
     EnableSEHtoExceptionMapping();
 
-    /* this is a test */
+    /* this is a test #2 */
 
     try {
         StringBuffer cmd;

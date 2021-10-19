@@ -27,6 +27,8 @@ USER hpcc
 WORKDIR /hpcc-dev/HPCC-Platform
 ARG GITHUB_REPO
 RUN git remote add upstream https://github.com/${GITHUB_REPO}
+RUN echo GITHUB_PRREF=${GITHUB_PRREF}
+RUN echo git fetch upstream +${GITHUB_PRREF}
 RUN git fetch upstream +${GITHUB_PRREF}
 RUN git checkout FETCH_HEAD
 RUN git submodule update --init --recursive
