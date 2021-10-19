@@ -92,28 +92,57 @@ jobs:
         id: check-images
         run: |
           build_base_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build_base }}:${{ steps.vars.outputs.base_ver }} > /dev/null ; echo $?)
-          build_prbase_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }} > /dev/null ; echo $?)
+          prbase_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }} > /dev/null ; echo $?)
           echo build_base_missing=${build_base_missing}
-          echo build_prbase_missing=${build_prbase_missing}
-          if [[ "${build_base_missing}" -eq 1 ]]
-          then
-            echo "Cannot find existing build base image, aborting"
-            exit 1
-          fi
-          if [[ "${build_prbase_missing}" -eq 1 ]]
+          echo prbase_missing=${prbase_missing}
+          echo ::set-output name=build_base_missing::${build_base_missing}
+          if [[ "${prbase_missing}" -eq 1 ]]
           then
             echo "Current PR target branch image cannot be found, using latest"
-            build_prbase_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-latest > /dev/null ; echo $?)
-            if [[ "${build_prbase_missing}" -eq 1 ]]
+            prbase_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-latest > /dev/null ; echo $?)
+            if [[ "${prbase_missing}" -eq 1 ]]
             then
               echo "Cannot find the 'latest' target branch image, aborting"
-              exit 1
+              echo ::set-output name=prbase_missing::${prbase_missing}
             fi
             echo ::set-output name=platform_prbase_ver::${{ steps.vars.outputs.build_prbase_label }}-latest
           else
             echo ::set-output name=platform_prbase_ver::${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }}
           fi
-         
+
+      # build build-base if missing
+      - name: HPCC build-base image
+        if: ${{ steps.check-images.outputs.build_base_missing == '1' && steps.check-images.outputs.prbase_missing == '1' }}
+        uses: docker/build-push-action@v2
+        with:
+          context: dockerfiles/${{ steps.vars.outputs.platform_build_base }}
+          builder: ${{ steps.buildx.outputs.name }}
+          tags: |
+            ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build_base }}:${{ steps.vars.outputs.base_ver }}
+          build-args: |
+            BASE_VER=${{ steps.vars.outputs.base_ver }}
+
+      # build branch image if missing
+      - name: branch image
+        if: ${{ steps.check-images.outputs.prbase_missing == '1' }}
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          file: ./dockerfiles/platform-build/Dockerfile
+          builder: ${{ steps.buildx.outputs.name }}
+          tags: |
+            ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ steps.vars.outputs.build_prbase_sha }}
+            ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-latest
+          build-args: |
+            CR_USER=${{ steps.vars.outputs.cr_user }}
+            CR_REPO=${{ steps.vars.outputs.container_registry }}
+            BASE_VER=${{ steps.vars.outputs.base_ver }}
+            BUILD_USER=${{ github.repository_owner }}
+            BUILD_TAG=${{ steps.vars.outputs.build_prbase_sha }}
+            BUILD_TYPE=${{ steps.vars.outputs.build_type }}
+            USE_CPPUNIT=${{ steps.vars.outputs.use_cppunit }}
+            BUILD_THREADS=${{ steps.vars.outputs.build_threads }}
+
       - name: PR image
         uses: docker/build-push-action@v2
         with:
