@@ -42,8 +42,8 @@ jobs:
           # echo ::set-output name=cr_user::${{ github.repository_owner }}
           echo ::set-output name=container_registry::docker.io
           echo ::set-output name=cr_user::${{ secrets.DOCKER_USERNAME }}
-          echo ::set-output name=build_prbase_sha::${{ github.sha }}
-          echo ::set-output name=build_prbase_label::${{ github.base_ref }}
+          echo ::set-output name=build_base_sha::${{ github.sha }}
+          echo ::set-output name=build_base_label::${GITHUB_REF##*/}
           echo ::set-output name=build_user::${{ github.actor }}
           echo ::set-output name=build_type::RelWithDebInfo
           echo ::set-output name=use_cppunit::1
@@ -63,8 +63,8 @@ jobs:
           echo "repository_owner = ${{ github.repository_owner }}"
           echo "github.workspace = ${{ github.workspace }}"
           echo "runner.workspace = ${{ runner.workspace }}"
-          echo "build_prbase_sha = ${{ steps.vars.outputs.build_prbase_sha }}"
-          echo "build_prbase_label = ${{ steps.vars.outputs.build_prbase_label }}"
+          echo "build_base_sha = ${{ steps.vars.outputs.build_base_sha }}"
+          echo "build_base_label = ${{ steps.vars.outputs.build_base_label }}"
 
       - name: Checkout PR
         uses: actions/checkout@v2
@@ -114,15 +114,15 @@ jobs:
           file: ./dockerfiles/platform-build/Dockerfile
           builder: ${{ steps.buildx.outputs.name }}
           tags: |
-            ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ steps.vars.outputs.build_prbase_sha }}
-            ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-latest
+            ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_base_label }}-${{ steps.vars.outputs.build_base_sha }}
+            ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_base_label }}-latest
           push: true
           build-args: |
             CR_USER=${{ steps.vars.outputs.cr_user }}
             CR_REPO=${{ steps.vars.outputs.container_registry }}
             BASE_VER=${{ steps.vars.outputs.base_ver }}
             BUILD_USER=${{ github.repository_owner }}
-            BUILD_TAG=${{ steps.vars.outputs.build_prbase_sha }}
+            BUILD_TAG=${{ steps.vars.outputs.build_base_sha }}
             BUILD_TYPE=${{ steps.vars.outputs.build_type }}
             USE_CPPUNIT=${{ steps.vars.outputs.use_cppunit }}
             BUILD_THREADS=${{ steps.vars.outputs.build_threads }}
