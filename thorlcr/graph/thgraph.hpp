@@ -1338,6 +1338,7 @@ extern graph_decl bool isDiskInput(ThorActivityKind kind);
 extern graph_decl bool isLoopActivity(CGraphElementBase &container);
 extern graph_decl void traceMemUsage();
 
+/* this is just a test */
 
 #endif
 
