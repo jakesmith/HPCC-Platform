@@ -64,7 +64,6 @@ jobs:
           context: .
           file: ./dockerfiles/img1/Dockerfile
           builder: ${{ steps.buildx.outputs.name }}
-          load: true
           tags: |
             docker.io/jakesmith0/img1:1.1
 
@@ -75,7 +74,6 @@ jobs:
           context: .
           file: ./dockerfiles/img2/Dockerfile
           builder: ${{ steps.buildx.outputs.name }}
-          load: true
           tags: |
             docker.io/jakesmith0/img2:1.1
 
