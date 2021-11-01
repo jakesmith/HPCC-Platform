@@ -15,46 +15,52 @@
 ################################################################################
 
 
-# Component: daliadminlib
+# Component: wsdfs
+
 #####################################################
 # Description:
 # ------------
-#    Cmake Input File for daliadminlib
+#    Cmake Input File for wsdfs
 #####################################################
 
-project( daliadminlib )
+
+project( wsdfs )
+
+include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)
 
 set (    SRCS
-         daadmin.cpp
+         wsdfs.cpp
+         ${ESPSCM_GENERATED_DIR}/ws_dfs_esp.cpp
     )
 
 include_directories (
-         .
-         ${HPCC_SOURCE_DIR}/fs/dafsclient
-         ${HPCC_SOURCE_DIR}/dali/server
-         ${HPCC_SOURCE_DIR}/dali/base
-         ${HPCC_SOURCE_DIR}/dali/ft
-         ${HPCC_SOURCE_DIR}/common/workunit
-         ${HPCC_SOURCE_DIR}/common/dllserver
-         ${HPCC_SOURCE_DIR}/system/mp
          ${HPCC_SOURCE_DIR}/system/include
          ${HPCC_SOURCE_DIR}/system/jlib
+         ${HPCC_SOURCE_DIR}/system/mp
+         ${HPCC_SOURCE_DIR}/system/xmllib
          ${HPCC_SOURCE_DIR}/system/security/shared
-         ${HPCC_SOURCE_DIR}/esp/clients/wsdfuaccess
-         ${HPCC_SOURCE_DIR}/esp/clients/wsdfs
+         ${HPCC_SOURCE_DIR}/system/security/securesocket
+         ${HPCC_SOURCE_DIR}/system/security/cryptohelper
+         ${HPCC_SOURCE_DIR}/esp/bindings
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/client
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp
+         ${HPCC_SOURCE_DIR}/esp/platform
+         ${HPCC_SOURCE_DIR}/esp/clients
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/Platform
+         ${HPCC_SOURCE_DIR}/esp/smc/SMCLib
+         ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/common/thorhelper
+         ${HPCC_SOURCE_DIR}/common/workunit
     )
 
-ADD_DEFINITIONS ( -D_USRDLL -DDALIADMIN_API_EXPORTS )
+ADD_DEFINITIONS( -D_USRDLL -DWSDFS_EXPORTS )
 
-HPCC_ADD_LIBRARY( daliadminlib SHARED ${SRCS} )
-install ( TARGETS daliadminlib RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
-target_link_libraries ( daliadminlib
+HPCC_ADD_LIBRARY( wsdfs SHARED ${SRCS} )
+install ( TARGETS wsdfs RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
+target_link_libraries ( wsdfs
          jlib
-         mp
-         dafsclient
+         xmllib
+         esphttp
          dalibase
          workunit
-         dllserver
-         wsdfuaccess
-         wsdfs
     )
