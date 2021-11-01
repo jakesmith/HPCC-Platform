@@ -39,9 +39,11 @@
 
 #include "jptree.hpp"
 #include "wsdfuaccess.hpp"
+#include "wsdfs.hpp"
 
 using namespace wsdfuaccess;
 using namespace dafsstream;
+using namespace wsdfs;
 
 
 #define DEFAULT_TEST "RANDTEST"
@@ -1913,6 +1915,37 @@ void TestSDS1()
     ISDSManager &sdsManager = querySDS();
     IRemoteConnection *conn;
     IPropertyTree *root;
+
+#if 1
+    {
+        const char *logicalName = "test1";
+        unsigned timeoutSecs = 60;
+        unsigned keepAliveExpiryFrequency = 10;
+        Owned<IUserDescriptor> userDesc = createUserDescriptor();
+        userDesc->set("jsmith", "password");
+
+        Owned<IDFSFile> dfsFile = lookupDFSFile(logicalName, timeoutSecs, keepAliveExpiryFrequency, userDesc);
+
+        // I want to ask Esp for this lock.. 
+        // OR rather I want the DFS service to do it for me?
+        // 1st param = lock name (arbitrary, but we'll use canonical file name)
+        // 2nd param = lock type: false = shared read lock, true = exclusive write lock
+        // 3rd param = keep-alive expiry time (in seconds)
+        // serialize lockId along with file meta back to client.
+        
+        // I am client, prentendig the Esp service has done the above, and I've got back meta+lockid
+
+        /*
+        1) Spawn a keep-alive thread to keep the lockId lock alive.
+        - this thread will send packet through to esp, through to locking engine (dali)
+        - it will handle broken connections and retry if necessary (e.g. if esp's go down)
+          (which might not be so unusual if lock held for a long time)
+        2) 
+        */
+
+        return;
+    }
+#endif
 
 #ifdef TSUB
     Owned<TestSubscription> ts = new TestSubscription();

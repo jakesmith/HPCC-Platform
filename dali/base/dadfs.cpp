@@ -1171,6 +1171,7 @@ public:
         return ret;
     }
     virtual bool removePhysicalPartFiles(const char *logicalName, IFileDescriptor *fileDesc, IMultiException *mexcept, unsigned numParallelDeletes=0) override;
+    virtual void setFileAccessed(const char *logicalName, const CDateTime &dt, const INode *foreigndali, unsigned foreigndalitimeout);
 };
 
 
@@ -11092,6 +11093,13 @@ void CDistributedFileDirectory::setFileAccessed(CDfsLogicalFileName &dlfn,IUserD
     else
         queryCoven().sendRecv(mb,RANK_RANDOM,MPTAG_DFS_REQUEST);
     checkDfsReplyException(mb);
+}
+
+void CDistributedFileDirectory::setFileAccessed(const char *logicalName, const CDateTime &dt, const INode *foreigndali, unsigned foreigndalitimeout)
+{
+    CDfsLogicalFileName dlfn;
+    dlfn.set(logicalName);
+    setFileAccessed(dlfn, nullptr, dt, foreigndali, foreigndalitimeout);
 }
 
 void CDistributedFileDirectory::setFileProtect(CDfsLogicalFileName &dlfn,IUserDescriptor *user, const char *owner, bool set, const INode *foreigndali,unsigned foreigndalitimeout)

@@ -1,5 +1,5 @@
 ################################################################################
-#    HPCC SYSTEMS software Copyright (C) 2012 HPCC Systems®.
+#    HPCC SYSTEMS software Copyright (C) 2021 HPCC Systems®.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -14,45 +14,51 @@
 #    limitations under the License.
 ################################################################################
 
-# Component: datest 
+
+# Component: wsdfs
+
 #####################################################
 # Description:
 # ------------
-#    Cmake Input File for datest
+#    Cmake Input File for wsdfs
 #####################################################
 
-project( datest ) 
+
+project( wsdfs ) 
+
+include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)
 
 set (    SRCS 
-         datest.cpp 
+         wsdfs.cpp 
+         ${ESPSCM_GENERATED_DIR}/ws_dfs_esp.cpp
     )
 
 include_directories ( 
-         ${HPCC_SOURCE_DIR}/dali/server 
-         ${HPCC_SOURCE_DIR}/system/mp 
          ${HPCC_SOURCE_DIR}/system/include 
          ${HPCC_SOURCE_DIR}/system/jlib
+         ${HPCC_SOURCE_DIR}/system/mp
+         ${HPCC_SOURCE_DIR}/system/xmllib
          ${HPCC_SOURCE_DIR}/system/security/shared
-         ${HPCC_SOURCE_DIR}/esp/clients/wsdfuaccess
-         ${HPCC_SOURCE_DIR}/esp/clients/wsdfs
-         ${HPCC_SOURCE_DIR}/fs/dafsstream
-         ${HPCC_SOURCE_DIR}/rtl/include
-         ${HPCC_SOURCE_DIR}/rtl/eclrtl
+         ${HPCC_SOURCE_DIR}/system/security/securesocket
+         ${HPCC_SOURCE_DIR}/system/security/cryptohelper
+         ${HPCC_SOURCE_DIR}/esp/bindings
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/client
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp
+         ${HPCC_SOURCE_DIR}/esp/platform
+         ${HPCC_SOURCE_DIR}/esp/clients
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/Platform
+         ${HPCC_SOURCE_DIR}/esp/smc/SMCLib
+         ${HPCC_SOURCE_DIR}/dali/base
+         ${HPCC_SOURCE_DIR}/common/thorhelper
     )
 
-HPCC_ADD_EXECUTABLE ( datest ${SRCS} )
-set_target_properties (datest PROPERTIES COMPILE_FLAGS -D_CONSOLE)
-target_link_libraries ( datest 
+ADD_DEFINITIONS( -D_USRDLL -DWSDFS_EXPORTS )
+
+HPCC_ADD_LIBRARY( wsdfs SHARED ${SRCS} )
+install ( TARGETS wsdfs RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
+target_link_libraries ( wsdfs 
          jlib
-         mp
-         hrpc
-         dafsclient
-         dafsstream
-         eclrtl
-         wsdfuaccess
-         wsdfs
+         xmllib 
+         esphttp
          dalibase
-         ${CPPUNIT_LIBRARIES}
     )
-
-

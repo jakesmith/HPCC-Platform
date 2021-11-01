@@ -48,7 +48,10 @@ extern da_decl IDistributedLock *createDistributedLock(DistributedLockId id, Ses
 interface IDaliServer;
 extern da_decl IDaliServer *createDaliLockServer(); // called for coven members
 
+interface INamedRemoteLock : extends IInterface
+{
 
+};
 
 #endif
 
