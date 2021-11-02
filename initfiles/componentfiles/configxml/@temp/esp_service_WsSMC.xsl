@@ -137,6 +137,10 @@ This is required by its binding with ESP service '<xsl:value-of select="$espServ
             <xsl:with-param name="bindingNode" select="$bindingNode"/>
             <xsl:with-param name="authNode" select="$authNode"/>
         </xsl:apply-templates>
+        <xsl:apply-templates select="." mode="ws_dfs">
+            <xsl:with-param name="bindingNode" select="$bindingNode"/>
+            <xsl:with-param name="authNode" select="$authNode"/>
+        </xsl:apply-templates>
     </xsl:template>
 
     <!-- WS-SMC -->
