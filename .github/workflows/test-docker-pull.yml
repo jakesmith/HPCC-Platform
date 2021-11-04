@@ -1,0 +1,23 @@
+name: test docker pull
+on:
+  pull_request:
+    branches:
+      - "candidate-8.4.x"
+
+jobs:
+  test-pull:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v1
+        with:
+          driver: docker
+
+      - name: test docker manifest
+        id: check-images
+        run: |
+          build_base_missing=$(docker manifest inspect docker.io/hpccbuilds/smoketest-platform-build-base:7.12.1 > /dev/null ; echo $?)
+          prbase_missing=$(docker manifest inspect docker.io/hpccbuilds/smoketest-platform-build:candidate-8.4.x-75caad326ad0db66745dc8c56f94c0749f48116c > /dev/null ; echo $?)
+          echo build_base_missing=${build_base_missing}
+          echo prbase_missing=${prbase_missing}
