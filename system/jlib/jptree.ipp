@@ -626,6 +626,7 @@ public:
     }
     virtual void createChildMap() { children = isnocase()?new ChildMapNC():new ChildMap(); }
     virtual void setName(const char *name) = 0;
+    virtual IPTArrayValue *ensureValue() { return value; }
 
 // IPropertyTree impl.
     virtual bool hasProp(const char * xpath) const override;

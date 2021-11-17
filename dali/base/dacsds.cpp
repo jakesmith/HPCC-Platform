@@ -878,6 +878,12 @@ bool CClientRemoteTree::removeAttribute(const char *attr)
         return false;
 }
 
+IPTArrayValue *CClientRemoteTree::ensureValue()
+{
+    checkExt();
+    return value;
+}
+
 void CClientRemoteTree::registerRenamed(const char *newName, const char *oldName, unsigned pos, __int64 id)
 {
     mergeState(CPS_Renames);

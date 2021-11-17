@@ -2923,8 +2923,9 @@ void PTree::serializeSelf(MemoryBuffer &tgt)
     tgt.append(_name ? _name : "");
     tgt.append(flags);
     serializeAttributes(tgt);
-    if (value)
-        value->serialize(tgt);
+    IPTArrayValue *_value = ensureValue();
+    if (_value)
+        _value->serialize(tgt);
     else
         tgt.append((size32_t)0);
 }
