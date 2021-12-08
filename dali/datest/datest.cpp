@@ -1943,6 +1943,23 @@ void TestSDS1()
         2) 
         */
 
+        Owned<IDistributedFile> legacyDfsFile = createLegacyDFSFile(dfsFile);
+        Owned<IFileDescriptor> fileDesc = legacyDfsFile->getFileDescriptor();
+        MemoryBuffer mb;
+        UnsignedArray parts;
+        parts.append(0);
+        fileDesc->serializeParts(mb, parts);
+
+        // worker side
+        IArrayOf<IPartDescriptor> partDescs;
+        deserializePartFileDescriptors(mb, partDescs);
+        IPartDescriptor &partDesc = partDescs.item(0);
+        RemoteFilename rfn;
+        partDesc.getFilename(0, rfn);
+        StringBuffer path;
+        rfn.getPath(path);
+        Owned<IFile> iFile = createIFile(path);
+        PROGLOG("File exists = %s", boolToStr(iFile->exists()));
         return;
     }
 #endif

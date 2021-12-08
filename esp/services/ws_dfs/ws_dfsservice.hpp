@@ -33,6 +33,7 @@ public:
     virtual ~CWsDfsEx(){};
     virtual void init(IPropertyTree *cfg, const char *process, const char *service);
     virtual bool onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &req, IEspDFSFileLookupResponse &resp);
+    virtual bool onDFSKeepAlive(IEspContext &context, IEspDFSLockKeepAliveRequest &req, IEspDFSLockKeepAliveResponse &resp);
 
 private:
 

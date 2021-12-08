@@ -19,13 +19,22 @@
 ESPrequest DFSFileLookupRequest
 {
     string Name;                        // the logical file name
-    int RequestTimeout(300);                   // Max seconds to block waiting (default = 5 mins)
+    int RequestTimeout(300);            // Max seconds to block waiting (default = 5 mins)
     int KeepAliveExpiryFrequency(10);   // If client has not 'pinged' lock in this period (secs), the lock will expire
 };
 
 ESPresponse [exceptions_inline] DFSFileLookupResponse
 {
     string Meta; // json
+};
+
+ESPrequest DFSLockKeepAliveRequest
+{
+    int64 LeaseId;
+};
+
+ESPresponse [exceptions_inline] DFSLockKeepAliveResponse
+{
 };
 
 //  ===========================================================================
@@ -37,6 +46,7 @@ ESPservice [
     exceptions_inline("./smc_xslt/exceptions.xslt")] WsDfs
 {
     ESPmethod [auth_feature("DfuAccess:READ"), min_ver("1.01")] DFSFileLookup(DFSFileLookupRequest, DFSFileLookupResponse);
+    ESPmethod [auth_feature("DfuAccess:READ"), min_ver("1.01")] DFSKeepAlive(DFSLockKeepAliveRequest, DFSLockKeepAliveResponse);
 };
 
 SCMexportdef(WSDFS);

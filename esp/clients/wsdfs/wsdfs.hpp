@@ -33,12 +33,15 @@ namespace wsdfs
 
 interface IDFSFile : extends IInterface
 {
-    virtual const IPropertyTree *getFileMeta() const = 0;
-    virtual unsigned __int64 getLocakId() const = 0;
+    virtual IPropertyTree *getFileMeta() const = 0;
+    virtual unsigned __int64 getLockId() const = 0;
 };
 
 WSDFS_API IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, const char *user, const char *token);
 WSDFS_API IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
+WSDFS_API IDistributedFile *createLegacyDFSFile(IDFSFile *dfsFile);
+WSDFS_API IDistributedFile *lookupLegacyDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, const char *user, const char *token);
+WSDFS_API IDistributedFile *lookupLegacyDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
 
 } // end of namespace wsdfs
 

@@ -104,7 +104,7 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
         unsigned timeoutSecs = req.getRequestTimeout();
 
         // 1) establish lock 1st
-        unsigned __int64 lockId = 1; // fake!
+        unsigned __int64 lockId = 1; // fake! Need to get real lock id from Dali
 
         // 2) get file meta data
         Owned<IPropertyTree> fileMetaInfo = getLFNMetaData(logicalName);
@@ -121,7 +121,8 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
         JBASE64_Encode(compressedRespMb.bytes(), compressedRespMb.length(), respStr, false);
         resp.setMeta(respStr.str());
 
-        // 4) update file access (really this should be done at end, but this is same as existing DFS lookup)
+        // 4) update file access.
+        //    Really this should be done at end (or at end as well), but this is same as existing DFS lookup.
         CDateTime dt;
         dt.setNow();
         queryDistributedFileDirectory().setFileAccessed(logicalName, dt);
@@ -130,7 +131,12 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
     }
     catch (IException *e)
     {
-//        FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
+        FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
     }
+    return true;
+}
+
+bool CWsDfsEx::onDFSKeepAlive(IEspContext &context, IEspDFSLockKeepAliveRequest &req, IEspDFSLockKeepAliveResponse &resp)
+{
     return true;
 }
