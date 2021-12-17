@@ -1918,7 +1918,7 @@ void TestSDS1()
 
 #if 1
     {
-        const char *logicalName = "test1";
+        const char *logicalName = "~thorfile";
         unsigned timeoutSecs = 60;
         unsigned keepAliveExpiryFrequency = 10;
         Owned<IUserDescriptor> userDesc = createUserDescriptor();

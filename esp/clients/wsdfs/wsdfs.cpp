@@ -129,7 +129,7 @@ public:
     CServiceDistributeFile(IDFSFile *_file) : file(_file)
     {
         meta.set(file->getFileMeta());
-        Owned<IFileDescriptor> fileDesc = createFileDescriptor(meta.getLink());
+        Owned<IFileDescriptor> fileDesc = deserializeFileDescriptorTree(meta);
         dfsFile.setown(queryDistributedFileDirectory().createNew(fileDesc));
     }
 // IDistributeFile

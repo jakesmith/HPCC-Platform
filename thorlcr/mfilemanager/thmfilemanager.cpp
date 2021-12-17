@@ -314,16 +314,20 @@ public:
     IDistributedFile *timedLookup(CJobBase &job, CDfsLogicalFileName &lfn, bool write, bool privilegedUser=false, unsigned timeout=INFINITE)
     {
         VStringBuffer blockedMsg("lock file '%s' for %s access", lfn.get(), write ? "WRITE" : "READ");
-#if 1
-        auto func = [&job, &lfn, write, privilegedUser](unsigned timeout)
+        if (job.getOptBool("newdfs"))
         {
-            static constexpr unsigned keepAliveExpiryFrequency = 30;
-            return wsdfs::lookupLegacyDFSFile(lfn.get(), timeout, keepAliveExpiryFrequency, job.queryUserDescriptor());
-        };
-#else
-        auto func = [&job, &lfn, write, privilegedUser](unsigned timeout) { return queryDistributedFileDirectory().lookup(lfn, job.queryUserDescriptor(), write, false, false, nullptr, privilegedUser, timeout); };
-#endif
-        return blockReportFunc<IDistributedFile *>(job, func, timeout, blockedMsg);
+            auto func = [&job, &lfn, write, privilegedUser](unsigned timeout)
+            {
+                static constexpr unsigned keepAliveExpiryFrequency = 30;
+                return wsdfs::lookupLegacyDFSFile(lfn.get(), timeout, keepAliveExpiryFrequency, job.queryUserDescriptor());
+            };
+            return blockReportFunc<IDistributedFile *>(job, func, timeout, blockedMsg);
+        }
+        else
+        {
+            auto func = [&job, &lfn, write, privilegedUser](unsigned timeout) { return queryDistributedFileDirectory().lookup(lfn, job.queryUserDescriptor(), write, false, false, nullptr, privilegedUser, timeout); };
+            return blockReportFunc<IDistributedFile *>(job, func, timeout, blockedMsg);
+        }
     }
     IDistributedFile *timedLookup(CJobBase &job, const char *logicalName, bool write, bool privilegedUser=false, unsigned timeout=INFINITE)
     {
