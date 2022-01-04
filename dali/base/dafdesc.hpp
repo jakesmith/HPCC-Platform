@@ -231,6 +231,7 @@ if endCluster is not called it will assume only one cluster and not replicated
 
     virtual unsigned numClusters() = 0;
     virtual IClusterInfo *queryCluster(const char *clusterName) = 0;
+    virtual IClusterInfo *queryClusterNum(unsigned idx) = 0;
     virtual ClusterPartDiskMapSpec &queryPartDiskMapping(unsigned clusternum) = 0;
     virtual IGroup *queryClusterGroup(unsigned clusternum) = 0;                     // returns group for cluster if known
     virtual void setClusterGroup(unsigned clusternum,IGroup *grp) = 0;              // sets group for cluster
@@ -261,7 +262,7 @@ interface ISuperFileDescriptor: extends IFileDescriptor
 };
 
 
-// == CLUSTER INFO (currently not exposed outside dali base) =================================================================================
+ // == CLUSTER INFO (currently not exposed outside dali base) =================================================================================
 
 
 interface IClusterInfo: extends IInterface  // used by IFileDescriptor and IDistributedFile

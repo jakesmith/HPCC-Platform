@@ -1218,6 +1218,11 @@ class CFileDescriptor:  public CFileDescriptorBase, implements ISuperFileDescrip
         return NULL;
     }
 
+    virtual IClusterInfo *queryClusterNum(unsigned idx) override
+    {
+        return &clusters.item(idx);
+    }
+
     void replaceClusterDir(unsigned partno,unsigned copy, StringBuffer &path)
     {
         // assumes default dir matches one of clusters
@@ -1467,8 +1472,8 @@ public:
     void serializeTree(IPropertyTree &pt,unsigned flags)
     {
         closePending();
-//      if (!tracename.isEmpty())
-//          pt.setProp("@trace",tracename);             // don't include trace name in tree (may revisit later)
+        if (!tracename.isEmpty())
+            pt.setProp("@trace",tracename);             // don't include trace name in tree (may revisit later)
         if (!directory.isEmpty())
             pt.setProp("@directory",directory);
         if (!partmask.isEmpty())

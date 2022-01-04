@@ -124,13 +124,16 @@ class CServiceDistributeFile : public CSimpleInterfaceOf<IDistributedFile>
 {
     Linked<IDFSFile> file;
     Linked<IPropertyTree> meta;
+    Owned<IFileDescriptor> fileDesc;
     Owned<IDistributedFile> dfsFile;
 public:
     CServiceDistributeFile(IDFSFile *_file) : file(_file)
     {
         meta.set(file->getFileMeta());
-        Owned<IFileDescriptor> fileDesc = deserializeFileDescriptorTree(meta);
-        dfsFile.setown(queryDistributedFileDirectory().createNew(fileDesc));
+        fileDesc.setown(deserializeFileDescriptorTree(meta));
+        StringBuffer name;
+        fileDesc->getTraceName(name);
+        dfsFile.setown(queryDistributedFileDirectory().createNew(fileDesc, name));
     }
 // IDistributeFile
     virtual unsigned numParts() override { return dfsFile->numParts(); }
@@ -139,41 +142,43 @@ public:
     virtual StringBuffer &getLogicalName(StringBuffer &name) override { return dfsFile->getLogicalName(name); }
     virtual const char *queryLogicalName() override { return dfsFile->queryLogicalName(); }
     virtual IDistributedFilePartIterator *getIterator(IDFPartFilter *filter=NULL) override { return dfsFile->getIterator(filter); }
-    virtual IFileDescriptor *getFileDescriptor(const char *clustername=NULL) override { return dfsFile->getFileDescriptor(clustername); }
+    virtual IFileDescriptor *getFileDescriptor(const char *clustername=NULL) override { return fileDesc.getLink(); }
     virtual const char *queryDefaultDir() override { return dfsFile->queryDefaultDir(); }
     virtual const char *queryPartMask() override { return dfsFile->queryPartMask(); }
     virtual IPropertyTree &queryAttributes() override { return dfsFile->queryAttributes(); }
     virtual bool lockProperties(unsigned timeoutms=INFINITE) override
     {
-        // TODO: implement
-
-        verifyex(false);
+        // TODO: implement. But for now only foreign [read] files are supported, where updates and locking have never been implemented.
+        return true;
     }
     virtual void unlockProperties(DFTransactionState state=TAS_NONE) override
     {
-        // TODO: implement
-
-        verifyex(false);
+        // TODO: implement. But for now only foreign [read] files are supported, where updates and locking have never been implemented.
     }
     virtual bool getModificationTime(CDateTime &dt) override { return dfsFile->getModificationTime(dt); }
     virtual bool getAccessedTime(CDateTime &dt) override { return dfsFile->getAccessedTime(dt); }
     virtual unsigned numCopies(unsigned partno) override { return dfsFile->numCopies(partno); }
     virtual bool existsPhysicalPartFiles(unsigned short port) override
     {
-        UNIMPLEMENTED_X("CServiceDistributeFile::existsPhysicalPartFiles");
+        return dfsFile->existsPhysicalPartFiles(port);
     }
-    virtual __int64 getFileSize(bool allowphysical,bool forcephysical) override
+    virtual __int64 getFileSize(bool allowphysical, bool forcephysical) override
     {
-        UNIMPLEMENTED_X("CServiceDistributeFile::getFileSize");
+        return dfsFile->getFileSize(allowphysical, forcephysical);
+        // NB: ignoring allowphysical and forcephysical, because meta data must exist in this implementation.
+        //__int64 ret = (__int64)(forcephysical?-1:queryAttributes().getPropInt64("@size", -1));
+        //verifyex(ret != -1);
+        //return ret;
     }
-    virtual __int64 getDiskSize(bool allowphysical,bool forcephysical) override
+    virtual __int64 getDiskSize(bool allowphysical, bool forcephysical) override
     {
-        UNIMPLEMENTED_X("CServiceDistributeFile::getDiskSize");
+        return dfsFile->getDiskSize(allowphysical, forcephysical);
     }
     virtual bool getFileCheckSum(unsigned &checksum) override { return dfsFile->getFileCheckSum(checksum); }
     virtual unsigned getPositionPart(offset_t pos,offset_t &base) override { return dfsFile->getPositionPart(pos,base); }
     virtual IDistributedSuperFile *querySuperFile() override
     {
+        return dfsFile->querySuperFile();
         UNIMPLEMENTED_X("CServiceDistributeFile::querySuperFile");
     }
     virtual IDistributedSuperFileIterator *getOwningSuperFiles(IDistributedFileTransaction *_transaction=NULL) override { return dfsFile->getOwningSuperFiles(_transaction); }
@@ -184,11 +189,20 @@ public:
     virtual unsigned findCluster(const char *clustername) override { return dfsFile->findCluster(clustername); }
     virtual ClusterPartDiskMapSpec &queryPartDiskMapping(unsigned clusternum) override { return dfsFile->queryPartDiskMapping(clusternum); }
     virtual IGroup *queryClusterGroup(unsigned clusternum) override { return dfsFile->queryClusterGroup(clusternum); }
-    virtual StringBuffer &getClusterGroupName(unsigned clusternum, StringBuffer &name) override { return dfsFile->getClusterGroupName(clusternum,name); }
+    virtual StringBuffer &getClusterGroupName(unsigned clusternum, StringBuffer &name) override
+    {
+        return fileDesc->getClusterGroupName(clusternum, name);
+    }
     virtual StringBuffer &getECL(StringBuffer &buf) override { return dfsFile->getECL(buf); }
 
-    virtual bool canModify(StringBuffer &reason) override { return dfsFile->canModify(reason); }
-    virtual bool canRemove(StringBuffer &reason,bool ignoresub=false) override { return dfsFile->canRemove(reason,ignoresub); }
+    virtual bool canModify(StringBuffer &reason) override
+    {
+        return false;
+    }
+    virtual bool canRemove(StringBuffer &reason,bool ignoresub=false) override
+    {
+        return false;
+    }
     virtual bool checkClusterCompatible(IFileDescriptor &fdesc, StringBuffer &err) override { return dfsFile->checkClusterCompatible(fdesc,err); }
 
     virtual bool getFormatCrc(unsigned &crc) override { return dfsFile->getFormatCrc(crc); }
@@ -412,12 +426,13 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
 
     CDfsLogicalFileName lfn;
     lfn.set(logicalName);
-    StringBuffer svc;
+    StringBuffer svc, remoteName;
     const char *service = nullptr;
     if (lfn.isRemote())
     {
-        if (lfn.getRemoteService(svc))
-            service = svc.str();
+        verifyex(lfn.getRemoteSpec(svc, remoteName));
+        service = svc;
+        logicalName = remoteName;
     }
     if (!service)
     {

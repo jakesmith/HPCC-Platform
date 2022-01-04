@@ -96,7 +96,7 @@ public:
     bool isExternalPlane() const;
     bool isRemote() const;
     bool getExternalPlane(StringBuffer & plane) const;
-    bool getRemoteService(StringBuffer & service) const;
+    bool getRemoteSpec(StringBuffer &remoteSvc, StringBuffer &logicalName) const;
     bool isExternalFile() const;
     bool getExternalHost(StringBuffer & host) const;
     /*

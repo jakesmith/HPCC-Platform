@@ -334,7 +334,7 @@ bool CDfsLogicalFileName::getExternalPlane(StringBuffer & plane) const
 }
 
 
-bool CDfsLogicalFileName::getRemoteService(StringBuffer & remoteSvc) const
+bool CDfsLogicalFileName::getRemoteSpec(StringBuffer &remoteSvc, StringBuffer &logicalName) const
 {
     if (!isRemote())
         return false;
@@ -343,6 +343,7 @@ bool CDfsLogicalFileName::getRemoteService(StringBuffer & remoteSvc) const
     const char * end = strstr(start,"::");
     assertex(end);
     remoteSvc.append(end-start, start);
+    logicalName.append(end+2);
     return true;
 }
 
@@ -769,7 +770,7 @@ bool CDfsLogicalFileName::normalizeExternal(const char * name, StringAttr &res, 
 
     if (startsWithIgnoreCase(name, REMOTE_SCOPE "::"))
     {
-        //Syntax plane::<plane>::<path>
+        //Syntax plane::<remote>::<path>
         lfn.clear();
         StringBuffer str;
         const char *s=strstr(name,"::");

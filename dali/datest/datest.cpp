@@ -1918,32 +1918,189 @@ void TestSDS1()
 
 #if 1
     {
-        const char *logicalName = "~thorfile";
+        const char *logicalName = ".::thorfile";
+
+        if (testParams.ordinality())
+            logicalName = testParams.item(0);
+
+        CDfsLogicalFileName dlfn;
+        dlfn.set(logicalName);
+        logicalName = dlfn.get();
+        StringBuffer svc, remoteName;
+        CDfsLogicalFileName dlfn2;
+        if (!dlfn.getRemoteSpec(svc, remoteName))
+            remoteName.clear().append(logicalName);
+        dlfn2.set(remoteName.str());
+        remoteName.clear().append(dlfn2.get());
+
+        PROGLOG("Reading file: %s, remoteName: %s", logicalName, remoteName.str());
+
         unsigned timeoutSecs = 60;
         unsigned keepAliveExpiryFrequency = 10;
         Owned<IUserDescriptor> userDesc = createUserDescriptor();
         userDesc->set("jsmith", "password");
 
-        Owned<IDFSFile> dfsFile = lookupDFSFile(logicalName, timeoutSecs, keepAliveExpiryFrequency, userDesc);
+        Owned<IDistributedFile> legacyDfsFile;
+        if (dlfn.isRemote())
+        {
+            Owned<IDFSFile> dfsFile = lookupDFSFile(logicalName, timeoutSecs, keepAliveExpiryFrequency, userDesc);
 
-        // I want to ask Esp for this lock.. 
-        // OR rather I want the DFS service to do it for me?
-        // 1st param = lock name (arbitrary, but we'll use canonical file name)
-        // 2nd param = lock type: false = shared read lock, true = exclusive write lock
-        // 3rd param = keep-alive expiry time (in seconds)
-        // serialize lockId along with file meta back to client.
+            // I want to ask Esp for this lock.. 
+            // OR rather I want the DFS service to do it for me?
+            // 1st param = lock name (arbitrary, but we'll use canonical file name)
+            // 2nd param = lock type: false = shared read lock, true = exclusive write lock
+            // 3rd param = keep-alive expiry time (in seconds)
+            // serialize lockId along with file meta back to client.
+            
+            // I am client, prentendig the Esp service has done the above, and I've got back meta+lockid
+
+            /*
+            1) Spawn a keep-alive thread to keep the lockId lock alive.
+            - this thread will send packet through to esp, through to locking engine (dali)
+            - it will handle broken connections and retry if necessary (e.g. if esp's go down)
+            (which might not be so unusual if lock held for a long time)
+            2) 
+            */
+
+            legacyDfsFile.setown(createLegacyDFSFile(dfsFile));
+        }
+        else
+        {
+            legacyDfsFile.setown(queryDistributedFileDirectory().lookup(dlfn, userDesc, false, false, false, nullptr, false));
+        }
+
+        if (!legacyDfsFile)
+        {
+            PROGLOG("Failed to open file: %s", logicalName);
+            return;
+        }
+// IDistributeFile
+        unsigned numParts = legacyDfsFile->numParts();
+        IDistributedFilePart &part0 = legacyDfsFile->queryPart(0);
+        Owned<IDistributedFilePart> part0b = legacyDfsFile->getPart(0);
+        StringBuffer partName;
+        part0b->getPartName(partName);
+        PROGLOG("partName: %s", partName.str());
+        StringBuffer lfn;
+        legacyDfsFile->getLogicalName(lfn);
+        PROGLOG("lfn: %s", lfn.str());
+        verifyex(streq(remoteName, lfn));
+        const char *lfnb = legacyDfsFile->queryLogicalName();
+        verifyex(streq(remoteName, lfnb));
+        Owned<IDistributedFilePartIterator> iter = legacyDfsFile->getIterator();
+        ForEach(*iter)
+        {
+            IDistributedFilePart &part = iter->query();
+            part.getPartName(partName.clear());
+            PROGLOG("partName: %s", partName.str());
+        }
+        Owned<IFileDescriptor> dfsFileDesc = legacyDfsFile->getFileDescriptor();
+        const char *dir = legacyDfsFile->queryDefaultDir();
+        const char *mask = legacyDfsFile->queryPartMask();
+        IPropertyTree &attrs = legacyDfsFile->queryAttributes();
+        legacyDfsFile->lockProperties();
+        legacyDfsFile->unlockProperties();
+        CDateTime dt;
+        legacyDfsFile->getModificationTime(dt);
+        StringBuffer dateString;
+        dt.getString(dateString);
+        PROGLOG("Modification time: %s", dateString.str());
+        legacyDfsFile->getAccessedTime(dt);
+        dt.getString(dateString.clear());
+        PROGLOG("Accessed time: %s", dateString.str());
+        unsigned numCopies = legacyDfsFile->numCopies(0);
+        PROGLOG("numCopies: %d", numCopies);
+        verifyex(legacyDfsFile->existsPhysicalPartFiles(0));
+        __int64 dfsSz = legacyDfsFile->getFileSize(true, true);
+        PROGLOG("dfsSz: %" I64F "d", dfsSz);
+        __int64 diskSz = legacyDfsFile->getDiskSize(true, true);
+        PROGLOG("diskSz: %" I64F "d", diskSz);
+        unsigned checkSum;
+        legacyDfsFile->getFileCheckSum(checkSum);
+        PROGLOG("checkSum: %d", checkSum);
+        offset_t base;
+        legacyDfsFile->getPositionPart(0, base);
+        PROGLOG("base: %" I64F "d", base);
+        IDistributedSuperFile *super = legacyDfsFile->querySuperFile();
+        PROGLOG("isSuper: %s", boolToStr(super!=NULL));
+        Owned<IDistributedSuperFileIterator> ownerIter = legacyDfsFile->getOwningSuperFiles();
+        ForEach(*ownerIter)
+        {
+            IDistributedSuperFile &superFile = ownerIter->query();
+            PROGLOG("superName: %s", superFile.queryLogicalName());
+        }
+        bool compressed = legacyDfsFile->isCompressed();
+        PROGLOG("compressed: %s", boolToStr(compressed));
+        StringBuffer clusterName;
+        legacyDfsFile->getClusterName(0, clusterName);
+        PROGLOG("clusterName: %s", clusterName.str());
+        StringArray clusters;
+        unsigned numClusterNames = legacyDfsFile->getClusterNames(clusters);
+        ForEachItemIn(i, clusters)
+        {
+            PROGLOG("clusterName: %s", clusters.item(i));
+        }
+        unsigned numClusters = legacyDfsFile->numClusters();
+        PROGLOG("numClusters: %d", numClusters);
+        unsigned clusterNamePos = legacyDfsFile->findCluster(clusterName);
+        PROGLOG("clusterNamePos: %d", clusterNamePos);
+        ClusterPartDiskMapSpec &mapSpec = legacyDfsFile->queryPartDiskMapping(0);
+        IGroup *group = legacyDfsFile->queryClusterGroup(0);
+        StringBuffer clusterGroupName;
+        legacyDfsFile->getClusterGroupName(0, clusterGroupName);
+        PROGLOG("clusterGroupName: %s", clusterGroupName.str());
+        StringBuffer ecl;
+        legacyDfsFile->getECL(ecl);
+        PROGLOG("ecl: %s", ecl.str());
+        StringBuffer reason;
+        bool canModify = legacyDfsFile->canModify(reason);
+        PROGLOG("canModify: %s", boolToStr(canModify));
+        bool canRemove = legacyDfsFile->canRemove(reason.clear());
+        PROGLOG("canRemove: %s", boolToStr(canRemove));
+        StringBuffer err;
+        bool compat = legacyDfsFile->checkClusterCompatible(*dfsFileDesc, err);
+        PROGLOG("compat: %s", boolToStr(compat));
+        unsigned crc;
+        legacyDfsFile->getFormatCrc(crc);
+        PROGLOG("crc: %d", crc);
+        size32_t rsz;
+        legacyDfsFile->getRecordSize(rsz);
+        PROGLOG("rsz: %d", rsz);
+        MemoryBuffer layout;
+        legacyDfsFile->getRecordLayout(layout, "_rtlType");
+        StringBuffer mapping;
+        legacyDfsFile->getColumnMapping(mapping);
+        PROGLOG("mapping: %s", mapping.str());
+        bool restricted = legacyDfsFile->isRestrictedAccess();
+        PROGLOG("restricted: %s", boolToStr(restricted));
+        unsigned oldTimeout = legacyDfsFile->setDefaultTimeout(3500);
+        PROGLOG("oldTimeout: %d", oldTimeout);
+        legacyDfsFile->validate();
+
+        IPropertyTree *history = legacyDfsFile->queryHistory();
+        bool isExternal = legacyDfsFile->isExternal();
+        PROGLOG("isExternal: %s", boolToStr(isExternal));
+        unsigned maxSkew, minSkew, maxSkewPart, minSkewPart;
+        legacyDfsFile->getSkewInfo(maxSkew, minSkew, maxSkewPart, minSkewPart, true);
+        PROGLOG("maxSkew: %d", maxSkew);
+        PROGLOG("minSkew: %d", minSkew);
+        PROGLOG("maxSkewPart: %d", maxSkewPart);
+        PROGLOG("minSkewPart: %d", minSkewPart);
+        int expire = legacyDfsFile->getExpire();
+        PROGLOG("expire: %d", expire);
+        try
+        {
+            double cost = legacyDfsFile->getCost(clusterName.str());
+            PROGLOG("cost: %f", cost);
+        }
+        catch(IException *e)
+        {
+            EXCLOG(e);
+            e->Release();
+        }
         
-        // I am client, prentendig the Esp service has done the above, and I've got back meta+lockid
 
-        /*
-        1) Spawn a keep-alive thread to keep the lockId lock alive.
-        - this thread will send packet through to esp, through to locking engine (dali)
-        - it will handle broken connections and retry if necessary (e.g. if esp's go down)
-          (which might not be so unusual if lock held for a long time)
-        2) 
-        */
 
-        Owned<IDistributedFile> legacyDfsFile = createLegacyDFSFile(dfsFile);
         Owned<IFileDescriptor> fileDesc = legacyDfsFile->getFileDescriptor();
         MemoryBuffer mb;
         UnsignedArray parts;

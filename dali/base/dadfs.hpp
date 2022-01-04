@@ -583,7 +583,7 @@ interface IDistributedFileDirectory: extends IInterface
                                         unsigned timeout=INFINITE
                                     ) = 0;  // links, returns NULL if not found
 
-    virtual IDistributedFile *createNew(IFileDescriptor *desc) = 0;
+    virtual IDistributedFile *createNew(IFileDescriptor *desc, const char *optName=nullptr) = 0;
     virtual IDistributedFile *createExternal(IFileDescriptor *desc, const char *name) = 0;
 
     virtual IDistributedFileIterator *getIterator(const char *wildname, bool includesuper, IUserDescriptor *user,bool isPrivilegedUser) = 0;
