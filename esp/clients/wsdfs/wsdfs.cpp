@@ -413,7 +413,8 @@ IClientWsDfs *getDfsClient(const char *serviceEndpoint, const char *user, const 
 {
     // JCSMORE - can I reuse these, are they thread safe (AFishbeck?)
 
-    const char *serviceUrl = "http://localhost:8010/WsDfs";
+    VStringBuffer serviceUrl("http://%s:8010/WsDfs", serviceEndpoint);
+    PROGLOG("Using serviceUrl = %s", serviceUrl.str());
     Owned<IClientWsDfs> dfsClient = createWsDfsClient();
     dfsClient->addServiceUrl(serviceUrl);
     dfsClient->setUsernameToken(user, token, "");
