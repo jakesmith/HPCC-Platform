@@ -120,32 +120,91 @@ public:
 #endif
 
 
-class CServiceDistributeFile : public CSimpleInterfaceOf<IDistributedFile>
+template <class INTERFACE>
+class CServiceDistributedFileBase : public CSimpleInterfaceOf<INTERFACE>
 {
-    Linked<IDFSFile> file;
-    Linked<IPropertyTree> meta;
+protected:
+    Linked<IDFSFile> dfsFile;
+    StringAttr logicalName;
+    Linked<IPropertyTree> fileMeta;
+    Owned<IDistributedFile> legacyDFSFile;
     Owned<IFileDescriptor> fileDesc;
-    Owned<IDistributedFile> dfsFile;
-public:
-    CServiceDistributeFile(IDFSFile *_file) : file(_file)
+
+    class CDistributedSuperFileIterator: public CSimpleInterfaceOf<IDistributedSuperFileIterator>
     {
-        meta.set(file->getFileMeta());
-        fileDesc.setown(deserializeFileDescriptorTree(meta));
-        StringBuffer name;
-        fileDesc->getTraceName(name);
-        dfsFile.setown(queryDistributedFileDirectory().createNew(fileDesc, name));
+        Linked<IDFSFile> source;
+        Owned<IDistributedSuperFile> cur;
+        std::vector<std::string> owners;
+        unsigned which = 0;
+
+        void setCurrent(unsigned w)
+        {
+            VStringBuffer lfn("~remote::%s::%s", source->queryService(), owners[w].c_str());
+            Owned<IDFSFile> dfsFile = lookupDFSFile(lfn, source->queryTimeoutSecs(), keepAliveExpiryFrequency, source->queryUserDescriptor());
+            if (!dfsFile->numSubFiles())
+                throwUnexpected();
+            Owned<IDistributedFile> legacyDFSFile = createLegacyDFSFile(dfsFile);
+            IDistributedSuperFile *super = legacyDFSFile->querySuperFile();
+            assertex(super);
+            cur.set(super);
+        }
+    public:
+        CDistributedSuperFileIterator(IDFSFile *_source, std::vector<std::string> _owners) : source(_source), owners(_owners)
+        {
+        }
+        virtual bool first() override
+        {
+            if (owners.empty())
+                return false;
+            which = 0;
+            setCurrent(which);
+            return true;
+        }
+        virtual bool next() override
+        {
+            if (which == (owners.size()-1))
+            {
+                cur.clear();
+                return false;
+            }
+            ++which;
+            setCurrent(which);
+            return true;
+        }
+        virtual bool isValid() override
+        {
+            return cur != nullptr;
+        }
+        virtual IDistributedSuperFile &query() override
+        {
+            return *cur;
+        }
+        virtual const char *queryName() override
+        {
+            if (!isValid())
+                return nullptr;
+            return owners[which].c_str();
+        }
+    };
+
+public:
+    CServiceDistributedFileBase(IDFSFile *_dfsFile) : dfsFile(_dfsFile)
+    {
+        fileMeta.setown(dfsFile->getFileMeta());
+        dbglogXML(fileMeta, 2);
+        logicalName.set(fileMeta->queryProp("@name"));
     }
-// IDistributeFile
-    virtual unsigned numParts() override { return dfsFile->numParts(); }
-    virtual IDistributedFilePart &queryPart(unsigned idx) override { return dfsFile->queryPart(idx); }
-    virtual IDistributedFilePart* getPart(unsigned idx) override { return dfsFile->getPart(idx); }
-    virtual StringBuffer &getLogicalName(StringBuffer &name) override { return dfsFile->getLogicalName(name); }
-    virtual const char *queryLogicalName() override { return dfsFile->queryLogicalName(); }
-    virtual IDistributedFilePartIterator *getIterator(IDFPartFilter *filter=NULL) override { return dfsFile->getIterator(filter); }
+
+    virtual unsigned numParts() override { return legacyDFSFile->numParts(); }
+    virtual IDistributedFilePart &queryPart(unsigned idx) override { return legacyDFSFile->queryPart(idx); }
+    virtual IDistributedFilePart* getPart(unsigned idx) override { return legacyDFSFile->getPart(idx); }
+    virtual StringBuffer &getLogicalName(StringBuffer &name) override { return legacyDFSFile->getLogicalName(name); }
+    virtual const char *queryLogicalName() override { return legacyDFSFile->queryLogicalName(); }
+    virtual IDistributedFilePartIterator *getIterator(IDFPartFilter *filter=NULL) override { return legacyDFSFile->getIterator(filter); }
     virtual IFileDescriptor *getFileDescriptor(const char *clustername=NULL) override { return fileDesc.getLink(); }
-    virtual const char *queryDefaultDir() override { return dfsFile->queryDefaultDir(); }
-    virtual const char *queryPartMask() override { return dfsFile->queryPartMask(); }
-    virtual IPropertyTree &queryAttributes() override { return dfsFile->queryAttributes(); }
+    virtual const char *queryDefaultDir() override { return legacyDFSFile->queryDefaultDir(); }
+    virtual const char *queryPartMask() override { return legacyDFSFile->queryPartMask(); }
+    virtual IPropertyTree &queryAttributes() override { return legacyDFSFile->queryAttributes(); }
     virtual bool lockProperties(unsigned timeoutms=INFINITE) override
     {
         // TODO: implement. But for now only foreign [read] files are supported, where updates and locking have never been implemented.
@@ -155,45 +214,55 @@ public:
     {
         // TODO: implement. But for now only foreign [read] files are supported, where updates and locking have never been implemented.
     }
-    virtual bool getModificationTime(CDateTime &dt) override { return dfsFile->getModificationTime(dt); }
-    virtual bool getAccessedTime(CDateTime &dt) override { return dfsFile->getAccessedTime(dt); }
-    virtual unsigned numCopies(unsigned partno) override { return dfsFile->numCopies(partno); }
+    virtual bool getModificationTime(CDateTime &dt) override { return legacyDFSFile->getModificationTime(dt); }
+    virtual bool getAccessedTime(CDateTime &dt) override { return legacyDFSFile->getAccessedTime(dt); }
+    virtual unsigned numCopies(unsigned partno) override { return legacyDFSFile->numCopies(partno); }
     virtual bool existsPhysicalPartFiles(unsigned short port) override
     {
-        return dfsFile->existsPhysicalPartFiles(port);
+        return legacyDFSFile->existsPhysicalPartFiles(port);
     }
     virtual __int64 getFileSize(bool allowphysical, bool forcephysical) override
     {
-        return dfsFile->getFileSize(allowphysical, forcephysical);
-        // NB: ignoring allowphysical and forcephysical, because meta data must exist in this implementation.
-        //__int64 ret = (__int64)(forcephysical?-1:queryAttributes().getPropInt64("@size", -1));
-        //verifyex(ret != -1);
-        //return ret;
+        return legacyDFSFile->getFileSize(allowphysical, forcephysical);
     }
     virtual __int64 getDiskSize(bool allowphysical, bool forcephysical) override
     {
-        return dfsFile->getDiskSize(allowphysical, forcephysical);
+        return legacyDFSFile->getDiskSize(allowphysical, forcephysical);
     }
-    virtual bool getFileCheckSum(unsigned &checksum) override { return dfsFile->getFileCheckSum(checksum); }
-    virtual unsigned getPositionPart(offset_t pos,offset_t &base) override { return dfsFile->getPositionPart(pos,base); }
+    virtual bool getFileCheckSum(unsigned &checksum) override { return legacyDFSFile->getFileCheckSum(checksum); }
+    virtual unsigned getPositionPart(offset_t pos,offset_t &base) override { return legacyDFSFile->getPositionPart(pos,base); }
     virtual IDistributedSuperFile *querySuperFile() override
     {
-        return dfsFile->querySuperFile();
-        UNIMPLEMENTED_X("CServiceDistributeFile::querySuperFile");
+        return nullptr;
     }
-    virtual IDistributedSuperFileIterator *getOwningSuperFiles(IDistributedFileTransaction *_transaction=NULL) override { return dfsFile->getOwningSuperFiles(_transaction); }
-    virtual bool isCompressed(bool *blocked=NULL) override { return dfsFile->isCompressed(blocked); }
-    virtual StringBuffer &getClusterName(unsigned clusternum,StringBuffer &name) override { return dfsFile->getClusterName(clusternum,name); }
-    virtual unsigned getClusterNames(StringArray &clusters) override { return dfsFile->getClusterNames(clusters); }                                                                                      // (use findCluster)
-    virtual unsigned numClusters() override { return dfsFile->numClusters(); }
-    virtual unsigned findCluster(const char *clustername) override { return dfsFile->findCluster(clustername); }
-    virtual ClusterPartDiskMapSpec &queryPartDiskMapping(unsigned clusternum) override { return dfsFile->queryPartDiskMapping(clusternum); }
-    virtual IGroup *queryClusterGroup(unsigned clusternum) override { return dfsFile->queryClusterGroup(clusternum); }
+    virtual IDistributedSuperFileIterator *getOwningSuperFiles(IDistributedFileTransaction *transaction=NULL) override
+    {
+        if (transaction)
+            throwUnexpected();
+        Owned<IPropertyTreeIterator> iter = fileMeta->getElements("SuperOwner");
+        std::vector<std::string> superOwners;
+        StringBuffer pname;
+        ForEach(*iter)
+        {
+            iter->query().getProp("@name",pname.clear());
+            if (pname.length())
+                superOwners.push_back(pname.str());
+        }
+
+        return new CDistributedSuperFileIterator(dfsFile, superOwners);
+    }
+    virtual bool isCompressed(bool *blocked=NULL) override { return legacyDFSFile->isCompressed(blocked); }
+    virtual StringBuffer &getClusterName(unsigned clusternum,StringBuffer &name) override { return legacyDFSFile->getClusterName(clusternum,name); }
+    virtual unsigned getClusterNames(StringArray &clusters) override { return legacyDFSFile->getClusterNames(clusters); }                                                                                      // (use findCluster)
+    virtual unsigned numClusters() override { return legacyDFSFile->numClusters(); }
+    virtual unsigned findCluster(const char *clustername) override { return legacyDFSFile->findCluster(clustername); }
+    virtual ClusterPartDiskMapSpec &queryPartDiskMapping(unsigned clusternum) override { return legacyDFSFile->queryPartDiskMapping(clusternum); }
+    virtual IGroup *queryClusterGroup(unsigned clusternum) override { return legacyDFSFile->queryClusterGroup(clusternum); }
     virtual StringBuffer &getClusterGroupName(unsigned clusternum, StringBuffer &name) override
     {
         return fileDesc->getClusterGroupName(clusternum, name);
     }
-    virtual StringBuffer &getECL(StringBuffer &buf) override { return dfsFile->getECL(buf); }
+    virtual StringBuffer &getECL(StringBuffer &buf) override { return legacyDFSFile->getECL(buf); }
 
     virtual bool canModify(StringBuffer &reason) override
     {
@@ -203,54 +272,32 @@ public:
     {
         return false;
     }
-    virtual bool checkClusterCompatible(IFileDescriptor &fdesc, StringBuffer &err) override { return dfsFile->checkClusterCompatible(fdesc,err); }
+    virtual bool checkClusterCompatible(IFileDescriptor &fdesc, StringBuffer &err) override { return legacyDFSFile->checkClusterCompatible(fdesc,err); }
 
-    virtual bool getFormatCrc(unsigned &crc) override { return dfsFile->getFormatCrc(crc); }
-    virtual bool getRecordSize(size32_t &rsz) override { return dfsFile->getRecordSize(rsz); }
-    virtual bool getRecordLayout(MemoryBuffer &layout, const char *attrname) override { return dfsFile->getRecordLayout(layout,attrname); }
-    virtual StringBuffer &getColumnMapping(StringBuffer &mapping) override { return dfsFile->getColumnMapping(mapping); }
+    virtual bool getFormatCrc(unsigned &crc) override { return legacyDFSFile->getFormatCrc(crc); }
+    virtual bool getRecordSize(size32_t &rsz) override { return legacyDFSFile->getRecordSize(rsz); }
+    virtual bool getRecordLayout(MemoryBuffer &layout, const char *attrname) override { return legacyDFSFile->getRecordLayout(layout,attrname); }
+    virtual StringBuffer &getColumnMapping(StringBuffer &mapping) override { return legacyDFSFile->getColumnMapping(mapping); }
 
-    virtual bool isRestrictedAccess() override { return dfsFile->isRestrictedAccess(); }
-    virtual unsigned setDefaultTimeout(unsigned timems) override { return dfsFile->setDefaultTimeout(timems); }
+    virtual bool isRestrictedAccess() override { return legacyDFSFile->isRestrictedAccess(); }
+    virtual unsigned setDefaultTimeout(unsigned timems) override { return legacyDFSFile->setDefaultTimeout(timems); }
 
-    virtual void validate() override { dfsFile->validate(); }
+    virtual void validate() override { legacyDFSFile->validate(); }
 
-    virtual IPropertyTree *queryHistory() const override { return dfsFile->queryHistory(); }
+    virtual IPropertyTree *queryHistory() const override { return legacyDFSFile->queryHistory(); }
     virtual bool isExternal() const override { return false; }
-    virtual bool getSkewInfo(unsigned &maxSkew, unsigned &minSkew, unsigned &maxSkewPart, unsigned &minSkewPart, bool calculateIfMissing) override { return dfsFile->getSkewInfo(maxSkew, minSkew, maxSkewPart, minSkewPart, calculateIfMissing); }
-    virtual int  getExpire() override { return dfsFile->getExpire(); }
-    virtual double getCost(const char * cluster) override { return dfsFile->getCost(cluster); }
+    virtual bool getSkewInfo(unsigned &maxSkew, unsigned &minSkew, unsigned &maxSkewPart, unsigned &minSkewPart, bool calculateIfMissing) override { return legacyDFSFile->getSkewInfo(maxSkew, minSkew, maxSkewPart, minSkewPart, calculateIfMissing); }
+    virtual int getExpire() override { return legacyDFSFile->getExpire(); }
+    virtual double getCost(const char * cluster) override { return legacyDFSFile->getCost(cluster); }
 
-//////////////
-
-    virtual bool renamePhysicalPartFiles(const char *newlfn,const char *cluster=NULL,IMultiException *exceptions=NULL,const char *newbasedir=NULL) override
-    {
-        UNIMPLEMENTED_X("CServiceDistributeFile::renamePhysicalPartFiles");
-    }
-    virtual void rename(const char *logicalname,IUserDescriptor *user) override
-    {
-        UNIMPLEMENTED_X("CServiceDistributeFile::rename");
-    }
-    virtual void attach(const char *logicalname,IUserDescriptor *user) override
-    {
-        UNIMPLEMENTED_X("CServiceDistributeFile::rename");
-    }
-    virtual void detach(unsigned timeoutms=INFINITE, ICodeContext *ctx=NULL) override
-    {
-        UNIMPLEMENTED_X("CServiceDistributeFile::detach");
-    }
-    virtual void enqueueReplicate()
-    {
-        UNIMPLEMENTED_X("CServiceDistributeFile::enqueueReplicate");
-    }
 
 
 // setters (change file meta data)
-    virtual void setPreferredClusters(const char *clusters) override { dfsFile->setPreferredClusters(clusters); }
-    virtual void setSingleClusterOnly() override { dfsFile->setSingleClusterOnly(); }
-    virtual void addCluster(const char *clustername,const ClusterPartDiskMapSpec &mspec) override { dfsFile->addCluster(clustername, mspec); }
-    virtual bool removeCluster(const char *clustername) override { return dfsFile->removeCluster(clustername); }
-    virtual void updatePartDiskMapping(const char *clustername,const ClusterPartDiskMapSpec &spec) override { dfsFile->updatePartDiskMapping(clustername, spec); }
+    virtual void setPreferredClusters(const char *clusters) override { legacyDFSFile->setPreferredClusters(clusters); }
+    virtual void setSingleClusterOnly() override { legacyDFSFile->setSingleClusterOnly(); }
+    virtual void addCluster(const char *clustername,const ClusterPartDiskMapSpec &mspec) override { legacyDFSFile->addCluster(clustername, mspec); }
+    virtual bool removeCluster(const char *clustername) override { return legacyDFSFile->removeCluster(clustername); }
+    virtual void updatePartDiskMapping(const char *clustername,const ClusterPartDiskMapSpec &spec) override { legacyDFSFile->updatePartDiskMapping(clustername, spec); }
 
     virtual void setModificationTime(const CDateTime &dt) override
     {
@@ -296,17 +343,144 @@ public:
     {
         // TBD
     }
+    virtual bool renamePhysicalPartFiles(const char *newlfn,const char *cluster=NULL,IMultiException *exceptions=NULL,const char *newbasedir=NULL) override
+    {
+        UNIMPLEMENTED_X("CServiceDistributedFile::renamePhysicalPartFiles");
+    }
+    virtual void rename(const char *logicalname,IUserDescriptor *user) override
+    {
+        UNIMPLEMENTED_X("CServiceDistributedFile::rename");
+    }
+    virtual void attach(const char *logicalname,IUserDescriptor *user) override
+    {
+        UNIMPLEMENTED_X("CServiceDistributedFile::rename");
+    }
+    virtual void detach(unsigned timeoutms=INFINITE, ICodeContext *ctx=NULL) override
+    {
+        UNIMPLEMENTED_X("CServiceDistributedFile::detach");
+    }
+    virtual void enqueueReplicate() override
+    {
+        UNIMPLEMENTED_X("CServiceDistributedFile::enqueueReplicate");
+    }
 };
 
+class CServiceDistributedFile : public CServiceDistributedFileBase<IDistributedFile>
+{
+    typedef CServiceDistributedFileBase<IDistributedFile> PARENT;
+public:
+    CServiceDistributedFile(IDFSFile *_dfsFile) : PARENT(_dfsFile)
+    {
+        fileDesc.setown(deserializeFileDescriptorTree(fileMeta));
+        if (fileDesc)
+            fileDesc->setTraceName(logicalName);
+        legacyDFSFile.setown(queryDistributedFileDirectory().createNew(fileDesc, logicalName));
+    }    
+};
+
+class CServiceSuperDistributedFile : public CServiceDistributedFileBase<IDistributedSuperFile>
+{
+    typedef CServiceDistributedFileBase<IDistributedSuperFile> PARENT;
+    Owned<IDistributedSuperFile> legacyDFSSuperFile;
+
+public:
+    CServiceSuperDistributedFile(IDFSFile *_dfsFile) : PARENT(_dfsFile)
+    {
+        IArrayOf<IDistributedFile> subFiles;
+        unsigned subs = dfsFile->numSubFiles();
+        for (unsigned s=0; s<subs; s++)
+        {
+            Owned<IDFSFile> subFile = dfsFile->getSubFile(s);
+            Owned<IDistributedFile> legacyDFSFile = createLegacyDFSFile(subFile);
+            subFiles.append(*legacyDFSFile.getClear());
+        }
+        legacyDFSSuperFile.setown(queryDistributedFileDirectory().createNewSuperFile(fileMeta, logicalName, &subFiles));
+        legacyDFSFile.set(legacyDFSSuperFile);
+        fileDesc.setown(legacyDFSSuperFile->getFileDescriptor());
+    }
+// IDistributedFile overrides
+    virtual IDistributedSuperFile *querySuperFile() override
+    {
+        return this;
+    }
+
+// IDistributedSuperFile overrides
+    virtual IDistributedFile &querySubFile(unsigned idx,bool sub) override
+    {
+        return legacyDFSSuperFile->querySubFile(idx, sub);
+    }
+    virtual IDistributedFile *querySubFileNamed(const char *name, bool sub) override
+    {
+        return legacyDFSSuperFile->querySubFileNamed(name, sub);
+    }
+    virtual IDistributedFile *getSubFile(unsigned idx,bool sub) override
+    {
+        return legacyDFSSuperFile->getSubFile(idx, sub);
+    }
+    virtual unsigned numSubFiles(bool sub) override
+    {
+        return legacyDFSSuperFile->numSubFiles(sub);
+    }
+    virtual bool isInterleaved() override
+    {
+        return legacyDFSSuperFile->isInterleaved();
+    }
+    virtual IDistributedFile *querySubPart(unsigned partidx,unsigned &subfileidx) override
+    {
+        return legacyDFSSuperFile->querySubPart(partidx, subfileidx);
+    }
+    virtual unsigned getPositionPart(offset_t pos, offset_t &base) override
+    {
+        return legacyDFSSuperFile->getPositionPart(pos, base);
+    }
+    virtual IDistributedFileIterator *getSubFileIterator(bool supersub=false) override
+    {
+        return legacyDFSSuperFile->getSubFileIterator(supersub);
+    }
+
+// IDistributedSuperFile
+    virtual void addSubFile(const char *subfile, bool before=false, const char *other=NULL, bool addcontents=false, IDistributedFileTransaction *transaction=NULL) override
+    {
+        UNIMPLEMENTED_X("CServiceSuperDistributedFile::addSubFile");        
+    }
+    virtual bool removeSubFile(const char *subfile, bool remsub, bool remcontents=false, IDistributedFileTransaction *transaction=NULL) override
+    {
+        UNIMPLEMENTED_X("CServiceSuperDistributedFile::removeSubFile");        
+    }
+    virtual bool removeOwnedSubFiles(bool remsub, IDistributedFileTransaction *transaction=NULL) override
+    {
+        UNIMPLEMENTED_X("CServiceSuperDistributedFile::removeOwnedSubFiles");        
+    }
+    virtual bool swapSuperFile( IDistributedSuperFile *_file, IDistributedFileTransaction *transaction) override
+    {
+        UNIMPLEMENTED_X("CServiceSuperDistributedFile::swapSuperFile");        
+    }
+};
+
+static IDFSFile *createDFSFile(IPropertyTree *meta, const char *service, unsigned timeoutSecs, IUserDescriptor *userDesc);
 class CDFSFile : public CSimpleInterfaceOf<IDFSFile>
 {
     Linked<IPropertyTree> fileMeta;
     unsigned __int64 lockId;
-    unsigned keepAlivePeriod;
+    std::vector<Owned<IDFSFile>> subFiles;
+    StringAttr service;
+    unsigned timeoutSecs;
+    Linked<IUserDescriptor> userDesc;
 
 public:
-    CDFSFile(IPropertyTree *_fileMeta, unsigned __int64 _lockId, unsigned _keepAlivePeriod) : fileMeta(_fileMeta), lockId(_lockId), keepAlivePeriod(_keepAlivePeriod)
+    CDFSFile(IPropertyTree *_fileMeta, const char *_service, unsigned _timeoutSecs, IUserDescriptor *_userDesc)
+        : fileMeta(_fileMeta), service(_service), timeoutSecs(_timeoutSecs), userDesc(_userDesc)
     {
+        lockId = fileMeta->getPropInt64("@lockId");
+        if (fileMeta->getPropBool("@isSuper"))
+        {
+            Owned<IPropertyTreeIterator> iter = fileMeta->getElements("File");
+            ForEach(*iter)
+            {
+                IPropertyTree &subMeta = iter->query();
+                subFiles.push_back(createDFSFile(&subMeta, service, timeoutSecs, userDesc));
+            }
+        }
     }
     virtual IPropertyTree *getFileMeta() const override
     {
@@ -316,7 +490,32 @@ public:
     {
         return lockId;
     }
+    virtual unsigned numSubFiles() const override
+    {
+        return (unsigned)subFiles.size();
+    }
+    virtual IDFSFile *getSubFile(unsigned idx) const override
+    {
+        return LINK(subFiles[idx]);
+    }
+    virtual const char *queryService() const override
+    {
+        return service;
+    }
+    virtual IUserDescriptor *queryUserDescriptor() const override
+    {
+        return userDesc.getLink();
+    }
+    virtual unsigned queryTimeoutSecs() const override
+    {
+        return timeoutSecs;
+    }
 };
+
+static IDFSFile *createDFSFile(IPropertyTree *meta, const char *service, unsigned timeoutSecs, IUserDescriptor *userDesc)
+{
+    return new CDFSFile(meta, service, timeoutSecs, userDesc);
+}
 
 #if 0
 static const char *getEspServiceURL(IConstWorkUnit * wu)
@@ -409,7 +608,7 @@ static const char *getEspServiceURL(IConstWorkUnit * wu)
 }
 #endif
 
-IClientWsDfs *getDfsClient(const char *serviceEndpoint, const char *user, const char *token)
+IClientWsDfs *getDfsClient(const char *serviceEndpoint, IUserDescriptor *userDesc)
 {
     // JCSMORE - can I reuse these, are they thread safe (AFishbeck?)
 
@@ -417,14 +616,15 @@ IClientWsDfs *getDfsClient(const char *serviceEndpoint, const char *user, const 
     PROGLOG("Using serviceUrl = %s", serviceUrl.str());
     Owned<IClientWsDfs> dfsClient = createWsDfsClient();
     dfsClient->addServiceUrl(serviceUrl);
+    StringBuffer user, token;
+    userDesc->getUserName(user),
+    userDesc->getPassword(token);
     dfsClient->setUsernameToken(user, token, "");
     return dfsClient.getClear();
 }
 
-IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, const char *user, const char *token)
+IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc)
 {
-    // NB: logicalName can have an option postfix @cluster
-
     CDfsLogicalFileName lfn;
     lfn.set(logicalName);
     StringBuffer svc, remoteName;
@@ -441,7 +641,7 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
         service = "localhost";
     }
 
-    Owned<IClientWsDfs> dfsClient = getDfsClient(service, user, token);
+    Owned<IClientWsDfs> dfsClient = getDfsClient(service, userDesc);
 
     Owned<IClientDFSFileLookupResponse> dfsResp;
 
@@ -468,10 +668,10 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
             MemoryBuffer decompressedRespMb;
             fastLZDecompressToBuffer(decompressedRespMb, compressedRespMb);
             Owned<IPropertyTree> resp = createPTree(decompressedRespMb);
-            unsigned __int64 lockId = resp->getPropInt64("@lockId");
-            unsigned keepAlivePeriod = resp->getPropInt("@keepAlivePeriod");
+            unsigned __int64 lockId = resp->getPropInt64("@leaseId"); // TBD
+            unsigned keepAlivePeriod = resp->getPropInt("@keepAlivePeriod"); // TBD
             dbglogXML(resp, 2);
-            return new CDFSFile(resp->queryPropTree("FileMeta"), resp->getPropInt64("@LockId"), resp->getPropInt("@keepAlivePeriod"));
+            return createDFSFile(resp->queryPropTree("File"), service, timeoutSecs, userDesc);
         }
         catch (IException *e)
         {
@@ -487,31 +687,28 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
             throw makeStringExceptionV(0, "DFSFileLookup timed out: file=%s, timeoutSecs=%u", logicalName, timeoutSecs);
         Sleep(5000); // sanity sleep
     }
-
-    return 0; // placeholder
 }
 
-IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc)
+IDistributedFile *createLegacyDFSSuperFile(IDFSFile *dfsFile)
 {
-    StringBuffer user, password;
-    return lookupDFSFile(logicalName, timeoutSecs, keepAliveExpiryFrequency, userDesc->getUserName(user), userDesc->getPassword(user));
+    Owned<IPropertyTree> fileMeta = dfsFile->getFileMeta();
+    assertex(fileMeta->hasProp("SuperFile"));
+    return new CServiceSuperDistributedFile(dfsFile);
 }
 
 IDistributedFile *createLegacyDFSFile(IDFSFile *dfsFile)
 {
-    return new CServiceDistributeFile(dfsFile);
-}
-
-IDistributedFile *lookupLegacyDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, const char *user, const char *token)
-{
-    Owned<IDFSFile> dfsFile = lookupDFSFile(logicalName, timeoutSecs, keepAliveExpiryFrequency, user, token);
-    return new CServiceDistributeFile(dfsFile);
+    Owned<IPropertyTree> fileMeta = dfsFile->getFileMeta();
+    if (fileMeta->getPropBool("@isSuper"))
+        return new CServiceSuperDistributedFile(dfsFile);
+    else
+        return new CServiceDistributedFile(dfsFile);
 }
 
 IDistributedFile *lookupLegacyDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc)
 {
     Owned<IDFSFile> dfsFile = lookupDFSFile(logicalName, timeoutSecs, keepAliveExpiryFrequency, userDesc);
-    return new CServiceDistributeFile(dfsFile);
+    return createLegacyDFSFile(dfsFile);
 }
 
 

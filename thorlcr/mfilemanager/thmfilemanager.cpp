@@ -318,8 +318,7 @@ public:
         {
             auto func = [&job, &lfn, write, privilegedUser](unsigned timeout)
             {
-                static constexpr unsigned keepAliveExpiryFrequency = 30;
-                return wsdfs::lookupLegacyDFSFile(lfn.get(), timeout, keepAliveExpiryFrequency, job.queryUserDescriptor());
+                return wsdfs::lookupLegacyDFSFile(lfn.get(), timeout, wsdfs::keepAliveExpiryFrequency, job.queryUserDescriptor());
             };
             return blockReportFunc<IDistributedFile *>(job, func, timeout, blockedMsg);
         }

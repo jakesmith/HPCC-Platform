@@ -31,16 +31,23 @@
 namespace wsdfs
 {
 
+static constexpr unsigned keepAliveExpiryFrequency = 30; // may want to make configurable at some point
+
 interface IDFSFile : extends IInterface
 {
     virtual IPropertyTree *getFileMeta() const = 0;
     virtual unsigned __int64 getLockId() const = 0;
+    virtual unsigned numSubFiles() const = 0; // >0 implies this is a superfile
+    virtual IDFSFile *getSubFile(unsigned idx) const = 0;
+
+// there are here in case a client wants to use them to lookup a related file.
+    virtual const char *queryService() const = 0;
+    virtual IUserDescriptor *queryUserDescriptor() const = 0;
+    virtual unsigned queryTimeoutSecs() const = 0;
 };
 
-WSDFS_API IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, const char *user, const char *token);
 WSDFS_API IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
 WSDFS_API IDistributedFile *createLegacyDFSFile(IDFSFile *dfsFile);
-WSDFS_API IDistributedFile *lookupLegacyDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, const char *user, const char *token);
 WSDFS_API IDistributedFile *lookupLegacyDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
 
 } // end of namespace wsdfs

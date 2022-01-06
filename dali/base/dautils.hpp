@@ -545,4 +545,6 @@ extern da_decl void setMaxPageCacheItems(unsigned _maxPageCacheItems);
 extern da_decl IRemoteConnection* connectXPathOrFile(const char* path, bool safe, StringBuffer& xpath);
 extern da_decl bool expandExternalPath(StringBuffer &dir, StringBuffer &tail, const char * filename, const char * s, bool iswin, IException **e);
 
+extern da_decl void testDFSFile(IDistributedFile *legacyDfsFile, const char *logicalName);
+
 #endif

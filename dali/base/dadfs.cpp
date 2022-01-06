@@ -1020,34 +1020,6 @@ public:
 
 };
 
-
-// Internal extension of transaction interface, used to manipulate and track transaction
-interface IDistributedFileTransactionExt : extends IDistributedFileTransaction
-{
-    virtual IUserDescriptor *queryUser()=0;
-    virtual void descend()=0;  // descend into a recursive call (can't autoCommit if depth is not zero)
-    virtual void ascend()=0;   // ascend back from the deep, one step at a time
-    virtual void autoCommit()=0; // if transaction not active, commit straight away
-    virtual void addAction(CDFAction *action)=0;
-    virtual void addFile(IDistributedFile *file)=0;
-    virtual void ensureFile(IDistributedFile *file)=0;
-    virtual void clearFile(IDistributedFile *file)=0;
-    virtual void clearFiles()=0;
-    virtual void noteAddSubFile(IDistributedSuperFile *super, const char *superName, IDistributedFile *sub) = 0;
-    virtual void noteRemoveSubFile(IDistributedSuperFile *super, IDistributedFile *sub) = 0;
-    virtual void noteSuperSwap(IDistributedSuperFile *super1, IDistributedSuperFile *super2) = 0;
-    virtual void clearSubFiles(IDistributedSuperFile *super) = 0;
-    virtual void noteRename(IDistributedFile *file, const char *newName) = 0;
-    virtual void validateAddSubFile(IDistributedSuperFile *super, IDistributedFile *sub, const char *subName) = 0;
-    virtual bool isSubFile(IDistributedSuperFile *super, const char *subFile, bool sub) = 0;
-    virtual bool addDelayedDelete(CDfsLogicalFileName &lfn,unsigned timeoutms=INFINITE)=0; // used internally to delay deletes until commit
-    virtual bool prepareActions()=0;
-    virtual void retryActions()=0;
-    virtual void runActions()=0;
-    virtual void commitAndClearup()=0;
-    virtual ICodeContext *queryCodeContext()=0;
-};
-
 class CDistributedFileDirectory: implements IDistributedFileDirectory, public CInterface
 {
     Owned<IUserDescriptor> defaultudesc;
@@ -1082,7 +1054,7 @@ public:
     IDistributedFile *createNew(IFileDescriptor * fdesc, const char *optName=nullptr);
     IDistributedFile *createExternal(IFileDescriptor *desc, const char *name);
     IDistributedSuperFile *createSuperFile(const char *logicalname,IUserDescriptor *user,bool interleaved,bool ifdoesnotexist,IDistributedFileTransaction *transaction=NULL);
-    IDistributedSuperFile *createNewSuperFile(IPropertyTree *tree, const char *optionalName=nullptr);
+    IDistributedSuperFile *createNewSuperFile(IPropertyTree *tree, const char *optionalName=nullptr, IArrayOf<IDistributedFile> *subFiles=nullptr);
     void removeSuperFile(const char *_logicalname, bool delSubs, IUserDescriptor *user, IDistributedFileTransaction *transaction);
 
     IDistributedFileIterator *getIterator(const char *wildname, bool includesuper,IUserDescriptor *user,bool isPrivilegedUser);
@@ -5569,11 +5541,16 @@ public:
         updateFileAttrs();
     }
 
-    CDistributedSuperFile(CDistributedFileDirectory *_parent, IPropertyTree *_root, const char *optionalName)
+    CDistributedSuperFile(CDistributedFileDirectory *_parent, IPropertyTree *_root, const char *optionalName, IArrayOf<IDistributedFile> *subFiles)
     {
         commonInit(_parent, _root);
         if (optionalName)
             logicalName.set(optionalName);
+        if (subFiles)
+        {
+            ForEachItemIn(i,*subFiles)
+                subfiles.append(OLINK(subFiles->item(i)));
+        }
     }
 
     ~CDistributedSuperFile()
@@ -6599,11 +6576,17 @@ public:
             ForEachItemIn(i,subfiles) {
                 StringArray clusters;
                 IDistributedFile &f=subfiles.item(i);
+                Owned<IFileDescriptor> fdesc = f.getFileDescriptor();
                 unsigned nc = f.numClusters();
                 for(unsigned j=0;j<nc;j++) {
                     f.getClusterName(j,name.clear());
-                    if (clusterscache.find(name.str())==NotFound) {
+                    if (clusterscache.find(name.str())==NotFound)
+                    {
+#if 1
+                        IClusterInfo &cluster = OLINK(*fdesc->queryClusterNum(j));
+#else
                         IClusterInfo &cluster = *createClusterInfo(name.str(),f.queryClusterGroup(j),f.queryPartDiskMapping(j),&queryNamedGroupStore());
+#endif
                         clusterscache.append(cluster);
                     }
                 }
@@ -8532,9 +8515,9 @@ IDistributedSuperFile *CDistributedFileDirectory::createSuperFile(const char *_l
 }
 
 // MORE: This should be implemented in DFSAccess later on
-IDistributedSuperFile *CDistributedFileDirectory::createNewSuperFile(IPropertyTree *tree, const char *optionalName)
+IDistributedSuperFile *CDistributedFileDirectory::createNewSuperFile(IPropertyTree *tree, const char *optionalName, IArrayOf<IDistributedFile> *subFiles)
 {
-    return new CDistributedSuperFile(this, tree, optionalName);
+    return new CDistributedSuperFile(this, tree, optionalName, subFiles);
 }
 
 // MORE: This should be implemented in DFSAccess later on

@@ -305,6 +305,35 @@ interface IDistributedFileTransaction: extends IInterface
     virtual IDistributedSuperFile *lookupSuperFile(const char *slfn,unsigned timeout=INFINITE)=0;
 };
 
+// Internal extension of transaction interface, used to manipulate and track transaction
+interface ICodeContext;
+interface IDistributedFileTransactionExt : extends IDistributedFileTransaction
+{
+    virtual IUserDescriptor *queryUser()=0;
+    virtual void descend()=0;  // descend into a recursive call (can't autoCommit if depth is not zero)
+    virtual void ascend()=0;   // ascend back from the deep, one step at a time
+    virtual void autoCommit()=0; // if transaction not active, commit straight away
+    virtual void addAction(CDFAction *action)=0;
+    virtual void addFile(IDistributedFile *file)=0;
+    virtual void ensureFile(IDistributedFile *file)=0;
+    virtual void clearFile(IDistributedFile *file)=0;
+    virtual void clearFiles()=0;
+    virtual void noteAddSubFile(IDistributedSuperFile *super, const char *superName, IDistributedFile *sub) = 0;
+    virtual void noteRemoveSubFile(IDistributedSuperFile *super, IDistributedFile *sub) = 0;
+    virtual void noteSuperSwap(IDistributedSuperFile *super1, IDistributedSuperFile *super2) = 0;
+    virtual void clearSubFiles(IDistributedSuperFile *super) = 0;
+    virtual void noteRename(IDistributedFile *file, const char *newName) = 0;
+    virtual void validateAddSubFile(IDistributedSuperFile *super, IDistributedFile *sub, const char *subName) = 0;
+    virtual bool isSubFile(IDistributedSuperFile *super, const char *subFile, bool sub) = 0;
+    virtual bool addDelayedDelete(CDfsLogicalFileName &lfn,unsigned timeoutms=INFINITE)=0; // used internally to delay deletes until commit
+    virtual bool prepareActions()=0;
+    virtual void retryActions()=0;
+    virtual void runActions()=0;
+    virtual void commitAndClearup()=0;
+    virtual ICodeContext *queryCodeContext()=0;
+};
+
+
 interface IDistributedSuperFileIterator: extends IIteratorOf<IDistributedSuperFile>
 {
     virtual const char *queryName() = 0;
@@ -608,7 +637,7 @@ interface IDistributedFileDirectory: extends IInterface
     virtual IFileDescriptor *getFileDescriptor(const char *lname,IUserDescriptor *user,const INode *foreigndali=NULL, unsigned foreigndalitimeout=FOREIGN_DALI_TIMEOUT) =0;
 
     virtual IDistributedSuperFile *createSuperFile(const char *logicalname,IUserDescriptor *user,bool interleaved,bool ifdoesnotexist=false,IDistributedFileTransaction *transaction=NULL) = 0;
-    virtual IDistributedSuperFile *createNewSuperFile(IPropertyTree *tree, const char *optionamName=nullptr) = 0;
+    virtual IDistributedSuperFile *createNewSuperFile(IPropertyTree *tree, const char *optionamName=nullptr, IArrayOf<IDistributedFile> *subFiles=nullptr) = 0;
     virtual IDistributedSuperFile *lookupSuperFile(const char *logicalname,IUserDescriptor *user,
                                                     IDistributedFileTransaction *transaction=NULL, // transaction only used for looking up sub files
                                                     unsigned timeout=INFINITE) = 0;  // NB lookup will also return superfiles

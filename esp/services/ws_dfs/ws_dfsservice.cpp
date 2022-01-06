@@ -33,32 +33,71 @@
 
 using namespace wsdfs;
 
-static IPropertyTree *getLFNMetaData(const char *logicalName)
+// all fake for now
+static std::atomic<unsigned __int64> nextLockID{0};
+static unsigned __int64 getLockId(unsigned __int64 leaseId)
 {
-    /*
-        A bit kludgy for now, getting file meta data (can be super), from Dali and then getting
-        specific copy (cluster) if specified.
-        Then return serialized property tree.
+    return ++nextLockID;
+}
 
-        At some point, it could get this info. from somewhere other than Dali
-        + be more streamlined / fit-for-purpose.
-    */
-    Owned<IFileDescriptor> fileDesc = queryDistributedFileDirectory().getFileDescriptor(logicalName, nullptr);
-    if (!fileDesc)
-        throw makeStringExceptionV(ECLWATCH_FILE_NOT_EXIST, "File %s does not exist.", logicalName);
-    StringBuffer cluster;
+static void populateLFNMeta(const char *logicalName, unsigned __int64 leaseId, IPropertyTree *meta)
+{
+    Owned<IPropertyTree> tree = queryDistributedFileDirectory().getFileTree(logicalName, nullptr);
     CDfsLogicalFileName lfn;
     lfn.set(logicalName);
-    if (lfn.getCluster(cluster).length())
+    if (lfn.isForeign())
+        ThrowStringException(-1, "foreign file %s. Not supported", logicalName);
+
+    assertex(!lfn.isMulti()); // not supported, don't think needs to be/will be.
+
+    bool isSuper = streq(tree->queryName(), queryDfsXmlBranchName(DXB_SuperFile));
+
+    IPropertyTree *file = meta->addPropTree("File", tree.getClear());
+    file->setProp("@name", logicalName);
+
+    // 1) establish lock 1st
+    unsigned __int64 lockId = getLockId(leaseId);
+    file->setPropInt64("@lockId", lockId);
+
+    if (isSuper)
     {
-        StringArray clusters;
-        clusters.append(cluster);
-        fileDesc->setClusterOrder(clusters, true);
+        file->setPropBool("@isSuper", true);
+        unsigned n = file->getPropInt("@numsubfiles");
+        if (n)
+        {
+            Owned<IPropertyTreeIterator> subit = file->getElements("SubFile");
+            // Adding a sub 'before' another get the list out of order (but still valid)
+            OwnedMalloc<IPropertyTree *> orderedSubFiles(n, true);
+            ForEach (*subit)
+            {
+                IPropertyTree &sub = subit->query();
+                unsigned sn = sub.getPropInt("@num",0);
+                if (sn == 0)
+                    ThrowStringException(-1, "CDistributedSuperFile: SuperFile %s: bad subfile part number %d of %d", logicalName, sn, n);
+                if (sn > n)
+                    ThrowStringException(-1, "CDistributedSuperFile: SuperFile %s: out-of-range subfile part number %d of %d", logicalName, sn, n);
+                if (orderedSubFiles[sn-1])
+                    ThrowStringException(-1, "CDistributedSuperFile: SuperFile %s: duplicated subfile part number %d of %d", logicalName, sn, n);
+                orderedSubFiles[sn-1] = &sub;
+            }
+            for (unsigned i=0; i<n; i++)
+            {
+                if (!orderedSubFiles[i])
+                    ThrowStringException(-1, "CDistributedSuperFile: SuperFile %s: missing subfile part number %d of %d", logicalName, i+1, n);
+            }
+            StringBuffer subname;
+            for (unsigned f=0; f<n; f++)
+            {
+                IPropertyTree &sub = *(orderedSubFiles[f]);
+                sub.getProp("@name", subname.clear());
+                populateLFNMeta(subname, leaseId, file);
+            }
+            for (unsigned f=0; f<n; f++)
+                file->removeTree(orderedSubFiles[f]);
+        }
     }
-    Owned<IPropertyTree> fileMetaInfo = createPTree();
-    fileDesc->serializeTree(*fileMetaInfo);
-    return fileMetaInfo.getClear();
 }
+
 
 void CWsDfsEx::init(IPropertyTree *cfg, const char *process, const char *service)
 {
@@ -101,19 +140,16 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
         // LDAP scope check
         checkLogicalName(logicalName, userDesc, true, false, false, nullptr); // check for read permissions
 
-        unsigned timeoutSecs = req.getRequestTimeout();
+        unsigned timeoutSecs = req.getRequestTimeout(); // TBD
 
-        // 1) establish lock 1st
-        unsigned __int64 lockId = 1; // fake! Need to get real lock id from Dali
+        unsigned __int64 leaseId = 1; // fake! Need to get real lease id from Dali
 
-        // 2) get file meta data
-        Owned<IPropertyTree> fileMetaInfo = getLFNMetaData(logicalName);
-
+        // populate file meta data and lock id's
         Owned<IPropertyTree> responseTree = createPTree();
-        responseTree->setPropTree("FileMeta", fileMetaInfo.getClear());
-        responseTree->setPropInt64("@lockId", lockId);
+        responseTree->setPropInt64("@leaseId", leaseId);
+        populateLFNMeta(logicalName, leaseId, responseTree);
 
-        // 3) serialize to blob
+        // serialize response
         MemoryBuffer respMb, compressedRespMb;
         responseTree->serialize(respMb);
         fastLZCompressToBuffer(compressedRespMb, respMb.length(), respMb.bytes());
@@ -121,7 +157,7 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
         JBASE64_Encode(compressedRespMb.bytes(), compressedRespMb.length(), respStr, false);
         resp.setMeta(respStr.str());
 
-        // 4) update file access.
+        // update file access.
         //    Really this should be done at end (or at end as well), but this is same as existing DFS lookup.
         CDateTime dt;
         dt.setNow();
