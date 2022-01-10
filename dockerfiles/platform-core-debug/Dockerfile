@@ -30,11 +30,14 @@ ENV LC_ALL en_US.UTF-8
 
 RUN apt-get install -y libcap2-bin zip libarchive13 libatlas3-base
 RUN setcap cap_sys_ptrace+eip /usr/bin/gdb
+RUN chmod +s /usr/bin/gdb
 
 ENV PATH="/opt/HPCCSystems/bin:${PATH}"
 ENV HPCC_containerized=1
 
-RUN usermod -aG sudo hpcc
+#RUN usermod -aG sudo hpcc
+RUN echo test
+RUN echo "hpcc ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 USER hpcc
 WORKDIR /var/lib/HPCCSystems
 ARG BUILD_TAG_OVERRIDE
