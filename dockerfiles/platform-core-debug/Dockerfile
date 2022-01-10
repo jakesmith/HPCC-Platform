@@ -38,7 +38,7 @@ ENV HPCC_containerized=1
 #RUN usermod -aG sudo hpcc
 RUN echo test
 RUN echo "hpcc ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-USER hpcc
+#USER hpcc
 WORKDIR /var/lib/HPCCSystems
 ARG BUILD_TAG_OVERRIDE
 ENV HPCC_BUILD_TAG=${BUILD_TAG_OVERRIDE}
