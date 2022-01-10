@@ -348,6 +348,8 @@ extern da_decl bool setReplicateDir(const char *name,StringBuffer &out, bool isr
 extern da_decl void initializeStorageGroups(bool createPlanesFromGroups);
 extern da_decl bool getDefaultStoragePlane(StringBuffer &ret);
 extern da_decl IStoragePlane * getDataStoragePlane(const char * name, bool required);
+extern da_decl IStoragePlane * getRemoteStoragePlane(const char * name, bool required);
+extern da_decl IStoragePlane * getRemoteStoragePlaneByHost(const char * host, bool required);
 
 extern da_decl IFileDescriptor *createFileDescriptor();
 extern da_decl IFileDescriptor *createFileDescriptor(IPropertyTree *attr);      // ownership of attr tree is taken

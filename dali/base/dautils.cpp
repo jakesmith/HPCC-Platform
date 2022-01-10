@@ -3836,11 +3836,13 @@ void testDFSFile(IDistributedFile *legacyDfsFile, const char *logicalName)
     bool isExternal = legacyDfsFile->isExternal();
     PROGLOG("isExternal: %s", boolToStr(isExternal));
     unsigned maxSkew, minSkew, maxSkewPart, minSkewPart;
-    legacyDfsFile->getSkewInfo(maxSkew, minSkew, maxSkewPart, minSkewPart, true);
-    PROGLOG("maxSkew: %d", maxSkew);
-    PROGLOG("minSkew: %d", minSkew);
-    PROGLOG("maxSkewPart: %d", maxSkewPart);
-    PROGLOG("minSkewPart: %d", minSkewPart);
+    if (legacyDfsFile->getSkewInfo(maxSkew, minSkew, maxSkewPart, minSkewPart, true))
+    {
+        PROGLOG("maxSkew: %d", maxSkew);
+        PROGLOG("minSkew: %d", minSkew);
+        PROGLOG("maxSkewPart: %d", maxSkewPart);
+        PROGLOG("minSkewPart: %d", minSkewPart);
+    }
     int expire = legacyDfsFile->getExpire();
     PROGLOG("expire: %d", expire);
     try

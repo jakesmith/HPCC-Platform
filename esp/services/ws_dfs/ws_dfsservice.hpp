@@ -32,8 +32,9 @@ public:
     IMPLEMENT_IINTERFACE;
     virtual ~CWsDfsEx(){};
     virtual void init(IPropertyTree *cfg, const char *process, const char *service);
+    virtual bool onGetLease(IEspContext &context, IEspLeaseRequest &req, IEspLeaseResponse &resp);
+    virtual bool onKeepAlive(IEspContext &context, IEspKeepAliveRequest &req, IEspKeepAliveResponse &resp);
     virtual bool onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &req, IEspDFSFileLookupResponse &resp);
-    virtual bool onDFSKeepAlive(IEspContext &context, IEspDFSLockKeepAliveRequest &req, IEspDFSLockKeepAliveResponse &resp);
 
 private:
 

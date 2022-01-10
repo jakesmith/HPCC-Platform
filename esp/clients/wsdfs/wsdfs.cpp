@@ -126,7 +126,6 @@ class CServiceDistributedFileBase : public CSimpleInterfaceOf<INTERFACE>
 protected:
     Linked<IDFSFile> dfsFile;
     StringAttr logicalName;
-    Linked<IPropertyTree> fileMeta;
     Owned<IDistributedFile> legacyDFSFile;
     Owned<IFileDescriptor> fileDesc;
 
@@ -190,9 +189,7 @@ protected:
 public:
     CServiceDistributedFileBase(IDFSFile *_dfsFile) : dfsFile(_dfsFile)
     {
-        fileMeta.setown(dfsFile->getFileMeta());
-        dbglogXML(fileMeta, 2);
-        logicalName.set(fileMeta->queryProp("@name"));
+        logicalName.set(dfsFile->queryMeta()->queryProp("FileMeta/@name"));
     }
 
     virtual unsigned numParts() override { return legacyDFSFile->numParts(); }
@@ -239,7 +236,7 @@ public:
     {
         if (transaction)
             throwUnexpected();
-        Owned<IPropertyTreeIterator> iter = fileMeta->getElements("SuperOwner");
+        Owned<IPropertyTreeIterator> iter = dfsFile->queryMeta()->getElements("FileMeta/SuperFile/SuperOwner");
         std::vector<std::string> superOwners;
         StringBuffer pname;
         ForEach(*iter)
@@ -345,23 +342,23 @@ public:
     }
     virtual bool renamePhysicalPartFiles(const char *newlfn,const char *cluster=NULL,IMultiException *exceptions=NULL,const char *newbasedir=NULL) override
     {
-        UNIMPLEMENTED_X("CServiceDistributedFile::renamePhysicalPartFiles");
+        UNIMPLEMENTED_X("CServiceDistributedFileBase::renamePhysicalPartFiles");
     }
     virtual void rename(const char *logicalname,IUserDescriptor *user) override
     {
-        UNIMPLEMENTED_X("CServiceDistributedFile::rename");
+        UNIMPLEMENTED_X("CServiceDistributedFileBase::rename");
     }
     virtual void attach(const char *logicalname,IUserDescriptor *user) override
     {
-        UNIMPLEMENTED_X("CServiceDistributedFile::rename");
+        UNIMPLEMENTED_X("CServiceDistributedFileBase::rename");
     }
     virtual void detach(unsigned timeoutms=INFINITE, ICodeContext *ctx=NULL) override
     {
-        UNIMPLEMENTED_X("CServiceDistributedFile::detach");
+        UNIMPLEMENTED_X("CServiceDistributedFileBase::detach");
     }
     virtual void enqueueReplicate() override
     {
-        UNIMPLEMENTED_X("CServiceDistributedFile::enqueueReplicate");
+        UNIMPLEMENTED_X("CServiceDistributedFileBase::enqueueReplicate");
     }
 };
 
@@ -371,9 +368,57 @@ class CServiceDistributedFile : public CServiceDistributedFileBase<IDistributedF
 public:
     CServiceDistributedFile(IDFSFile *_dfsFile) : PARENT(_dfsFile)
     {
-        fileDesc.setown(deserializeFileDescriptorTree(fileMeta));
+        IPropertyTree *file = dfsFile->queryMeta()->queryPropTree("FileMeta/File");
+        const char *remotePlaneName = file->queryProp("@group");
+        VStringBuffer planeXPath("planes[@name=\"%s\"]", remotePlaneName);
+        IPropertyTree *remotePlane = dfsFile->queryMeta()->queryPropTree(planeXPath);
+        assertex(remotePlane);
+
+        // I think only planes that are backed by PVC's will need path translation
+        // Ones backed by URL's or hostGroups will be access directly.
+
+        // Path translation is necessary, because the local plane will not necessarily have the same
+        // prefix. In particular, both a local and remote plane may want to use the same prefix/mount.
+        // So, the local plane will be defined with a unique prefix locally.
+        if (remotePlane->hasProp("@pvc"))
+        {
+            // A external plane within another environment backed by a PVC, will need a pre-existing
+            // corresponding plane and PVC in the local environment.
+            // The local plane will be associated with the remote environment, via it's service host/IP.
+
+            const char *remoteService = dfsFile->queryService();
+            Owned<IStoragePlane> localPlane = getRemoteStoragePlaneByHost(remoteService, false);
+            if (!localPlane)
+                throw makeStringExceptionV(0, "Local environment does not have a corresponding plane for remote environment '%s'", remoteService);
+
+            StringBuffer remotePlanePrefix;
+            remotePlane->getProp("@prefix", remotePlanePrefix);
+            if (remotePlane->hasProp("@subPath"))
+                remotePlanePrefix.append('/').append(remotePlane->queryProp("@subPath"));
+            // the plane prefix should match the base of file's base directory
+            // Q: what if the plane has been redefined since the files were created?
+
+            VStringBuffer clusterXPath("Cluster[@name=\"%s\"]", remotePlaneName);
+            IPropertyTree *cluster = file->queryPropTree("Cluster[@name=\"%s\"]");
+            assertex(cluster);
+            const char *clusterDir = cluster->queryProp("@defaultBaseDir");
+            assertex(startsWith(clusterDir, remotePlanePrefix));
+            clusterDir += remotePlanePrefix.length();
+
+            VStringBuffer newPath("%s/%s", localPlane->queryPrefix(), clusterDir); // add remaining tail of path
+            cluster->setProp("@defaultBaseDir", newPath.str());
+
+            const char *dir = file->queryProp("@directory");
+            assertex(startsWith(dir, remotePlanePrefix));
+            dir += remotePlanePrefix.length();
+            newPath.clear().appendf("%s/%s", localPlane->queryPrefix(), dir); // add remaining tail of path
+            file->setProp("@dir", newPath.str());
+        }
+
+        fileDesc.setown(deserializeFileDescriptorTree(file));
         if (fileDesc)
             fileDesc->setTraceName(logicalName);
+
         legacyDFSFile.setown(queryDistributedFileDirectory().createNew(fileDesc, logicalName));
     }    
 };
@@ -394,7 +439,7 @@ public:
             Owned<IDistributedFile> legacyDFSFile = createLegacyDFSFile(subFile);
             subFiles.append(*legacyDFSFile.getClear());
         }
-        legacyDFSSuperFile.setown(queryDistributedFileDirectory().createNewSuperFile(fileMeta, logicalName, &subFiles));
+        legacyDFSSuperFile.setown(queryDistributedFileDirectory().createNewSuperFile(dfsFile->queryMeta()->queryPropTree("FileMeta/SuperFile"), logicalName, &subFiles));
         legacyDFSFile.set(legacyDFSSuperFile);
         fileDesc.setown(legacyDFSSuperFile->getFileDescriptor());
     }
@@ -437,6 +482,14 @@ public:
     {
         return legacyDFSSuperFile->getSubFileIterator(supersub);
     }
+    virtual void validate() override
+    {
+        if (!legacyDFSSuperFile->existsPhysicalPartFiles(0))
+        {
+            const char * logicalName = queryLogicalName();
+            throw MakeStringException(-1, "Some physical parts do not exists, for logical file : %s",(isEmptyString(logicalName) ? "[unattached]" : logicalName));
+        }
+    }
 
 // IDistributedSuperFile
     virtual void addSubFile(const char *subfile, bool before=false, const char *other=NULL, bool addcontents=false, IDistributedFileTransaction *transaction=NULL) override
@@ -460,7 +513,7 @@ public:
 static IDFSFile *createDFSFile(IPropertyTree *meta, const char *service, unsigned timeoutSecs, IUserDescriptor *userDesc);
 class CDFSFile : public CSimpleInterfaceOf<IDFSFile>
 {
-    Linked<IPropertyTree> fileMeta;
+    Linked<IPropertyTree> meta;
     unsigned __int64 lockId;
     std::vector<Owned<IDFSFile>> subFiles;
     StringAttr service;
@@ -468,13 +521,14 @@ class CDFSFile : public CSimpleInterfaceOf<IDFSFile>
     Linked<IUserDescriptor> userDesc;
 
 public:
-    CDFSFile(IPropertyTree *_fileMeta, const char *_service, unsigned _timeoutSecs, IUserDescriptor *_userDesc)
-        : fileMeta(_fileMeta), service(_service), timeoutSecs(_timeoutSecs), userDesc(_userDesc)
+    CDFSFile(IPropertyTree *_meta, const char *_service, unsigned _timeoutSecs, IUserDescriptor *_userDesc)
+        : meta(_meta), service(_service), timeoutSecs(_timeoutSecs), userDesc(_userDesc)
     {
+        IPropertyTree *fileMeta = meta->queryPropTree("FileMeta");
         lockId = fileMeta->getPropInt64("@lockId");
         if (fileMeta->getPropBool("@isSuper"))
         {
-            Owned<IPropertyTreeIterator> iter = fileMeta->getElements("File");
+            Owned<IPropertyTreeIterator> iter = fileMeta->getElements("FileMeta");
             ForEach(*iter)
             {
                 IPropertyTree &subMeta = iter->query();
@@ -482,9 +536,9 @@ public:
             }
         }
     }
-    virtual IPropertyTree *getFileMeta() const override
+    virtual IPropertyTree *queryMeta() const override
     {
-        return fileMeta.getLink();
+        return meta;
     }
     virtual unsigned __int64 getLockId() const override
     {
@@ -623,6 +677,50 @@ IClientWsDfs *getDfsClient(const char *serviceEndpoint, IUserDescriptor *userDes
     return dfsClient.getClear();
 }
 
+static CriticalSection serviceLeaseMapCS;
+static std::unordered_map<std::string, unsigned __int64> serviceLeaseMap;
+unsigned __int64 ensureClientLease(const char *service, IUserDescriptor *userDesc)
+{
+    CriticalBlock block(serviceLeaseMapCS);
+    auto r = serviceLeaseMap.find(service);
+    if (r != serviceLeaseMap.end())
+        return r->second;
+
+    Owned<IClientWsDfs> dfsClient = getDfsClient(service, userDesc);
+
+    Owned<IClientLeaseResponse> leaseResp;
+
+    unsigned timeoutSecs = 60;
+    CTimeMon tm(timeoutSecs*1000);
+    while (true)
+    {
+        try
+        {
+            Owned<IClientLeaseRequest> leaseReq = dfsClient->createGetLeaseRequest();
+            leaseReq->setKeepAliveExpiryFrequency(keepAliveExpiryFrequency);
+            leaseResp.setown(dfsClient->GetLease(leaseReq));
+
+            unsigned __int64 leaseId = leaseResp->getLeaseId();
+            serviceLeaseMap[service] = leaseId;
+            return leaseId;
+        }
+        catch (IException *e)
+        {
+            /* NB: there should really be a different IException class and a specific error code
+            * The server knows it's an unsupported method.
+            */
+            if (SOAP_SERVER_ERROR != e->errorCode())
+                throw;
+            e->Release();
+        }
+
+        if (tm.timedout())
+            throw makeStringExceptionV(0, "GetLease timed out: timeoutSecs=%u", timeoutSecs);
+        Sleep(5000); // sanity sleep
+    }
+}
+
+
 IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc)
 {
     CDfsLogicalFileName lfn;
@@ -645,7 +743,7 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
 
     Owned<IClientDFSFileLookupResponse> dfsResp;
 
-    CTimeMon tm(timeoutSecs);
+    CTimeMon tm(timeoutSecs*1000); // NB: this timeout loop is to cater for *a* esp disappearing.
     while (true)
     {
         try
@@ -653,8 +751,12 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
             Owned<IClientDFSFileLookupRequest> dfsReq = dfsClient->createDFSFileLookupRequest();
 
             dfsReq->setName(logicalName);
-            dfsReq->setRequestTimeout(timeoutSecs);
-            dfsReq->setKeepAliveExpiryFrequency(keepAliveExpiryFrequency);
+            unsigned remaining;
+            if (tm.timedout(&remaining))
+                break;
+            dfsReq->setRequestTimeout(remaining/1000);
+            unsigned __int64 clientLeaseId = ensureClientLease(service, userDesc);
+            dfsReq->setLeaseId(clientLeaseId);
 
             dfsResp.setown(dfsClient->DFSFileLookup(dfsReq));
 
@@ -667,11 +769,8 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
             JBASE64_Decode(base64Resp, compressedRespMb);
             MemoryBuffer decompressedRespMb;
             fastLZDecompressToBuffer(decompressedRespMb, compressedRespMb);
-            Owned<IPropertyTree> resp = createPTree(decompressedRespMb);
-            unsigned __int64 lockId = resp->getPropInt64("@leaseId"); // TBD
-            unsigned keepAlivePeriod = resp->getPropInt("@keepAlivePeriod"); // TBD
-            dbglogXML(resp, 2);
-            return createDFSFile(resp->queryPropTree("File"), service, timeoutSecs, userDesc);
+            Owned<IPropertyTree> meta = createPTree(decompressedRespMb);
+            return createDFSFile(meta, service, timeoutSecs, userDesc);
         }
         catch (IException *e)
         {
@@ -689,17 +788,9 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
     }
 }
 
-IDistributedFile *createLegacyDFSSuperFile(IDFSFile *dfsFile)
-{
-    Owned<IPropertyTree> fileMeta = dfsFile->getFileMeta();
-    assertex(fileMeta->hasProp("SuperFile"));
-    return new CServiceSuperDistributedFile(dfsFile);
-}
-
 IDistributedFile *createLegacyDFSFile(IDFSFile *dfsFile)
 {
-    Owned<IPropertyTree> fileMeta = dfsFile->getFileMeta();
-    if (fileMeta->getPropBool("@isSuper"))
+    if (dfsFile->queryMeta()->getPropBool("FileMeta/@isSuper"))
         return new CServiceSuperDistributedFile(dfsFile);
     else
         return new CServiceDistributedFile(dfsFile);

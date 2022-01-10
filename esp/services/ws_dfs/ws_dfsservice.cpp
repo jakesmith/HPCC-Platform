@@ -34,13 +34,15 @@
 using namespace wsdfs;
 
 // all fake for now
+// this will be implemened in Dali.
 static std::atomic<unsigned __int64> nextLockID{0};
 static unsigned __int64 getLockId(unsigned __int64 leaseId)
 {
+    // associated new locks with lease
     return ++nextLockID;
 }
 
-static void populateLFNMeta(const char *logicalName, unsigned __int64 leaseId, IPropertyTree *meta)
+static void populateLFNMeta(const char *logicalName, unsigned __int64 leaseId, IPropertyTree *metaRoot, IPropertyTree *meta)
 {
     Owned<IPropertyTree> tree = queryDistributedFileDirectory().getFileTree(logicalName, nullptr);
     CDfsLogicalFileName lfn;
@@ -52,20 +54,21 @@ static void populateLFNMeta(const char *logicalName, unsigned __int64 leaseId, I
 
     bool isSuper = streq(tree->queryName(), queryDfsXmlBranchName(DXB_SuperFile));
 
-    IPropertyTree *file = meta->addPropTree("File", tree.getClear());
-    file->setProp("@name", logicalName);
+    IPropertyTree *fileMeta = meta->addPropTree("FileMeta");
+    fileMeta->setProp("@name", logicalName);
 
-    // 1) establish lock 1st
+    // 1) establish lock 1st (from Dali)
+    // TBD
     unsigned __int64 lockId = getLockId(leaseId);
-    file->setPropInt64("@lockId", lockId);
+    fileMeta->setPropInt64("@lockId", lockId);
 
     if (isSuper)
     {
-        file->setPropBool("@isSuper", true);
-        unsigned n = file->getPropInt("@numsubfiles");
+        fileMeta->setPropBool("@isSuper", true);
+        unsigned n = tree->getPropInt("@numsubfiles");
         if (n)
         {
-            Owned<IPropertyTreeIterator> subit = file->getElements("SubFile");
+            Owned<IPropertyTreeIterator> subit = tree->getElements("SubFile");
             // Adding a sub 'before' another get the list out of order (but still valid)
             OwnedMalloc<IPropertyTree *> orderedSubFiles(n, true);
             ForEach (*subit)
@@ -90,10 +93,24 @@ static void populateLFNMeta(const char *logicalName, unsigned __int64 leaseId, I
             {
                 IPropertyTree &sub = *(orderedSubFiles[f]);
                 sub.getProp("@name", subname.clear());
-                populateLFNMeta(subname, leaseId, file);
+                populateLFNMeta(subname, leaseId, metaRoot, fileMeta);
             }
-            for (unsigned f=0; f<n; f++)
-                file->removeTree(orderedSubFiles[f]);
+            // for (unsigned f=0; f<n; f++)
+            //     file->removeTree(orderedSubFiles[f]);
+        }
+    }
+    fileMeta->setPropTree(tree->queryName(), tree.getLink());
+    Owned<IPropertyTreeIterator> clusterIter = tree->getElements("Cluster");
+    ForEach(*clusterIter)
+    {
+        IPropertyTree &cluster = clusterIter->query();
+        const char *planeName = cluster.queryProp("@name");
+        VStringBuffer planeXPath("planes[@name='%s']", planeName);
+        if (!metaRoot->hasProp(planeXPath))
+        {
+            VStringBuffer storagePlaneXPath("storage/%s", planeXPath.str());            
+            Owned<IPropertyTree> dataPlane = getGlobalConfigSP()->getPropTree(storagePlaneXPath);
+            metaRoot->addPropTree("planes", dataPlane.getClear());
         }
     }
 }
@@ -122,6 +139,20 @@ void CWsDfsEx::init(IPropertyTree *cfg, const char *process, const char *service
 #endif
 }
 
+bool CWsDfsEx::onGetLease(IEspContext &context, IEspLeaseRequest &req, IEspLeaseResponse &resp)
+{
+    unsigned timeoutSecs = req.getKeepAliveExpiryFrequency();
+
+    // TBD will get from Dali.
+    resp.setLeaseId(1);
+    return true;
+}
+
+bool CWsDfsEx::onKeepAlive(IEspContext &context, IEspKeepAliveRequest &req, IEspKeepAliveResponse &resp)
+{
+    return true;
+}
+
 bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &req, IEspDFSFileLookupResponse &resp)
 {
     try
@@ -140,14 +171,16 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
         // LDAP scope check
         checkLogicalName(logicalName, userDesc, true, false, false, nullptr); // check for read permissions
 
-        unsigned timeoutSecs = req.getRequestTimeout(); // TBD
-
-        unsigned __int64 leaseId = 1; // fake! Need to get real lease id from Dali
+        unsigned timeoutSecs = req.getRequestTimeout();
+        unsigned __int64 leaseId = req.getLeaseId();
 
         // populate file meta data and lock id's
         Owned<IPropertyTree> responseTree = createPTree();
-        responseTree->setPropInt64("@leaseId", leaseId);
-        populateLFNMeta(logicalName, leaseId, responseTree);
+        populateLFNMeta(logicalName, leaseId, responseTree, responseTree);
+        
+        DBGLOG("onDFSFileLookup response:");
+        dbglogYAML(responseTree, 2);
+        DBGLOG("=========================");
 
         // serialize response
         MemoryBuffer respMb, compressedRespMb;
@@ -172,7 +205,3 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
     return true;
 }
 
-bool CWsDfsEx::onDFSKeepAlive(IEspContext &context, IEspDFSLockKeepAliveRequest &req, IEspDFSLockKeepAliveResponse &resp)
-{
-    return true;
-}

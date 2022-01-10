@@ -431,6 +431,10 @@
           "description": "optional name of the persistent volume claim for this plane",
           "type": "string"
         },
+        "host": {
+          "description": "host of remote DFS service",
+          "type": "string"
+        },
         "hostGroup": {
           "description": "optional name of the host group (for bare metal storage)",
           "type": "string"

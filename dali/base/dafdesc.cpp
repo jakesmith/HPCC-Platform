@@ -3564,26 +3564,45 @@ private:
 
 
 //MORE: This could be cached
+static IStoragePlane * getStoragePlane(const char * attr, const char * value, const std::vector<std::string> &categories, bool required)
+{
+    VStringBuffer xpath("storage/planes[@%s='%s']", attr, value);
+    Owned<IPropertyTree> match = getGlobalConfigSP()->getPropTree(xpath);
+    if (!match)
+    {
+        if (required)
+            throw makeStringExceptionV(-1, "Unknown storage plane %s='%s'", attr, value);
+        return nullptr;
+    }
+    const char * category = match->queryProp("@category");
+    auto r = std::find(categories.begin(), categories.end(), category);
+    if (r == categories.end())
+    {
+        if (required)
+            throw makeStringExceptionV(-1, "storage plane %s='%s' does not match request categories (plane category=%s)", attr, value, category);
+        return nullptr;
+    }
+
+    return new CStoragePlaneInfo(match);
+}
+
 IStoragePlane * getDataStoragePlane(const char * name, bool required)
 {
     StringBuffer group;
     group.append(name).toLowerCase();
 
-    VStringBuffer xpath("storage/planes[@name='%s']", group.str());
-    Owned<IPropertyTree> match = getGlobalConfigSP()->getPropTree(xpath);
-    if (!match)
-    {
-        if (required)
-            throw makeStringExceptionV(-1, "Unknown storage plane '%s'", name);
-        return nullptr;
-    }
-    const char * category = match->queryProp("@category");
-    if (!streq(category, "data") && !streq(category, "lz"))
-    {
-        if (required)
-            throw makeStringExceptionV(-1, "storage plane '%s' does not store data (category %s)", name, category);
-        return nullptr;
-    }
+    return getStoragePlane("name", group, { "data", "lz" }, required);
+}
 
-    return new CStoragePlaneInfo(match);
+IStoragePlane * getRemoteStoragePlane(const char * name, bool required)
+{
+    StringBuffer group;
+    group.append(name).toLowerCase();
+
+    return getStoragePlane("name", group, { "remote" }, required);
+}
+
+IStoragePlane * getRemoteStoragePlaneByHost(const char * host, bool required)
+{
+    return getStoragePlane("host", host, { "remote" }, required);
 }

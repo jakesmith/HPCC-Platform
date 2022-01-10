@@ -34,6 +34,7 @@ RUN setcap cap_sys_ptrace+eip /usr/bin/gdb
 ENV PATH="/opt/HPCCSystems/bin:${PATH}"
 ENV HPCC_containerized=1
 
+RUN usermod -aG sudo hpcc
 USER hpcc
 WORKDIR /var/lib/HPCCSystems
 ARG BUILD_TAG_OVERRIDE
