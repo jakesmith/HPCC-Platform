@@ -40,6 +40,7 @@ RUN echo test
 RUN echo "hpcc ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 #USER hpcc
 WORKDIR /var/lib/HPCCSystems
+RUN touch /var/lib/HPCCSystems/newimage1
 ARG BUILD_TAG_OVERRIDE
 ENV HPCC_BUILD_TAG=${BUILD_TAG_OVERRIDE}
 RUN eclcc -pch
