@@ -3567,6 +3567,7 @@ private:
 //MORE: This could be cached
 static IStoragePlane * getStoragePlane(const char * attr, const char * value, const std::vector<std::string> &categories, bool required)
 {
+    dbglogYAML(getGlobalConfigSP(), 2);
     VStringBuffer xpath("storage/planes[@%s='%s']", attr, value);
     Owned<IPropertyTree> match = getGlobalConfigSP()->getPropTree(xpath);
     if (!match)
@@ -3600,10 +3601,10 @@ IStoragePlane * getRemoteStoragePlane(const char * name, bool required)
     StringBuffer group;
     group.append(name).toLowerCase();
 
-    return getStoragePlane("name", group, { "remote" }, required);
+    return getStoragePlane("name", group, { "data" }, required);
 }
 
 IStoragePlane * getRemoteStoragePlaneByHost(const char * host, bool required)
 {
-    return getStoragePlane("host", host, { "remote" }, required);
+    return getStoragePlane("host", host, { "data" }, required);
 }
