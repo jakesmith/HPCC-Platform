@@ -3600,11 +3600,11 @@ IStoragePlane * getRemoteStoragePlane(const char * name, bool required)
 {
     StringBuffer group;
     group.append(name).toLowerCase();
-
     return getStoragePlane("name", group, { "data" }, required);
 }
 
 IStoragePlane * getRemoteStoragePlaneByHost(const char * host, bool required)
 {
+    PROGLOG("getRemoteStoragePlaneByHost(%s, %s)", host, required ? "true" : "false");
     return getStoragePlane("host", host, { "data" }, required);
 }

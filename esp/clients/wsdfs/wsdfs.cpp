@@ -388,6 +388,7 @@ public:
             // The local plane will be associated with the remote environment, via it's service host/IP.
 
             const char *remoteService = dfsFile->queryService();
+            PROGLOG("getRemoteStoragePlaneByHost: %s", remoteService);
             Owned<IStoragePlane> localPlane = getRemoteStoragePlaneByHost(remoteService, false);
             if (!localPlane)
                 throw makeStringExceptionV(0, "Local environment does not have a corresponding plane for remote environment '%s'", remoteService);
