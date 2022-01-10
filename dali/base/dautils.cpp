@@ -3737,7 +3737,9 @@ void testDFSFile(IDistributedFile *legacyDfsFile, const char *logicalName)
     }
     Owned<IFileDescriptor> dfsFileDesc = legacyDfsFile->getFileDescriptor();
     const char *dir = legacyDfsFile->queryDefaultDir();
+    PROGLOG("dir = %s", dir);
     const char *mask = legacyDfsFile->queryPartMask();
+    PROGLOG("mask = %s", dir);
     IPropertyTree &attrs = legacyDfsFile->queryAttributes();
     legacyDfsFile->lockProperties();
     legacyDfsFile->unlockProperties();

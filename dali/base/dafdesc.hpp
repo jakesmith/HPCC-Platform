@@ -287,6 +287,7 @@ interface IClusterInfo: extends IInterface  // used by IFileDescriptor and IDist
 //I'm not sure if this should be used in place of an IGroup, probably as system gradually changes
 interface IStoragePlane: extends IInterface
 {
+    virtual const char * queryName() const = 0;
     virtual const char * queryPrefix() const = 0;
     virtual unsigned numDevices() const = 0;
     virtual const char * queryHosts() const = 0;

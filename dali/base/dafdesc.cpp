@@ -3551,6 +3551,7 @@ class CStoragePlaneInfo : public CInterfaceOf<IStoragePlane>
 public:
     CStoragePlaneInfo(IPropertyTree * _xml) : xml(_xml) {}
 
+    virtual const char * queryName() const override { return xml->queryProp("@name"); }
     virtual const char * queryPrefix() const override { return xml->queryProp("@prefix"); }
     virtual unsigned numDevices() const override { return xml->getPropInt("@numDevices", 1); }
     virtual const char * queryHosts() const override { return xml->queryProp("@hosts"); }

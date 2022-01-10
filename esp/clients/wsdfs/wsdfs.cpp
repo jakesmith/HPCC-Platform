@@ -380,7 +380,8 @@ public:
         // Path translation is necessary, because the local plane will not necessarily have the same
         // prefix. In particular, both a local and remote plane may want to use the same prefix/mount.
         // So, the local plane will be defined with a unique prefix locally.
-        if (remotePlane->hasProp("@pvc"))
+        const char *remotePlanePrefix = remotePlane->queryProp("@prefix");
+        if (isAbsolutePath(remotePlanePrefix) && !remotePlane->hasProp("@hosts")) // otherwise assume url
         {
             // A external plane within another environment backed by a PVC, will need a pre-existing
             // corresponding plane and PVC in the local environment.
@@ -390,11 +391,14 @@ public:
             Owned<IStoragePlane> localPlane = getRemoteStoragePlaneByHost(remoteService, false);
             if (!localPlane)
                 throw makeStringExceptionV(0, "Local environment does not have a corresponding plane for remote environment '%s'", remoteService);
+            PROGLOG("Remote plane defined as local storage plane named '%s' found", localPlane->queryName());
 
             StringBuffer remotePlanePrefix;
             remotePlane->getProp("@prefix", remotePlanePrefix);
             if (remotePlane->hasProp("@subPath"))
                 remotePlanePrefix.append('/').append(remotePlane->queryProp("@subPath"));
+            PROGLOG("Remote local plane prefix = '%s'", remotePlanePrefix.str());
+
             // the plane prefix should match the base of file's base directory
             // Q: what if the plane has been redefined since the files were created?
 
@@ -406,12 +410,14 @@ public:
             clusterDir += remotePlanePrefix.length();
 
             VStringBuffer newPath("%s/%s", localPlane->queryPrefix(), clusterDir); // add remaining tail of path
+            PROGLOG("Redefining cluster defaultBaseDir to '%s'", newPath.str());
             cluster->setProp("@defaultBaseDir", newPath.str());
 
             const char *dir = file->queryProp("@directory");
             assertex(startsWith(dir, remotePlanePrefix));
             dir += remotePlanePrefix.length();
             newPath.clear().appendf("%s/%s", localPlane->queryPrefix(), dir); // add remaining tail of path
+            PROGLOG("Redefining @dir to '%s'", newPath.str());
             file->setProp("@dir", newPath.str());
         }
 
