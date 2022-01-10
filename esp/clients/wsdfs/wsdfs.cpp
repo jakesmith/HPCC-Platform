@@ -404,7 +404,7 @@ public:
             // Q: what if the plane has been redefined since the files were created?
 
             VStringBuffer clusterXPath("Cluster[@name=\"%s\"]", remotePlaneName);
-            IPropertyTree *cluster = file->queryPropTree("Cluster[@name=\"%s\"]");
+            IPropertyTree *cluster = file->queryPropTree(clusterXPath);
             assertex(cluster);
             const char *clusterDir = cluster->queryProp("@defaultBaseDir");
             assertex(startsWith(clusterDir, remotePlanePrefix));
