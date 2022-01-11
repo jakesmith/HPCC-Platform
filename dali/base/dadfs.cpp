@@ -10744,6 +10744,8 @@ public:
             logicalname->getTail(tail);
             Owned<IPropertyTree> tree = getNamedPropTree(sroot,queryDfsXmlBranchName(DXB_File),"@name",tail.str(),false);
             if (tree) {
+                PROGLOG("Dali MDFS_GET_FILE_TREE_... tree ..");
+                dbglogXML(tree, 2);
                 if (ver>=MDFS_GET_FILE_TREE_V2) {
                     Owned<IFileDescriptor> fdesc = deserializeFileDescriptorTree(tree,&queryNamedGroupStore(),IFDSF_EXCLUDE_CLUSTERNAMES);
                     if (fdesc) {
@@ -11208,6 +11210,10 @@ IPropertyTree *CDistributedFileDirectory::getFileTree(const char *lname, IUserDe
     }
     if (foreigndali && appendForeign)
         resolveForeignFiles(ret,foreigndali);
+    PROGLOG("CDistributedFileDirectory::getFileTree(%s)", lname);
+    StringBuffer xml;
+    toXML(ret, xml);
+    PROGLOG("xml = %s", xml.str());
     return ret.getClear();
 }
 

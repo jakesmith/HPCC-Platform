@@ -419,7 +419,7 @@ public:
             dir += remotePlanePrefix.length();
             newPath.clear().appendf("%s/%s", localPlane->queryPrefix(), dir); // add remaining tail of path
             PROGLOG("Redefining @dir to '%s'", newPath.str());
-            file->setProp("@dir", newPath.str());
+            file->setProp("@directory", newPath.str());
         }
 
         fileDesc.setown(deserializeFileDescriptorTree(file));
