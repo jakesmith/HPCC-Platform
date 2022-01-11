@@ -45,6 +45,8 @@ static unsigned __int64 getLockId(unsigned __int64 leaseId)
 static void populateLFNMeta(const char *logicalName, unsigned __int64 leaseId, IPropertyTree *metaRoot, IPropertyTree *meta)
 {
     Owned<IPropertyTree> tree = queryDistributedFileDirectory().getFileTree(logicalName, nullptr);
+    if (!tree)
+        return;
     CDfsLogicalFileName lfn;
     lfn.set(logicalName);
     if (lfn.isForeign())
@@ -95,8 +97,6 @@ static void populateLFNMeta(const char *logicalName, unsigned __int64 leaseId, I
                 sub.getProp("@name", subname.clear());
                 populateLFNMeta(subname, leaseId, metaRoot, fileMeta);
             }
-            // for (unsigned f=0; f<n; f++)
-            //     file->removeTree(orderedSubFiles[f]);
         }
     }
     fileMeta->setPropTree(tree->queryName(), tree.getLink());

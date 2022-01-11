@@ -260,14 +260,8 @@ void ClusterPartDiskMapSpec::deserialize(MemoryBuffer &mb)
         mb.read(repeatedPart);
     else
         repeatedPart = CPDMSRP_notRepeated;
-    PROGLOG("here1");
     if (flags&CPDMSF_defaultBaseDir)
-    {
-        PROGLOG("here2");
         mb.read(defaultBaseDir);
-        PrintStackReport();
-        PROGLOG("defaultBaseDir = %s",defaultBaseDir.get());
-    }
     else
         defaultBaseDir.clear();
     if (flags&CPDMSF_defaultReplicateDir)

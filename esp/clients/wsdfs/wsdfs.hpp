@@ -35,7 +35,8 @@ static constexpr unsigned keepAliveExpiryFrequency = 30; // may want to make con
 
 interface IDFSFile : extends IInterface
 {
-    virtual IPropertyTree *queryMeta() const = 0;
+    virtual IPropertyTree *queryFileMeta() const = 0;
+    virtual IPropertyTree *queryCommonMeta() const = 0;
     virtual unsigned __int64 getLockId() const = 0;
     virtual unsigned numSubFiles() const = 0; // >0 implies this is a superfile
     virtual IDFSFile *getSubFile(unsigned idx) const = 0;
