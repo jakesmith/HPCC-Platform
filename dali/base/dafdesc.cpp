@@ -3567,14 +3567,6 @@ private:
 //MORE: This could be cached
 static IStoragePlane * getStoragePlane(const char * attr, const char * value, const std::vector<std::string> &categories, bool required)
 {
-    StringBuffer xml;
-    toXML(getGlobalConfigSP(), xml);
-    PROGLOG("getStoragePlane(%s,%s)", attr, value);
-    PROGLOG("%s", xml.str());
-    PROGLOG("======================");
-    PROGLOG("dbglogYAML");
-    dbglogYAML(getGlobalConfigSP(), 2);
-    PROGLOG("==========");
     VStringBuffer xpath("storage/planes[@%s='%s']", attr, value);
     Owned<IPropertyTree> match = getGlobalConfigSP()->getPropTree(xpath);
     if (!match)
@@ -3612,6 +3604,5 @@ IStoragePlane * getRemoteStoragePlane(const char * name, bool required)
 
 IStoragePlane * getRemoteStoragePlaneByHost(const char * host, bool required)
 {
-    PROGLOG("getRemoteStoragePlaneByHost(%s, %s)", host, required ? "true" : "false");
     return getStoragePlane("host", host, { "data" }, required);
 }

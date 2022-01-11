@@ -22,6 +22,7 @@
 #include "jsecrets.hpp"
 #include "seclib.hpp"
 #include "ws_dfs.hpp"
+#include "workunit.hpp"
 
 #include "eclwatch_errorlist.hpp" // only for ECLWATCH_FILE_NOT_EXIST
 #include "soapmessage.hpp"
@@ -374,7 +375,7 @@ public:
         IPropertyTree *remotePlane = dfsFile->queryCommonMeta()->queryPropTree(planeXPath);
         assertex(remotePlane);
 
-#ifdef _CONTAINERIZED
+#if 1//def _CONTAINERIZED
         // Path translation is necessary, because the local plane will not necessarily have the same
         // prefix. In particular, both a local and remote plane may want to use the same prefix/mount.
         // So, the local plane will be defined with a unique prefix locally.
@@ -397,7 +398,7 @@ public:
             remotePlane->getProp("@prefix", remotePlanePrefix);
             if (remotePlane->hasProp("@subPath"))
                 remotePlanePrefix.append('/').append(remotePlane->queryProp("@subPath"));
-            PROGLOG("Remote local plane prefix = '%s'", remotePlanePrefix.str());
+            PROGLOG("Remote plane prefix = '%s'", remotePlanePrefix.str());
 
             // the plane prefix should match the base of file's base directory
             // Q: what if the plane has been redefined since the files were created?
@@ -406,8 +407,10 @@ public:
             IPropertyTree *cluster = file->queryPropTree(clusterXPath);
             assertex(cluster);
             const char *clusterDir = cluster->queryProp("@defaultBaseDir");
+            PROGLOG("clusterDir = '%s'", clusterDir);
             assertex(startsWith(clusterDir, remotePlanePrefix));
             clusterDir += remotePlanePrefix.length();
+            clusterDir += 1; // skip the '/'
 
             VStringBuffer newPath("%s/%s", localPlane->queryPrefix(), clusterDir); // add remaining tail of path
             PROGLOG("Redefining cluster defaultBaseDir to '%s'", newPath.str());
@@ -415,7 +418,10 @@ public:
 
             const char *dir = file->queryProp("@directory");
             assertex(startsWith(dir, remotePlanePrefix));
+            PROGLOG("@dir = '%s'", dir);
             dir += remotePlanePrefix.length();
+            dir += 1; // skip the '/'
+
             newPath.clear().appendf("%s/%s", localPlane->queryPrefix(), dir); // add remaining tail of path
             PROGLOG("Redefining @dir to '%s'", newPath.str());
             file->setProp("@directory", newPath.str());
@@ -745,8 +751,24 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
     }
     if (!service)
     {
-        // JCSMORE - discover the k8s service from configuration..
+#ifdef _CONTAINERIZED
+        Owned<IPropertyTreeIterator> eclWatchServices = getGlobalConfigSP()->getElements("services[@type='eclwatch']");
+        if (!eclWatchServices->first())
+            throw makeStringException(-1, "No eclwatch service not defined");
+        const IPropertyTree &eclWatch = eclWatchServices->query();
+        StringBuffer eclWatchName;
+        eclWatch.getProp("@name", eclWatchName);
+        auto service = getExternalService(eclWatchName);
+        if (service.first.empty())
+            throw makeStringExceptionV(-1, "eclwatch '%s': service not found", eclWatchName.str());
+        if (0 == service.second)
+            throw makeStringExceptionV(-1, "eclwatch '%s': service port not defined", eclWatchName.str());
+        svc.append(service.first).append(':').append(service.second);
+        service = svc;
+#else
+        UNIMPLEMENTED_X("lookupDFSFile");
         service = "localhost";
+#endif
     }
 
     Owned<IClientWsDfs> dfsClient = getDfsClient(service, userDesc);

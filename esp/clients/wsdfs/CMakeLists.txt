@@ -50,6 +50,7 @@ include_directories (
          ${HPCC_SOURCE_DIR}/esp/smc/SMCLib
          ${HPCC_SOURCE_DIR}/dali/base
          ${HPCC_SOURCE_DIR}/common/thorhelper
+         ${HPCC_SOURCE_DIR}/common/workunit
     )
 
 ADD_DEFINITIONS( -D_USRDLL -DWSDFS_EXPORTS )
@@ -61,4 +62,5 @@ target_link_libraries ( wsdfs
          xmllib 
          esphttp
          dalibase
+         workunit
     )

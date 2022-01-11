@@ -314,7 +314,7 @@ public:
     IDistributedFile *timedLookup(CJobBase &job, CDfsLogicalFileName &lfn, bool write, bool privilegedUser=false, unsigned timeout=INFINITE)
     {
         VStringBuffer blockedMsg("lock file '%s' for %s access", lfn.get(), write ? "WRITE" : "READ");
-        if (!write && job.getOptBool("newdfs"))
+        if (!write && lfn.isRemote() && job.getOptBool("newdfs"))
         {
             auto func = [&job, &lfn, write, privilegedUser](unsigned timeout)
             {
