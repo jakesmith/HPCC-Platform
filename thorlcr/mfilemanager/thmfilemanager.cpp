@@ -314,8 +314,15 @@ public:
     IDistributedFile *timedLookup(CJobBase &job, CDfsLogicalFileName &lfn, bool write, bool privilegedUser=false, unsigned timeout=INFINITE)
     {
         VStringBuffer blockedMsg("lock file '%s' for %s access", lfn.get(), write ? "WRITE" : "READ");
-        if (!write && lfn.isRemote() && job.getOptBool("newdfs"))
+        if (!write && job.getOptBool("dfsesp"))
         {
+            if (lfn.isRemote() || job.getOptBool("dfsesp-forlocal"))
+            {
+                Owned<IDistributedFile> file = queryDistributedFileDirectory().lookup(lfn, write, privilegedUser, timeout);
+                if (file)
+                    noteFileRead(job, file, false);
+                return file.getClear();
+            }
             auto func = [&job, &lfn, write, privilegedUser](unsigned timeout)
             {
                 return wsdfs::lookupLegacyDFSFile(lfn.get(), timeout, wsdfs::keepAliveExpiryFrequency, job.queryUserDescriptor());

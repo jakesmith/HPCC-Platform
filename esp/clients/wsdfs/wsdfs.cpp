@@ -758,12 +758,12 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
         const IPropertyTree &eclWatch = eclWatchServices->query();
         StringBuffer eclWatchName;
         eclWatch.getProp("@name", eclWatchName);
-        auto service = getExternalService(eclWatchName);
-        if (service.first.empty())
+        auto result = getExternalService(eclWatchName);
+        if (result.first.empty())
             throw makeStringExceptionV(-1, "eclwatch '%s': service not found", eclWatchName.str());
-        if (0 == service.second)
+        if (0 == result.second)
             throw makeStringExceptionV(-1, "eclwatch '%s': service port not defined", eclWatchName.str());
-        svc.append(service.first).append(':').append(service.second);
+        svc.append(result.first.c_str()).append(':').append(result.second);
         service = svc;
 #else
         UNIMPLEMENTED_X("lookupDFSFile");
