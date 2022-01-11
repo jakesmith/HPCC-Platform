@@ -318,22 +318,17 @@ public:
         {
             if (lfn.isRemote() || job.getOptBool("dfsesp-forlocal"))
             {
-                Owned<IDistributedFile> file = queryDistributedFileDirectory().lookup(lfn, write, privilegedUser, timeout);
-                if (file)
-                    noteFileRead(job, file, false);
-                return file.getClear();
+                auto func = [&job, &lfn, write, privilegedUser](unsigned timeout)
+                {
+                    return wsdfs::lookupLegacyDFSFile(lfn.get(), timeout, wsdfs::keepAliveExpiryFrequency, job.queryUserDescriptor());
+                };
+                return blockReportFunc<IDistributedFile *>(job, func, timeout, blockedMsg);
             }
-            auto func = [&job, &lfn, write, privilegedUser](unsigned timeout)
-            {
-                return wsdfs::lookupLegacyDFSFile(lfn.get(), timeout, wsdfs::keepAliveExpiryFrequency, job.queryUserDescriptor());
-            };
-            return blockReportFunc<IDistributedFile *>(job, func, timeout, blockedMsg);
         }
-        else
-        {
-            auto func = [&job, &lfn, write, privilegedUser](unsigned timeout) { return queryDistributedFileDirectory().lookup(lfn, job.queryUserDescriptor(), write, false, false, nullptr, privilegedUser, timeout); };
-            return blockReportFunc<IDistributedFile *>(job, func, timeout, blockedMsg);
-        }
+        // NB: if we're here, we're not using DFSESP
+        auto func = [&job, &lfn, write, privilegedUser](unsigned timeout) { return queryDistributedFileDirectory().lookup(lfn, job.queryUserDescriptor(), write, false, false, nullptr, privilegedUser, timeout); };
+        return blockReportFunc<IDistributedFile *>(job, func, timeout, blockedMsg);
+
     }
     IDistributedFile *timedLookup(CJobBase &job, const char *logicalName, bool write, bool privilegedUser=false, unsigned timeout=INFINITE)
     {
