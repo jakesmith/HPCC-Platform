@@ -14439,7 +14439,7 @@ std::pair<std::string, unsigned> getExternalService(const char *serviceName)
     StringBuffer output;
     try
     {
-        VStringBuffer getServiceCmd("kubectl get svc --selector=server=%s --output=jsonpath={.items[0].status.loadBalancer.ingress[0].hostname},{.items[0].spec.ports[0].port}", serviceName);
+        VStringBuffer getServiceCmd("kubectl get svc --selector=server=%s --output=jsonpath={.items[0].status.loadBalancer.ingress[0].hostname},{.items[0].status.loadBalancer.ingress[0].ip},{.items[0].spec.ports[0].port}", serviceName);
         runKubectlCommand("get-external-service", getServiceCmd, nullptr, &output);
     }
     catch (IException *e)
@@ -14458,9 +14458,13 @@ std::pair<std::string, unsigned> getExternalService(const char *serviceName)
     unsigned port = 0;
     if (fields.ordinality())
     {
-        host = fields.item(0);
-        if (fields.ordinality()>1)
-            port = atoi(fields.item(1));
+        if (fields.item(0).length())
+            host = fields.item(0); // hostname
+        else
+            host = fields.item(1); // ip
+        if (host.length() == 0 || fields.item(2).length() == 0)
+            throw makeStringExceptionV(-1, "Failed to get external service for '%s'. hostname/ip or port invalid", serviceName);
+        port = atoi(fields.item(2)); // port
     }
     auto servicePair = std::make_pair(host, port);
     externalServiceCache.add(serviceName, servicePair);
