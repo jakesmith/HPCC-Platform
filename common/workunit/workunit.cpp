@@ -14423,6 +14423,8 @@ void runK8sJob(const char *componentName, const char *wuid, const char *job, con
         throw exception.getClear();
 }
 
+#endif
+
 
 std::pair<std::string, unsigned> getExternalService(const char *serviceName)
 {
@@ -14440,7 +14442,7 @@ std::pair<std::string, unsigned> getExternalService(const char *serviceName)
     try
     {
         VStringBuffer getServiceCmd("kubectl get svc --selector=server=%s --output=jsonpath={.items[0].status.loadBalancer.ingress[0].hostname},{.items[0].status.loadBalancer.ingress[0].ip},{.items[0].spec.ports[0].port}", serviceName);
-        runKubectlCommand("get-external-service", getServiceCmd, nullptr, &output);
+        //runKubectlCommand("get-external-service", getServiceCmd, nullptr, &output);
     }
     catch (IException *e)
     {
@@ -14454,21 +14456,15 @@ std::pair<std::string, unsigned> getExternalService(const char *serviceName)
     fields.appendList(output, ",");
 
     // NB: add even if no result, want non-result to be cached too
-    std::string host;
-    unsigned port = 0;
-    if (fields.ordinality())
+    std::string host, port;
+    if (fields.ordinality() == 3) // hostname,ip,port. NB: hostname may be missing, but still present as a blank field
     {
-        if (fields.item(0).length())
-            host = fields.item(0); // hostname
-        else
+        host = fields.item(0); // hostname
+        if (0 == host.length())
             host = fields.item(1); // ip
-        if (host.length() == 0 || fields.item(2).length() == 0)
-            throw makeStringExceptionV(-1, "Failed to get external service for '%s'. hostname/ip or port invalid", serviceName);
-        port = atoi(fields.item(2)); // port
+        port = fields.item(2);
     }
-    auto servicePair = std::make_pair(host, port);
+    auto servicePair = std::make_pair(host, atoi(port.c_str()));
     externalServiceCache.add(serviceName, servicePair);
     return servicePair;
 }
-
-#endif
