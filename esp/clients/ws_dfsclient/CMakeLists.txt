@@ -1,5 +1,5 @@
 ################################################################################
-#    HPCC SYSTEMS software Copyright (C) 2012 HPCC Systems®.
+#    HPCC SYSTEMS software Copyright (C) 2021 HPCC Systems®.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -15,69 +15,52 @@
 ################################################################################
 
 
-# Component: ws_dfs
+# Component: ws_dfsclient
+
 #####################################################
 # Description:
 # ------------
-#    Cmake Input File for ws_dfs
+#    Cmake Input File for ws_dfsclient
 #####################################################
 
-project( ws_dfs )
+
+project( ws_dfsclient )
 
 include(${HPCC_SOURCE_DIR}/esp/scm/smcscm.cmake)
 
 set (    SRCS
+         ws_dfsclient.cpp
          ${ESPSCM_GENERATED_DIR}/ws_dfs_esp.cpp
-         ${HPCC_SOURCE_DIR}/esp/scm/ws_dfs.ecm
-         ws_dfsservice.cpp
-         ws_dfsplugin.cpp
     )
 
 include_directories (
-         ${CMAKE_BINARY_DIR}
-         ${CMAKE_BINARY_DIR}/oss
+         ${HPCC_SOURCE_DIR}/system/include
          ${HPCC_SOURCE_DIR}/system/jlib
          ${HPCC_SOURCE_DIR}/system/mp
          ${HPCC_SOURCE_DIR}/system/xmllib
-         ${HPCC_SOURCE_DIR}/system/security/securesocket
          ${HPCC_SOURCE_DIR}/system/security/shared
+         ${HPCC_SOURCE_DIR}/system/security/securesocket
          ${HPCC_SOURCE_DIR}/system/security/cryptohelper
-         ${HPCC_SOURCE_DIR}/system/include
-         ${HPCC_SOURCE_DIR}/esp/platform
-         ${HPCC_SOURCE_DIR}/esp/services
          ${HPCC_SOURCE_DIR}/esp/bindings
-         ${HPCC_SOURCE_DIR}/esp/smc/SMCLib
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/client
          ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/xpp
+         ${HPCC_SOURCE_DIR}/esp/platform
          ${HPCC_SOURCE_DIR}/esp/clients
-         ${HPCC_SOURCE_DIR}/esp/clients/wsdfs
-         ${HPCC_SOURCE_DIR}/esp/services/common
+         ${HPCC_SOURCE_DIR}/esp/bindings/SOAP/Platform
+         ${HPCC_SOURCE_DIR}/esp/smc/SMCLib
          ${HPCC_SOURCE_DIR}/dali/base
-         ${HPCC_SOURCE_DIR}/dali/dfu
-         ${HPCC_SOURCE_DIR}/dali/sasha
          ${HPCC_SOURCE_DIR}/common/thorhelper
          ${HPCC_SOURCE_DIR}/common/workunit
-         ${HPCC_SOURCE_DIR}/rtl/include
-         ${HPCC_SOURCE_DIR}/rtl/eclrtl
     )
 
-ADD_DEFINITIONS( -D_USRDLL -DWS_DFS_EXPORTS )
+ADD_DEFINITIONS( -D_USRDLL -DWS_DFSCLIENT_EXPORTS )
 
-HPCC_ADD_LIBRARY( ws_dfs SHARED ${SRCS} )
-add_dependencies ( ws_dfs espscm )
-install ( TARGETS ws_dfs RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
-target_link_libraries ( ws_dfs
+HPCC_ADD_LIBRARY( ws_dfsclient SHARED ${SRCS} )
+install ( TARGETS ws_dfsclient RUNTIME DESTINATION ${EXEC_DIR} LIBRARY DESTINATION ${LIB_DIR} )
+target_link_libraries ( ws_dfsclient
          jlib
-         mp
-         dalibase
-         dllserver
-         workunit
          xmllib
          esphttp
-         SMCLib
+         dalibase
+         workunit
     )
-
-IF (USE_OPENSSL)
-    target_link_libraries ( ws_dfs
-        securesocket
-    )
-ENDIF()

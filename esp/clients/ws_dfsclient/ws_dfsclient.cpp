@@ -31,7 +31,7 @@
 #include "dadfs.hpp"
 #include "dautils.hpp"
 
-#include "wsdfs.hpp"
+#include "ws_dfsclient.hpp"
 
 namespace wsdfs
 {

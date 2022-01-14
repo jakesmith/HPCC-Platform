@@ -28,7 +28,7 @@
 #include "exception_util.hpp"
 #include "package.h"
 
-#include "wsdfs.hpp"
+#include "ws_dfsclient.hpp"
 #include "ws_dfsservice.hpp"
 
 using namespace wsdfs;

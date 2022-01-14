@@ -15,15 +15,15 @@
     limitations under the License.
 ############################################################################## */
 
-#ifndef _WSDFS_HPP
-#define _WSDFS_HPP
+#ifndef _WS_DFSCLIENT_HPP
+#define _WS_DFSCLIENT_HPP
 
-#ifndef WSDFS_API
+#ifndef WS_DFSCLIENT_API
 
-#ifdef WSDFS_EXPORTS
-#define WSDFS_API DECL_EXPORT
+#ifdef WS_DFSCLIENT_EXPORTS
+#define WS_DFSCLIENT_API DECL_EXPORT
 #else
-#define WSDFS_API DECL_IMPORT
+#define WS_DFSCLIENT_API DECL_IMPORT
 #endif
 
 #endif
@@ -47,10 +47,10 @@ interface IDFSFile : extends IInterface
     virtual unsigned queryTimeoutSecs() const = 0;
 };
 
-WSDFS_API IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
-WSDFS_API IDistributedFile *createLegacyDFSFile(IDFSFile *dfsFile);
-WSDFS_API IDistributedFile *lookupLegacyDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
+WS_DFSCLIENT_API IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
+WS_DFSCLIENT_API IDistributedFile *createLegacyDFSFile(IDFSFile *dfsFile);
+WS_DFSCLIENT_API IDistributedFile *lookupLegacyDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
 
 } // end of namespace wsdfs
 
-#endif // _WSDFS_HPP
+#endif // _WS_DFSCLIENT_HPP

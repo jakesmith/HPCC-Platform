@@ -141,7 +141,7 @@ This is required by its binding with ESP service '<xsl:value-of select="$espServ
             <xsl:with-param name="bindingNode" select="$bindingNode"/>
             <xsl:with-param name="authNode" select="$authNode"/>
         </xsl:apply-templates>
-        <xsl:apply-templates select="." mode="ws_dfs">
+        <xsl:apply-templates select="." mode="ws_dfsservice">
             <xsl:with-param name="bindingNode" select="$bindingNode"/>
             <xsl:with-param name="authNode" select="$authNode"/>
         </xsl:apply-templates>
@@ -772,8 +772,8 @@ This is required by its binding with ESP service '<xsl:value-of select="$espServ
       </xsl:copy>
    </xsl:template>
 
-    <!-- ws_dfs -->
-    <xsl:template match="EspService" mode="ws_dfs">
+    <!-- ws_dfsservice -->
+    <xsl:template match="EspService" mode="ws_dfsservice">
         <xsl:param name="bindingNode"/>
         <xsl:param name="authNode"/>
 
@@ -783,7 +783,7 @@ This is required by its binding with ESP service '<xsl:value-of select="$espServ
         <xsl:variable name="bindType" select="'ws_dfsSoapBinding'"/>
         <xsl:variable name="servicePlugin">
             <xsl:call-template name="defineServicePlugin">
-                <xsl:with-param name="plugin" select="'ws_dfs'"/>
+                <xsl:with-param name="plugin" select="'ws_dfsservice'"/>
             </xsl:call-template>
         </xsl:variable>
         <EspService name="{$serviceName}" type="{$serviceType}" plugin="{$servicePlugin}">
@@ -793,7 +793,7 @@ This is required by its binding with ESP service '<xsl:value-of select="$espServ
             <xsl:call-template name="bindAuthentication">
                 <xsl:with-param name="bindingNode" select="$bindingNode"/>
                 <xsl:with-param name="authMethod" select="$authNode/@method"/>
-                <xsl:with-param name="service" select="'ws_dfs'"/>
+                <xsl:with-param name="service" select="'ws_dfsservice'"/>
             </xsl:call-template>
         </EspBinding>
     </xsl:template>

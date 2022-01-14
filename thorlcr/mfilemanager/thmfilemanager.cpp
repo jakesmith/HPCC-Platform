@@ -38,7 +38,7 @@
 
 #include "workunit.hpp"
 
-#include "wsdfs.hpp"
+#include "ws_dfsclient.hpp"
 
 #define CHECKPOINTSCOPE "checkpoints"
 #define TMPSCOPE "temporary"

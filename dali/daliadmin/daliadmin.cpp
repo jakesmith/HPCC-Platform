@@ -20,7 +20,7 @@
 #include "rmtfile.hpp"
 #include "daadmin.hpp"
 
-#include "wsdfs.hpp"
+#include "ws_dfsclient.hpp"
 
 
 using namespace daadmin;

@@ -37,7 +37,7 @@ include_directories (
          ${HPCC_SOURCE_DIR}/common/workunit
          ${HPCC_SOURCE_DIR}/dali/base
          ${HPCC_SOURCE_DIR}/dali/ft
-         ${HPCC_SOURCE_DIR}/esp/clients/wsdfs
+         ${HPCC_SOURCE_DIR}/esp/clients/ws_dfsclient
          ${HPCC_SOURCE_DIR}/roxie/roxiemem
          ${HPCC_SOURCE_DIR}/rtl/eclrtl
          ${HPCC_SOURCE_DIR}/rtl/include
@@ -68,7 +68,7 @@ target_link_libraries ( mfilemanager_lcr
          nbcd
          remote
          workunit
-         wsdfs
+         ws_dfsclient
     )
 
 if (NOT CONTAINERIZED)
