@@ -1,6 +1,6 @@
 /*##############################################################################
 
-    HPCC SYSTEMS software Copyright (C) 2021 HPCC Systems®.
+    HPCC SYSTEMS software Copyright (C) 2022 HPCC Systems®.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -34,13 +34,13 @@ extern "C"
 // Change the function names when we stick with dynamic loading.
 ESP_FACTORY IEspService * esp_service_factory(const char *name, const char* type, IPropertyTree *cfg, const char *process)
 {
-   if (strieq(type, "WsDfs"))
-   {
-      CWsDfsEx* service = new CWsDfsEx;
-      service->init(cfg, process, name);
-      return service;
-   }
-   return NULL;
+    if (strieq(type, "WsDfs"))
+    {
+        CWsDfsEx* service = new CWsDfsEx;
+        service->init(cfg, process, name);
+        return service;
+    }
+    return nullptr;
 }
 
 ESP_FACTORY IEspRpcBinding* esp_binding_factory(const char* name, const char* type, IPropertyTree* cfg, const char* process)

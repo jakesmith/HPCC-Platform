@@ -2800,7 +2800,9 @@ public:
     void resetHistory()
     {
         DistributedFilePropertyLock lock(this);
-        queryAttributes().removeTree(queryHistory());
+        IPropertyTree *history = queryHistory();
+        if (history)
+            queryAttributes().removeTree(history);
     }
     void lockFileAttrLock(CFileAttrLock & attrLock)
     {

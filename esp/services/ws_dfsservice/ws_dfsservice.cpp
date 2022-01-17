@@ -1,6 +1,6 @@
 /*##############################################################################
 
-    HPCC SYSTEMS software Copyright (C) 2021 HPCC Systems®.
+    HPCC SYSTEMS software Copyright (C) 2022 HPCC Systems®.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -119,8 +119,6 @@ static void populateLFNMeta(const char *logicalName, unsigned __int64 leaseId, I
 void CWsDfsEx::init(IPropertyTree *cfg, const char *process, const char *service)
 {
     DBGLOG("Initializing %s service [process = %s]", service, process);
-
-    assertex(!m_daliDetached);
 }
 
 bool CWsDfsEx::onGetLease(IEspContext &context, IEspLeaseRequest &req, IEspLeaseResponse &resp)

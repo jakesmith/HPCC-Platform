@@ -1,6 +1,6 @@
 /*##############################################################################
 
-    HPCC SYSTEMS software Copyright (C) 2018 HPCC Systems®.
+    HPCC SYSTEMS software Copyright (C) 2022 HPCC Systems®.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -30,6 +30,9 @@
 #include "dafdesc.hpp"
 #include "dadfs.hpp"
 #include "dautils.hpp"
+#ifndef _CONTAINERIZED
+#include "environment.hpp"
+#endif
 
 #include "ws_dfsclient.hpp"
 
@@ -79,7 +82,7 @@ protected:
 
         void setCurrent(unsigned w)
         {
-            VStringBuffer lfn("~remote::%s::%s", source->queryService(), owners[w].c_str());
+            VStringBuffer lfn("~remote::%s::%s", source->queryRemoteName(), owners[w].c_str());
             Owned<IDFSFile> dfsFile = lookupDFSFile(lfn, source->queryTimeoutSecs(), keepAliveExpiryFrequency, source->queryUserDescriptor());
             if (!dfsFile)
                 throw makeStringExceptionV(0, "Failed to open superfile %s", lfn.str());
@@ -239,49 +242,52 @@ public:
     virtual bool removeCluster(const char *clustername) override { return legacyDFSFile->removeCluster(clustername); }
     virtual void updatePartDiskMapping(const char *clustername,const ClusterPartDiskMapSpec &spec) override { legacyDFSFile->updatePartDiskMapping(clustername, spec); }
 
+/* NB/TBD: these modifications are only effecting this instance, the changes are not propagated to Dali
+ * This is the same behaviour when foreign files are used, but will need addressing in future.
+ */
     virtual void setModificationTime(const CDateTime &dt) override
     {
-        // TBD
+        legacyDFSFile->setModificationTime(dt);
     }
     virtual void setModified() override
     {
-        // TBD
+        legacyDFSFile->setModified();
     }
     virtual void setAccessedTime(const CDateTime &dt) override
     {
-        // TBD
+        legacyDFSFile->setAccessedTime(dt);
     }
     virtual void setAccessed() override
     {
-        // TBD
+        legacyDFSFile->setAccessed();
     }
     virtual void addAttrValue(const char *attr, unsigned __int64 value) override
     {
-        // TBD
+        legacyDFSFile->addAttrValue(attr, value);
     }
     virtual void setExpire(int expireDays) override
     {
-        // TBD
+        legacyDFSFile->setExpire(expireDays);
     }
     virtual void setECL(const char *ecl) override
     {
-
+        legacyDFSFile->setECL(ecl);
     }
     virtual void resetHistory() override
     {
-        // TBD
+        legacyDFSFile->resetHistory();
     }
     virtual void setProtect(const char *callerid, bool protect=true, unsigned timeoutms=INFINITE) override
     {
-        // TBD
+        legacyDFSFile->setProtect(callerid, protect, timeoutms);
     }
     virtual void setColumnMapping(const char *mapping) override
     {
-        // TBD
+        legacyDFSFile->setColumnMapping(mapping);
     }
     virtual void setRestrictedAccess(bool restricted) override
     {
-        // TBD
+        legacyDFSFile->setRestrictedAccess(restricted);
     }
     virtual bool renamePhysicalPartFiles(const char *newlfn,const char *cluster=NULL,IMultiException *exceptions=NULL,const char *newbasedir=NULL) override
     {
@@ -316,7 +322,7 @@ public:
         VStringBuffer planeXPath("planes[@name=\"%s\"]", remotePlaneName);
         IPropertyTree *filePlane = dfsFile->queryCommonMeta()->queryPropTree(planeXPath);
         assertex(filePlane);
-        const char *remoteName = dfsFile->queryService(); // NB: null if local
+        const char *remoteName = dfsFile->queryRemoteName(); // NB: null if local
 
         if (!isEmptyString(remoteName))
         {
@@ -328,6 +334,9 @@ public:
             const char *filePlanePrefix = filePlane->queryProp("@prefix");
             if (isAbsolutePath(filePlanePrefix) && !filePlane->hasProp("@hosts")) // otherwise assume url
             {
+#ifndef _CONTAINERIZED
+                throw makeStringException(0, "Bare metal does not support remote file access to planes without hosts");
+#endif
                 // A external plane within another environment backed by a PVC, will need a pre-existing
                 // corresponding plane and PVC in the local environment.
                 // The local plane will be associated with the remote environment, via a storage/remote mapping.
@@ -371,7 +380,6 @@ public:
                 file->setProp("@directory", newPath.str());
             }
         }
-
         fileDesc.setown(deserializeFileDescriptorTree(file));
         if (fileDesc)
             fileDesc->setTraceName(logicalName);
@@ -467,20 +475,20 @@ public:
     }
 };
 
-static IDFSFile *createDFSFile(IPropertyTree *commonMeta, IPropertyTree *fileMeta, const char *service, unsigned timeoutSecs, IUserDescriptor *userDesc);
+static IDFSFile *createDFSFile(IPropertyTree *commonMeta, IPropertyTree *fileMeta, const char *remoteName, unsigned timeoutSecs, IUserDescriptor *userDesc);
 class CDFSFile : public CSimpleInterfaceOf<IDFSFile>
 {
     Linked<IPropertyTree> commonMeta; // e.g. share info between IFDSFiles, e.g. common plane info between subfiles
     Linked<IPropertyTree> fileMeta;
     unsigned __int64 lockId;
     std::vector<Owned<IDFSFile>> subFiles;
-    StringAttr service;
+    StringAttr remoteName;
     unsigned timeoutSecs;
     Linked<IUserDescriptor> userDesc;
 
 public:
-    CDFSFile(IPropertyTree *_commonMeta, IPropertyTree *_fileMeta, const char *_service, unsigned _timeoutSecs, IUserDescriptor *_userDesc)
-        : commonMeta(_commonMeta), fileMeta(_fileMeta), service(_service), timeoutSecs(_timeoutSecs), userDesc(_userDesc)
+    CDFSFile(IPropertyTree *_commonMeta, IPropertyTree *_fileMeta, const char *_remoteName, unsigned _timeoutSecs, IUserDescriptor *_userDesc)
+        : commonMeta(_commonMeta), fileMeta(_fileMeta), remoteName(_remoteName), timeoutSecs(_timeoutSecs), userDesc(_userDesc)
     {
         lockId = fileMeta->getPropInt64("@lockId");
         if (fileMeta->getPropBool("@isSuper"))
@@ -489,7 +497,7 @@ public:
             ForEach(*iter)
             {
                 IPropertyTree &subMeta = iter->query();
-                subFiles.push_back(createDFSFile(commonMeta, &subMeta, service, timeoutSecs, userDesc));
+                subFiles.push_back(createDFSFile(commonMeta, &subMeta, remoteName, timeoutSecs, userDesc));
             }
         }
     }
@@ -513,9 +521,9 @@ public:
     {
         return LINK(subFiles[idx]);
     }
-    virtual const char *queryService() const override
+    virtual const char *queryRemoteName() const override
     {
-        return service;
+        return remoteName;
     }
     virtual IUserDescriptor *queryUserDescriptor() const override
     {
@@ -527,9 +535,9 @@ public:
     }
 };
 
-static IDFSFile *createDFSFile(IPropertyTree *commonMeta, IPropertyTree *fileMeta, const char *service, unsigned timeoutSecs, IUserDescriptor *userDesc)
+static IDFSFile *createDFSFile(IPropertyTree *commonMeta, IPropertyTree *fileMeta, const char *remoteName, unsigned timeoutSecs, IUserDescriptor *userDesc)
 {
-    return new CDFSFile(commonMeta, fileMeta, service, timeoutSecs, userDesc);
+    return new CDFSFile(commonMeta, fileMeta, remoteName, timeoutSecs, userDesc);
 }
 
 IClientWsDfs *getDfsClient(const char *serviceUrl, IUserDescriptor *userDesc)
@@ -599,15 +607,19 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
     if (lfn.isRemote())
     {
         verifyex(lfn.getRemoteSpec(remoteName, remoteLogicalFileName));
-        Owned<IPropertyTree> remoteStorage = getRemoteStorage(remoteName.str());
-        if (!remoteStorage)
-            throw makeStringExceptionV(0, "Remote storage '%s' not found", remoteName.str());
-        serviceUrl.set(remoteStorage->queryProp("@service"));
-        logicalName = remoteLogicalFileName;
+
+        if (!strieq(remoteName, "local")) // "local" is a reserve remote name, used to mean the local environment.
+        {
+            Owned<IPropertyTree> remoteStorage = getRemoteStorage(remoteName.str());
+            if (!remoteStorage)
+                throw makeStringExceptionV(0, "Remote storage '%s' not found", remoteName.str());
+            serviceUrl.set(remoteStorage->queryProp("@service"));
+            logicalName = remoteLogicalFileName;
+        }
     }
-#ifdef _CONTAINERIZED
-    else
+    if (!serviceUrl.length())
     {
+#ifdef _CONTAINERIZED
         // NB: only expected to be here if experimental option #option('dfsesp-localfiles', true); is in use.
         // This finds and uses local eclwatch service for local read lookukup.
         Owned<IPropertyTreeIterator> eclWatchServices = getGlobalConfigSP()->getElements("services[@type='eclwatch']");
@@ -623,8 +635,24 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
             throw makeStringExceptionV(-1, "eclwatch '%s': service port not defined", eclWatchName.str());
         const char *protocol = eclWatch.getPropBool("@tls") ? "https" : "http";
         serviceUrl.appendf("%s://%s:%u", protocol, result.first.c_str(), result.second);
-    }
+#else
+        static std::vector<std::string> dfsServiceUrls;
+        static CriticalSection dfsServiceUrlCrit;
+        static std::atomic<unsigned> currentDfsServiceUrl{0};
+        static std::atomic<bool> dfsServiceUrlsDiscovered{false};
+        bool expected = false;
+        if (dfsServiceUrlsDiscovered.compare_exchange_strong(expected, true))
+        {
+            getAccessibleServiceURLList("WsDfs", dfsServiceUrls);
+            if (0 == dfsServiceUrls.size())
+                throw makeStringException(-1, "Could not find any DFS services in the target HPCC configuration.");
+
+        }
+        serviceUrl.append(dfsServiceUrls[currentDfsServiceUrl++].c_str());
+        logicalName = remoteLogicalFileName;
+        remoteName.clear(); // local
 #endif
+    }
 
     DBGLOG("Looking up file '%s' on '%s'", logicalName, serviceUrl.str());
     Owned<IClientWsDfs> dfsClient = getDfsClient(serviceUrl, userDesc);

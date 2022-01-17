@@ -1,6 +1,6 @@
 /*##############################################################################
 
-    HPCC SYSTEMS software Copyright (C) 2021 HPCC Systems®.
+    HPCC SYSTEMS software Copyright (C) 2022 HPCC Systems®.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -41,8 +41,8 @@ interface IDFSFile : extends IInterface
     virtual unsigned numSubFiles() const = 0; // >0 implies this is a superfile
     virtual IDFSFile *getSubFile(unsigned idx) const = 0;
 
-// there are here in case a client wants to use them to lookup a related file.
-    virtual const char *queryService() const = 0;
+// there are here in case a client wants to use them to lookup a related file (e.g. subfiles of a super)
+    virtual const char *queryRemoteName() const = 0;
     virtual IUserDescriptor *queryUserDescriptor() const = 0;
     virtual unsigned queryTimeoutSecs() const = 0;
 };

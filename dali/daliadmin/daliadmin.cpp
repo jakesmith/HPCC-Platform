@@ -625,6 +625,7 @@ static void testDFSFile(IDistributedFile *legacyDfsFile, const char *logicalName
     StringBuffer dateString;
     dt.getString(dateString);
     PROGLOG("Modification time: %s", dateString.str());
+
     legacyDfsFile->getAccessedTime(dt);
     dt.getString(dateString.clear());
     PROGLOG("Accessed time: %s", dateString.str());
@@ -734,6 +735,20 @@ static void testDFSFile(IDistributedFile *legacyDfsFile, const char *logicalName
         e->Release();
     }
 
+    // test some write methods. NB: at the moment, in common with foreign files, these changes do not get propagaged to dali
+    legacyDfsFile->setModified();
+    dt.adjustTime(30);
+    legacyDfsFile->setAccessedTime(dt);
+    legacyDfsFile->setAccessed();
+    legacyDfsFile->addAttrValue("recordCount", 10);
+    legacyDfsFile->setExpire(10);
+    legacyDfsFile->setECL("1;");
+    legacyDfsFile->resetHistory();
+    legacyDfsFile->setProtect("me", true);
+    legacyDfsFile->setColumnMapping("field1");
+    legacyDfsFile->setRestrictedAccess(true);
+
+    // this is simulating what happens in Thor when the manager serializes parts to workers
     Owned<IFileDescriptor> fileDesc = legacyDfsFile->getFileDescriptor();
     MemoryBuffer mb;
     UnsignedArray parts;
