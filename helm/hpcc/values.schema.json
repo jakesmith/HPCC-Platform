@@ -528,12 +528,25 @@
           "description": "the remote DFS service",
           "type": "string"
         },
-        "plane": {
-          "description": "the local plane that this remote storage definition will be mapped to",
-          "type": "string"
+        "planes": {
+          "description": "mapping of remote planes to local planes",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "remote": {
+                "type": "string",
+                "description": "The name of the remote plane to map from"
+              },
+              "local": {
+                "type": "string",
+                "description": "The name of the local plane to map to"
+              }
+            }
+          }
         }
       },
-      "required": [ "name", "service", "plane" ],
+      "required": [ "name", "service", "planes" ],
       "additionalProperties": false
     },
     "resources": {

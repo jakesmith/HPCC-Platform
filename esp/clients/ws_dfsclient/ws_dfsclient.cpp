@@ -344,12 +344,16 @@ public:
                 Owned<IPropertyTree> remoteStorage = getRemoteStorage(remoteName);
                 if (!remoteStorage)
                     throw makeStringExceptionV(0, "Remote storage '%s' not found", remoteName);
+                VStringBuffer remotePlaneXPath("planes[@remote='%s']/@local", remotePlaneName);
+                const char *localMappedPlaneName = remoteStorage->queryProp(remotePlaneXPath);
+                if (isEmptyString(localMappedPlaneName))
+                    throw makeStringExceptionV(0, "Remote plane '%s' not found in remote storage definition '%s'", remotePlaneName, remoteName);
 
-                const char *plane = remoteStorage->queryProp("@plane");
-                Owned<IStoragePlane> localPlane = getRemoteStoragePlane(plane, false);
+                Owned<IStoragePlane> localPlane = getRemoteStoragePlane(localMappedPlaneName, false);
                 if (!localPlane)
-                    throw makeStringExceptionV(0, "Plane '%s' not found in remote storage '%s'", plane, remoteName);
-                DBGLOG("Remote plane defined as local storage plane named '%s' found", plane);
+                    throw makeStringExceptionV(0, "Local plane not found, mapped to by remote storage '%s' (%s->%s)", remoteName, remotePlaneName, localMappedPlaneName);
+
+                DBGLOG("Remote logical file '%s' using remote storage '%s', mapping remote plane '%s' to local plane '%s'", logicalName.str(), remoteName, remotePlaneName, localMappedPlaneName);
 
                 StringBuffer filePlanePrefix;
                 filePlane->getProp("@prefix", filePlanePrefix);
@@ -598,6 +602,13 @@ unsigned __int64 ensureClientLease(const char *service, IUserDescriptor *userDes
 }
 
 
+#ifndef _CONTAINERIZED
+static std::vector<std::string> dfsServiceUrls;
+static CriticalSection dfsServiceUrlCrit;
+static std::atomic<unsigned> currentDfsServiceUrl{0};
+static bool dfsServiceUrlsDiscovered = false;
+#endif
+
 IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc)
 {
     CDfsLogicalFileName lfn;
@@ -636,17 +647,15 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
         const char *protocol = eclWatch.getPropBool("@tls") ? "https" : "http";
         serviceUrl.appendf("%s://%s:%u", protocol, result.first.c_str(), result.second);
 #else
-        static std::vector<std::string> dfsServiceUrls;
-        static CriticalSection dfsServiceUrlCrit;
-        static std::atomic<unsigned> currentDfsServiceUrl{0};
-        static std::atomic<bool> dfsServiceUrlsDiscovered{false};
-        bool expected = false;
-        if (dfsServiceUrlsDiscovered.compare_exchange_strong(expected, true))
         {
-            getAccessibleServiceURLList("WsDfs", dfsServiceUrls);
-            if (0 == dfsServiceUrls.size())
-                throw makeStringException(-1, "Could not find any DFS services in the target HPCC configuration.");
-
+            CriticalBlock b(dfsServiceUrlCrit);
+            if (!dfsServiceUrlsDiscovered)
+            {
+                dfsServiceUrlsDiscovered = true;
+                getAccessibleServiceURLList("WsDfs", dfsServiceUrls);
+                if (0 == dfsServiceUrls.size())
+                    throw makeStringException(-1, "Could not find any DFS services in the target HPCC configuration.");
+            }
         }
         serviceUrl.append(dfsServiceUrls[currentDfsServiceUrl++].c_str());
         logicalName = remoteLogicalFileName;
