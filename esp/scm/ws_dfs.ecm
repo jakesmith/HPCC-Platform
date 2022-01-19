@@ -49,7 +49,7 @@ ESPresponse [exceptions_inline] KeepAliveResponse
 
 //  ===========================================================================
 ESPservice [
-    auth_feature("DEFERRED"),
+    auth_feature("WsDfsAccess:ACCESS"),
     version("1.01"),
     default_client_version("1.01"),
     noforms,
@@ -60,5 +60,5 @@ ESPservice [
     ESPmethod [auth_feature("DfuAccess:READ"), min_ver("1.01")] DFSFileLookup(DFSFileLookupRequest, DFSFileLookupResponse);
 };
 
-SCMexportdef(WSDFS);
-SCMapi(WSDFS) IClientWsDfs *createWsDfsClient();
+SCMexportdef(WsDfs);
+SCMapi(WsDfs) IClientWsDfs *createWsDfsClient();

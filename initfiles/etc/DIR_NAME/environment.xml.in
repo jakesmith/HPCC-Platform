@@ -433,6 +433,11 @@
                          path="WsLogAccess"
                          resource="WsLogAccess"
                          service="ws_logaccess"/>
+    <AuthenticateFeature authenticate="Yes"
+                         description="Access to DFS service"
+                         path="WsDfs"
+                         resource="WsDfsAccess"
+                         service="ws_dfsservice"/>
     <Authenticate access="Read"
                   description="Root access to SMC service"
                   path="/"
@@ -778,6 +783,11 @@
                          path="WsLogAccess"
                          resource="WsLogAccess"
                          service="ws_logaccess"/>
+    <AuthenticateFeature authenticate="Yes"
+                         description="Access to DFS service"
+                         path="WsDfs"
+                         resource="WsDfsAccess"
+                         service="ws_dfsservice"/>
     <ProcessFilters>
      <Platform name="Windows">
       <ProcessFilter name="any">
@@ -1179,6 +1189,11 @@
                          path="WsLogAccess"
                          resource="WsLogAccess"
                          service="ws_logaccess"/>
+     <AuthenticateFeature authenticate="Yes"
+                         description="Access to DFS service"
+                         path="WsDfs"
+                         resource="WsDfsAccess"
+                         service="ws_dfsservice"/>
      <ProcessFilters>
       <Platform name="Windows">
        <ProcessFilter name="any">

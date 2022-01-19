@@ -41,4 +41,4 @@ binding_plugins:
   ws_codesign: ws_codesign
   ws_resources: ws_resources
   WSDali: ws_dali
-  
+
