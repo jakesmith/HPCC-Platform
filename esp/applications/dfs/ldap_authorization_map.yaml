@@ -1,0 +1,5 @@
+ldap:
+   root_access:
+      resource: WsDfsAccess
+      required: Read
+      description: Base access to EclWatch
