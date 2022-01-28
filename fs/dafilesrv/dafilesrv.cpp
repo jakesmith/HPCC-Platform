@@ -391,7 +391,8 @@ int main(int argc, const char* argv[])
     unsigned short  sslport;
     unsigned dedicatedRowServicePort = DEFAULT_ROWSERVICE_PORT;
 #ifdef _CONTAINERIZED
-    connectMethod = SSLOnly;
+    bool directIO = strsame(config->queryProp("@application"), "directio");
+    connectMethod = directIO ? SSLNone : SSLOnly;
     dedicatedRowServicePort = 0; // row service always runs on same secure ssl port in containerized mode
     port = 0;
     sslport = config->getPropInt("service/@port", SECURE_DAFILESRV_PORT);
@@ -773,10 +774,10 @@ int main(int argc, const char* argv[])
                     {
                         SocketEndpoint rowServiceEp(listenep); // copy listenep, incase bound by -addr
                         rowServiceEp.port = dedicatedRowServicePort;
-                        server->run(connectMethod, listenep, sslport, &rowServiceEp, dedicatedRowServiceSSL, rowServiceOnStdPort);
+                        server->run(config, connectMethod, listenep, sslport, &rowServiceEp, dedicatedRowServiceSSL, rowServiceOnStdPort);
                     }
                     else
-                        server->run(connectMethod, listenep, sslport);
+                        server->run(config, connectMethod, listenep, sslport);
                 }
                 catch (IException *e)
                 {
@@ -870,10 +871,10 @@ int main(int argc, const char* argv[])
         {
             SocketEndpoint rowServiceEp(listenep); // copy listenep, incase bound by -addr
             rowServiceEp.port = dedicatedRowServicePort;
-            server->run(connectMethod, listenep, sslport, &rowServiceEp, dedicatedRowServiceSSL, rowServiceOnStdPort);
+            server->run(config, connectMethod, listenep, sslport, &rowServiceEp, dedicatedRowServiceSSL, rowServiceOnStdPort);
         }
         else
-            server->run(connectMethod, listenep, sslport);
+            server->run(config, connectMethod, listenep, sslport);
     }
     catch (IException *e)
     {
