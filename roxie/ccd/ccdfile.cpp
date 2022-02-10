@@ -1711,6 +1711,7 @@ public:
 
             bool defaultDirPerPart = false;
             StringBuffer defaultDir;
+            unsigned stripeNum = 0;
 #ifdef _CONTAINERIZED
             if (!dlfn.isExternal())
             {
@@ -1719,12 +1720,15 @@ public:
                 fileDesc.getClusterGroupName(0, planeName);
                 Owned<IStoragePlane> plane = getDataStoragePlane(planeName, true);
                 defaultDir.append(plane->queryPrefix());
+                unsigned numStripedDevices = plane->numDevices();
+                if (numStripedDevices > 1)
+                    stripeNum = (partNo % numStripedDevices)+1;
                 FileDescriptorFlags fileFlags = static_cast<FileDescriptorFlags>(fileDesc.queryProperties().getPropInt("@flags"));
                 if (FileDescriptorFlags::none != (fileFlags & FileDescriptorFlags::dirperpart))
                     defaultDirPerPart = true;
             }
 #endif
-            makePhysicalPartName(dlfn.get(), partNo, numParts, localLocation, replicationLevel, DFD_OSdefault, defaultDir.str(), defaultDirPerPart);
+            makePhysicalPartName(dlfn.get(), partNo, numParts, localLocation, replicationLevel, DFD_OSdefault, defaultDir.str(), defaultDirPerPart, stripeNum);
         }
         Owned<ILazyFileIO> ret;
         try

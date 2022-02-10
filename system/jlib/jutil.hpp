@@ -633,6 +633,9 @@ struct HPCCBuildInfo
 extern jlib_decl HPCCBuildInfo hpccBuildInfo;
 extern jlib_decl bool checkCreateDaemon(unsigned argc, const char * * argv);
 
+#ifdef _CONTAINERIZED
+extern jlib_decl bool getDefaultPlane(StringBuffer &ret, const char * componentOption, const char * category);
+#endif
 
 #endif
 

@@ -200,6 +200,7 @@ void ClusterPartDiskMapSpec::toProp(IPropertyTree *tree)
     setPropDef(tree,"@interleave",interleave,0);
     setPropDef(tree,"@mapFlags",flags,0);
     setPropDef(tree,"@repeatedPart",repeatedPart,(int)CPDMSRP_notRepeated);
+    setPropDef(tree, "@numStripedDevices", numStripedDevices, 1);
     if (defaultBaseDir.isEmpty())
         tree->removeProp("@defaultBaseDir");
     else
@@ -228,6 +229,7 @@ void ClusterPartDiskMapSpec::fromProp(IPropertyTree *tree)
     interleave = getPropDef(tree,"@interleave",0);
     flags = (byte)getPropDef(tree,"@mapFlags",0);
     repeatedPart = (unsigned)getPropDef(tree,"@repeatedPart",(int)CPDMSRP_notRepeated);
+    numStripedDevices = (unsigned)getPropDef(tree, "@numStripedDevices", 1);
     setDefaultBaseDir(tree->queryProp("@defaultBaseDir"));
     setDefaultReplicateDir(tree->queryProp("@defaultReplicateDir"));
 }
@@ -246,6 +248,8 @@ void ClusterPartDiskMapSpec::serialize(MemoryBuffer &mb)
         mb.append(defaultBaseDir);
     if (flags&CPDMSF_defaultReplicateDir)
         mb.append(defaultReplicateDir);
+    if (flags&CPDMSF_striped)
+        mb.append(numStripedDevices);
 }
 
 void ClusterPartDiskMapSpec::deserialize(MemoryBuffer &mb)
@@ -268,6 +272,8 @@ void ClusterPartDiskMapSpec::deserialize(MemoryBuffer &mb)
         mb.read(defaultReplicateDir);
     else
         defaultReplicateDir.clear();
+    if (flags&CPDMSF_striped)
+        mb.read(numStripedDevices);
 }
 
 
@@ -398,7 +404,18 @@ struct CClusterInfo: implements IClusterInfo, public CInterface
                 name.set(gname);
         }
     }
-
+    void checkStriped()
+    {
+        if (!name.isEmpty())
+        {
+            Owned<IStoragePlane> plane = getDataStoragePlane(name, false);
+            mspec.numStripedDevices = plane ? plane->numDevices() : 1;
+            if (mspec.numStripedDevices>1)
+                mspec.flags |= CPDMSF_striped;
+            else
+                mspec.flags &= ~CPDMSF_striped;
+        }
+    }
 public:
     IMPLEMENT_IINTERFACE;
     CClusterInfo(MemoryBuffer &mb,INamedGroupStore *resolver)
@@ -418,6 +435,7 @@ public:
         name.toLowerCase();
         mspec =_mspec;
         checkClusterName(resolver);
+        checkStriped();
     }
     CClusterInfo(IPropertyTree *pt,INamedGroupStore *resolver,unsigned flags)
     {
@@ -442,6 +460,7 @@ public:
         }
         else
             checkClusterName(resolver);
+        checkStriped();
     }
 
     const char *queryGroupName()
@@ -930,6 +949,54 @@ void getClusterInfo(IPropertyTree &pt, INamedGroupStore *resolver, unsigned flag
     }
 }
 
+inline bool validFNameChar(char c)
+{
+    static const char *invalids = "*\"/:<>?\\|";
+    return (c>=32 && c<127 && !strchr(invalids, c));
+}
+
+inline const char *skipRoot(const char *lname)
+{
+    for (;;) {
+        while (*lname==' ')
+            lname++;
+        if (*lname!='.')
+            break;
+        const char *s = lname+1;
+        while (*s==' ')
+            s++;
+        if (!*s)
+            lname = s;
+        else if ((s[0]==':')&&(s[1]==':'))
+            lname = s+2;
+        else
+            break;
+    }
+    return lname;
+}
+
+// returns position in result buffer of tail lfn name
+static size32_t translateLFNToPath(StringBuffer &result, const char *lname, char pathSep)
+{
+    lname = skipRoot(lname);
+    char c;
+    size32_t l = result.length();
+    while ((c=*(lname++))!=0)
+    {
+        if ((c==':')&&(*lname==':'))
+        {
+            lname++;
+            result.clip().append(pathSep);
+            l = result.length();
+            lname = skipRoot(lname);
+        }
+        else if (validFNameChar(c))
+            result.append((char)tolower(c));
+        else
+            result.appendf("%%%.2X", (int) c);
+    }
+    return l;
+}
 
 class CFileDescriptor:  public CFileDescriptorBase, implements ISuperFileDescriptor
 {
@@ -1128,6 +1195,15 @@ class CFileDescriptor:  public CFileDescriptorBase, implements ISuperFileDescrip
     {
         unsigned n = numParts();
         if (idx<n) {
+            StringBuffer stripeDir;
+            unsigned lcopy;
+            IClusterInfo * cluster = queryCluster(idx,copy,lcopy);
+#ifdef _CONTAINERIZED
+            if (cluster)
+                addStripeDirectory(stripeDir, directory, cluster->queryGroupName(), idx, cluster->queryPartDiskMapping().numStripedDevices);
+#endif
+            if (stripeDir.isEmpty())
+                stripeDir.append(directory);
             StringBuffer fullpath;
             StringBuffer tmp1;
             CPartDescriptor &pt = *part(idx);
@@ -1138,23 +1214,23 @@ class CFileDescriptor:  public CFileDescriptorBase, implements ISuperFileDescrip
                     StringBuffer tmpon; // bit messy but need to ensure dir put back on before removing!
                     const char *on = pt.overridename.get();
                     if (on&&*on&&!isAbsolutePath(on)&&!directory.isEmpty())
-                        on = addPathSepChar(tmpon.append(directory)).append(on).str();
+                        on = addPathSepChar(tmpon.append(stripeDir)).append(on).str();
                     StringBuffer tmp2;
                     splitDirMultiTail(on,tmp1,tmp2);
                 }
                 else
                     splitDirTail(pt.overridename,tmp1);
-                if (directory.isEmpty()||(isAbsolutePath(tmp1.str())||(stdIoHandle(tmp1.str())>=0)))
+                if (stripeDir.isEmpty()||(isAbsolutePath(tmp1.str())||(stdIoHandle(tmp1.str())>=0)))
                     fullpath.swapWith(tmp1);
                 else {
-                    fullpath.append(directory);
+                    fullpath.append(stripeDir);
                     if (fullpath.length())
                         addPathSepChar(fullpath);
                     fullpath.append(tmp1);
                 }
             }
             else if (!partmask.isEmpty()) {
-                fullpath.append(directory);
+                fullpath.append(stripeDir);
                 if (containsPathSepChar(partmask)) {
                     if (fullpath.length())
                         addPathSepChar(fullpath);
@@ -1162,11 +1238,9 @@ class CFileDescriptor:  public CFileDescriptorBase, implements ISuperFileDescrip
                 }
             }
             else
-                fullpath.append(directory);
+                fullpath.append(stripeDir);
             replaceClusterDir(idx,copy, fullpath);
             StringBuffer baseDir, repDir;
-            unsigned lcopy;
-            IClusterInfo * cluster = queryCluster(idx,copy,lcopy);
             if (cluster)
             {
                 DFD_OS os = SepCharBaseOs(getPathSepChar(fullpath));
@@ -2336,7 +2410,7 @@ IFileDescriptor *createFileDescriptor(const char *lname,IGroup *grp,IPropertyTre
         width = grp->ordinality();
     StringBuffer s;
     for (unsigned i=0;i<width;i++) {
-        makePhysicalPartName(lname, i+1, width, s.clear(), 0, os, nullptr, false);
+        makePhysicalPartName(lname, i+1, width, s.clear(), 0, os, nullptr, false, 0);
         RemoteFilename rfn;
         rfn.setPath(grp->queryNode(i%grp->ordinality()).endpoint(),s.str());
         res->setPart(i,rfn,NULL);
@@ -2402,12 +2476,6 @@ IFileDescriptor *deserializeFileDescriptor(MemoryBuffer &mb)
 IFileDescriptor *deserializeFileDescriptorTree(IPropertyTree *tree, INamedGroupStore *resolver, unsigned flags)
 {
     return new CFileDescriptor(tree, resolver, flags);
-}
-
-inline bool validFNameChar(char c)
-{
-    static const char *invalids = "*\"/:<>?\\|";
-    return (c>=32 && c<127 && !strchr(invalids, c));
 }
 
 static const char * defaultWindowsBaseDirectories[__grp_size][MAX_REPLICATION_LEVELS] =
@@ -2635,50 +2703,7 @@ StringBuffer &getPartMask(StringBuffer &ret,const char *lname,unsigned partmax)
     return ret;
 }
 
-inline const char *skipRoot(const char *lname)
-{
-    for (;;) {
-        while (*lname==' ')
-            lname++;
-        if (*lname!='.')
-            break;
-        const char *s = lname+1;
-        while (*s==' ')
-            s++;
-        if (!*s)
-            lname = s;
-        else if ((s[0]==':')&&(s[1]==':'))
-            lname = s+2;
-        else
-            break;
-    }
-    return lname;
-}
-
-// returns position in result buffer of tail lfn name
-static size32_t translateLFNToPath(StringBuffer &result, const char *lname, char pathSep)
-{
-    lname = skipRoot(lname);
-    char c;
-    size32_t l = result.length();
-    while ((c=*(lname++))!=0)
-    {
-        if ((c==':')&&(*lname==':'))
-        {
-            lname++;
-            result.clip().append(pathSep);
-            l = result.length();
-            lname = skipRoot(lname);
-        }
-        else if (validFNameChar(c))
-            result.append((char)tolower(c));
-        else
-            result.appendf("%%%.2X", (int) c);
-    }
-    return l;
-}
-
-StringBuffer &makePhysicalPartName(const char *lname, unsigned partno, unsigned partmax, StringBuffer &result, unsigned replicateLevel, DFD_OS os,const char *diroverride,bool dirPerPart)
+StringBuffer &makePhysicalPartName(const char *lname, unsigned partno, unsigned partmax, StringBuffer &result, unsigned replicateLevel, DFD_OS os,const char *diroverride,bool dirPerPart,unsigned stripeNum)
 {
     assertex(lname);
     if (strstr(lname,"::>")) { // probably query
@@ -2720,6 +2745,9 @@ StringBuffer &makePhysicalPartName(const char *lname, unsigned partno, unsigned 
         result.append(OsSepChar(os));
         l++;
     }
+
+    if (stripeNum)
+        result.append('d').append(stripeNum).append(OsSepChar(os));
 
     l = translateLFNToPath(result, lname, OsSepChar(os));
 
@@ -2769,7 +2797,7 @@ StringBuffer &makeSinglePhysicalPartName(const char *lname, StringBuffer &result
 {
     wasdfs = !(allowospath&&(isAbsolutePath(lname)||(stdIoHandle(lname)>=0)));
     if (wasdfs)
-        return makePhysicalPartName(lname, 1, 1, result, 0, DFD_OSdefault, diroverride, false);
+        return makePhysicalPartName(lname, 1, 1, result, 0, DFD_OSdefault, diroverride, false, 0);
     return result.append(lname);
 }
 
@@ -3529,16 +3557,20 @@ void initializeStorageGroups(bool createPlanesFromGroups)
 bool getDefaultStoragePlane(StringBuffer &ret)
 {
 #ifdef _CONTAINERIZED
-    // If the plane is specified for the component, then use that
-    if (getComponentConfigSP()->getProp("@dataPlane", ret))
+    if (getDefaultPlane(ret, "@dataPlane", "data"))
         return true;
 
-    //Otherwise check what the default plane for data storage is configured to be
-    Owned<IPropertyTreeIterator> dataPlanes = getGlobalConfigSP()->getElements("storage/planes[@category='data']");
-    if (dataPlanes->first())
-        return dataPlanes->query().getProp("@name", ret);
-
     throwUnexpectedX("Default data plane not specified"); // The default should always have been configured by the helm charts
+#else
+    return false;
+#endif
+}
+
+bool getDefaultSpillPlane(StringBuffer &ret)
+{
+#ifdef _CONTAINERIZED
+    if (getDefaultPlane(ret, "@spillPlane", "spill"))
+        return true;
 #else
     return false;
 #endif

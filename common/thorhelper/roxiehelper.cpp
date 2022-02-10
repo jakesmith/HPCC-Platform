@@ -2399,7 +2399,14 @@ void ClusterWriteHandler::getPhysicalName(StringBuffer & name, const char * clus
 {
     Owned<IStoragePlane> plane = getDataStoragePlane(cluster, false);
     const char * prefix = plane ? plane->queryPrefix() : nullptr;
-    makePhysicalPartName(logicalName.get(), 1, 1, name, 0, DFD_OSdefault, prefix, false);
+    unsigned stripeNum = 0;
+    if (plane)
+    {
+        // TBD - use hash of logicalName (particularly if 1-way) to distribute across devices and avoid skew
+        unsigned numStripedDevices = plane->numDevices();
+        stripeNum = (0%numStripedDevices)+1;
+    }
+    makePhysicalPartName(logicalName.get(), 1, 1, name, 0, DFD_OSdefault, prefix, false, stripeNum);
 }
 
 void ClusterWriteHandler::addCluster(char const * cluster)
@@ -2454,16 +2461,28 @@ void ClusterWriteHandler::getLocalPhysicalFilename(StringAttr & out) const
     PROGLOG("%s(CLUSTER) for logical filename %s writing to local file %s", activityType.get(), logicalName.get(), out.get());
 }
 
-void ClusterWriteHandler::splitPhysicalFilename(StringBuffer & dir, StringBuffer & base) const
+void ClusterWriteHandler::getDirAndFilename(StringBuffer & dir, StringBuffer & filename) const
 {
 #ifdef _CONTAINERIZED
     assertex(localClusterName.length());
 #endif
     StringBuffer physicalName, physicalDir, physicalBase;
-    getPhysicalName(physicalName, localClusterName);
-    splitFilename(physicalName, &physicalDir, &physicalDir, &physicalBase, &physicalBase);
-    dir.append(physicalDir);
-    base.append(physicalBase);
+
+    Owned<IStoragePlane> plane = getDataStoragePlane(localClusterName, false);
+    const char * prefix = plane ? plane->queryPrefix() : nullptr;
+
+    makePhysicalPartName(logicalName.get(), 0, 0, dir, 0, DFD_OSdefault, prefix, false, false);
+
+    unsigned stripeNum = 0;
+    if (plane)
+    {
+        // TBD - use hash of logicalName to distribute across devices
+        unsigned numStripedDevices = plane->numDevices();
+        stripeNum = (0%numStripedDevices)+1;
+    }
+    StringBuffer fullPath;
+    makePhysicalPartName(logicalName.get(), 1, 1, fullPath, 0, DFD_OSdefault, prefix, false, stripeNum);
+    splitFilename(physicalName, nullptr, nullptr, &filename, &filename);
 }
 
 void ClusterWriteHandler::getTempFilename(StringAttr & out) const

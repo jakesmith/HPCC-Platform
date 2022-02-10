@@ -12335,7 +12335,7 @@ public:
         StringBuffer dir,base;
         offset_t indexFileSize = writer->queryFile()->size();
         if(clusterHandler)
-            clusterHandler->splitPhysicalFilename(dir, base);
+            clusterHandler->getDirAndFilename(dir, base);
         else
         {
             // Check filename is URL and get localpath, only actually necessary if force remote reads are are on

@@ -3309,6 +3309,7 @@ public:
             }
 
             StringBuffer dir;
+            unsigned stripeNum = 0;
 #ifdef _CONTAINERIZED
             StringBuffer cluster;
             if (clusters)
@@ -3321,10 +3322,14 @@ public:
                 getDefaultStoragePlane(cluster);
             Owned<IStoragePlane> plane = getDataStoragePlane(cluster, true);
             dir.append(plane->queryPrefix());
+            unsigned numStripedDevices = plane->numDevices();
+            if (numStripedDevices>1)
+                stripeNum = (0%numStripedDevices)+1;
 #endif
             // MORE - should we create the IDistributedFile here ready for publishing (and/or to make sure it's locked while we write)?
+            // TBD base on hash of logical filename
             StringBuffer physicalPath;
-            makePhysicalPartName(lfn.get(), 1, 1, physicalPath, 0, DFD_OSdefault, dir, false); // more - may need to override path for roxie
+            makePhysicalPartName(lfn.get(), 1, 1, physicalPath, 0, DFD_OSdefault, dir, false, stripeNum); // more - may need to override path for roxie
             localpath.set(physicalPath);
             fileExists = (dfile != NULL);
             return write;
@@ -3725,4 +3730,29 @@ extern da_decl IRemoteConnection* connectXPathOrFile(const char* path, bool safe
     if (conn.get())
         xpath.append(path);
     return conn.getClear();
+}
+
+void addStripeDirectory(StringBuffer &out, const char *directory, const char *planeName, unsigned partNum, unsigned numStripes)
+{
+    if (numStripes <= 1)
+        return;
+    /* 'directory' is the prefix+logical file path, we need to know
+    * the plane prefix to manipulate it and insert the stripe directory.
+    */
+    Owned<IStoragePlane> plane = getDataStoragePlane(planeName, false);
+    if (plane)
+    {
+        const char *planePrefix = plane->queryPrefix();
+        if (!isEmptyString(planePrefix))
+        {
+            assertex(startsWith(directory, planePrefix));
+            const char *tail = directory+strlen(planePrefix);
+            if (isPathSepChar(*tail))
+                tail++;
+            out.append(planePrefix);
+            addPathSepChar(out).append('d').append((partNum%numStripes)+1);
+            if (*tail)
+                addPathSepChar(out).append(tail);
+        }
+    }
 }

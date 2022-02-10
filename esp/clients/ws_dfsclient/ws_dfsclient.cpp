@@ -631,18 +631,18 @@ IDFSFile *lookupDFSFile(const char *logicalName, unsigned timeoutSecs, unsigned 
 #ifdef _CONTAINERIZED
         // NB: only expected to be here if experimental option #option('dfsesp-localfiles', true); is in use.
         // This finds and uses local eclwatch service for local read lookukup.
-        Owned<IPropertyTreeIterator> eclWatchServices = getGlobalConfigSP()->getElements("services[@type='eclwatch']");
-        if (!eclWatchServices->first())
-            throw makeStringException(-1, "No eclwatch service not defined");
-        const IPropertyTree &eclWatch = eclWatchServices->query();
-        StringBuffer eclWatchName;
-        eclWatch.getProp("@name", eclWatchName);
-        auto result = getExternalService(eclWatchName);
+        Owned<IPropertyTreeIterator> dfsServices = getGlobalConfigSP()->getElements("services[@type='dfs']");
+        if (!dfsServices->first())
+            throw makeStringException(-1, "No dfs service not defined");
+        const IPropertyTree &dfsService = dfsServices->query();
+        StringBuffer dfsServiceName;
+        dfsService.getProp("@name", dfsServiceName);
+        auto result = getExternalService(dfsServiceName);
         if (result.first.empty())
-            throw makeStringExceptionV(-1, "eclwatch '%s': service not found", eclWatchName.str());
+            throw makeStringExceptionV(-1, "dfs '%s': service not found", dfsServiceName.str());
         if (0 == result.second)
-            throw makeStringExceptionV(-1, "eclwatch '%s': service port not defined", eclWatchName.str());
-        const char *protocol = eclWatch.getPropBool("@tls") ? "https" : "http";
+            throw makeStringExceptionV(-1, "dfs '%s': service port not defined", dfsServiceName.str());
+        const char *protocol = dfsService.getPropBool("@tls") ? "https" : "http";
         serviceUrl.appendf("%s://%s:%u", protocol, result.first.c_str(), result.second);
 #else
         {

@@ -80,6 +80,7 @@ public:
                             // ( | CPDMSRP_onlyRepeated for *only* repeats )
     StringAttr defaultBaseDir; // if set overrides *base* directory (i.e. /c$/dir/x/y becomes odir/x/y)
     StringAttr defaultReplicateDir;
+    unsigned numStripedDevices = 1;
 
     void setRoxie (unsigned redundancy, unsigned channelsPerNode, int replicateOffset=1);
     void setRepeatedCopies(unsigned partnum,bool onlyrepeats);
@@ -98,13 +99,14 @@ public:
     bool isReplicated() const;
 };
 
-#define CPDMSF_wrapToNextDrv    (0x01)      // whether should wrap to next drv
-#define CPDMSF_fillWidth        (0x02)      // replicate copies fill cluster serially (when num parts < clusterwidth/2)
-#define CPDMSF_packParts        (0x04)      // whether to save parts as binary
-#define CPDMSF_repeatedPart     (0x08)      // if repeated parts included
-#define CPDMSF_defaultBaseDir   (0x10)      // set if defaultBaseDir present
-#define CPDMSF_defaultReplicateDir  (0x20)      // set if defaultBaseDir present
-#define CPDMSF_overloadedConfig  (0x40)      // set if overloaded mode
+#define CPDMSF_wrapToNextDrv       (0x01) // whether should wrap to next drv
+#define CPDMSF_fillWidth           (0x02) // replicate copies fill cluster serially (when num parts < clusterwidth/2)
+#define CPDMSF_packParts           (0x04) // whether to save parts as binary
+#define CPDMSF_repeatedPart        (0x08) // if repeated parts included
+#define CPDMSF_defaultBaseDir      (0x10) // set if defaultBaseDir present
+#define CPDMSF_defaultReplicateDir (0x20) // set if defaultBaseDir present
+#define CPDMSF_overloadedConfig    (0x40) // set if overloaded mode
+#define CPDMSF_striped             (0x80) // set if parts striped over multiple devices
 
 
 // ==PART DESCRIPTOR ==============================================================================================
@@ -326,7 +328,8 @@ extern da_decl StringBuffer &makePhysicalPartName(
                                 unsigned replicateLevel,            // uses replication directory
                                 DFD_OS os,                          // os must be specified if no dir specified
                                 const char *diroverride,            // override default directory
-                                bool dirPerPart);                   // generate a subdirectory per part
+                                bool dirPerPart,                    // generate a subdirectory per part
+                                unsigned stripeNum);                 // strip number
 extern da_decl StringBuffer &makeSinglePhysicalPartName(const char *lname, // single part file
                                                         StringBuffer &result,
                                                         bool allowospath,   // allow an OS (absolute) file path
@@ -347,6 +350,7 @@ extern da_decl bool setReplicateDir(const char *name,StringBuffer &out, bool isr
 
 extern da_decl void initializeStorageGroups(bool createPlanesFromGroups);
 extern da_decl bool getDefaultStoragePlane(StringBuffer &ret);
+extern da_decl bool getDefaultSpillPlane(StringBuffer &ret);
 extern da_decl IStoragePlane * getDataStoragePlane(const char * name, bool required);
 extern da_decl IStoragePlane * getRemoteStoragePlane(const char * name, bool required);
 
@@ -400,5 +404,6 @@ inline DFD_OS SepCharBaseOs(char c)
 
 extern da_decl void extractFilePartInfo(IPropertyTree &info, IFileDescriptor &file);
 
+extern da_decl void addStripeDirectory(StringBuffer &out, const char *directory, const char *planeName, unsigned partNum, unsigned numStripes);
 
 #endif
