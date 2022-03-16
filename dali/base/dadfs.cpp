@@ -802,14 +802,15 @@ static void foreignDaliSendRecv(const INode *foreigndali,CMessageBuffer &mb, uns
     SocketEndpoint ep = foreigndali->endpoint();
     if (ep.port==0)
         ep.port = DALI_SERVER_PORT;
-    Owned<IGroup> grp = createIGroup(1,&ep);
-    Owned<ICommunicator> comm = createCommunicator(grp,true);
-    if (!comm->verifyConnection(0,foreigndalitimeout)) {
+    Owned<IGroup> grp = createIGroup(1, &ep);
+    Owned<ICommunicator> comm = createCommunicator(grp, true);
+    if (!comm->verifyConnection(0, foreigndalitimeout))
+    {
         StringBuffer tmp;
         IDFS_Exception *e = new CDFS_Exception(DFSERR_ForeignDaliTimeout, foreigndali->endpoint().getUrlStr(tmp).str());
         throw e;
     }
-    comm->sendRecv(mb,0,MPTAG_DFS_REQUEST);
+    comm->sendRecv(mb, 0, MPTAG_DFS_REQUEST);
 }
 
 static bool isLocalDali(const INode *foreigndali)
@@ -10840,9 +10841,11 @@ public:
                 Owned<IPropertyTree> tree = getNamedPropTree(sroot,queryDfsXmlBranchName(DXB_File),"@name",tail.str(),false);
                 if (tree)
                 {
+#ifdef _CONTAINERIZED
                     //NB: for new clients, only clients specifically asking for remap
                     if (hasMask(opts, GetFileTreeOpts::remapToService))
                         remapGroupsToDafilesrv(tree, &queryNamedGroupStore());
+#endif
 
                     Owned<IFileDescriptor> fdesc = deserializeFileDescriptorTree(tree,&queryNamedGroupStore(),IFDSF_EXCLUDE_CLUSTERNAMES);
                     mb.append((int)1); // 1 == standard file
@@ -11288,7 +11291,6 @@ IPropertyTree *CDistributedFileDirectory::getFileTree(const char *lname, IUserDe
     bool expandnodes = hasMask(opts, GetFileTreeOpts::expandNodes);
     bool appendForeign = hasMask(opts, GetFileTreeOpts::appendForeign);
 
-    bool getFileTree2Support = queryDaliServerVersion().compare("3.17") >= 0;
     // this accepts either a foreign dali node or a foreign lfn
     Owned<INode> fnode;
     CDfsLogicalFileName dlfn;
@@ -11304,6 +11306,17 @@ IPropertyTree *CDistributedFileDirectory::getFileTree(const char *lname, IUserDe
     }
     if (isLocalDali(foreigndali))
         foreigndali = NULL;
+
+    bool getFileTree2Support;
+    if (!foreigndali)
+        getFileTree2Support = true; // implicit
+    else
+    {
+        CDaliVersion serverVersion, minClientVersion;
+        checkForeignDaliVersionInfo(foreigndali, serverVersion, minClientVersion);
+        getFileTree2Support = serverVersion.compare("3.17") >= 0;
+    }
+
     CMessageBuffer mb;
 
     if (getFileTree2Support)
