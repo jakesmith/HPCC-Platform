@@ -4,6 +4,10 @@
 <chapter id="ContainerConfigurationValuesCHAPTER">
   <title>Configuration Values</title>
 
+blah blah
+
+blah blah
+
   <para>This chapter describes the configuration of HPCC Systems for a
   Kubernetes Containerized deployment. The following sections detail how
   configurations are supplied to helm charts, how to find out what options are
