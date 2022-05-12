@@ -127,7 +127,7 @@ bool CThorInput::isFastThrough() const
 // 
 
 CSlaveActivity::CSlaveActivity(CGraphElementBase *_container, const StatisticsMapping &statsMapping)
-    : CActivityBase(_container, statsMapping), CEdgeProgress(this)
+    : CActivityBase(_container, statsMapping), CEdgeProgress(this), inactiveStats(statsMapping)
 {
     data = NULL;
 }
@@ -243,6 +243,32 @@ void CSlaveActivity::setupSpace4FileStats(unsigned where, bool statsForMultipleF
         slotsNeeded = isSuper ? numSubs : 0;
     for (unsigned i=fileStats.size(); i<where+slotsNeeded; i++)
         fileStats.push_back(new CRuntimeStatisticCollection(statsMapping));
+}
+
+// Collates previously collected static stats with live stats collected via a callback, and updates the activity's 'stats'
+// The callback fetches the current state of the activity's stats, called within a critical section ('statsCs'),
+// which the activity should use to protect any objects it uses whilst stats are being collected.
+void CSlaveActivity::collateStats(std::function<void(CRuntimeStatisticCollection &activeStats)> harvestStatsFn)
+{
+    if (someInactiveStats)
+    {
+        CRuntimeStatisticCollection activeStats(inactiveStats);
+        {
+            CriticalBlock block(statsCs);
+            harvestStatsFn(activeStats);
+        }
+        stats.set(activeStats);
+    }
+    else
+    {
+        const StatisticsMapping &statsMapping = stats.queryMapping();
+        CRuntimeStatisticCollection activeStats(statsMapping);
+        {
+            CriticalBlock block(statsCs);
+            harvestStatsFn(activeStats);
+        }
+        stats.set(activeStats);
+    }
 }
 
 bool CSlaveActivity::isInputFastThrough(unsigned index) const

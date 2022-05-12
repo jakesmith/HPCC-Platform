@@ -125,8 +125,6 @@ protected:
     unsigned usageCount;
     CDfsLogicalFileName dlfn;
     StringBuffer tempExternalName;
-    CriticalSection outputCs;  // Ensure outputIO remains valid for the duration of mergeStats()
-    CRuntimeStatisticCollection closedPartFileStats;
 
     void open();
     void removeFiles();

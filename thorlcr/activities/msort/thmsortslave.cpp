@@ -48,7 +48,6 @@ class MSortSlaveActivity : public CSlaveActivity
     mptag_t mpTagRPC;
     Owned<IBarrier> barrier;
     SocketEndpoint server;
-    CriticalSection statsCs;
 
     bool isUnstable()
     {
@@ -168,16 +167,17 @@ public:
     virtual void reset() override
     {
         PARENT::reset();
-        if (sorter) return; // JCSMORE loop - shouldn't have to recreate sorter between loop iterations
-        sorter.setown(CreateThorSorter(this, server, &queryJobChannel().queryJobComm(), mpTagRPC));
+        {
+            // JCSMORE - it would be better if sorter was reused, but it's non-trivial to do so
+            CriticalBlock block(statsCs);
+            // fold the outgoing 'sorter' stats into inactiveStats, which will be merged in serializeStats via collateStats
+            mergeStats(inactiveStats, sorter, spillStatistics);
+            someInactiveStats = true;
+            sorter.setown(CreateThorSorter(this, server, &queryJobChannel().queryJobComm(), mpTagRPC));
+        }
     }
     virtual void kill() override
     {
-        {
-            CriticalBlock block(statsCs);
-            mergeStats(stats, sorter, spillStatistics);
-            sorter.clear();
-        }
         if (portbase)
         {
             queryJobChannel().freePort(portbase, NUMSLAVEPORTS);
@@ -187,10 +187,7 @@ public:
     }
     virtual void serializeStats(MemoryBuffer &mb) override
     {
-        {
-            CriticalBlock block(statsCs);
-            mergeStats(stats, sorter, spillStatistics);
-        }
+        collateStats([&](CRuntimeStatisticCollection &activeStats) { mergeStats(activeStats, sorter, spillStatistics); });
         PARENT::serializeStats(mb);    
     }
     CATCH_NEXTROW()

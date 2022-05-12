@@ -394,7 +394,7 @@ void CDiskWriteSlaveActivityBase::open()
     Owned<IFileIO> partOutputIO = createMultipleWrite(this, *partDesc, diskRowMinSz, twFlags, compress, ecomp, this, &abortSoon, (external&&!query) ? &tempExternalName : NULL);
 
     {
-        CriticalBlock block(outputCs);
+        CriticalBlock block(statsCs);
         outputIO.setown(partOutputIO.getClear());
     }
 
@@ -468,10 +468,10 @@ void CDiskWriteSlaveActivityBase::close()
 
             Owned<IFileIO> tmpFileIO;
             {
-                CriticalBlock block(outputCs);
+                CriticalBlock block(statsCs);
                 // ensure it is released/destroyed after releasing crit, since the IFileIO might involve a final copy and take considerable time.
                 tmpFileIO.setown(outputIO.getClear());
-                mergeStats(closedPartFileStats, tmpFileIO, diskWriteRemoteStatistics);
+                mergeStats(inactiveStats, tmpFileIO, diskWriteRemoteStatistics);
             }
             tmpFileIO->close(); // NB: close now, do not rely on close in dtor
         }
@@ -498,7 +498,7 @@ void CDiskWriteSlaveActivityBase::close()
 }
 
 CDiskWriteSlaveActivityBase::CDiskWriteSlaveActivityBase(CGraphElementBase *container)
-    : ProcessSlaveActivity(container, diskWriteActivityStatistics), closedPartFileStats(diskWriteRemoteStatistics)
+    : ProcessSlaveActivity(container, diskWriteActivityStatistics)
 {
     diskHelperBase = static_cast <IHThorDiskWriteArg *> (queryHelper());
     grouped = false;
@@ -548,13 +548,7 @@ void CDiskWriteSlaveActivityBase::abort()
 
 void CDiskWriteSlaveActivityBase::serializeStats(MemoryBuffer &mb)
 {
-    CRuntimeStatisticCollection activeStats(diskWriteRemoteStatistics);
-    {
-        CriticalBlock block(outputCs);
-        activeStats.set(closedPartFileStats);
-        mergeStats(activeStats, outputIO, diskWriteRemoteStatistics);
-    }
-    stats.set(activeStats); // replace disk write stats
+    collateStats([&](CRuntimeStatisticCollection &activeStats) { mergeStats(activeStats, outputIO, diskWriteRemoteStatistics); });
     stats.setStatistic(StPerReplicated, replicateDone);
     PARENT::serializeStats(mb);
 }
