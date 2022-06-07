@@ -100,6 +100,7 @@ spec:
  {{- end }}
 {{- end }}
     spec:
+      {{- include "hpcc.addPodSecurityContext" $commonCtx | indent 6 }}
       {{- include "hpcc.placementsByPodTargetType" (dict "root" $ "pod" $dali.name "type" "dali") | indent 6 }}
       serviceAccountName: "hpcc-dali"
       initContainers: 

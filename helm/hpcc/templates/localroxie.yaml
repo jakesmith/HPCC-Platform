@@ -78,6 +78,7 @@ spec:
 {{ toYaml .annotations | indent 8 }}
 {{- end }}
     spec:
+      {{- include "hpcc.addPodSecurityContext" $commonCtx | indent 6 }}
       {{- include "hpcc.placementsByPodTargetType" (dict "root" $ "pod" $roxie.name "target" $roxie.name "type" "roxie") | indent 6 }}
       serviceAccountName: "hpcc-default"
       initContainers:

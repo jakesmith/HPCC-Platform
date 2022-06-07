@@ -848,6 +848,18 @@ securityContext:
 {{ end -}}
 
 {{/*
+Add pod security context
+Pass in a dictionary with root defined
+*/}}
+{{- define "hpcc.addPodSecurityContext" }}
+{{- $user := (.root.Values.global.user | default dict) }}
+securityContext:
+  fsGroup: {{ $user.gid | default 10001 }}
+  fsGroupChangePolicy: "OnRootMismatch"
+{{ end -}}
+
+
+{{/*
 Generate instance queue names
 */}}
 {{- define "hpcc.generateConfigMapQueues" -}}

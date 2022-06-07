@@ -62,6 +62,7 @@ spec:
 {{ toYaml $sasha.annotations | indent 8 }}
 {{- end }}
     spec:
+      {{- include "hpcc.addPodSecurityContext" $commonCtx | indent 6 }}
       {{- include "hpcc.placementsByPodTargetType" (dict "root" $ "pod" $serviceName "type" "sasha") | indent 6 }}
       serviceAccountName: "hpcc-default"
       {{- if hasKey $sasha "plane" }}

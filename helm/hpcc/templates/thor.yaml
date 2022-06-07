@@ -91,6 +91,7 @@ data:
 {{ toYaml .me.annotations | indent 12 }}
 {{- end }}
         spec:
+          {{- include "hpcc.addPodSecurityContext" (dict "root" .root) | indent 10 }}
           {{- include "hpcc.placementsByJobTargetType" (dict "root" .root "job" $eclAgentJobName "target" .me.name "type" "thor") | indent 10 }}
           serviceAccountName: "hpcc-agent"
           initContainers: 
@@ -159,6 +160,7 @@ data:
 {{ toYaml $thorScope.annotations | indent 12 }}
 {{- end }}
         spec:
+          {{- include "hpcc.addPodSecurityContext" (dict "root" .root) | indent 10 }}
           {{- include "hpcc.placementsByJobTargetType" (dict "root" .root "job" $thorManagerJobName "target" .me.name "type" "thor") | indent 10 }}
           serviceAccountName: hpcc-thoragent
           initContainers:
@@ -226,6 +228,7 @@ data:
 {{ toYaml $thorScope.annotations | indent 12 }}
 {{- end }}
         spec:
+          {{- include "hpcc.addPodSecurityContext" (dict "root" .root) | indent 10 }}
           {{- include "hpcc.placementsByJobTargetType" (dict "root" .root "job" $thorWorkerJobName "target" .me.name "type" "thor") | indent 10 }}
           serviceAccountName: hpcc-default
           initContainers:
@@ -359,6 +362,7 @@ spec:
 {{ toYaml $commonCtx.me.annotations | indent 8 }}
 {{- end }}
     spec:
+      {{- include "hpcc.addPodSecurityContext" $commonCtx | indent 6 }}
       {{- include "hpcc.placementsByPodTargetType" (dict "root" $ "pod" $commonCtx.eclAgentName "target" .name "type" "thor") | indent 6 }}
       {{- include "hpcc.addImagePullSecrets" $commonCtx | nindent 6 -}}
       serviceAccountName: {{ $commonCtx.eclAgentUseChildProcesses | ternary "hpcc-default" "hpcc-agent" }}
@@ -420,6 +424,7 @@ spec:
 {{ toYaml $commonCtx.me.annotations | indent 8 }}
 {{- end }}
     spec:
+      {{- include "hpcc.addPodSecurityContext" $commonCtx | indent 6 }}
       {{- include "hpcc.placementsByPodTargetType" (dict "root" $ "pod" $commonCtx.thorAgentName "target" .name "type" "thor") | indent 6 }}
       {{- include "hpcc.addImagePullSecrets" $commonCtx | nindent 6 -}}
       serviceAccountName: "hpcc-thoragent"

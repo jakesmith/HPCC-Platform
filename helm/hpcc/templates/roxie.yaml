@@ -131,6 +131,7 @@ spec:
 {{ toYaml $toposerver.annotations | indent 8 }}
 {{- end }}
     spec:
+      {{- include "hpcc.addPodSecurityContext" $commonCtx | indent 6 }}
       {{- include "hpcc.placementsByPodTargetType" (dict "root" $ "pod" $commonCtx.toponame "target" $roxie.name "type" "roxie") | indent 6 }}
       serviceAccountName: "hpcc-default"
       {{- include "hpcc.addImagePullSecrets" $commonCtx | nindent 6 -}}
@@ -250,6 +251,7 @@ spec:
 {{ toYaml $roxie.annotations | indent 8 }}
 {{- end }}
     spec:
+      {{- include "hpcc.addPodSecurityContext" $commonCtx | indent 6 }}
       {{- include "hpcc.placementsByPodTargetType" (dict "root" $ "pod" $servername "target" $roxie.name "type" "roxie") | indent 6 }}
       serviceAccountName: "hpcc-default"
       initContainers:
@@ -351,6 +353,7 @@ spec:
 {{ toYaml $roxie.annotations | indent 8 }}
 {{- end }}
     spec:
+      {{- include "hpcc.addPodSecurityContext" $commonCtx | indent 6 }}
       {{- include "hpcc.placementsByPodTargetType" (dict "root" $ "pod" $name "target" $roxie.name "type" "roxie") | indent 6 }}
       serviceAccountName: "hpcc-default"
       initContainers:
