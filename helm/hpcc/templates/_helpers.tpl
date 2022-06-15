@@ -854,6 +854,8 @@ Pass in a dictionary with root defined
 {{- define "hpcc.addPodSecurityContext" }}
 {{- $user := (.root.Values.global.user | default dict) }}
 securityContext:
+  runAsUser: {{ $user.uid | default 10000 }}
+  runAsGroup: {{ $user.gid | default 10001 }}
   fsGroup: {{ $user.gid | default 10001 }}
   fsGroupChangePolicy: "OnRootMismatch"
 {{ end -}}
