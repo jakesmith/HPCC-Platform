@@ -132,7 +132,8 @@ static void remoteTest(const char *logicalName, bool withDali);
 
 int main(int argc, const char* argv[])
 {
-    int ret = 0;
+    int ret = 1;
+    ret = 0;
     InitModuleObjects();
     EnableSEHtoExceptionMapping();
     setDaliServixSocketCaching(true);
