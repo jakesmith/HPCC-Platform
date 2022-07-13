@@ -1218,6 +1218,7 @@ void closeThorServerStatus()
  *  0 = unrecognised format, or wuid mismatch
  *  1 = success. new graph/wuid received.
  */
+static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiLingerAgentQueue, StringBuffer &retWuid, StringBuffer &retGraphName) __attribute__((unused));
 static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiLingerAgentQueue, StringBuffer &retWuid, StringBuffer &retGraphName)
 {
     PROGLOG("Lingering time left: %.2f", ((float)timeoutMs)/1000);
@@ -1239,9 +1240,10 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiL
         auto dequeueFunc = [&]()
         {
             COnScopeExit scoped([&]() { sem.signal(); });
-            if (!multiLingerAgentQueue->dequeue(msg, timeoutMs))
+            Owned<IJobQueueItem> item = multiLingerAgentQueue->dequeue(timeoutMs);
+            if (!item)
                 return false;
-            msg.read(nextFromQueue);
+            nextFromQueue.set(item->queryWUID());
             return true;
         };
         auto directCommFunc = [&]()
