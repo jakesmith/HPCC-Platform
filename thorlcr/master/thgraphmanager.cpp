@@ -15,6 +15,9 @@
     limitations under the License.
 ############################################################################## */
 
+#include <future>
+#include <chrono>
+
 #include "platform.h"
 #include <math.h>
 #include "jarray.hpp"
@@ -1206,7 +1209,7 @@ void closeThorServerStatus()
 }
 
 
-#ifdef _CONTAINERIZED
+//#ifdef _CONTAINERIZED
 /*
  * Waits on recv for another wuid/graph to run.
  * Return values:
@@ -1220,64 +1223,95 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiL
     PROGLOG("Lingering time left: %.2f", ((float)timeoutMs)/1000);
     CMessageBuffer msg;
 
+    bool directComm = false;
+    StringBuffer nextJob;
     if (nullptr == multiLingerAgentQueue)
     {
         if (!queryWorldCommunicator().recv(msg, NULL, MPTAG_THOR, nullptr, timeoutMs))
             return -1;
-        StringBuffer next;
-        msg.read(next);
+        msg.read(nextJob);
+        directComm = true;
     }
     else
     {
-        CTimeMon timer(timeoutMs);
-        unsigned remaining = timeoutMs;
-        while (true)
+        StringBuffer nextFromQueue, nextFromDirectComm;
+        Semaphore sem;
+        auto dequeueFunc = [&]()
         {
-            unsigned commTimeout = 5000;
-            if (remaining < commTimeout)
-                commTimeout = remaining;
-            if (queryWorldCommunicator().recv(msg, NULL, MPTAG_THOR, nullptr, commTimeout))
-            {
-                StringBuffer next;
-                msg.read(next);
-                break;
-            }
+            COnScopeExit scoped([&]() { sem.signal(); });
+            if (!multiLingerAgentQueue->dequeue(msg, timeoutMs))
+                return false;
+            msg.read(nextFromQueue);
+            return true;
+        };
+        auto directCommFunc = [&]()
+        {
+            COnScopeExit scoped([&]() { sem.signal(); });
+            if (!queryWorldCommunicator().recv(msg, NULL, MPTAG_THOR, nullptr, timeoutMs))
+                return false;
+            msg.read(nextFromDirectComm);
+            return true;
+        };
+        std::future<bool> dequeueFuncResult = std::async(std::launch::async, dequeueFunc);
+        std::future<bool> directCommFuncResult = std::async(std::launch::async, directCommFunc);
+
+        sem.wait();
+        bool dequeueThreadDone = (dequeueFuncResult.wait_for(std::chrono::seconds(0)) == std::future_status::ready);
+        if (dequeueThreadDone)
+        {
+            queryWorldCommunicator().cancel(NULL, MPTAG_THOR);
+            if (dequeueFuncResult.get()) // else timed out
+                nextJob.swapWith(nextFromQueue);
+            // as both threads on same timeout, they will probably both timedout,
+            // but possible the directComm grabbed a result just in time.
+        }
+        if (nextJob.isEmpty())
+        {
+            if (!dequeueThreadDone)
+                multiLingerAgentQueue->cancelAcceptConversation();
+            if (dequeueFuncResult.get()) // wait for the dequeue thread to finish, if there's a result it takes priority
+                nextJob.swapWith(nextFromQueue);
             else
             {
-                // check queue
-
-                Owned<IJobQueueItem> item = multiLingerAgentQueue->dequeue(0);
-                if (item.get())
+                if (directCommFuncResult.get())
                 {
-                    StringAttr wuid;
-                    wuid.set(item->queryWUID());
-                    break;
+                    directComm = true;
+                    nextJob.swapWith(nextFromDirectComm);
                 }
+                else
+                    return -1;
             }
-            if (timer.timedout(&remaining))
-                return -1;
         }
     }
     // validate
     StringArray sArray;
-    sArray.appendList(next, "/");
+    sArray.appendList(nextJob, "/");
     if (2 == sArray.ordinality())
     {
         if (wuid && !streq(sArray.item(0), wuid))
             return 0;
-        msg.clear().append(true);
-        if (queryWorldCommunicator().reply(msg, 60*1000)) // should be quick!
+        if (!directComm) // i.e. result from queue
         {
             retWuid.set(sArray.item(0));
             retGraphName.set(sArray.item(1));
             return 1;
         }
         else
-            return -2;
+        {
+            msg.clear().append(true);
+            if (queryWorldCommunicator().reply(msg, 60*1000)) // should be quick!
+            {
+                retWuid.set(sArray.item(0));
+                retGraphName.set(sArray.item(1));
+                return 1;
+            }
+            else
+                return -2;
+        }
     }
     return 0;
 }
-#endif
+//#endif
 
 void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphName)
 {
@@ -1402,7 +1436,11 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
                     while (!timer.timedout(&remaining))
                     {
                         StringBuffer wuid;
-                        int ret = recvNextGraph(remaining, multiJobLinger ? nullptr : currentWuid.str(), wuid, currentGraphName);
+                        int ret;
+                        if (multiJobLinger)
+                            ret = recvNextGraph(remaining, nullptr, agentQueue, wuid, currentGraphName);
+                        else
+                            ret = recvNextGraph(remaining, currentWuid.str(), nullptr, wuid, currentGraphName);
                         if (ret > 0)
                         {
                             currentWuid.set(wuid); // NB: will always be same if !multiJobLinger
