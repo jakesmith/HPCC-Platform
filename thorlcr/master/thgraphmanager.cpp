@@ -1215,15 +1215,49 @@ void closeThorServerStatus()
  *  0 = unrecognised format, or wuid mismatch
  *  1 = success. new graph/wuid received.
  */
-static int recvNextGraph(unsigned timeoutMs, const char *wuid, StringBuffer &retWuid, StringBuffer &retGraphName)
+static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiLingerAgentQueue, StringBuffer &retWuid, StringBuffer &retGraphName)
 {
     PROGLOG("Lingering time left: %.2f", ((float)timeoutMs)/1000);
     CMessageBuffer msg;
-    if (!queryWorldCommunicator().recv(msg, NULL, MPTAG_THOR, nullptr, timeoutMs))
-        return -1;
-    StringBuffer next;
-    msg.read(next);
 
+    if (nullptr == multiLingerAgentQueue)
+    {
+        if (!queryWorldCommunicator().recv(msg, NULL, MPTAG_THOR, nullptr, timeoutMs))
+            return -1;
+        StringBuffer next;
+        msg.read(next);
+    }
+    else
+    {
+        CTimeMon timer(timeoutMs);
+        unsigned remaining = timeoutMs;
+        while (true)
+        {
+            unsigned commTimeout = 5000;
+            if (remaining < commTimeout)
+                commTimeout = remaining;
+            if (queryWorldCommunicator().recv(msg, NULL, MPTAG_THOR, nullptr, commTimeout))
+            {
+                StringBuffer next;
+                msg.read(next);
+                break;
+            }
+            else
+            {
+                // check queue
+
+                Owned<IJobQueueItem> item = multiLingerAgentQueue->dequeue(0);
+                if (item.get())
+                {
+                    StringAttr wuid;
+                    wuid.set(item->queryWUID());
+                    break;
+                }
+            }
+            if (timer.timedout(&remaining))
+                return -1;
+        }
+    }
     // validate
     StringArray sArray;
     sArray.appendList(next, "/");
@@ -1283,6 +1317,17 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
             bool multiJobLinger = globals->getPropBool("@multiJobLinger");
             VStringBuffer multiJobLingerQueueName("%s_lingerqueue", globals->queryProp("@name"));
             StringBuffer instance("thorinstance_");
+
+            Owned<IJobQueue> agentQueue;
+            if (multiJobLinger)
+            {
+                const char *thorAgentName = config->queryProp("@name");
+                StringBuffer thorAgentQueueName;
+                getClusterThorQueueName(thorAgentQueueName, thorAgentName);
+                agentQueue.setown(createJobQueue(thorAgentQueueName));
+                agentQueue->connect(false);
+            }
+
             queryMyNode()->endpoint().getUrlStr(instance);
             StringBuffer currentGraphName(graphName);
             StringBuffer currentWuid(wuid);
