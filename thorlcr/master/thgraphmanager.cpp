@@ -30,6 +30,7 @@
 #include "portlist.h"
 #include "wujobq.hpp"
 #include "daclient.hpp"
+#include "daqueue.hpp"
 
 #include "thgraphmaster.ipp"
 #include "thorport.hpp"
