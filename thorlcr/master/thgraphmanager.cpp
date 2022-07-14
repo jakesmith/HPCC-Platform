@@ -1357,7 +1357,7 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
             Owned<IJobQueue> agentQueue;
             if (multiJobLinger)
             {
-                const char *thorAgentName = config->queryProp("@name");
+                const char *thorAgentName = globals->queryProp("@thorAgentName");
                 StringBuffer thorAgentQueueName;
                 getClusterThorQueueName(thorAgentQueueName, thorAgentName);
                 agentQueue.setown(createJobQueue(thorAgentQueueName));

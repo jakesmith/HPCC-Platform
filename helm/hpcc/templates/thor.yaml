@@ -33,6 +33,9 @@ Pass in dict with root and me
 {{- $eclAgentResources := .me.eclAgentResources | default dict -}}
 {{- $hthorScope := dict "name" $hthorName "jobMemorySectionName" "eclAgentMemory" | merge (pick .me "multiJobLinger") | merge (dict "resources" (deepCopy $eclAgentResources)) }}
 {{- $thorScope := omit .me "eclagent" "thoragent" "hthor" "logging" "env" "eclAgentResources" "eclAgentUseChildProcesses" "eclAgentReplicas" "thorAgentReplicas" "eclAgentType" }}
+{{- if $thorScope.multiJobLinger }}
+ {{- $_ := set $thorScope "thorAgentName" (printf "%s-thoragent" .me.name) -}}
+{{- end }}
 {{- $misc := .root.Values.global.misc | default dict }}
 {{- $postJobCommand := $misc.postJobCommand | default "" }}
 {{- $eclAgentJobName := printf "%s-_HPCC_JOBNAME_" $eclAgentType }}
