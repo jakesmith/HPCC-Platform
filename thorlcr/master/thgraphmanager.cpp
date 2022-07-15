@@ -1240,19 +1240,29 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiL
         Semaphore sem;
         auto dequeueFunc = [&]()
         {
-            COnScopeExit scoped([&]() { sem.signal(); });
+            COnScopeExit scoped([&]() { DBGLOG("Q: signalling"); sem.signal(); });
+ DBGLOG("Waiting on Q");
             Owned<IJobQueueItem> item = multiLingerAgentQueue->dequeue(timeoutMs);
             if (!item)
+            {
+ DBGLOG("Q: cancelled");
                 return false;
+            }
             nextFromQueue.set(item->queryWUID());
+ DBGLOG("Q: Got Item: %s", nextFromQueue.str());
             return true;
         };
         auto directCommFunc = [&]()
         {
-            COnScopeExit scoped([&]() { sem.signal(); });
+            COnScopeExit scoped([&]() { DBGLOG("DC: signalling"); sem.signal(); });
+ DBGLOG("Waiting on DC");
             if (!queryWorldCommunicator().recv(msg, NULL, MPTAG_THOR, nullptr, timeoutMs))
+            {
+ DBGLOG("DC: recv cancelled");
                 return false;
+            }
             msg.read(nextFromDirectComm);
+ DBGLOG("DC: Got Item: %s", nextFromDirectComm.str());
             return true;
         };
         std::future<bool> dequeueFuncResult = std::async(std::launch::async, dequeueFunc);
@@ -1262,30 +1272,47 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiL
         bool dequeueThreadDone = (dequeueFuncResult.wait_for(std::chrono::seconds(0)) == std::future_status::ready);
         if (dequeueThreadDone)
         {
+ DBGLOG("Q: thread done");
             queryWorldCommunicator().cancel(NULL, MPTAG_THOR);
+ DBGLOG("Q: DC comm cancelled");
             if (dequeueFuncResult.get()) // else timed out
+            {
+ DBGLOG("Q: got item: %s", nextFromQueue.str());
                 nextJob.swapWith(nextFromQueue);
+            }
             // as both threads on same timeout, they will probably both timedout,
             // but possible the directComm grabbed a result just in time.
         }
         if (nextJob.isEmpty())
         {
             if (!dequeueThreadDone)
+            {
+ DBGLOG("Q: empty- thread not finished, cancel Q (accept conversation)");
                 multiLingerAgentQueue->cancelAcceptConversation();
+            }
             if (dequeueFuncResult.get()) // wait for the dequeue thread to finish, if there's a result it takes priority
+            {
+ DBGLOG("Q: was empty, but item on queue after cancel");
                 nextJob.swapWith(nextFromQueue);
+            }
             else
             {
+ DBGLOG("Q: was empty, still empty after cancel");
                 if (directCommFuncResult.get())
                 {
+ DBGLOG("DC: item on direct comm");
                     directComm = true;
                     nextJob.swapWith(nextFromDirectComm);
                 }
                 else
+                {
+ DBGLOG("DC: no item on direct comm - therefore no item on either returning -1");
                     return -1;
+                }
             }
         }
     }
+ DBGLOG("Processing job: %s", nextJob.str());
     // validate
     StringArray sArray;
     sArray.appendList(nextJob, "/");
