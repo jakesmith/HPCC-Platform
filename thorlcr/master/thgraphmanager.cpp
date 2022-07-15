@@ -1238,6 +1238,12 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, const char *multi
     }
     else
     {
+        if (globals->getPropBool("expert/@sleep"))
+        {
+            PROGLOG("Sleeping for %u ms", timeoutMs);
+            MilliSleep(timeoutMs);
+            return -1;
+        }
  DBGLOG("Q: Creating job queue: %s", multiLingerThorQueueName);
         Owned<IJobQueue> thorQueue = createJobQueue(multiLingerThorQueueName);
         thorQueue->connect(false);
@@ -1246,7 +1252,7 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, const char *multi
         auto dequeueFunc = [&]()
         {
             COnScopeExit scoped([&]() { DBGLOG("Q: signalling"); sem.signal(); });
- DBGLOG("Q: Waiting on //");
+ DBGLOG("Q: Waiting on ..");
             Owned<IJobQueueItem> item = thorQueue->dequeue(timeoutMs);
             if (!item)
             {
