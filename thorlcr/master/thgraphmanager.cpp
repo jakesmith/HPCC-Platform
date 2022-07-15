@@ -1387,14 +1387,11 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
             VStringBuffer multiJobLingerQueueName("%s_lingerqueue", globals->queryProp("@name"));
             StringBuffer instance("thorinstance_");
 
-            Owned<IJobQueue> agentQueue;
+            StringBuffer thorQueueName;
             if (multiJobLinger)
             {
-                StringBuffer thorAgentQueueName;
-                getClusterThorQueueName(thorAgentQueueName, globals->queryProp("@name"));
- DBGLOG("multiJobLinger: creating job queue: %s", thorAgentQueueName.str());
-                agentQueue.setown(createJobQueue(thorAgentQueueName));
-                agentQueue->connect(false);
+                getClusterThorQueueName(thorQueueName, globals->queryProp("@name"));
+ DBGLOG("multiJobLinger: will use job queue name: %s", thorQueueName.str());
             }
 
             queryMyNode()->endpoint().getUrlStr(instance);
@@ -1473,7 +1470,7 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
                         StringBuffer wuid;
                         int ret;
                         if (multiJobLinger)
-                            ret = recvNextGraph(remaining, nullptr, agentQueue, wuid, currentGraphName);
+                            ret = recvNextGraph(remaining, nullptr, thorQueueName, wuid, currentGraphName);
                         else
                             ret = recvNextGraph(remaining, currentWuid.str(), nullptr, wuid, currentGraphName);
                         if (ret > 0)
