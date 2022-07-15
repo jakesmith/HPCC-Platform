@@ -1219,15 +1219,17 @@ void closeThorServerStatus()
  *  0 = unrecognised format, or wuid mismatch
  *  1 = success. new graph/wuid received.
  */
-static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiLingerAgentQueue, StringBuffer &retWuid, StringBuffer &retGraphName) __attribute__((unused));
-static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiLingerAgentQueue, StringBuffer &retWuid, StringBuffer &retGraphName)
+static int recvNextGraph(unsigned timeoutMs, const char *wuid, const char *multiLingerThorQueueName, StringBuffer &retWuid, StringBuffer &retGraphName) __attribute__((unused));
+static int recvNextGraph(unsigned timeoutMs, const char *wuid, const char *multiLingerThorQueueName, StringBuffer &retWuid, StringBuffer &retGraphName)
 {
     PROGLOG("Lingering time left: %.2f", ((float)timeoutMs)/1000);
     CMessageBuffer msg;
 
     bool directComm = false;
     StringBuffer nextJob;
-    if (nullptr == multiLingerAgentQueue)
+
+
+    if (nullptr == multiLingerThorQueueName)
     {
         if (!queryWorldCommunicator().recv(msg, NULL, MPTAG_THOR, nullptr, timeoutMs))
             return -1;
@@ -1236,13 +1238,16 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiL
     }
     else
     {
+ DBGLOG("Q: Creating job queue: %s", multiLingerThorQueueName);
+        Owned<IJobQueue> thorQueue = createJobQueue(multiLingerThorQueueName);
+        thorQueue->connect(false);
         StringBuffer nextFromQueue, nextFromDirectComm;
         Semaphore sem;
         auto dequeueFunc = [&]()
         {
             COnScopeExit scoped([&]() { DBGLOG("Q: signalling"); sem.signal(); });
- DBGLOG("Waiting on Q..");
-            Owned<IJobQueueItem> item = multiLingerAgentQueue->dequeue(timeoutMs);
+ DBGLOG("Q: Waiting on //");
+            Owned<IJobQueueItem> item = thorQueue->dequeue(timeoutMs);
             if (!item)
             {
  DBGLOG("Q: cancelled");
@@ -1255,7 +1260,7 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiL
         auto directCommFunc = [&]()
         {
             COnScopeExit scoped([&]() { DBGLOG("DC: signalling"); sem.signal(); });
- DBGLOG("Waiting on DC");
+ DBGLOG("DC: Waiting on ..");
             if (!queryWorldCommunicator().recv(msg, NULL, MPTAG_THOR, nullptr, timeoutMs))
             {
  DBGLOG("DC: recv cancelled");
@@ -1288,7 +1293,7 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiL
             if (!dequeueThreadDone)
             {
  DBGLOG("Q: empty- thread not finished, cancel Q (accept conversation)");
-                multiLingerAgentQueue->cancelAcceptConversation();
+                thorQueue->cancelAcceptConversation();
             }
             if (dequeueFuncResult.get()) // wait for the dequeue thread to finish, if there's a result it takes priority
             {
@@ -1387,6 +1392,7 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
             {
                 StringBuffer thorAgentQueueName;
                 getClusterThorQueueName(thorAgentQueueName, globals->queryProp("@name"));
+ DBGLOG("multiJobLinger: creating job queue: %s", thorAgentQueueName.str());
                 agentQueue.setown(createJobQueue(thorAgentQueueName));
                 agentQueue->connect(false);
             }
