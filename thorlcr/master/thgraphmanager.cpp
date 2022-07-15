@@ -1241,7 +1241,7 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, IJobQueue *multiL
         auto dequeueFunc = [&]()
         {
             COnScopeExit scoped([&]() { DBGLOG("Q: signalling"); sem.signal(); });
- DBGLOG("Waiting on Q");
+ DBGLOG("Waiting on Q..");
             Owned<IJobQueueItem> item = multiLingerAgentQueue->dequeue(timeoutMs);
             if (!item)
             {
