@@ -1222,8 +1222,6 @@ void closeThorServerStatus()
 static int recvNextGraph(IJobQueue *thorQueue, unsigned timeoutMs, const char *wuid, StringBuffer &retWuid, StringBuffer &retGraphName) __attribute__((unused));
 static int recvNextGraph(IJobQueue *thorQueue, unsigned timeoutMs, const char *wuid, StringBuffer &retWuid, StringBuffer &retGraphName)
 {
-    PROGLOG("Lingering time left: %.2f", ((float)timeoutMs)/1000);
-
     StringBuffer next;
     if (thorQueue)
     {
