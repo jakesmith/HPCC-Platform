@@ -1219,7 +1219,6 @@ void closeThorServerStatus()
  *  0 = unrecognised format, or wuid mismatch
  *  1 = success. new graph/wuid received.
  */
-static int recvNextGraph(IJobQueue *thorQueue, unsigned timeoutMs, const char *wuid, StringBuffer &retWuid, StringBuffer &retGraphName) __attribute__((unused));
 static int recvNextGraph(IJobQueue *thorQueue, unsigned timeoutMs, const char *wuid, StringBuffer &retWuid, StringBuffer &retGraphName)
 {
     StringBuffer next;
@@ -1243,20 +1242,19 @@ static int recvNextGraph(IJobQueue *thorQueue, unsigned timeoutMs, const char *w
     sArray.appendList(next, "/");
     if (2 == sArray.ordinality())
     {
-        if (wuid && !streq(sArray.item(0), wuid))
-            return 0;
-        CMessageBuffer msg;
-        msg.append(true);
-        if (queryWorldCommunicator().reply(msg, 60*1000)) // should be quick!
+        if (!thorQueue)
         {
-            retWuid.set(sArray.item(0));
-            retGraphName.set(sArray.item(1));
-            return 1;
+            if (wuid && !streq(sArray.item(0), wuid))
+                return 0; // mismatch/ignore
+            CMessageBuffer msg;
+            msg.append(true);
+            if (!queryWorldCommunicator().reply(msg, 60*1000)) // should be quick!
+                return -2; // failed to reply to client
         }
-        else
-            return -2;
     }
-    return 0;
+    retWuid.set(sArray.item(0));
+    retGraphName.set(sArray.item(1));
+    return 1; // success
 }
 
 void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphName)
