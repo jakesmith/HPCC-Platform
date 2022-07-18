@@ -1292,7 +1292,7 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
         Owned<CJobManager> jobManager = new CJobManager(logHandler);
         try
         {
-            if (isContainerized())
+            if (!isContainerized())
                 jobManager->run();
             else
             {
