@@ -1222,6 +1222,7 @@ void closeThorServerStatus()
 static int recvNextGraph(IJobQueue *thorQueue, unsigned timeoutMs, const char *wuid, StringBuffer &retWuid, StringBuffer &retGraphName)
 {
     StringBuffer next;
+    CMessageBuffer msg;
     if (thorQueue)
     {
         Owned<IJobQueueItem> item = thorQueue->dequeue(timeoutMs);
@@ -1231,7 +1232,6 @@ static int recvNextGraph(IJobQueue *thorQueue, unsigned timeoutMs, const char *w
     }
     else
     {
-        CMessageBuffer msg;
         if (!queryWorldCommunicator().recv(msg, NULL, MPTAG_THOR, nullptr, timeoutMs))
             return -1;
         msg.read(next);
@@ -1246,8 +1246,7 @@ static int recvNextGraph(IJobQueue *thorQueue, unsigned timeoutMs, const char *w
         {
             if (wuid && !streq(sArray.item(0), wuid))
                 return 0; // mismatch/ignore
-            CMessageBuffer msg;
-            msg.append(true);
+            msg.clear().append(true);
             if (!queryWorldCommunicator().reply(msg, 60*1000)) // should be quick!
                 return -2; // failed to reply to client
         }
