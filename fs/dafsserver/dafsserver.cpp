@@ -5301,7 +5301,7 @@ public:
                 featureSupport = FeatureSupport::stream;
             else if (strsame("spray", appType))
                 featureSupport = FeatureSupport::spray;
-            else if (strsame("directIO", appType))
+            else if (strsame("directio", appType))
                 featureSupport = FeatureSupport::directIO;
         }
 #endif
