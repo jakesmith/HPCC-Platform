@@ -2242,6 +2242,17 @@ int CMPConnectThread::run()
                 PROGLOG("MP: Connect Thread: addrval = %" I64F "u", addrval);
 #endif
 
+                if (!_remoteep.ipequals(peerEp))
+                {
+                    StringBuffer rIp, pIp;
+                    _remoteep.getIpText(rIp);
+                    peerEp.getIpText(pIp);
+                    PROGLOG("MP: WARNING: remote client address (%s:%u) != peer address (%s:%u)", rIp.str(), _remoteep.port, pIp.str(), peerEp.port);
+                    _remoteep.ipset(peerEp);
+                    connectHdr.id[0].set(_remoteep);
+                    // should we sock->close() and continue ?
+                }
+
                 if (_remoteep.isNull() || hostep.isNull())
                 {
                     StringBuffer errMsg;
