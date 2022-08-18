@@ -293,6 +293,8 @@ Add ConfigMap volume mount for a component
   mountPath: /tmp
 - name: {{ .name }}-hpcctmp-volume
   mountPath: /var/lib/HPCCSystems
+- name: {{ .name }}-homedir-volume
+  mountPath: /home/hpcc
 - name: {{ .name }}-configmap-volume
   mountPath: /etc/config
 {{- end -}}
@@ -304,6 +306,8 @@ Add ConfigMap volume for a component
 - name: {{ .name }}-temp-volume
   emptyDir: {}
 - name: {{ .name }}-hpcctmp-volume
+  emptyDir: {}
+- name: {{ .name }}-homedir-volume
   emptyDir: {}
 - name: {{ .name }}-configmap-volume
   configMap:
