@@ -89,7 +89,7 @@ extern DALIADMIN_API void serverlist(const char *mask);
 extern DALIADMIN_API void clusterlist(const char *mask);
 extern DALIADMIN_API void auditlog(const char *froms, const char *tos, const char *matchs);
 extern DALIADMIN_API void coalesce();
-extern DALIADMIN_API void mpping(const char *eps);
+extern DALIADMIN_API void mpping(const char *eps, unsigned intervalSecs);
 extern DALIADMIN_API void daliping(const char *dalis, unsigned connecttime, unsigned n);
 
 extern DALIADMIN_API void validateStore(bool fix, bool deleteFiles, bool verbose);

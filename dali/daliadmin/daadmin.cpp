@@ -2169,17 +2169,22 @@ void coalesce()
 //=============================================================================
 
 
-void mpping(const char *eps)
+void mpping(const char *eps, unsigned intervalSecs)
 {
     SocketEndpoint ep(eps);
     Owned<INode> node = createINode(ep);
     Owned<IGroup> grp = createIGroup(1,&ep);
     Owned<ICommunicator> comm = createCommunicator(grp,true);
-    unsigned start = msTick();
-    if (!comm->verifyConnection(0,60*1000))
-        UERRLOG("MPping %s failed",eps);
-    else
-        OUTLOG("MPping %s succeeded in %d",eps,msTick()-start);
+    while (true)
+    {
+        unsigned start = msTick();
+        if (!comm->verifyConnection(0,60*1000))
+            UERRLOG("MPping %s failed",eps);
+        else
+            OUTLOG("MPping %s succeeded in %d",eps,msTick()-start);
+        if (intervalSecs)
+            MilliSleep(intervalSecs*1000);
+    }
 }
 
 //=============================================================================

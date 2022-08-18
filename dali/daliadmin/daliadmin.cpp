@@ -94,7 +94,7 @@ void usage(const char *exe)
   printf("  clusterlist <mask>              -- list clusters   (mask optional)\n");
   printf("  auditlog <fromdate> <todate> <match>\n");
   printf("  coalesce                        -- force transaction coalesce\n");
-  printf("  mpping <server-ip>              -- time MP connect\n");
+  printf("  mpping <server-ip> [<interval-secs>]  -- time MP connect\n");
   printf("  daliping [ <num> ]              -- time dali server connect\n");
   printf("  getxref <destxmlfile>           -- get all XREF information\n");
   printf("  dalilocks [ <ip-pattern> ] [ files ] -- get all locked files/xpaths\n");
@@ -463,8 +463,8 @@ int main(int argc, const char* argv[])
                         coalesce();
                     }
                     else if (strieq(cmd,"mpping")) {
-                        CHECKPARAMS(1,1);
-                        mpping(params.item(1));
+                        CHECKPARAMS(1,2);
+                        mpping(params.item(1), np>1 ? params.item(2) : 0);
                     }
                     else if (strieq(cmd,"daliping")) {
                         CHECKPARAMS(0,1);
