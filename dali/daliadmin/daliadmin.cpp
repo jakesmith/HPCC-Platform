@@ -464,7 +464,7 @@ int main(int argc, const char* argv[])
                     }
                     else if (strieq(cmd,"mpping")) {
                         CHECKPARAMS(1,2);
-                        mpping(params.item(1), np>1 ? params.item(2) : 0);
+                        mpping(params.item(1), (np>1) ? atoi(params.item(2)) : 0);
                     }
                     else if (strieq(cmd,"daliping")) {
                         CHECKPARAMS(0,1);
