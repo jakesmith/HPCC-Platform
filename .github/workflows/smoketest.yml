@@ -75,6 +75,7 @@ jobs:
       run: |
         if [[ "${{ github.event_name }}" = 'pull_request' ]]
         then
+          echo "should_skip = ${{ needs.check-skip.outputs.should_skip }}"
           echo ::set-output name=branch::${{ github.head_ref }}
           echo ::set-output name=base_ref::${{ github.base_ref }}
           versioned=$(echo ${{ github.base_ref }} | sed -E -n 's/^(.*)-([0-9]+)\.([0-9]+)\.([0-9]+|x)(-[0-9]+|).*$/\1 \2 \3 \4 \5/p')
