@@ -193,6 +193,8 @@ FILESERVICES_API void FILESERVICES_CALL fsClearExpireDays(ICodeContext * ctx, co
 FILESERVICES_API char * FILESERVICES_CALL fsCmdProcess(const char *prog, const char *src);
 FILESERVICES_API void FILESERVICES_CALL fsCmdProcess2(unsigned & tgtLen, char * & tgt, const char *prog, unsigned srcLen, const char * src);
 
+FILESERVICES_API bool FILESERVICES_CALL fsGetNoCommonDefault();
+
 }
 
 #endif

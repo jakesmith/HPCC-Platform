@@ -3128,3 +3128,10 @@ FILESERVICES_API void FILESERVICES_CALL fsClearExpireDays(ICodeContext * ctx, co
     else
         throw makeStringExceptionV(0, "ClearExpireDays: Could not find logical file %s", lfn.str());
 }
+
+FILESERVICES_API bool FILESERVICES_CALL fsGetNoCommonDefault()
+{
+    Owned<IConstEnvironment> daliEnv = openDaliEnvironment();
+    Owned<IPropertyTree> env = getEnvironmentTree(daliEnv);
+    return env->getPropBool("Software/DfuServerProcess[1]/@noCommonDefault", true);
+}
