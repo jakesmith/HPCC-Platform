@@ -70,8 +70,8 @@ static JSocketStatistics *SSTATS;
 #define CHK_ERR(err, s) if((err)==-1){perror(s);exit(1);}
 #define CHK_SSL(err) if((err) ==-1){ERR_print_errors_fp(stderr); exit(2);}
 
-#define THROWSECURESOCKETEXCEPTION(err) \
-    throw MakeStringException(-1, "SecureSocket Exception Raised in: %s, line %d - %s", sanitizeSourceFile(__FILE__), __LINE__, err);
+#define THROWSECURESOCKETEXCEPTION(errno, errMsg) \
+    throw createJSocketException(errno, "SecureSocket Exception Raised in: %s, line %d - %s", sanitizeSourceFile(__FILE__), __LINE__, errMsg);
 
 
 static int pem_passwd_cb(char* buf, int size, int rwflag, void* password)
@@ -810,10 +810,10 @@ void CSecureSocket::readTimeout(void* buf, size32_t min_size, size32_t max_size,
         if (timeout != WAIT_FOREVER) {
             rc = wait_read(timeleft);
             if (rc < 0) {
-                THROWSECURESOCKETEXCEPTION("wait_read error"); 
+                THROWSECURESOCKETEXCEPTION(ERRNO(), "wait_read error"); 
             }
             if (rc == 0) {
-                THROWSECURESOCKETEXCEPTION("timeout expired"); 
+                THROWSECURESOCKETEXCEPTION(JSOCKERR_timeout_expired, "timeout expired"); 
             }
             timeleft = socketTimeRemaining(useSeconds, start, timeout);
         }
