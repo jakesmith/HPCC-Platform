@@ -50,6 +50,9 @@ jobs:
       - name: Install additional tools
         working-directory: ./testing/helm
         run: wget https://github.com/zegl/kube-score/releases/download/v1.8.1/kube-score_1.8.1_linux_amd64 && sudo mv kube-score_1.8.1_linux_amd64 /usr/bin/kube-score && sudo chmod +x /usr/bin/kube-score
+      - name: install helm
+        working-directory: ./testing/helm
+        run: curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && chmod 700 get_helm.sh && ./get_helm.sh
       - name: Test
         working-directory: ./testing/helm
         run: ./run.sh
