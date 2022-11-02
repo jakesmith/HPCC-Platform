@@ -4,7 +4,8 @@ options="--set global.image.version=someversion --set global.image.pullPolicy=Al
 hpccchart=$scriptdir/../../helm/hpcc
 failed=0
 
-./helm version
+helm version
+which version
 echo Testing unmodified values file
 ./helm lint $hpccchart ${options} > results.txt 2> errors.txt
 if [ $? -ne 0 ]
