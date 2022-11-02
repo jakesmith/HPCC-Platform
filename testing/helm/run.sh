@@ -4,9 +4,9 @@ options="--set global.image.version=someversion --set global.image.pullPolicy=Al
 hpccchart=$scriptdir/../../helm/hpcc
 failed=0
 
-helm version
+./helm version
 echo Testing unmodified values file
-helm lint $hpccchart ${options} > results.txt 2> errors.txt
+./helm lint $hpccchart ${options} > results.txt 2> errors.txt
 if [ $? -ne 0 ]
 then
    echo Unmodified failed
@@ -18,7 +18,7 @@ fi
 echo Running valid tests...
 for file in $scriptdir/tests/*.yaml
 do
-   helm lint $hpccchart ${options} --values $file > results.txt 2> errors.txt
+   ./helm lint $hpccchart ${options} --values $file > results.txt 2> errors.txt
    if [ $? -ne 0 ]
    then
       echo $file failed
@@ -26,7 +26,7 @@ do
       cat results.txt
       failed=1
    else
-      helm template $hpccchart ${options} --values $file > results.txt 2> errors.txt
+      ./helm template $hpccchart ${options} --values $file > results.txt 2> errors.txt
       if [ $? -ne 0 ]
       then
          echo $file failed
@@ -40,10 +40,10 @@ done
 echo Running invalid tests...
 for file in $scriptdir/errtests/*.yaml
 do
-   helm lint $hpccchart ${options} --values $file > results.txt 2> errors.txt
+   ./helm lint $hpccchart ${options} --values $file > results.txt 2> errors.txt
    if [ $? -eq 0 ]
    then
-      helm template $hpccchart ${options} --values $file > results.txt 2> errors.txt
+      ./helm template $hpccchart ${options} --values $file > results.txt 2> errors.txt
       if [ $? -eq 0 ]
       then
          echo $file should have failed
@@ -60,7 +60,7 @@ done
 
 if type kubeval >/dev/null 2> /dev/null; then
    echo Running kubeval...
-   helm template $hpccchart ${options} | kubeval --strict - >results.txt 2>errors.txt
+   ./helm template $hpccchart ${options} | kubeval --strict - >results.txt 2>errors.txt
    if [ $? -ne 0 ]
    then
       echo $file failed
@@ -73,7 +73,7 @@ fi
 if type kube-score >/dev/null 2> /dev/null; then
    echo Running kube-score...
    # Note we force all replicas to be > 1 as some checks are not done on replicas=1 cases e.g. antiaffinity
-   helm template $hpccchart ${options} | sed "s/replicas: 1/replicas: 2/" | \
+   ./helm template $hpccchart ${options} | sed "s/replicas: 1/replicas: 2/" | \
      kube-score score --output-format ci \
         --ignore-container-cpu-limit \
         --ignore-container-memory-limit \
