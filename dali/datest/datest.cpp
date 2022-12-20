@@ -3337,6 +3337,54 @@ int main(int argc, char* argv[])
     EnableSEHtoExceptionMapping();
 
     try {
+
+#if 1
+            if (argc<2)
+                throw makeStringException(0, "Usage: datest <path>");
+
+            const char *path = argv[1];
+            unsigned mbs = 10;
+            if (argc>2)
+            {
+                mbs = atoi(argv[2]);
+                if ((mbs == 0) || (mbs > 100000))
+                    throw makeStringExceptionV(0, "invalid mbs: %u", mbs);
+            }
+
+            unsigned pid = GetCurrentProcessId();
+
+            StringBuffer file(path);
+            addPathSepChar(file);
+            file.append("thtmp_").append(pid).append(".tmp");
+
+            PROGLOG("Creating file: %s, mbs: %u", file.str(), mbs);
+
+            Owned<IFile> aFile = createIFile(file);
+            Owned<IFileIO> iFileIO = aFile->open(IFOcreate);
+            Owned<IFileIOStream> stream = createBufferedIOStream(iFileIO);
+
+
+            seedRandom((unsigned)get_cycles_now());
+            size_t totalBytes = mbs * 1024 * 1024;
+            unsigned __int64 n;
+            unsigned sz = sizeof(n);
+            totalBytes = (totalBytes / sz) * sz; // round
+            while (totalBytes)
+            {
+                n = getRandom();
+                stream->write(sz, &n);
+                totalBytes -= sz;
+            }
+            stream.clear();
+            iFileIO.clear();
+
+            StringBuffer file2(file);
+            file2.append("2");
+            aFile->rename(file2);
+            return 0;
+#endif
+
+
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
         StringBuffer lf;
