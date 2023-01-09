@@ -20,7 +20,7 @@ on:
 jobs:
   release:
     name: Publish Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - id: create_release
         uses: actions/create-release@v1
@@ -205,6 +205,7 @@ jobs:
   build-container:
     name: Build Container
     needs: build-platform
+    if: matrix.os == 'ubuntu-22.04'
     runs-on: ubuntu-22.04
 
     steps:
