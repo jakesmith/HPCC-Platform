@@ -205,7 +205,7 @@ jobs:
   build-container:
     name: Build Container
     needs: build-platform
-    if: matrix.os == 'ubuntu-22.04'
+    if: needs.build-platform.matrix.os == 'ubuntu-22.04'
     runs-on: ubuntu-22.04
 
     steps:
