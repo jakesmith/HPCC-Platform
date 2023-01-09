@@ -92,14 +92,16 @@ jobs:
         uses: actions/cache@v3
         with:
           path: build
-          key: ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}
+          key: ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}-${{ github.run_id }}
           restore-keys: |
+            ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}-
             ${{ matrix.os }}-cmake-
+            ${{ matrix.os }}-
 
       - name: CMake Build
         run: |
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF"
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target jlib eclrtl"
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target jlib eclrtl eclwatch"
           sudo chown -R "$(id -u):$(id -g)" ./build
 
   package:
@@ -155,9 +157,11 @@ jobs:
         uses: actions/cache@v3
         with:
           path: build
-          key: ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}
+          key: ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}-${{ github.run_id }}
           restore-keys: |
+            ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}-
             ${{ matrix.os }}-cmake-
+            ${{ matrix.os }}-
 
       - name: Bundle Regular Package
         run: |
@@ -211,9 +215,11 @@ jobs:
         uses: actions/cache@v3
         with:
           path: build
-          key: ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}
+          key: ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}-${{ github.run_id }}
           restore-keys: |
+            ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}-
             ${{ matrix.os }}-cmake-
+            ${{ matrix.os }}-
 
       - name: Bundle containerized packages
         run: |
