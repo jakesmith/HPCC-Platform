@@ -77,7 +77,7 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           builder: ${{ steps.buildx.outputs.name }}
-          file: dockerfiles/vcpkg/${{ matrix.os}}.dockerfile
+          file: dockerfiles/vcpkg/${{ matrix.os }}.dockerfile
           context: dockerfiles/vcpkg
           push: true
           tags: |
@@ -90,26 +90,33 @@ jobs:
             VCPKG_REF=${{ steps.vars.outputs.vcpkg_sha_short }}
             BUILD_FOLDER=build-${{ matrix.os }}
 
-      - name: Bundle Regular Package
+      - name: CMake Build
         run: |
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF"
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc)"
+
+      - name: Cache CMake build folder
+        uses: actions/cache@v3
+        with:
+          path: build
+          key: ${{ runner.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-cmake-
+
+      - name: CMake Package
+        run: |
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package"
 
-      - name: Bundle Stripped Package
+      - name: CMake Stripped Package
         run: |
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=ON"
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package"
 
-      - uses: AButler/upload-release-assets@v2.0
+      - uses: AButler/upload-release-assets@v2.0.2
         with:
           files: "build/*.deb;build/*.rpm"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           release-tag: ${{ steps.vars.outputs.branch_name }}
-
-      - uses: actions/upload-artifact@v3
-        with:
-          name: build-${{ matrix.os}}
-          path: build/
 
   build-plugins:
     name: Build Plugins
@@ -159,33 +166,6 @@ jobs:
         id: buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Create Build Image
-        uses: docker/build-push-action@v3
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          file: dockerfiles/vcpkg/${{ matrix.os}}.dockerfile
-          context: dockerfiles/vcpkg
-          push: false
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} 
-            ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:latest
-          cache-from: |
-            ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} 
-            ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:latest
-          build-args: |
-            VCPKG_REF=${{ steps.vars.outputs.vcpkg_sha_short }}
-            BUILD_FOLDER=build-${{ matrix.os }}
-
-      - uses: actions/download-artifact@v3
-        with:
-          name: build-${{ matrix.os}}
-
       - name: Bundle Regular Package
         run: |
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -D${{ matrix.package }}=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF"
@@ -196,7 +176,7 @@ jobs:
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -D${{ matrix.package }}=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=ON"
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package"
 
-      - uses: AButler/upload-release-assets@v2.0
+      - uses: AButler/upload-release-assets@v2.0.2
         with:
           files: "build/*.deb;build/*.rpm"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -223,37 +203,6 @@ jobs:
           echo "vcpkg_sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
           echo "cmake_options=-DCMAKE_BUILD_TYPE=RelWithDebInfo -DVCPKG_FILES_DIR=/hpcc-dev -DCPACK_THREADS=0 -DUSE_OPTIONAL=OFF" >> $GITHUB_OUTPUT
 
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Create Build Image
-        uses: docker/build-push-action@v3
-        with:
-          builder: ${{ steps.buildx.outputs.name }}
-          file: dockerfiles/vcpkg/ubuntu-22.04.dockerfile
-          context: dockerfiles/vcpkg
-          push: false
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:${{ steps.vars.outputs.branch_name }} 
-            ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:latest
-          cache-from: |
-            ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:${{ steps.vars.outputs.branch_name }} 
-            ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:latest
-          build-args: |
-            VCPKG_REF=${{ steps.vars.outputs.vcpkg_sha_short }}
-            BUILD_FOLDER=build-ubuntu-22.04
-
-      - uses: actions/download-artifact@v3
-        with:
-          name: build-ubuntu-22.04
-
       - name: Bundle containerized packages
         run: |
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DCONTAINERIZED=ON -DINCLUDE_PLUGINS=ON -DSUPPRESS_REMBED=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_SPARK=ON -DCPACK_STRIP_FILES=OFF"
@@ -264,7 +213,7 @@ jobs:
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DCONTAINERIZED=ON -DINCLUDE_PLUGINS=ON -DSUPPRESS_REMBED=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_SPARK=ON -DCPACK_STRIP_FILES=ON"
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package"
 
-      - uses: AButler/upload-release-assets@v2.0
+      - uses: AButler/upload-release-assets@v2.0.2
         with:
           files: "build/*.deb;build/*.rpm"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -354,7 +303,7 @@ jobs:
         run: |
           cmake --build . ${{ matrix.cmake_build_options }} --target package
 
-      - uses: AButler/upload-release-assets@v2.0
+      - uses: AButler/upload-release-assets@v2.0.2
         with:
           files: "build/*.exe;build/*.msi;build/*.dmg;build/*.pkg;build/*.tar.gz"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
