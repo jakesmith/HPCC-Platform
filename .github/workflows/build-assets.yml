@@ -103,7 +103,7 @@ jobs:
 
       - name: Save docker image
         run: |
-          docker save ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} > build/docker.tar
+          sudo docker save ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} > build/docker.tar
 
   package:
     name: Package Platform + Plugins
@@ -121,15 +121,15 @@ jobs:
         package:
           [
             "PLATFORM",
-            "MEMCACHED",
-            "SQS",
-            "REDIS",
-            "MYSQLEMBED",
-            "JAVAEMBED",
-            "SQLITE3EMBED",
-            "KAFKA",
             "COUCHBASEEMBED",
+            "JAVAEMBED",
+            "KAFKA",
+            "MEMCACHED",
+            "MYSQLEMBED",
+            "REDIS",
             "REMBED",
+            "SQLITE3EMBED",
+            "SQS",
           ]
       fail-fast: false
 
