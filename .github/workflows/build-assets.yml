@@ -21,15 +21,14 @@ jobs:
   release:
     name: Publish Release
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
       - id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
+          name: Release ${{ github.ref }}
+          generateReleaseNotes: true
           prerelease: ${{ contains(github.ref, 'rc') }}
 
   build-platform:
