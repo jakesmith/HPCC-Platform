@@ -101,6 +101,10 @@ jobs:
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF"
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target jlib eclrtl"
 
+      - name: Save docker image
+        run: |
+          docker save ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} > build/docker.tar
+
   package:
     name: Package Platform + Plugins
     needs: build-platform
@@ -158,10 +162,14 @@ jobs:
           restore-keys: |
             ${{ matrix.os }}-cmake-
 
+      - name: Restore docker image
+        run: |
+          docker load < build/docker.tar
+
       - name: Bundle Regular Package
         run: |
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -D${{ matrix.package }}=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF"
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package"
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -D${{ matrix.package }}=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF" 2>&1 | tee cmake-config.log
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 2>&1 | tee cmake-build.log
 
       - name: Bundle Stripped Package
         run: |
@@ -173,6 +181,14 @@ jobs:
           files: "build/*.deb;build/*.rpm"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           release-tag: ${{ steps.vars.outputs.branch_name }}
+
+      - name: Upload error logs
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.os }}-${{ matrix.package }}-logs
+          path: cmake-*.log
+          if-no-files-found: error
 
   build-container:
     name: Build Container
@@ -205,6 +221,10 @@ jobs:
           key: ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: |
             ${{ matrix.os }}-cmake-
+
+      - name: Restore docker image
+        run: |
+          docker load < build/docker.tar
 
       - name: Bundle containerized packages
         run: |
