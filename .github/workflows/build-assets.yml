@@ -101,67 +101,8 @@ jobs:
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF"
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc)"
 
-  package-platform:
-    name: Package Platform
-    needs: build-platform
-    strategy:
-      matrix:
-        os:
-          [
-            "ubuntu-22.04",
-            "ubuntu-20.04",
-            "ubuntu-18.04",
-            "centos-8",
-            "centos-7",
-          ]
-      fail-fast: false
-    runs-on: ubuntu-22.04
-
-    steps:
-      - name: Check out source code (tag)
-        uses: actions/checkout@v3
-        with:
-          ref: ${{ github.ref }}
-          submodules: recursive
-
-      - name: Calculate vars
-        id: vars
-        run: |
-          echo "branch_name=$(echo ${{ github.ref }} | cut -d'/' -f3)" >> $GITHUB_OUTPUT
-          cd vcpkg
-          echo "vcpkg_sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
-          echo "cmake_options=-DCMAKE_BUILD_TYPE=RelWithDebInfo -DVCPKG_FILES_DIR=/hpcc-dev -DCPACK_THREADS=0 -DUSE_OPTIONAL=OFF" >> $GITHUB_OUTPUT
-
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Cache CMake build folder
-        uses: actions/cache@v3
-        with:
-          path: build
-          key: ${{ matrix.os }}-cmake-${{ hashFiles('**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ matrix.os }}-cmake-
-
-      - name: CMake Package
-        run: |
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF"
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package"
-
-      - name: CMake Stripped Package
-        run: |
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=ON"
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package"
-
-      - uses: AButler/upload-release-assets@v2.0.2
-        with:
-          files: "build/*.deb;build/*.rpm"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          release-tag: ${{ steps.vars.outputs.branch_name }}
-
-  package-plugins:
-    name: Package Plugins
+  package:
+    name: Package Platform + Plugins
     needs: build-platform
     strategy:
       matrix:
@@ -175,6 +116,7 @@ jobs:
           ]
         package:
           [
+            "PLATFORM",
             "REMBED",
             "MEMCACHED",
             "SQS",
@@ -235,7 +177,6 @@ jobs:
   build-container:
     name: Build Container
     needs: build-platform
-    if: needs.build-platform.matrix.os == 'ubuntu-22.04'
     runs-on: ubuntu-22.04
 
     steps:
