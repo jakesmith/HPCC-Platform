@@ -100,7 +100,7 @@ jobs:
         run: |
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF"
           docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target jlib eclrtl"
-          chown -R "$(id -u):$(id -g)" ./build
+          sudo chown -R "$(id -u):$(id -g)" ./build
 
       - name: Save docker image
         run: |
@@ -165,7 +165,7 @@ jobs:
 
       - name: Restore docker image
         run: |
-          docker load < build/docker.tar
+          docker load < ./build/docker.tar
 
       - name: Bundle Regular Package
         run: |
