@@ -79,10 +79,10 @@ jobs:
           context: dockerfiles/vcpkg
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ hashFiles('dockerfiles/vcpkg/${{ matrix.os }}.dockerfile') }} 
+            ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} 
             ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:latest
           cache-from: |
-            ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ hashFiles('dockerfiles/vcpkg/${{ matrix.os }}.dockerfile') }} 
+            ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }}
             ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:latest
           build-args: |
             VCPKG_REF=${{ steps.vars.outputs.vcpkg_sha_short }}
@@ -117,7 +117,6 @@ jobs:
         package:
           [
             "PLATFORM",
-            "REMBED",
             "MEMCACHED",
             "SQS",
             "REDIS",
@@ -126,6 +125,7 @@ jobs:
             "SQLITE3EMBED",
             "KAFKA",
             "COUCHBASEEMBED",
+            "REMBED",
           ]
       fail-fast: false
 
