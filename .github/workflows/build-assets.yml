@@ -43,23 +43,6 @@ jobs:
             "centos-8",
             "centos-7",
           ]
-        package:
-          [
-            "PLATFORM",
-            "CASSANDRAEMBED",
-            "COUCHBASEEMBED",
-            "ECLBLAS",
-            "H3",
-            "JAVAEMBED",
-            "KAFKA",
-            "MEMCACHED",
-            "MYSQLEMBED",
-            "NLP",
-            "REDIS",
-            "REMBED",
-            "SQLITE3EMBED",
-            "SQS",
-          ]
       fail-fast: false
     runs-on: ubuntu-22.04
 
@@ -105,27 +88,34 @@ jobs:
             VCPKG_REF=${{ steps.vars.outputs.vcpkg_sha_short }}
             BUILD_FOLDER=build-${{ matrix.os }}
 
-      - name: Bundle Regular Package
+      - name: Bundle Platform
         run: |
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -D${{ matrix.package }}=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF" 2>&1 | tee cmake-config.log
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 2>&1 | tee cmake-build.log
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF" 
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=ON"
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 
 
-      - name: Bundle Stripped Package
+      - name: Bundle Plugins
         run: |
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -D${{ matrix.package }}=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=ON" 2>&1 | tee cmake-stripped-config.log
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 2>&1 | tee cmake-stripped-build.log
+          plugins=("CASSANDRAEMBED" "COUCHBASEEMBED" "ECLBLAS" "H3" "JAVAEMBED" "KAFKA" "MEMCACHED" "MYSQLEMBED" "NLP" "REDIS" "REMBED" "SQLITE3EMBED" "SQS")
+          for plugin in "${plugins[@]}"; do
+            sudo rm -f ./build/CMakeCache.txt
+            sudo rm -rf ./build/CMakeFiles
+            docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -D${{ plugin }}=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF" 
+            docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 
+            docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -D${{ plugin }}=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=ON"
+            docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 
+          done
 
       - name: Bundle containerized packages
-        if: ${{ matrix.os == 'ubuntu-20.04' && matrix.package == 'PACKAGE' }}
+        if: ${{ matrix.os == 'ubuntu-22.04' }}
         run: |
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DCONTAINERIZED=ON -DINCLUDE_PLUGINS=ON -DSUPPRESS_REMBED=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_SPARK=ON -DCPACK_STRIP_FILES=OFF" 2>&1 | tee cmake-container-config.log
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 2>&1 | tee cmake-container-build.log
-
-      - name: Bundle containerized stripped packages
-        if: ${{ matrix.os == 'ubuntu-20.04' && matrix.package == 'PACKAGE' }}
-        run: |
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DCONTAINERIZED=ON -DINCLUDE_PLUGINS=ON -DSUPPRESS_REMBED=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_SPARK=ON -DCPACK_STRIP_FILES=ON" 2>&1 | tee cmake-container-stripped-config.log
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 2>&1 | tee cmake-container-stripped-build.log
+          sudo rm -f ./build/CMakeCache.txt
+          sudo rm -rf ./build/CMakeFiles
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DINCLUDE_PLUGINS=ON -DCONTAINERIZED=ON -DSUPPRESS_REMBED=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_SPARK=ON -DCPACK_STRIP_FILES=OFF"
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DINCLUDE_PLUGINS=ON -DCONTAINERIZED=ON -DSUPPRESS_REMBED=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_SPARK=ON -DCPACK_STRIP_FILES=ON" 
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 
 
       - uses: AButler/upload-release-assets@v2.0.2
         with:
@@ -135,11 +125,10 @@ jobs:
 
       - name: Upload error logs
         if: ${{ failure() || cancelled() }}
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.os }}-${{ matrix.package }}-logs
-          path: cmake-*.log
-          if-no-files-found: error
+          path: build/CMakeCache.txt
 
   build-clienttools:
     needs: release

@@ -24,9 +24,9 @@
 
 project(cassandraembed)
 
-if(CASSANDRAEMBED AND USE_CASSANDRA)
+if(CASSANDRAEMBED OR USE_CASSANDRA)
   ADD_PLUGIN(cassandraembed)
-  if(MAKE_CASSANDRAEMBED)
+  if(MAKE_CASSANDRAEMBED OR USE_CASSANDRA)
     find_path(CPP_DRIVER_INCLUDE_DIRS "cassandra.h" REQUIRED)
     find_library(CPP_DRIVER_LIBRARY NAMES "cassandra" REQUIRED)
     find_package(libuv CONFIG REQUIRED)
