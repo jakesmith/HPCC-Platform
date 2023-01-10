@@ -43,11 +43,11 @@ jobs:
             "centos-8",
             "centos-7",
           ]
-        containerized: 
-          [
-            true, 
-            false
-          ]
+        include:
+          - os: "ubuntu-22.04"
+            containerized: false
+          - os: "ubuntu-22.04"
+            containerized: true
       fail-fast: false
     runs-on: ubuntu-22.04
 
