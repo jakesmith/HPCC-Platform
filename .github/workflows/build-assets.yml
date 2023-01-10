@@ -46,11 +46,15 @@ jobs:
         package:
           [
             "PLATFORM",
+            "CASSANDRAEMBED",
             "COUCHBASEEMBED",
+            "ECLBLAS",
+            "H3",
             "JAVAEMBED",
             "KAFKA",
             "MEMCACHED",
             "MYSQLEMBED",
+            "NLP",
             "REDIS",
             "REMBED",
             "SQLITE3EMBED",
