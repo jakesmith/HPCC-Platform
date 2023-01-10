@@ -35,15 +35,19 @@ jobs:
     needs: release
     strategy:
       matrix:
-        os:
-          [
-            "ubuntu-22.04-container",
-            "ubuntu-22.04",
-            "ubuntu-20.04",
-            "ubuntu-18.04",
-            "centos-8",
-            "centos-7",
-          ]
+        include:
+          - os: ubuntu-22.04
+            container: true
+          - os: ubuntu-22.04
+            container: false
+          - os: ubuntu-20.04
+            container: false
+          - os: ubuntu-18.04
+            container: false
+          - os: centos-8
+            container: false
+          - os: centos-7
+            container: false
       fail-fast: false
     runs-on: ubuntu-22.04
 
@@ -76,7 +80,7 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           builder: ${{ steps.buildx.outputs.name }}
-          file: dockerfiles/vcpkg/${{ matrix.os }}.dockerfile
+          file: dockerfiles/vcpkg/${{ matrix.dockerfile }}
           context: dockerfiles/vcpkg
           push: true
           tags: |
@@ -90,7 +94,7 @@ jobs:
             BUILD_FOLDER=build-${{ matrix.os }}
 
       - name: CMake Packages
-        if: ${{ matrix.os != 'ubuntu-22.04-container' }}
+        if: ${{ !matrix.container }}
         run: |
           plugins=("CASSANDRAEMBED" "COUCHBASEEMBED" "ECLBLAS" "H3" "JAVAEMBED" "KAFKA" "MEMCACHED" "MYSQLEMBED" "NLP" "REDIS" "SQLITE3EMBED" "SQS" "PLATFORM")
           for plugin in "${plugins[@]}"; do
@@ -103,7 +107,7 @@ jobs:
           done
 
       - name: Bundle containerized packages
-        if: ${{ matrix.os == 'ubuntu-22.04-container' }}
+        if: ${{ matrix.container }}
         run: |
           sudo rm -f ./build/CMakeCache.txt
           sudo rm -rf ./build/CMakeFiles
