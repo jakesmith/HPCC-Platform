@@ -80,7 +80,7 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           builder: ${{ steps.buildx.outputs.name }}
-          file: dockerfiles/vcpkg/${{ matrix.dockerfile }}
+          file: dockerfiles/vcpkg/${{ matrix.os }}.dockerfile
           context: dockerfiles/vcpkg
           push: true
           tags: |
