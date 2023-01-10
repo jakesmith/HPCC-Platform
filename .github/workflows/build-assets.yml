@@ -37,17 +37,13 @@ jobs:
       matrix:
         os:
           [
+            "ubuntu-22.04-container",
             "ubuntu-22.04",
             "ubuntu-20.04",
             "ubuntu-18.04",
             "centos-8",
             "centos-7",
           ]
-        include:
-          - os: "ubuntu-22.04"
-            containerized: false
-          - os: "ubuntu-22.04"
-            containerized: true
       fail-fast: false
     runs-on: ubuntu-22.04
 
@@ -94,7 +90,7 @@ jobs:
             BUILD_FOLDER=build-${{ matrix.os }}
 
       - name: CMake Packages
-        if: ${{ matrix.containerized == false }}
+        if: ${{ matrix.os != 'ubuntu-22.04-container' }}
         run: |
           plugins=("CASSANDRAEMBED" "COUCHBASEEMBED" "ECLBLAS" "H3" "JAVAEMBED" "KAFKA" "MEMCACHED" "MYSQLEMBED" "NLP" "REDIS" "SQLITE3EMBED" "SQS" "PLATFORM")
           for plugin in "${plugins[@]}"; do
@@ -107,14 +103,14 @@ jobs:
           done
 
       - name: Bundle containerized packages
-        if: ${{ matrix.os == 'ubuntu-22.04' && matrix.containerized == true }}
+        if: ${{ matrix.os == 'ubuntu-22.04-container' }}
         run: |
           sudo rm -f ./build/CMakeCache.txt
           sudo rm -rf ./build/CMakeFiles
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DINCLUDE_PLUGINS=ON -DCONTAINERIZED=ON -DSUPPRESS_REMBED=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_SPARK=ON -DCPACK_STRIP_FILES=OFF"
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DINCLUDE_PLUGINS=ON -DCONTAINERIZED=ON -DSUPPRESS_REMBED=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_SPARK=ON -DCPACK_STRIP_FILES=ON" 
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DINCLUDE_PLUGINS=ON -DCONTAINERIZED=ON -DSUPPRESS_REMBED=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_SPARK=ON -DCPACK_STRIP_FILES=OFF"
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DINCLUDE_PLUGINS=ON -DCONTAINERIZED=ON -DSUPPRESS_REMBED=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_SPARK=ON -DCPACK_STRIP_FILES=ON" 
+          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-ubuntu-22.04:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target package" 
 
       - uses: AButler/upload-release-assets@v2.0.2
         with:
@@ -144,7 +140,7 @@ jobs:
             triplet: "x64-osx"
             mono: "mono"
             sudo: "sudo"
-            cmake_config_options: "-DCMAKE_BUILD_TYPE=Release -DUSE_OPTIONAL=OFF -DCLIENTTOOLS_ONLY=ON -DINCLUDE_PLUGINS=OFF -DUSE_JAVA=OFF"
+            cmake_config_options: "-DCMAKE_BUILD_TYPE=Release -DUSE_OPTIONAL=OFF -DCLIENTTOOLS_ONLY=ON -DINCLUDE_PLUGINS=OFF -DUSE_JAVA=OFF -DUSE_LIBMEMCACHED=OFF -DUSE_OPENLDAP=OFF -DUSE_CASSANDRA=OFF -DUSE_AZURE=OFF -DWSSQL_SERVICE=OFF"
             cmake_build_options: "--parallel $(nproc)"
       fail-fast: false
 
