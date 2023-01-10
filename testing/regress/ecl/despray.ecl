@@ -25,7 +25,6 @@
 //nothor
 
 //nohthor
-//class=spray
 
 import $.setup;
 import Std.File AS FileServices;
