@@ -88,16 +88,9 @@ jobs:
             VCPKG_REF=${{ steps.vars.outputs.vcpkg_sha_short }}
             BUILD_FOLDER=build-${{ matrix.os }}
 
-      - name: Bundle Platform
-        run: |
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF" 
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target eclwatch" 
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/HPCC-Platform/build ${{ steps.vars.outputs.cmake_options }} -DPLATFORM=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=ON"
-          docker run --rm --mount source="$(pwd)",target=/hpcc-dev/HPCC-Platform,type=bind,consistency=cached ${{ secrets.DOCKER_USERNAME }}/build-${{ matrix.os }}:${{ steps.vars.outputs.branch_name }} "cmake --build /hpcc-dev/HPCC-Platform/build --parallel $(nproc) --target eclwatch" 
-
       - name: Bundle Plugins
         run: |
-          plugins=("CASSANDRAEMBED" "COUCHBASEEMBED" "ECLBLAS" "H3" "JAVAEMBED" "KAFKA" "MEMCACHED" "MYSQLEMBED" "NLP" "REDIS" "REMBED" "SQLITE3EMBED" "SQS")
+          plugins=("CASSANDRAEMBED" "COUCHBASEEMBED" "ECLBLAS" "H3" "JAVAEMBED" "KAFKA" "MEMCACHED" "MYSQLEMBED" "NLP" "REDIS" "SQLITE3EMBED" "SQS" "PLATFORM")
           for plugin in "${plugins[@]}"; do
             sudo rm -f ./build/CMakeCache.txt
             sudo rm -rf ./build/CMakeFiles
