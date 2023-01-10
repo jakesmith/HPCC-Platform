@@ -623,6 +623,7 @@ int main( int argc, const char *argv[]  )
     if (!globals->getProp("@daliServers", daliServer)) 
     {
         LOG(MCerror, thorJob, "No Dali server list specified in THOR.XML (daliServers=iport,iport...)\n");
+        LOG(MCerror, thorJob, "No Dali server list specified in THOR.XML (daliServers=iport,iport...)\n");
         return 0; // no recycle
     }
 
