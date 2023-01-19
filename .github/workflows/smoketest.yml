@@ -239,7 +239,7 @@ jobs:
         sudo apt-get install -y ${{ env.OS_DEPENDENCIES }}
         sudo apt-get install -y xmlstarlet
 
-        curl -fsSL https://deb.nodesource.com/setup_19.x | sudo -E bash -
+        curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
         sudo apt-get install -y nodejs
 
         echo "node.js version = $(node --version), npm version = $(npm --version), release = $(lsb_release -sc)"
@@ -437,7 +437,7 @@ jobs:
         sudo apt-get install -y ${{ env.OS_DEPENDENCIES }}
         sudo apt-get install -y gdb
 
-        curl -fsSL https://deb.nodesource.com/setup_19.x | sudo -E bash -
+        curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
         sudo apt-get install -y nodejs
 
         echo "node.js version = $(node --version), npm version = $(npm --version), release = $(lsb_release -sc)"
@@ -498,7 +498,7 @@ jobs:
         sudo apt-get install -y ${{ env.OS_DEPENDENCIES }}
         sudo apt-get install -y gdb
 
-        curl -fsSL https://deb.nodesource.com/setup_19.x | sudo -E bash -
+        curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
         sudo apt-get install -y nodejs
 
         echo "node.js version = $(node --version), npm version = $(npm --version), release = $(lsb_release -sc)"
@@ -551,7 +551,7 @@ jobs:
         sudo apt-get install -y ${{ env.OS_DEPENDENCIES }}
         sudo apt-get install -y gdb
 
-        curl -fsSL https://deb.nodesource.com/setup_19.x | sudo -E bash -
+        curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
         sudo apt-get install -y nodejs
 
         echo "node.js version = $(node --version), npm version = $(npm --version), release = $(lsb_release -sc)"
