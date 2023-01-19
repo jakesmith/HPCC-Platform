@@ -17,14 +17,12 @@
 
 # Build container image containing all 3rd-party tools required to build HPCC platform
 
-# DEPRECATED  ---  DEPRECATED  ---  DEPRECATED
-
-FROM ubuntu:20.04 as build
+FROM ubuntu:22.04 as build
 ENV DEBIAN_FRONTEND=noninteractive
 ARG BASE_VER
 
-# This is version 8.6 of the platform-build-base, and anyone building/using it should have set that in BASE_VER
-RUN [ "${BASE_VER}" = "8.6" ]
+# This is version 8.12-rc2 of the platform-build-base, and anyone building/using it should have set that in BASE_VER
+RUN [ "${BASE_VER}" = "8.12-rc2" ]
  
 RUN apt clean -y && \
     apt autoclean -y && \
@@ -32,49 +30,12 @@ RUN apt clean -y && \
     apt autoremove -y && \
     apt-get update -y
 
-RUN apt-get install -y \
-  automake \
-  autotools-dev \
-  binutils-dev \
-  bison \
-  build-essential \
-  curl \
-  default-jdk \
-  default-libmysqlclient-dev \
-  flex \
-  libapr1-dev \
-  libaprutil1-dev \
-  libarchive-dev \
-  libatlas-base-dev \
-  libblas-dev \
-  libboost-regex-dev \
-  libcppunit-dev \
-  libcurl4-openssl-dev \
-  libevent-dev \
-  libhiredis-dev \
-  libiberty-dev \
-  libicu-dev \
-  libldap2-dev \
-  libmemcached-dev \
-  libnuma-dev \
-  libsqlite3-dev \
-  libssl-dev \
-  libtbb-dev \
-  libtool \
-  libv8-dev \
-  libxalan-c-dev \
-  libxslt1-dev \
-  pkg-config \
-  python-dev \
-  python3-dev \
-  r-base-dev \
-  r-cran-inline \
-  r-cran-rcpp \
-  r-cran-rinside \
-  rsync \
-  psmisc \
-  libpopt0 \
-  zlib1g-dev
+RUN apt-get install -y bison flex build-essential binutils-dev curl lsb-release libldap2-dev libcppunit-dev libicu-dev \
+    libxslt1-dev zlib1g-dev libboost-regex-dev libarchive-dev python3-dev default-jdk libapr1-dev libaprutil1-dev \
+    libiberty-dev libhiredis-dev libtbb-dev libxalan-c-dev libnuma-dev libevent-dev libatlas-base-dev libblas-dev \
+    python3-dev default-libmysqlclient-dev libsqlite3-dev r-base-dev r-cran-rcpp r-cran-rinside r-cran-inline \
+    libmemcached-dev pkg-config libtool autotools-dev automake libssl-dev git libcurl4-openssl-dev cmake libbsd-dev
+
 
 RUN apt-get install -y \
   bash-completion \
@@ -89,20 +50,10 @@ RUN apt-get install -y \
   lsb-release \
   jq
 
-RUN curl https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add -
-RUN apt-add-repository "deb https://deb.nodesource.com/node_16.x $(lsb_release -sc) main"
-RUN apt-get update -y
+RUN curl -fsSL https://deb.nodesource.com/setup_19.x | bash -
 RUN apt-get install -y nodejs
 
-RUN mkdir /home/temp
-WORKDIR /home/temp
-RUN curl https://cmake.org/files/v3.16/cmake-3.16.3.tar.gz | tar xvz
-WORKDIR /home/temp/cmake-3.16.3/
-RUN ./bootstrap
-RUN make -j4
-RUN make install
 WORKDIR /
-RUN rm -rf /home/temp
 RUN apt-get clean -y
 
 FROM ubuntu:20.04
