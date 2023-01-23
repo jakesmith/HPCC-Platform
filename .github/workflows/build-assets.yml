@@ -53,7 +53,7 @@ jobs:
           owner: ${{ secrets.LNB_ACTOR }}
           repo: LN
           token: ${{ secrets.LNB_TOKEN }}
-          commit: ${{ steps.vars.outputs.internal_ref }}
+          tag: ${{ steps.vars.outputs.internal_tag }}
           allowUpdates: true
           generateReleaseNotes: true
           prerelease: ${{ contains(github.ref, '-rc') }}
