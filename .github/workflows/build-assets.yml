@@ -106,7 +106,7 @@ jobs:
 
       - name: Print vars II
         run: |
-          echo "${{ toJSON(needs.release.vars.outputs) }})"
+          echo "${{ toJSON(needs.release.steps.vars.outputs) }})"
 
       - name: Set up Docker Buildx
         id: buildx
