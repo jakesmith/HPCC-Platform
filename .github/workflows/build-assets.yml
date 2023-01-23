@@ -23,6 +23,14 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+    outputs:
+      mount_platform: ${{ steps.vars.outputs.mount_platform }}
+      mount_ln: ${{ steps.vars.outputs.mount_ln }}
+      community_ref: ${{ steps.vars.outputs.community_ref }}
+      internal_ref: ${{ steps.vars.outputs.internal_ref }}
+      community_tag: ${{ steps.vars.outputs.community_tag }}
+      internal_tag: ${{ steps.vars.outputs.internal_tag }}
+      cmake_options: ${{ steps.vars.outputs.cmake_options }}
     steps:
       - name: Calculate vars
         id: vars
@@ -106,7 +114,7 @@ jobs:
 
       - name: Print vars II
         run: |
-          echo "${{ toJSON(needs.release.steps.vars.outputs) }})"
+          echo "${{ toJSON(needs.release.outputs) }})"
 
       - name: Set up Docker Buildx
         id: buildx
