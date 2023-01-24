@@ -3662,12 +3662,12 @@ bool getDefaultSpillPlane(StringBuffer &ret)
 bool getDefaultIndexBuildStoragePlane(StringBuffer &ret)
 {
 #ifdef _CONTAINERIZED
-    if (getGlobalConfigSP()->getProp("storage/@indexBuildPlane", ret))
+    if (getComponentConfigSP()->getProp("@indexBuildPlane", ret))
         return true;
-    else if (getDefaultPlane(ret, "@indexBuildPlane", "data"))
+    else if (getGlobalConfigSP()->getProp("storage/@indexBuildPlane", ret))
         return true;
-
-    throwUnexpectedX("Default data plane not specified"); // The default should always have been configured by the helm charts
+    else
+        return getDefaultStoragePlane(ret);
 #else
     return false;
 #endif
