@@ -316,7 +316,7 @@ jobs:
           token: ${{ secrets.LNB_TOKEN }}
           tag: ${{ needs.release.outputs.internal_tag }}
           allowUpdates: true
-          artifacts: "./build/*.exe,./build/*.msi,./build/*.dmg,./build/*.pkg,./build/*.tar.gz"
+          artifacts: "./build/hpccsystems-clienttools-internal*.exe,./build/hpccsystems-clienttools-internal*.msi,./build/hpccsystems-clienttools-internal*.dmg,./build/hpccsystems-clienttools-internal*.pkg,./build/hpccsystems-clienttools-internal*.tar.gz"
 
       - name: Upload error logs
         if: ${{ failure() || cancelled() }}
