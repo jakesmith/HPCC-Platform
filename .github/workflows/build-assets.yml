@@ -66,6 +66,7 @@ jobs:
           allowUpdates: true
           generateReleaseNotes: false
           prerelease: ${{ contains(github.ref, '-rc') }}
+
       - name: Release LN
         uses: ncipollo/release-action@v1.12.0
         with:

@@ -69,8 +69,7 @@ jobs:
       - name: Print vars
         run: |
           echo "${{ toJSON(steps.vars.outputs) }})"
-          echo "${{ toJSON(outputs) }})"
-
+          echo "${{ toJSON(check-skip.outputs) }})"
 
   build:
     strategy:
