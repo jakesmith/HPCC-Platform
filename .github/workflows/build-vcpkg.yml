@@ -347,7 +347,7 @@ jobs:
         run: |
           mkdir -p ./build
           cmake -S ./HPCC-Platform -B ./build ${{ matrix.cmake_config_options }}
-          cmake --build ./build ${{ matrix.cmake_build_options }} --target package
+          cmake --build ./build ${{ matrix.cmake_build_options }}
 
       - name: Upload error logs
         if: ${{ failure() || cancelled() }}
