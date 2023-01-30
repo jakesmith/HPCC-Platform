@@ -3334,6 +3334,8 @@ int main(int argc, char* argv[])
     ReleaseAtomBlock rABlock;
     InitModuleObjects();
 
+    // test2a
+
     EnableSEHtoExceptionMapping();
 
     try {
