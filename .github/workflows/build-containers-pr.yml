@@ -92,6 +92,7 @@ jobs:
           context: .
           file: ./dockerfiles/platform-build/Dockerfile
           builder: ${{ steps.buildx.outputs.name }}
+          push: true
           tags: |
             ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ steps.vars.outputs.build_prbase_sha }}
           build-args: |
