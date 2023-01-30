@@ -79,19 +79,20 @@ jobs:
         run: |
           prbase_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }} > /dev/null ; echo $?)
           echo prbase_missing=${prbase_missing}
-          if [[ "${prbase_missing}" -eq 1 ]]
-          then
-            echo "Current PR target branch image cannot be found, using latest"
-            prbase_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-latest > /dev/null ; echo $?)
-            if [[ "${prbase_missing}" -eq 1 ]]
-            then
-              echo "Cannot find the 'latest' target branch image"
-              echo ::set-output name=prbase_missing::${prbase_missing}
-            fi
-            echo ::set-output name=platform_prbase_ver::${{ steps.vars.outputs.build_prbase_label }}-latest
-          else
-            echo ::set-output name=platform_prbase_ver::${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }}
-          fi
+#          if [[ "${prbase_missing}" -eq 1 ]]
+#          then
+#            echo "Current PR target branch image cannot be found, using latest"
+#            prbase_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-latest > /dev/null ; echo $?)
+#            if [[ "${prbase_missing}" -eq 1 ]]
+#            then
+#              echo "Cannot find the 'latest' target branch image"
+#              echo ::set-output name=prbase_missing::${prbase_missing}
+#            fi
+#            echo ::set-output name=platform_prbase_ver::${{ steps.vars.outputs.build_prbase_label }}-latest
+#          else
+#            echo ::set-output name=platform_prbase_ver::${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }}
+#          fi
+          echo ::set-output name=platform_prbase_ver::${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }}
 
       # Normal expectation is that the following step would normally be skipped
       # NB: This is only for the case where the target branch image doesn't already exist.
