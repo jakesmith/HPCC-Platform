@@ -79,6 +79,7 @@ jobs:
         run: |
           prbase_missing=$(docker manifest inspect ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }} > /dev/null ; echo $?)
           echo prbase_missing=${prbase_missing}
+          echo ::set-output name=prbase_missing::${prbase_missing}
           echo ::set-output name=platform_prbase_ver::${{ steps.vars.outputs.build_prbase_label }}-${{ github.event.pull_request.base.sha }}
 
       # Normal expectation is that the following step would normally be skipped
