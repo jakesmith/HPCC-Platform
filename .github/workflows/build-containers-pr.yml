@@ -94,9 +94,7 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
           tags: |
             ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-${{ steps.vars.outputs.build_prbase_sha }}
-            ${{ steps.vars.outputs.container_registry }}/${{ steps.vars.outputs.cr_user }}/${{ steps.vars.outputs.platform_build }}:${{ steps.vars.outputs.build_prbase_label }}-latest
           build-args: |
-            CR_USER=${{ steps.vars.outputs.cr_user }}
             CR_REPO=${{ steps.vars.outputs.container_registry }}
             BASE_VER=${{ steps.vars.outputs.base_ver }}
             BUILD_USER=${{ github.repository_owner }}
