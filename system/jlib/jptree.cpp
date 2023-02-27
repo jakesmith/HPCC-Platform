@@ -8696,7 +8696,6 @@ static void holdLoop()
 }
 #endif
 
-#if defined(__linux__)
 static std::tuple<std::string, IPropertyTree *, IPropertyTree *> doLoadConfiguration(IPropertyTree *componentDefault, const char * * argv, const char * componentTag, const char * envPrefix, const char * legacyFilename, IPropertyTree * (mapper)(IPropertyTree *), const char *altNameAttribute);
 
 class CConfigUpdater : public CInterface
@@ -8878,20 +8877,6 @@ void executeConfigUpdaterCallbacks()
         return;
     configFileUpdater->executeCallbacks(componentConfiguration.getLink(), globalConfiguration.getLink());
 }
-#else
-unsigned installConfigUpdateHook(ConfigUpdateFunc notifyFunc, bool callWhenInstalled)
-{
-    return 0;
-}
-
-void removeConfigUpdateHook(unsigned notifyFuncId)
-{
-}
-
-void executeConfigUpdaterCallbacks()
-{
-}
-#endif // __linux__
 
 void CConfigUpdateHook::clear()
 {

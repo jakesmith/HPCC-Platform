@@ -343,7 +343,7 @@ jobs:
           find ./build -name 'eclcc'
           echo "OUTPUT(1);" > test.ecl
           cat ./test.ecl
-          ./build/Release/bin/eclcc -g ./test.ecl
+          ./build/bin/Release/eclcc -g ./test.ecl
           ./a.out
 
       - name: Upload error logs
