@@ -343,6 +343,12 @@ jobs:
           find ./build -name 'eclcc'
           echo "OUTPUT(1);" > test.ecl
           cat ./test.ecl
+          cd \
+          dir
+          cd \a
+          dir
+          cd \a\HPCC-Platform
+          dir /s
           ./build/bin/Release/eclcc -g ./test.ecl
           ./a.out
 
