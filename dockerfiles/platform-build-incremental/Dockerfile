@@ -51,6 +51,9 @@ WORKDIR /hpcc-dev/build
 ARG BUILD_THREADS
 RUN if [ -n "${BUILD_THREADS}" ] ; then echo ${BUILD_THREADS} > ~/build_threads; else echo $(($(nproc)*3/2)) > ~/build_threads ; fi
 RUN echo Building with $(cat ~/build_threads) threads
+USER root
+RUN chown hpcc:hpcc /hpcc-dev/build/generated/*.esp
+USER hpcc
 RUN make -j$(cat ~/build_threads)
 
 USER root
