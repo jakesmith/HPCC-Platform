@@ -3337,6 +3337,7 @@ int main(int argc, char* argv[])
     EnableSEHtoExceptionMapping();
 
     try {
+        // just testing 1
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
         StringBuffer lf;
