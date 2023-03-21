@@ -710,12 +710,13 @@ void CJobManager::run()
             break;
         }
         StringAttr graphName, wuid;
-        const char *wuidGraph = item->queryWUID(); // actually <wuid>/<graphName>
+        const char *wuidGraph = item->queryWUID(); // actually <wuid>/<graphName>/wfid
         StringArray sArray;
         sArray.appendList(wuidGraph, "/");
-        assertex(2 == sArray.ordinality());
-        wuid.set(sArray.item(0));
-        graphName.set(sArray.item(1));
+        assertex(3 == sArray.ordinality());
+        unsigned wfid = atoi(sArray.item(0));
+        wuid.set(sArray.item(1));
+        graphName.set(sArray.item(2));
 
         handlingConversation = true;
         SocketEndpoint agentep;
@@ -747,6 +748,14 @@ void CJobManager::run()
         {
             factory.setown(getWorkUnitFactory());
             workunit.setown(factory->openWorkUnit(wuid));
+
+            VStringBuffer scopeName("w%u:%s", wfid, graphName.str());
+            StatisticScopeType scopeType = getScopeType(scopeName);
+            {
+                Owned<IWorkUnit> w = &workunit->lock();
+                unsigned __int64 timeStamp = getTimeStampNowValue();
+                w->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), scopeType, scopeName, StWhenQueued, nullptr, timeStamp, 1, 0, StatsMergeReplace);
+            }
 
             unsigned maxLogDetail = workunit->getDebugValueInt("maxlogdetail", DefaultDetail); 
             ILogMsgFilter *existingLogHandler = queryLogMsgManager()->queryMonitorFilter(logHandler);

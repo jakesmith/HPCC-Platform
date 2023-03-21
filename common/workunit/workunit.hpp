@@ -1771,7 +1771,6 @@ inline double calcCost(double ratePerHour, unsigned __int64 ms) { return ratePer
 
 extern WORKUNIT_API void executeThorGraph(const char * graphName, IConstWorkUnit &workunit, const IPropertyTree &config);
 
-#ifdef _CONTAINERIZED
 enum class KeepK8sJobs { none, podfailures, all };
 extern WORKUNIT_API KeepK8sJobs translateKeepJobs(const char *keepJobs);
 
@@ -1784,7 +1783,6 @@ extern WORKUNIT_API void runK8sJob(const char *componentName, const char *wuid, 
 
 // returns a vector of {pod-name, node-name} vectors,
 extern WORKUNIT_API std::vector<std::vector<std::string>> getPodNodes(const char *selector);
-#endif
 
 extern WORKUNIT_API TraceFlags loadTraceFlags(IConstWorkUnit * wu, const std::initializer_list<TraceOption> & y, TraceFlags dft);
 
