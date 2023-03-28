@@ -1874,7 +1874,7 @@ IPropertyTree *CFileSprayEx::getAndValidateDropZone(const char *path, const char
 }
 
 void CFileSprayEx::readAndCheckSpraySourceReq(MemoryBuffer& srcxml, const char* srcIP, const char* srcPath, const char* srcPlane,
-    StringBuffer& sourceIPReq, StringBuffer& sourcePathReq)
+    StringBuffer& sourcePlaneReq, StringBuffer& sourceIPReq, StringBuffer& sourcePathReq)
 {
     StringBuffer sourcePath(srcPath);
     sourcePath.trim();
@@ -1902,6 +1902,7 @@ void CFileSprayEx::readAndCheckSpraySourceReq(MemoryBuffer& srcxml, const char* 
                 sourcePath.append(s);
             }
             getDropZoneHost(srcPlane, dropZone, sourceIPReq);
+            sourcePlaneReq.append(srcPlane);
         }
         else
         {
@@ -1909,6 +1910,7 @@ void CFileSprayEx::readAndCheckSpraySourceReq(MemoryBuffer& srcxml, const char* 
             if (sourceIPReq.isEmpty())
                 throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Source network IP not specified.");
             Owned<IPropertyTree> plane = getAndValidateDropZone(sourcePath, sourceIPReq);
+            sourcePlaneReq.append(plane->queryProp("@name"));
         }
     }
     getStandardPosixPath(sourcePathReq, sourcePath.str());
@@ -1956,8 +1958,8 @@ bool CFileSprayEx::onSprayFixed(IEspContext &context, IEspSprayFixed &req, IEspS
             throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Destination node group not specified.");
 
         MemoryBuffer& srcxml = (MemoryBuffer&)req.getSrcxml();
-        StringBuffer sourceIPReq, sourcePathReq;
-        readAndCheckSpraySourceReq(srcxml, req.getSourceIP(), req.getSourcePath(), req.getSourcePlane(), sourceIPReq, sourcePathReq);
+        StringBuffer sourcePlaneReq, sourceIPReq, sourcePathReq;
+        readAndCheckSpraySourceReq(srcxml, req.getSourceIP(), req.getSourcePath(), req.getSourcePlane(), sourcePlaneReq, sourceIPReq, sourcePathReq);
         const char* srcip = sourceIPReq.str();
         const char* srcfile = sourcePathReq.str();
         const char* destname = req.getDestLogicalName();
@@ -1997,7 +1999,7 @@ bool CFileSprayEx::onSprayFixed(IEspContext &context, IEspSprayFixed &req, IEspS
         wu->setCommand(DFUcmd_import);
 
         IDFUfileSpec *source = wu->queryUpdateSource();
-        checkDZScopeAccessAndSetSpraySourceDFUFileSpec(context, req.getSourcePlane(), srcip, srcfile, srcxml, source);
+        checkDZScopeAccessAndSetSpraySourceDFUFileSpec(context, sourcePlaneReq, sourceIPReq, srcfile, srcxml, source);
 
         IDFUfileSpec *destination = wu->queryUpdateDestination();
         bool nosplit = req.getNosplit();
@@ -2122,8 +2124,8 @@ bool CFileSprayEx::onSprayVariable(IEspContext &context, IEspSprayVariable &req,
             gName.append(destNodeGroup);
 
         MemoryBuffer& srcxml = (MemoryBuffer&)req.getSrcxml();
-        StringBuffer sourceIPReq, sourcePathReq;
-        readAndCheckSpraySourceReq(srcxml, req.getSourceIP(), req.getSourcePath(), req.getSourcePlane(), sourceIPReq, sourcePathReq);
+        StringBuffer sourcePlaneReq, sourceIPReq, sourcePathReq;
+        readAndCheckSpraySourceReq(srcxml, req.getSourceIP(), req.getSourcePath(), req.getSourcePlane(), sourcePlaneReq, sourceIPReq, sourcePathReq);
         const char* srcip = sourceIPReq.str();
         const char* srcfile = sourcePathReq.str();
         const char* destname = req.getDestLogicalName();
@@ -2157,7 +2159,7 @@ bool CFileSprayEx::onSprayVariable(IEspContext &context, IEspSprayVariable &req,
         IDFUfileSpec *destination = wu->queryUpdateDestination();
         IDFUoptions *options = wu->queryUpdateOptions();
 
-        checkDZScopeAccessAndSetSpraySourceDFUFileSpec(context, req.getSourcePlane(), srcip, srcfile, srcxml, source);
+        checkDZScopeAccessAndSetSpraySourceDFUFileSpec(context, sourcePlaneReq, sourceIPReq, srcfile, srcxml, source);
         source->setMaxRecordSize(req.getSourceMaxRecordSize());
         source->setFormat((DFUfileformat)req.getSourceFormat());
 
@@ -2269,36 +2271,40 @@ void CFileSprayEx::checkDZScopeAccessAndSetSpraySourceDFUFileSpec(IEspContext &c
 {
     if(srcXML.length() == 0)
     {
-        RemoteMultiFilename rmfn;
+        //Both srcPlane and srcHost are validated in readAndCheckSpraySourceReq().
+        StringBuffer fnamebuf(srcFile);
+        fnamebuf.trim();
+        StringArray files;
+        files.appendList(fnamebuf, ","); // handles comma separated files
+        ForEachItemIn(i, files)
+        {
+            const char *file = files.item(i);
+            if (isEmptyString(file))
+                continue;
+
+            //Based on the tests, the dfuserver only supports the wildcard inside the file name, like '/path/f*'.
+            //The dfuserver throws an error if the wildcard is inside the path, like /p*ath/file.
+            StringBuffer dirPath, dirTail;
+            splitFilename(file, &dirPath, &dirPath, &dirTail, &dirTail);
+
+            const char* s = containsWildcard(dirTail) ? dirPath : file;
+            SecAccessFlags permission = getDropZoneScopePermissions(context, srcPlane, s, srcHost);
+            if (permission < SecAccess_Read)
+                throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Access DropZone Scope %s %s not allowed for user %s (permission:%s). Read Access Required.",
+                    srcPlane, s, context.queryUserId(), getSecAccessFlagName(permission));
+        }
+
         SocketEndpoint ep(srcHost);
         if (ep.isNull())
             throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Cannot resolve source network IP from %s.", srcHost);
 
+        RemoteMultiFilename rmfn;
         rmfn.setEp(ep);
-        StringBuffer fnamebuf(srcFile);
-        fnamebuf.trim();
-        rmfn.append(fnamebuf.str());    // handles comma separated files
+        rmfn.append(fnamebuf.str());
         srcDFUfileSpec->setMultiFilename(rmfn);
-
-        ForEachItemIn(i, rmfn)
-        {
-            StringBuffer path;
-            rmfn.item(i).getLocalPath(path);
-
-            //A spray source could be: '/path/*'.
-            StringBuffer dirPath, dirTail;
-            splitFilename(path, &dirPath, &dirPath, &dirTail, &dirTail);
-
-            const char* s = streq(dirTail.str(), "*") ? dirPath : path;
-            SecAccessFlags permission = getDropZoneScopePermissions(context, srcPlane, s, srcHost);
-            if (permission < SecAccess_Read)
-                throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Access DropZone Scope %s %s not allowed for user %s (permission:%s). Read Access Required.",
-                    isEmptyString(srcPlane) ? srcHost : srcPlane, s, context.queryUserId(), getSecAccessFlagName(permission));
-        }
     }
     else
     {
-        srcXML.append('\0');
         srcDFUfileSpec->setFromXML((const char*)srcXML.toByteArray());
 
         //Should the srcPlane is read from the fileSpec (add to the srcXML and set by the srcXML)?
@@ -2497,7 +2503,6 @@ bool CFileSprayEx::onDespray(IEspContext &context, IEspDespray &req, IEspDespray
         }
         else
         {
-            dstxml.append('\0');
             destination->setFromXML((const char*)dstxml.toByteArray());
             validateDropZoneScopePermissionsByDFUFileSpec(context, destPlane, destination, SecAccess_Write);
         }

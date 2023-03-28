@@ -67,9 +67,7 @@ void CWsFileIOEx::validateDropZoneAccess(IEspContext &context, const char *targe
     const char *dropZoneName = dropZone->queryProp("@name");
     dlfn.setPlaneExternal(dropZoneName, fileNameWithRelPath);
 
-    Owned<IUserDescriptor> userDesc = createUserDescriptor();
-    userDesc->set(context.queryUserId(), context.queryPassword(), context.querySignature());
-    SecAccessFlags permission = queryDistributedFileDirectory().getDLFNPermissions(dlfn, userDesc);
+    SecAccessFlags permission = getDropZoneScopePermissions(context, dropZoneName, fileNameWithRelPath, nullptr);
     if (permission < permissionReq)
         throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Access DropZone Scope %s %s not allowed for user %s (permission:%s). %s Access Required.",
             dropZoneName, fileNameWithRelPath, context.queryUserId(), getSecAccessFlagName(permission), getSecAccessFlagName(permissionReq));
