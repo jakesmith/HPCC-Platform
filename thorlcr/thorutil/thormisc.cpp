@@ -1276,6 +1276,9 @@ public:
     {
         CMessageBuffer msg;
         msg.append(1); // stop
+#ifdef TRACE_GLOBAL_GROUP
+        ActPrintLog(&activity, "%s - sending to %u", __func__, node);
+#endif
         verifyex(comm.send(msg, node, mpTag));
     }
 };
@@ -1325,6 +1328,9 @@ public:
                     mb.read(code);
                     if (1 == code) // stop
                     {
+#ifdef TRACE_GLOBAL_GROUP
+                        ActPrintLog(activity, "%s - received stop mb.len=%u, sender=%u", __func__, mb.length(), (unsigned)sender);
+#endif
                         seq->stop();
                         break;
                     }
