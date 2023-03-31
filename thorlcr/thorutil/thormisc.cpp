@@ -1311,6 +1311,9 @@ public:
     }
     ~CRowServer()
     {
+#ifdef TRACE_GLOBAL_GROUP
+        ActPrintLog(activity, "%s", __func__);
+#endif
         stop();
         threaded.join();
     }
@@ -1320,6 +1323,9 @@ public:
         while (running)
         {
             rank_t sender;
+#ifdef TRACE_GLOBAL_GROUP
+            ActPrintLog(activity, "%s - recv()", __func__);
+#endif
             if (comm.recv(mb, RANK_ALL, mpTag, &sender))
             {
                 unsigned code;
@@ -1329,6 +1335,7 @@ public:
                     if (1 == code) // stop
                     {
 #ifdef TRACE_GLOBAL_GROUP
+testffwfw;
                         ActPrintLog(activity, "%s - received stop mb.len=%u, sender=%u", __func__, mb.length(), (unsigned)sender);
 #endif
                         seq->stop();
@@ -1353,7 +1360,14 @@ public:
         }
         running = false;
     }
-    void stop() { running = false; comm.cancel(RANK_ALL, mpTag); }
+    void stop()
+    {
+#ifdef TRACE_GLOBAL_GROUP
+        ActPrintLog(activity, "%s", __func__);
+#endif
+        running = false;
+        comm.cancel(RANK_ALL, mpTag);
+    }
 };
 
 IRowServer *createRowServer(CActivityBase *activity, IRowStream *seq, ICommunicator &comm, mptag_t mpTag)
