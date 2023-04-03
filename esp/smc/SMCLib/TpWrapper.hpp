@@ -232,6 +232,7 @@ extern TPWRAPPER_API bool matchNetAddressRequest(const char* netAddressReg, bool
 
 extern TPWRAPPER_API bool validateDropZonePath(const char* dropZoneName, const char* netAddr, const char* pathToCheck);
 extern TPWRAPPER_API SecAccessFlags getDropZoneScopePermissions(IEspContext& context, const char * dropZoneName, const char * dropZonePath, const char * dropZoneHost);
+extern TPWRAPPER_API void validateDropZoneAccess(IEspContext &context, const char *targetDZNameOrHost, const char *hostReq, SecAccessFlags permissionReq, const char *fileNameWithRelPath, CDfsLogicalFileName &dlfn);
 
 #endif //_ESPWIZ_TpWrapper_HPP__
 
