@@ -73,8 +73,6 @@ class CFileSprayEx : public CFileSpray
     IPropertyTree* getAndValidateDropZone(const char * path, const char * host);
     void checkDZScopeAccessAndSetSpraySourceDFUFileSpec(IEspContext& context, const char* srcPlane, const char * srcHost,
         const char* srcFile, MemoryBuffer& srcXML, IDFUfileSpec* srcDFUfileSpec);
-    void validateDropZoneScopePermissionsByDFUFileSpec(IEspContext& context, const char* dropZoneName, IDFUfileSpec* fileSpec,
-        SecAccessFlags permissionReq);
 
 public:
     virtual void init(IPropertyTree *cfg, const char *process, const char *service);

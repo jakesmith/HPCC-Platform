@@ -1960,7 +1960,6 @@ bool CFileSprayEx::onSprayFixed(IEspContext &context, IEspSprayFixed &req, IEspS
         MemoryBuffer& srcxml = (MemoryBuffer&)req.getSrcxml();
         StringBuffer sourcePlaneReq, sourceIPReq, sourcePathReq;
         readAndCheckSpraySourceReq(srcxml, req.getSourceIP(), req.getSourcePath(), req.getSourcePlane(), sourcePlaneReq, sourceIPReq, sourcePathReq);
-        const char* srcip = sourceIPReq.str();
         const char* srcfile = sourcePathReq.str();
         const char* destname = req.getDestLogicalName();
         if(isEmptyString(destname))
@@ -2126,7 +2125,6 @@ bool CFileSprayEx::onSprayVariable(IEspContext &context, IEspSprayVariable &req,
         MemoryBuffer& srcxml = (MemoryBuffer&)req.getSrcxml();
         StringBuffer sourcePlaneReq, sourceIPReq, sourcePathReq;
         readAndCheckSpraySourceReq(srcxml, req.getSourceIP(), req.getSourcePath(), req.getSourcePlane(), sourcePlaneReq, sourceIPReq, sourcePathReq);
-        const char* srcip = sourceIPReq.str();
         const char* srcfile = sourcePathReq.str();
         const char* destname = req.getDestLogicalName();
         if(isEmptyString(destname))
@@ -2284,14 +2282,11 @@ void CFileSprayEx::checkDZScopeAccessAndSetSpraySourceDFUFileSpec(IEspContext &c
 
             //Based on the tests, the dfuserver only supports the wildcard inside the file name, like '/path/f*'.
             //The dfuserver throws an error if the wildcard is inside the path, like /p*ath/file.
-            StringBuffer dirPath, dirTail;
-            splitFilename(file, &dirPath, &dirPath, &dirTail, &dirTail);
 
-            const char* s = containsWildcard(dirTail) ? dirPath : file;
-            SecAccessFlags permission = getDropZoneScopePermissions(context, srcPlane, s, srcHost);
+            SecAccessFlags permission = getDropZoneScopePermissions(context, srcPlane, file, srcHost, true);
             if (permission < SecAccess_Read)
                 throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Access DropZone Scope %s %s not allowed for user %s (permission:%s). Read Access Required.",
-                    srcPlane, s, context.queryUserId(), getSecAccessFlagName(permission));
+                    srcPlane, file, context.queryUserId(), getSecAccessFlagName(permission));
         }
 
         SocketEndpoint ep(srcHost);
@@ -2304,30 +2299,12 @@ void CFileSprayEx::checkDZScopeAccessAndSetSpraySourceDFUFileSpec(IEspContext &c
         srcDFUfileSpec->setMultiFilename(rmfn);
     }
     else
-    {
+    {   //this block is copied from the code before PR https://github.com/hpcc-systems/HPCC-Platform/pull/17144.
+        //Not sure there exists any use case for spraying a file using the srcXML. JIRA-29339 is created to check
+        //whether this is completely legacy. If it is, it may be removed to make the code a lot clearer.
+        srcXML.append('\0');
         srcDFUfileSpec->setFromXML((const char*)srcXML.toByteArray());
-
-        //Should the srcPlane is read from the fileSpec (add to the srcXML and set by the srcXML)?
-        validateDropZoneScopePermissionsByDFUFileSpec(context, srcPlane, srcDFUfileSpec, SecAccess_Read);
     }
-}
-
-void CFileSprayEx::validateDropZoneScopePermissionsByDFUFileSpec(IEspContext &context, const char *dropZoneName, IDFUfileSpec *fileSpec, SecAccessFlags permissionReq)
-{
-    StringBuffer host, path;
-    RemoteFilename rfn;
-    fileSpec->getPartFilename(0, 0, rfn);//Any better way to get RemoteFilename from IDFUfileSpec? //Could multiple files be defined in the XML?
-    rfn.getLocalPath(path);
-
-    if (isEmptyString(dropZoneName))
-        rfn.queryEndpoint().getIpText(host);
-
-    SecAccessFlags permission = getDropZoneScopePermissions(context, dropZoneName, path, host);
-    if (permission < permissionReq)
-        throw makeStringExceptionV(ECLWATCH_INVALID_INPUT,
-            "Access DropZone Scope %s %s not allowed for user %s (permission:%s). %s Access Required.",
-            isEmptyString(dropZoneName) ? host.str() : dropZoneName, path.str(), context.queryUserId(),
-            getSecAccessFlagName(permission), getSecAccessFlagName(permissionReq));
 }
 
 bool CFileSprayEx::onReplicate(IEspContext &context, IEspReplicate &req, IEspReplicateResponse &resp)
@@ -2482,7 +2459,7 @@ bool CFileSprayEx::onDespray(IEspContext &context, IEspDespray &req, IEspDespray
             if (!isEmptyString(destPlane))
                 getDropZoneInfoByDestPlane(version, destPlane, destfile, destfileWithPath, umask, destip);
 
-            SecAccessFlags permission = getDropZoneScopePermissions(context, destPlane, destfileWithPath, destip);
+            SecAccessFlags permission = getDropZoneScopePermissions(context, destPlane, destfileWithPath, destip, true);
             if (permission < SecAccess_Write)
                 throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Access DropZone Scope %s %s not allowed for user %s (permission:%s). Write Access Required.",
                     isEmptyString(destPlane) ? destip : destPlane, destfileWithPath.str(), context.queryUserId(), getSecAccessFlagName(permission));
@@ -2502,9 +2479,10 @@ bool CFileSprayEx::onDespray(IEspContext &context, IEspDespray &req, IEspDespray
             destination->setSingleFilename(rfn);
         }
         else
-        {
+        {   //Not sure there exists any use case for despraying a file using the dstxml. JIRA-29339 is created to check
+            //whether this is completely legacy. If it is, it may be removed to make the code a lot clearer.
+            dstxml.append('\0');
             destination->setFromXML((const char*)dstxml.toByteArray());
-            validateDropZoneScopePermissionsByDFUFileSpec(context, destPlane, destination, SecAccess_Write);
         }
         destination->setTitle(srcTitle.str());
 

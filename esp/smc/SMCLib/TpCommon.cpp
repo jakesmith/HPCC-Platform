@@ -156,27 +156,15 @@ extern TPWRAPPER_API bool validateDropZonePath(const char* dropZoneName, const c
     return false;
 }
 
-extern TPWRAPPER_API SecAccessFlags getDropZoneScopePermissions(IEspContext& context, const char* dropZoneName, const char* dropZonePath, const char* dropZoneHost)
+static SecAccessFlags getDropZoneScopePermissions(IEspContext& context, const IPropertyTree* dropZone, const char* dropZonePath, const char* dropZoneHost)
 {
     if (isEmptyString(dropZonePath))
         throw makeStringException(ECLWATCH_INVALID_CLUSTER_NAME, "getDropZoneScopePermissions(): DropZone path must be specified.");
 
-    Owned<IPropertyTree> plane;
-    if (isEmptyString(dropZoneName))
-    {
-        plane.setown(findDropZonePlane(dropZonePath, dropZoneHost, true, true));
-        dropZoneName = plane->queryProp("@name");
-    }
-    else
-    {
-        plane.setown(getDropZonePlane(dropZoneName));
-        if (!plane)
-            throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "getDropZoneScopePermissions(): DropZone %s not found.", dropZoneName);
-    }
-
     //If the dropZonePath is an absolute path, change it to a relative path.
     StringBuffer s;
-    const char* prefix = plane->queryProp("@prefix");
+    const char* prefix = dropZone->queryProp("@prefix");
+    const char* name = dropZone->queryProp("@name");
     if (hasPrefix(dropZonePath, prefix, true))
     {
         const char* p = dropZonePath + strlen(prefix);
@@ -188,5 +176,58 @@ extern TPWRAPPER_API SecAccessFlags getDropZoneScopePermissions(IEspContext& con
 
     Owned<IUserDescriptor> userDesc = createUserDescriptor();
     userDesc->set(context.queryUserId(), context.queryPassword(), context.querySignature());
-    return queryDistributedFileDirectory().getDropZoneScopePermissions(dropZoneName, dropZonePath, userDesc);
+    return queryDistributedFileDirectory().getDropZoneScopePermissions(name, dropZonePath, userDesc);
+}
+
+extern TPWRAPPER_API SecAccessFlags getDropZoneScopePermissions(IEspContext& context, const char* dropZoneName, const char* dropZonePath, const char* dropZoneHost)
+{
+    if (isEmptyString(dropZonePath))
+        throw makeStringException(ECLWATCH_INVALID_CLUSTER_NAME, "getDropZoneScopePermissions(): DropZone path must be specified.");
+
+    Owned<IPropertyTree> dropZone;
+    if (isEmptyString(dropZoneName))
+        dropZone.setown(findDropZonePlane(dropZonePath, dropZoneHost, true, true));
+    else
+    {
+        dropZone.setown(getDropZonePlane(dropZoneName));
+        if (!dropZone)
+            throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "getDropZoneScopePermissions(): DropZone %s not found.", dropZoneName);
+    }
+
+    return getDropZoneScopePermissions(context, dropZone, dropZonePath, dropZoneHost);
+}
+
+extern TPWRAPPER_API SecAccessFlags getDropZoneScopePermissions(IEspContext& context, const char* dropZoneName, const char* dropZonePath,
+    const char* dropZoneHost, bool removeFileNameFromPath)
+{
+    StringBuffer dir, fileName;
+    if (removeFileNameFromPath)
+    {
+        splitFilename(dropZonePath, &dir, &dir, &fileName, &fileName);
+        dropZonePath = dir.str();
+    }
+    return getDropZoneScopePermissions(context, dropZoneName, dropZonePath, dropZoneHost);
+}
+
+extern TPWRAPPER_API void validateDropZoneAccess(IEspContext& context, const char* targetDZNameOrHost, const char* hostReq, SecAccessFlags permissionReq,
+    const char* fileNameWithRelPath, CDfsLogicalFileName& dlfn)
+{
+    if (containsRelPaths(fileNameWithRelPath)) //Detect a path like: a/../../../f
+        throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Invalid file path %s", fileNameWithRelPath);
+
+    Owned<IPropertyTree> dropZone = getDropZonePlane(targetDZNameOrHost);
+    if (!dropZone) //The targetDZNameOrHost could be a dropzone host.
+        dropZone.setown(findDropZonePlane(nullptr, targetDZNameOrHost, true, true));
+    else if (!isEmptyString(hostReq))
+    {
+        if (!isHostInPlane(dropZone, hostReq, true))
+            throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Host %s is not valid DropZone plane %s", hostReq, targetDZNameOrHost);
+    }
+
+    SecAccessFlags permission = getDropZoneScopePermissions(context, dropZone, fileNameWithRelPath, hostReq);
+    const char *dropZoneName = dropZone->queryProp("@name");
+    if (permission < permissionReq)
+        throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Access DropZone Scope %s %s not allowed for user %s (permission:%s). %s Access Required.",
+            dropZoneName, fileNameWithRelPath, context.queryUserId(), getSecAccessFlagName(permission), getSecAccessFlagName(permissionReq));
+    dlfn.setPlaneExternal(dropZoneName, fileNameWithRelPath);
 }
