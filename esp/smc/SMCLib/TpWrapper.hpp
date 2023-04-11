@@ -230,12 +230,14 @@ extern TPWRAPPER_API StringArray & getRoxieDirectAccessPlanes(StringArray & plan
 extern TPWRAPPER_API bool validateDataPlaneName(const char *remoteDali, const char * name);
 extern TPWRAPPER_API bool matchNetAddressRequest(const char* netAddressReg, bool ipReq, IConstTpMachine& tpMachine);
 
-extern TPWRAPPER_API bool validateDropZonePath(const char* dropZoneName, const char* netAddr, const char* pathToCheck);
-extern TPWRAPPER_API SecAccessFlags getDropZoneScopePermissions(IEspContext& context, const char* dropZoneName, const char* dropZonePath, const char* dropZoneHost);
-extern TPWRAPPER_API SecAccessFlags getDropZoneScopePermissions(IEspContext& context, const char* dropZoneName, const char* dropZonePath,
-    const char* dropZoneHost, bool removeFileName);
-extern TPWRAPPER_API void validateDropZoneAccess(IEspContext& context, const char* targetDZNameOrHost, const char* hostReq, SecAccessFlags permissionReq,
-    const char* fileNameWithRelPath, CDfsLogicalFileName& dlfn);
+extern TPWRAPPER_API SecAccessFlags checkEspDZPathPermissions(IEspContext& context, const char* dropZoneName, const char* dropZonePath,
+    const char* dropZoneHost, SecAccessFlags permissionReq, bool errorOnNoPerms, CDfsLogicalFileName* dlfn, StringBuffer *resolvedDropZoneName);
+extern TPWRAPPER_API SecAccessFlags checkEspDZFilePermissions(IEspContext& context, const char* dropZoneName, const char* dropZoneFilePath,
+    const char* dropZoneHost, SecAccessFlags permissionReq, bool errorOnNoPerms, CDfsLogicalFileName* dlfn, StringBuffer *resolvedDropZoneName);
+extern TPWRAPPER_API void validateDZPathAccess(IEspContext& context, const char* targetDZNameOrHost, const char* hostReq, SecAccessFlags permissionReq,
+    const char* dropZonePath, CDfsLogicalFileName* dlfn);
+extern TPWRAPPER_API void validateDZFileAccess(IEspContext& context, const char* targetDZNameOrHost, const char* hostReq, SecAccessFlags permissionReq,
+    const char* dropZoneFilePath, CDfsLogicalFileName* dlfn);
 
 #endif //_ESPWIZ_TpWrapper_HPP__
 

@@ -21,6 +21,7 @@
 #include "jwrapper.hpp"
 #include "dfuwu.hpp"
 #include "dadfs.hpp"
+#include "dautils.hpp"
 #include "exception_util.hpp"
 
 #define FILE_SPRAY_URL      "FileSprayAccess"
@@ -400,61 +401,22 @@ int CFileSpraySoapBindingEx::downloadFile(IEspContext &context, CHttpRequest* re
         request->getParameter("Name", nameStr);
         request->getParameter("DropZoneName", dropZoneName);
 
-        SecAccessFlags permission = getDropZoneScopePermissions(context, dropZoneName, pathStr, netAddressStr);
-        if (permission < SecAccess_Read)
-            throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Access DropZone Scope %s %s %s not allowed for user %s (permission:%s). Read Access Required.",
-                dropZoneName.str(), netAddressStr.str(), pathStr.str(), context.queryUserId(), getSecAccessFlagName(permission));
-#if 0
-        StringArray files;
-        IProperties* params = request->queryParameters();
-        Owned<IPropertyIterator> iter = params->getIterator();
-        if (iter && iter->first())
-        {
-            while (iter->isValid())
-            {
-                const char *keyname=iter->getPropKey();
-                if (!keyname || strncmp(keyname, "Names", 5))
-                    continue;
+        StringBuffer filePath(pathStr);
+        addPathSepChar(filePath).append(nameStr);
+        CDfsLogicalFileName dlfn;
+        validateDZFileAccess(context, dropZoneName, netAddressStr, SecAccess_Read, filePath, &dlfn);
 
-                files.append(params->queryProp(iter->getPropKey()));
-                iter->next();
-            }
-        }
-#endif
-
-        if (netAddressStr.length() < 1)
-            throw MakeStringException(ECLWATCH_INVALID_INPUT, "Network address not specified.");
-
-        if (pathStr.length() < 1)
-            throw MakeStringException(ECLWATCH_INVALID_INPUT, "Path not specified.");
-
-        if (nameStr.length() < 1)
-            throw MakeStringException(ECLWATCH_INVALID_INPUT,"File name not specified.");
-
-        char pathSep = '/';
-        if ((osStr.length() > 1) && (atoi(osStr.str())== OS_WINDOWS))
-        {
-            pathSep = '\\';
-        }
-
-        pathStr.replace(pathSep=='\\'?'/':'\\', pathSep);
-        if (*(pathStr.str() + pathStr.length() -1) != pathSep)
-            pathStr.append( pathSep );
-
-        if (!validateDropZonePath(nullptr, netAddressStr, pathStr)) //The pathStr should be the absolute path for the dropzone.
-            throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Invalid file path %s", pathStr.str());
-
-        StringBuffer fullName;
-        fullName.appendf("%s%s", pathStr.str(), nameStr.str());
+        // jcs->kw - this seemed wrong, if dropzone is provided, hostname should not be compulsory
+        // if (netAddressStr.length() < 1)
+        //     throw MakeStringException(ECLWATCH_INVALID_INPUT, "Network address not specified.");
 
         StringBuffer headerStr("attachment;");
         headerStr.appendf("filename=%s", nameStr.str());
 
         RemoteFilename rfn;
-        rfn.setRemotePath(fullName.str());
-        SocketEndpoint ep(netAddressStr.str());
-        rfn.setIp(ep);
-
+        dlfn.getExternalFilename(rfn);
+        StringBuffer fullName;
+        rfn.getRemotePath(fullName);
         Owned<IFile> rFile = createIFile(rfn);
         if (!rFile)
             throw MakeStringException(ECLWATCH_CANNOT_OPEN_FILE,"Cannot open file %s.",fullName.str());
@@ -488,12 +450,9 @@ int CFileSpraySoapBindingEx::onStartUpload(IEspContext& ctx, CHttpRequest* reque
     request->getParameter("NetAddress", netAddress);
     request->getParameter("Path", path);
     request->getParameter("DropZoneName", dropZoneName);
-    if (!validateDropZonePath(nullptr, netAddress, path)) //The path should be the absolute path for the dropzone.
-        throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Invalid Landing Zone path %s", path.str());
-    SecAccessFlags permission = getDropZoneScopePermissions(ctx, dropZoneName, path, netAddress);
-    if (permission < SecAccess_Full)
-        throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Access DropZone Scope %s %s %s not allowed for user %s (permission:%s). Full Access Required.",
-            dropZoneName.str(), netAddress.str(), path.str(), ctx.queryUserId(), getSecAccessFlagName(permission));
+
+    CDfsLogicalFileName dlfn;
+    validateDZFileAccess(ctx, dropZoneName, netAddress, SecAccess_Full, path, &dlfn);
 
     return EspHttpBinding::onStartUpload(ctx, request, response, serv, method);
 }

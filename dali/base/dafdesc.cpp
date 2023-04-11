@@ -3352,6 +3352,7 @@ public:
     unsigned containerOffset = 0;
     GroupType groupType = grp_unknown;
     unsigned dropZoneIndex = 0;
+    bool isVisible = true; // for legacy lzs only
 };
 
 using GroupInfoArray = CIArrayOf<GroupInformation>;
@@ -3431,6 +3432,7 @@ void GroupInformation::createStoragePlane(IPropertyTree * storage, unsigned copy
 
     const char * category = (dropZoneIndex != 0) ? "lz" : "data";
     plane->setProp("@category", category);
+    plane->setPropBool("@isVisible", isVisible);
 
     //MORE: If container is identical to this except for the name we could generate an information tag @alias
 }
@@ -3588,6 +3590,8 @@ static void doInitializeStorageGroups(bool createPlanesFromGroups)
 
                     next->dir.set(cur.queryProp("@directory"));
                     next->dropZoneIndex = ++numDropZones;
+                    if (!isContainerized())
+                        next->isVisible = cur.getPropBool("ECLWatchVisible", true);
                     if (ip && !strieq(ip, "localhost"))
                         next->hosts.append(ip);
                     appendGroup(allGroups, next.getClear());

@@ -29,6 +29,15 @@
 
 #define FILE_IO_URL     "FileIOAccess"
 
+// Weird semantics where 'server' can either be a dropzone name or a hostname within a dropzone
+static std::string getDropZoneName(const char *targetDZNameOrHost)
+{
+    Owned<IPropertyTree> dropZone = getDropZonePlane(targetDZNameOrHost);
+    if (!dropZone) //The targetDZNameOrHost could be a dropzone host.
+        dropZone.setown(findDropZonePlane(nullptr, targetDZNameOrHost, true, true));
+    return dropZone->queryProp("@name");
+}
+
 void CWsFileIOEx::init(IPropertyTree *cfg, const char *process, const char *service)
 {
     CTpWrapper tpWrapper;
@@ -57,8 +66,14 @@ bool CWsFileIOEx::onCreateFile(IEspContext &context, IEspCreateFileRequest &req,
     resp.setDestDropZone(server);
     resp.setDestRelativePath(destRelativePath);
 
+    // cater for weird semantics of 'server' either being dropzone or hostname
+    std::string dropZoneName = getDropZoneName(server);
+
+    // bug: need to know whether this is a directory or a file, without knowing, can't correctly checker scope permissions
+    // for now assume directory and call validateDZPathAccess.
+    // That means if it's actually a file, it will be unecessarily checking scope of the file name here.
     CDfsLogicalFileName dlfn;
-    validateDropZoneAccess(context, server, req.getDestNetAddress(), SecAccess_Write, destRelativePath, dlfn);
+    validateDZPathAccess(context, dropZoneName.c_str(), req.getDestNetAddress(), SecAccess_Write, destRelativePath, &dlfn);
 
     RemoteFilename rfn;
     dlfn.getExternalFilename(rfn);
@@ -123,8 +138,11 @@ bool CWsFileIOEx::onReadFileData(IEspContext &context, IEspReadFileDataRequest &
         return true;
     }
 
+    // cater for weird semantics of 'server' either being dropzone or hostname
+    std::string dropZoneName = getDropZoneName(server);
+
     CDfsLogicalFileName dlfn;
-    validateDropZoneAccess(context, server, req.getDestNetAddress(), SecAccess_Read, destRelativePath, dlfn);
+    validateDZFileAccess(context, dropZoneName.c_str(), req.getDestNetAddress(), SecAccess_Read, destRelativePath, &dlfn);
 
     StringBuffer user;
     RemoteFilename rfn;
@@ -210,8 +228,11 @@ bool CWsFileIOEx::onWriteFileData(IEspContext &context, IEspWriteFileDataRequest
     resp.setDestDropZone(server);
     resp.setDestRelativePath(destRelativePath);
 
+    // cater for weird semantics of 'server' either being dropzone or hostname
+    std::string dropZoneName = getDropZoneName(server);
+
     CDfsLogicalFileName dlfn;
-    validateDropZoneAccess(context, server, req.getDestNetAddress(), SecAccess_Write, destRelativePath, dlfn);
+    validateDZFileAccess(context, dropZoneName.c_str(), req.getDestNetAddress(), SecAccess_Write, destRelativePath, &dlfn);
 
     StringBuffer user;
     RemoteFilename rfn;
