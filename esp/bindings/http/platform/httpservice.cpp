@@ -571,7 +571,8 @@ int CEspHttpServer::onUpdatePasswordInput(CHttpRequest* request, CHttpResponse* 
 int CEspHttpServer::onUpdatePassword(CHttpRequest* request, CHttpResponse* response)
 {
     StringBuffer html;
-    unsigned returnCode = m_apport->onUpdatePassword(*request->queryContext(), request, html);
+    IEspContext* context = request->queryContext();
+    unsigned returnCode = m_apport->onUpdatePassword(*context, request, html);
     if (returnCode == 0)
     {
         EspHttpBinding* binding = getBinding();
@@ -585,7 +586,7 @@ int CEspHttpServer::onUpdatePassword(CHttpRequest* request, CHttpResponse* respo
             {//A session can only be set for those 2 auth types.
                 StringBuffer urlCookie;
                 readCookie(SESSION_START_URL_COOKIE, urlCookie);
-                unsigned sessionID = createHTTPSession(binding, request->getParameters()->queryProp("username"), urlCookie.isEmpty() ? "/" : urlCookie.str());
+                unsigned sessionID = createHTTPSession(context, binding, request->getParameters()->queryProp("username"), urlCookie.isEmpty() ? "/" : urlCookie.str());
                 m_request->queryContext()->setSessionToken(sessionID);
                 VStringBuffer cookieStr("%u", sessionID);
                 addCookie(binding->querySessionIDCookieName(), cookieStr.str(), 0, true);
@@ -1593,11 +1594,10 @@ EspAuthState CEspHttpServer::authNewSession(EspAuthRequest& authReq, const char*
         ESPLOG(LogMin, "Authentication failed for %s@%s", _userName, peer.str());
         return handleAuthFailed(true, authReq, unlock, "User authentication failed.");
     }
-
     // authenticate optional groups
     authOptionalGroups(authReq);
 
-    unsigned sessionID = createHTTPSession(authReq.authBinding, _userName, sessionStartURL);
+    unsigned sessionID = createHTTPSession(authReq.ctx, authReq.authBinding, _userName, sessionStartURL);
     authReq.ctx->setSessionToken(sessionID);
 
     ESPLOG(LogMax, "Authenticated for %s@%s", _userName, peer.str());
@@ -2039,17 +2039,22 @@ EspAuthState CEspHttpServer::authExistingSession(EspAuthRequest& authReq, unsign
 
     //The UserID has to be set before the populateRequest() because the UserID is used to create the user object.
     //After the user object is created, we may call addSessionToken().
-    StringAttr userName = sessionTree->queryProp(PropSessionUserID);
-    authReq.ctx->setUserID(userName.str());
+    StringAttr userID = sessionTree->queryProp(PropSessionUserID);
+    authReq.ctx->setUserID(userID.str());
     authReq.authBinding->populateRequest(m_request.get());
     authReq.ctx->setSessionToken(sessionID);
     authReq.ctx->queryUser()->setAuthenticateStatus(AS_AUTHENTICATED);
     authReq.ctx->setAuthStatus(AUTH_STATUS_OK); //May be changed to AUTH_STATUS_NOACCESS if failed in feature level authorization.
 
-    ESPLOG(LogMax, "Authenticated for %s<%u> %s@%s", PropSessionID, sessionID, userName.str(), sessionTree->queryProp(PropSessionNetworkAddress));
+    StringAttr userName = sessionTree->queryProp(PropSessionUserName);
+    if (!userName.isEmpty())
+        authReq.ctx->queryUser()->setName(userName);
+        //Should a new ISecUser method be added to set the user name in case the setName() is needed for something else?
+
+    ESPLOG(LogMax, "Authenticated for %s<%u> %s@%s", PropSessionID, sessionID, userName.isEmpty() ? userID.str() : userName.str(), sessionTree->queryProp(PropSessionNetworkAddress));
     if (!authReq.serviceName.isEmpty() && !authReq.methodName.isEmpty() && strieq(authReq.serviceName.str(), "esp") && strieq(authReq.methodName.str(), "login"))
     {
-        VStringBuffer msg("User %s has logged into this session. If you want to login as a different user, please logout and login again.", userName.str());
+        VStringBuffer msg("User %s has logged into this session. If you want to login as a different user, please logout and login again.", userID.str());
         sendMessage(msg.str(), "text/html; charset=UTF-8");
         return authTaskDone;
     }
@@ -2236,7 +2241,7 @@ bool CEspHttpServer::changeRedirectURL(EspAuthRequest& authReq)
     return false;
 }
 
-unsigned CEspHttpServer::createHTTPSession(EspHttpBinding* authBinding, const char* userID, const char* sessionStartURL)
+unsigned CEspHttpServer::createHTTPSession(IEspContext* ctx, EspHttpBinding* authBinding, const char* userID, const char* sessionStartURL)
 {
     CDateTime now;
     now.setNow();
@@ -2269,6 +2274,14 @@ unsigned CEspHttpServer::createHTTPSession(EspHttpBinding* authBinding, const ch
     ptree->setPropInt64(PropSessionLastAccessed, createTime);
     ptree->setPropInt64(PropSessionTimeoutAt, createTime + authBinding->getServerSessionTimeoutSeconds());
     ptree->setProp(PropSessionLoginURL, sessionStartURL);
+
+    ISecUser *user = ctx->queryUser();
+    if (user)
+    {
+        const char* userName = user->getName();
+        if (!isEmptyString(userName) && !streq(userName, userID))
+            ptree->setProp(PropSessionUserName, userName);
+    }
     return sessionID;
 }
 

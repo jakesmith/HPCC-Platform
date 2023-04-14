@@ -68,6 +68,7 @@ static const char* const PathSessionSession="Session_";
 static const char* const PropSessionID = "@id";
 static const char* const PropSessionExternalID = "@externalid";
 static const char* const PropSessionUserID = "@userid";
+static const char* const PropSessionUserName = "@username";
 static const char* const PropSessionNetworkAddress = "@netaddr";
 static const char* const PropSessionState = "@state";
 static const char* const PropSessionCreateTime = "@createtime";

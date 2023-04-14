@@ -106,7 +106,7 @@ protected:
     EspHttpBinding* getEspHttpBinding(EspAuthRequest& req);
     bool isAuthRequiredForBinding(EspAuthRequest& req);
     void authOptionalGroups(EspAuthRequest& req);
-    unsigned createHTTPSession(EspHttpBinding* authBinding, const char* userID, const char* loginURL);
+    unsigned createHTTPSession(IEspContext* ctx, EspHttpBinding* authBinding, const char* userID, const char* loginURL);
     void timeoutESPSessions(EspHttpBinding* authBinding, IPropertyTree* espSessions);
     void addCookie(const char* cookieName, const char *cookieValue, int maxAgeSec, bool httpOnly);
     void clearCookie(const char* cookieName);
