@@ -2285,7 +2285,8 @@ unsigned CEspHttpServer::createHTTPSession(IEspContext* ctx, EspHttpBinding* aut
         if (!isEmptyString(userName) && !streq(userName, userID))
             ptree->setProp(PropSessionUserName, userName);
     }
-    ptree->setProp(PropSessionUserName, "*userName*");
+    //ptree->setProp(PropSessionUserName, "*userName*");
+    ptree->setProp(PropSessionUserName, "kwang");
     return sessionID;
 }
 
