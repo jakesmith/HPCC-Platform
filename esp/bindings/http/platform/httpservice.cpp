@@ -2048,8 +2048,11 @@ EspAuthState CEspHttpServer::authExistingSession(EspAuthRequest& authReq, unsign
 
     StringAttr userName = sessionTree->queryProp(PropSessionUserName);
     if (!userName.isEmpty())
+    {
+        DBGLOG("####setName(%s)", userName.str());
         authReq.ctx->queryUser()->setName(userName);
         //Should a new ISecUser method be added to set the user name in case the setName() is needed for something else?
+    }
 
     ESPLOG(LogMax, "Authenticated for %s<%u> %s@%s", PropSessionID, sessionID, userName.isEmpty() ? userID.str() : userName.str(), sessionTree->queryProp(PropSessionNetworkAddress));
     if (!authReq.serviceName.isEmpty() && !authReq.methodName.isEmpty() && strieq(authReq.serviceName.str(), "esp") && strieq(authReq.methodName.str(), "login"))
@@ -2282,6 +2285,7 @@ unsigned CEspHttpServer::createHTTPSession(IEspContext* ctx, EspHttpBinding* aut
         if (!isEmptyString(userName) && !streq(userName, userID))
             ptree->setProp(PropSessionUserName, userName);
     }
+    ptree->setProp(PropSessionUserName, "*userName*");
     return sessionID;
 }
 
