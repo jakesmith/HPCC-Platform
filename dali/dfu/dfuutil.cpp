@@ -451,7 +451,7 @@ public:
 
     void cloneSubFile(IPropertyTree *ftree,const char *destfilename, INode *srcdali, const char *srcCluster)   // name already has prefix added
     {
-        DBGLOG("cloneSubFile %s", destfilename);
+        DBGLOG("cloneSubFile %s", nullText(destfilename));
 
         Owned<IFileDescriptor> srcfdesc = deserializeFileDescriptorTree(ftree, NULL, 0);
         const char * kind = srcfdesc->queryProperties().queryProp("@kind");
@@ -484,6 +484,7 @@ public:
         Owned<IStoragePlane> plane = getDataStoragePlane(cluster1, false);
         if (plane) // I think it should always exist, even in bare-metal.., but guard against it not for now (assumes initializeStorageGroups has been called)
         {
+            DBGLOG("cloneSubFile: found plane for cluster '%s', dirPerPart=%s", cluster1.get(), boolToStr(plane->queryDirPerPart()));
             if (plane->queryDirPerPart())
                 dstfdesc->setFlags(FileDescriptorFlags::dirperpart);
         }
@@ -860,6 +861,8 @@ public:
 
     void cloneRoxieFile(const char *filename, const char *destfilename)
     {
+        DBGLOG("cloneRoxieFile %s --> %s", nullText(filename), nullText(destfilename));
+
         Linked<INode> srcdali = foreigndalinode;
         CDfsLogicalFileName srcLFN;
         srcLFN.set(filename);

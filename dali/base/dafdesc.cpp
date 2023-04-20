@@ -3625,6 +3625,7 @@ static void doInitializeStorageGroups(bool createPlanesFromGroups)
 
 void initializeStorageGroups(bool createPlanesFromGroups)
 {
+    DBGLOG("POC Build info - initializeStorageGroups called with createPlanesFromGroups=%s", boolToStr(createPlanesFromGroups));
     auto updateFunc = [createPlanesFromGroups](const IPropertyTree *oldComponentConfiguration, const IPropertyTree *oldGlobalConfiguration)
     {
         PROGLOG("initializeStorageGroups update");
