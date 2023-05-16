@@ -556,6 +556,8 @@ void CDiskWriteSlaveActivityBase::gatherActiveStats(CRuntimeStatisticCollection 
 {
     PARENT::gatherActiveStats(activeStats);
     mergeStats(activeStats, outputIO, diskWriteRemoteStatistics);
+    if (tmpUsage && outputIO ) // Update tmpUsage file size (Needed to calc inter-graph spill stats)
+        tmpUsage->setSize(outputIO->getStatistic(StSizeDiskWrite));
     activeStats.setStatistic(StPerReplicated, replicateDone);
 }
 

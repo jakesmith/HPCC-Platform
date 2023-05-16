@@ -2375,21 +2375,32 @@ void CGraphTempHandler::clearTemps()
     tmpFiles.kill();
 }
 
-void CGraphTempHandler::serializeUsageStats(MemoryBuffer &mb, graph_id gid)
+void CGraphTempHandler::getUsageStats(graph_id gid, offset_t & graphSpillSize)
 {
     CriticalBlock b(crit);
     Owned<IFileUsageIterator> iter = getIterator();
-    offset_t activeSpillSize = 0;
-    offset_t graphSpillSize = 0;
+    graphSpillSize = 0;
     ForEach(*iter)
     {
         CFileUsageEntry &entry = iter->query();
         if (entry.queryGraphId() == gid)
             graphSpillSize += entry.getSize();
-        activeSpillSize += entry.getSize();
     }
+}
+
+void CGraphTempHandler::serializeUsageStats(MemoryBuffer &mb, graph_id gid)
+{
+    offset_t graphSpillSize;
+    getUsageStats(gid, graphSpillSize);
     mb.append(graphSpillSize);
-    mb.append(activeSpillSize);
+}
+
+void CGraphTempHandler::setUsageStats(CRuntimeStatisticCollection &rsc, graph_id gid)
+{
+    offset_t graphSpillSize;
+    getUsageStats(gid, graphSpillSize);
+    rsc.setStatistic(StSizeActiveSpillFile, graphSpillSize);
+    rsc.setStatistic(StPeakSizeNodeSpillFile, graphSpillSize);  // StatsMergeMax should track the peak
 }
 /////
 

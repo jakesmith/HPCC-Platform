@@ -1254,10 +1254,19 @@ void CSlaveGraph::done()
 bool CSlaveGraph::serializeStats(MemoryBuffer &mb)
 {
     unsigned beginPos = mb.length();
-    mb.append(queryGraphId());
+    graph_id gid = queryGraphId();
+    mb.append(gid);
 
     CRuntimeStatisticCollection stats(graphStatistics);
     stats.setStatistic(StNumExecutions, numExecuted);
+    if (!owner)
+        queryJob().queryTempHandler()->setUsageStats(stats, gid);
+    else
+    {
+        IGraphTempHandler *tempHandler = queryTempHandler(false);
+        if (tempHandler)
+            tempHandler->setUsageStats(stats, gid);
+    }
     stats.serialize(mb);
 
     unsigned cPos = mb.length();

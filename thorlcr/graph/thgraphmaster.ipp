@@ -94,7 +94,7 @@ class graphmaster_decl CMasterGraph : public CGraphBase
     bool sentGlobalInit = false;
     CThorStatsCollection graphStats;
     offset_t totalActiveSpillSize = 0; // total inter-graph spill
-    offset_t graphSpillSize = 0;
+    offset_t peakNodeSpillFile = 0;
 
     CReplyCancelHandler activityInitMsgHandler, bcastMsgHandler, executeReplyMsgHandler;
 
@@ -202,10 +202,10 @@ public:
         dirty = true;
     }
 // Track spills
-    virtual void updateActiveSpillSize(offset_t graphSpillSize, offset_t activeSpillSize)
+    virtual void updateActiveSpillSize(offset_t graphSpillSize, offset_t peakNodeSpillSize)
     {
         totalSpillSize.fetch_add(graphSpillSize);
-        peakSpillSize.store_max(activeSpillSize);
+        peakSpillSize.store_max(peakNodeSpillSize);
     }
     virtual offset_t getTotalSpillSize() const { return totalSpillSize; }
     virtual offset_t getPeakSpillSize() const { return peakSpillSize; }
