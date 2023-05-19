@@ -10511,13 +10511,12 @@ public:
         Owned<IPropertyTreeIterator> dropzones = conn->queryRoot()->getElements("DropZone");
         ForEach(*dropzones)
         {
-            IPropertyTree & cur = dropzones->query();
-            unsigned numServers = cur.getCount("ServerList");
+            IPropertyTree & dropZone = dropzones->query();
+            unsigned numServers = dropZone.getCount("ServerList");
 
             //Allow url style drop zones, and drop zones with a single node.  Not sure what >1 would mean in legacy.
             if (numServers <= 1)
             {
-                IPropertyTree &dropZone = dropzones->query();
                 IPropertyTree *oldDropZone = NULL;
                 if (oldEnvironment)
                 {
