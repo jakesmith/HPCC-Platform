@@ -2014,6 +2014,16 @@ public:
             parts.append(new CPartDescriptor(*this,parts.ordinality(),NULL));
         while (parts.ordinality()>numparts)
             delpart(parts.ordinality()-1);
+        if (::isMulti(partmask))
+        {
+            StringBuffer path;
+            for (unsigned p=0; p<parts.ordinality(); p++)
+            {
+                CPartDescriptor *pt = (CPartDescriptor *)parts.item(p);
+                pt->getPath(path.clear(), 0);
+                pt->setOverrideName(path);
+            }
+        }
     }
 
     unsigned numClusters()
