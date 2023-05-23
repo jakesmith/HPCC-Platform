@@ -1254,10 +1254,22 @@ void CSlaveGraph::done()
 bool CSlaveGraph::serializeStats(MemoryBuffer &mb)
 {
     unsigned beginPos = mb.length();
-    mb.append(queryGraphId());
+    graph_id gid = queryGraphId();
+    mb.append(gid);
 
     CRuntimeStatisticCollection stats(graphStatistics);
     stats.setStatistic(StNumExecutions, numExecuted);
+    offset_t graphSpillSize = 0;
+    if (!owner)
+        graphSpillSize = queryJob().queryTempHandler()->getUsageStats();
+    else
+    {
+        IGraphTempHandler *tempHandler = queryTempHandler(false);
+        if (tempHandler)
+            graphSpillSize = tempHandler->getUsageStats();
+    }
+
+    stats.mergeStatistic(StPeakSizeNodeSpillFile, graphSpillSize);
     stats.serialize(mb);
 
     unsigned cPos = mb.length();
@@ -1331,17 +1343,6 @@ void CSlaveGraph::serializeDone(MemoryBuffer &mb)
         }
     }
     mb.writeDirect(cPos, sizeof(count), &count);
-
-    if (!owner)
-        queryJob().queryTempHandler()->serializeUsageStats(mb, gid);
-    else
-    {
-        IGraphTempHandler *tempHandler = queryTempHandler(false);
-        if (tempHandler)
-            tempHandler->serializeUsageStats(mb, gid);
-        else
-            IGraphTempHandler::serializeNullUsageStats(mb);
-    }
 }
 
 void CSlaveGraph::getDone(MemoryBuffer &doneInfoMb)

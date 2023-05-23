@@ -2706,17 +2706,17 @@ void gatherSpillSize(const IConstWorkUnit * wu, const char *scope, stat_type & t
         filter.addScope("");
     filter.setIncludeNesting(2);
     filter.addSource("global");
-    filter.addOutputStatistic(StSizeSpillFile);
-    filter.addOutputStatistic(StSizePeakSpillFile);
+    filter.addOutputStatistic(StSizeActiveSpillFile);
+    filter.addOutputStatistic(StPeakSizeNodeSpillFile);
     filter.finishedFilter();
     Owned<IConstWUScopeIterator> it = &wu->getScopeIterator(filter);
     for (it->first(); it->isValid(); )
     {
         stat_type value = 0;
-        if (it->getStat(StSizeSpillFile, value))
+        if (it->getStat(StSizeActiveSpillFile, value))
         {
             totalSizeSpill += value;
-            if (it->getStat(StSizePeakSpillFile, value))
+            if (it->getStat(StPeakSizeNodeSpillFile, value))
             {
                 if (value>peakSizeSpill)
                     peakSizeSpill = value;
@@ -2736,8 +2736,8 @@ void updateSpillSize(IWorkUnit * wu, const char * scope, StatisticScopeType scop
     gatherSpillSize(wu, scope, totalSizeSpill, peakSizeSpill);
     if (totalSizeSpill)
     {
-        wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), scopeType, scope, StSizePeakSpillFile, nullptr, peakSizeSpill, 1, 0, StatsMergeReplace);
-        wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), scopeType, scope, StSizeSpillFile, nullptr, totalSizeSpill, 1, 0, StatsMergeReplace);
+        wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), scopeType, scope, StPeakSizeNodeSpillFile, nullptr, peakSizeSpill, 1, 0, StatsMergeReplace);
+        wu->setStatistic(queryStatisticsComponentType(), queryStatisticsComponentName(), scopeType, scope, StSizeActiveSpillFile, nullptr, totalSizeSpill, 1, 0, StatsMergeMax);
     }
 }
 //---------------------------------------------------------------------------------------------------------------------

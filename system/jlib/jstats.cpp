@@ -70,7 +70,7 @@ void setStatisticsComponentName(StatisticCreatorType processType, const char * p
 //--------------------------------------------------------------------------------------------------------------------
 
 // Textual forms of the different enumerations, first items are for none and all.
-static constexpr const char * const measureNames[] = { "", "all", "ns", "ts", "cnt", "sz", "cpu", "skw", "node", "ppm", "ip", "cy", "en", "txt", "bool", "id", "fname", "cost", NULL };
+static constexpr const char * const measureNames[] = { "", "all", "ns", "ts", "cnt", "sz", "cpu", "skw", "node", "ppm", "ip", "cy", "en", "txt", "bool", "id", "fname", "cost", "peaksz", NULL };
 static constexpr const char * const creatorTypeNames[]= { "", "all", "unknown", "hthor", "roxie", "roxie:s", "thor", "thor:m", "thor:s", "eclcc", "esp", "summary", NULL };
 static constexpr const char * const scopeTypeNames[] = { "", "all", "global", "graph", "subgraph", "activity", "allocator", "section", "compile", "dfu", "edge", "function", "workflow", "child", "file", "channel", "unknown", nullptr };
 
@@ -406,6 +406,7 @@ StringBuffer & formatStatistic(StringBuffer & out, unsigned __int64 value, Stati
     case SMeasureCount:
         return out.append(value);
     case SMeasureSize:
+    case SMeasurePeakSize:
         return formatSize(out, value);
     case SMeasureLoad:
         return formatLoad(out, value);
@@ -488,6 +489,7 @@ stat_type readStatisticValue(const char * cur, const char * * end, StatisticMeas
         break;
     case SMeasureCount:
     case SMeasureSize:
+    case SMeasurePeakSize:
         //Allow K, M, G as scaling suffixes
         if (next[0] == 'K')
         {
@@ -650,6 +652,7 @@ const char * queryMeasurePrefix(StatisticMeasure measure)
     case SMeasureTimestampUs:   return "When";
     case SMeasureCount:         return "Num";
     case SMeasureSize:          return "Size";
+    case SMeasurePeakSize:      return "PeakSize";
     case SMeasureLoad:          return "Load";
     case SMeasureSkew:          return "Skew";
     case SMeasureNode:          return "Node";
@@ -713,6 +716,7 @@ static constexpr StatsMergeAction queryMergeMode(StatisticMeasure measure)
         (measure == SMeasureId) ? StatsMergeKeepNonZero :
         (measure == SMeasureFilename) ? StatsMergeKeepNonZero :
         (measure == SMeasureCost) ? StatsMergeSum :
+        (measure == SMeasurePeakSize) ? StatsMergeMax :
         StatsMergeSum;
 }
 
@@ -784,6 +788,7 @@ static constexpr StatsMergeAction queryMergeMode(StatisticMeasure measure)
 #define CYCLESTAT(y) St##Cycle##y##Cycles, SMeasureCycle, StatsMergeSum, St##Time##y, St##Cycle##y##Cycles, { NAMES(Cycle, y##Cycles) }, { TAGS(Cycle, y##Cycles) }
 #define ENUMSTAT(y) STAT(Enum, y, SMeasureEnum)
 #define COSTSTAT(y) STAT(Cost, y, SMeasureCost)
+#define PEAKSIZESTAT(y) STAT(PeakSize, y, SMeasurePeakSize)
 //--------------------------------------------------------------------------------------------------------------------
 
 class StatisticMeta
@@ -951,7 +956,6 @@ static const constexpr StatisticMeta statsMetaData[StMax] = {
     { CYCLESTAT(LeafFetch) },
     { TIMESTAT(BlobFetch) },
     { CYCLESTAT(BlobFetch) },
-    { SIZESTAT(PeakSpillFile) },
     { TIMESTAT(AgentQueue) },
     { CYCLESTAT(AgentQueue) },
     { TIMESTAT(IBYTIDelay) },
@@ -961,6 +965,8 @@ static const constexpr StatisticMeta statsMetaData[StMax] = {
     { WHENFIRSTSTAT(K8sLaunched) },
     { WHENFIRSTSTAT(K8sStarted) },
     { WHENFIRSTSTAT(K8sReady) },
+    { PEAKSIZESTAT(NodeSpillFile) },
+    { SIZESTAT(ActiveSpillFile)},
 };
 
 
@@ -1211,6 +1217,7 @@ inline void mergeUpdate(StatisticMeasure measure, unsigned __int64 & value, cons
     case SMeasureLoad:
     case SMeasureSkew:
     case SMeasureCycle:
+    case SMeasurePeakSize:
         value += otherValue;
         break;
     case SMeasureTimestampUs:
@@ -2835,6 +2842,7 @@ static bool isSignificantRange(StatisticKind kind, unsigned __int64 range, unsig
         insignificantDiff = 1000;       // Ignore 1us timing difference between nodes
         break;
     case SMeasureSize:
+    case SMeasurePeakSize:
         insignificantDiff = 1024;
         break;
     }
