@@ -922,6 +922,7 @@
                daliServers="mydali"
                description="Thor process"
                fileCacheLimit="1800"
+               globalMemorySize="200"
                heapRetainMemory="false"
                heapUseHugePages="false"
                heapUseTransparentHugePages="true"
@@ -935,7 +936,7 @@
                replicateAsync="false"
                replicateOutputs="false"
                slaveport="20100"
-               slavesPerNode="1"
+               slavesPerNode="2"
                watchdogEnabled="true"
                watchdogProgressEnabled="true">
    <SwapNode AutoSwapNode="false"/>

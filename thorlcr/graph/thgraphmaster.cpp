@@ -2722,11 +2722,6 @@ void CMasterGraph::handleSlaveDone(unsigned node, MemoryBuffer &mb)
         sdMb.setBuffer(len, (void *)d);
         act->slaveDone(node, sdMb);
     }
-    offset_t nodeGraphSpill;
-    mb.read(nodeGraphSpill);
-    totalActiveSpillSize += nodeGraphSpill;
-    if (nodeGraphSpill>peakNodeSpillFile)
-        peakNodeSpillFile = nodeGraphSpill;
 }
 
 void CMasterGraph::getFinalProgress()
