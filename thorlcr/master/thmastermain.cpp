@@ -268,6 +268,7 @@ public:
         LOG(MCdebugProgress, thorJob, "Waiting for %d slaves to register", slaves);
 
         IPointerArrayOf<INode> connectedSlaves;
+        std::vector<std::string> connectedWorkerPods;
         connectedSlaves.ensureCapacity(slaves);
         unsigned remaining = slaves;
         INode *_sender = nullptr;
@@ -293,10 +294,16 @@ public:
              */
             unsigned slaveNum;
             msg.read(slaveNum);
+            StringBuffer slavePodName;
             if (NotFound == slaveNum)
             {
                 connectedSlaves.append(sender.getLink());
                 slaveNum = connectedSlaves.ordinality();
+                if (isContainerized())
+                {
+                    msg.read(slavePodName);
+                    connectedWorkerPods.push_back(slavePodName.str());
+                }
             }
             else
             {
@@ -322,6 +329,12 @@ public:
             Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
             Owned<IWorkUnit> workunit = factory->updateWorkUnit(wuid);
             addTimeStamp(workunit, wfid, graphName, StWhenK8sReady);
+            workunit->setContainerizedProcessInfo("Thor", globals->queryProp("@name"), queryMyPodName(), nullptr);
+            for (unsigned workerNum=0; workerNum<connectedWorkerPods.size(); workerNum++)
+            {
+                const char *workerPodName = connectedWorkerPods[workerNum].c_str();
+                workunit->setContainerizedProcessInfo("ThorWorker", globals->queryProp("@name"), workerPodName, std::to_string(workerNum).c_str());
+            }
         }
 
         unsigned localThorPortInc = globals->getPropInt("@localThorPortInc", DEFAULT_SLAVEPORTINC);
