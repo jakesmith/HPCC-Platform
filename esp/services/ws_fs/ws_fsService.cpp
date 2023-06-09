@@ -1906,20 +1906,6 @@ IPropertyTree *CFileSprayEx::getAndValidateDropZone(const char *path, const char
     return nullptr;
 }
 
-static bool parseUNCPath(const char* sprayPath, IPropertyTree* dropZone,
-    const char *host, const SocketEndpoint &hostEp, StringBuffer& localPath, StringBuffer& hostInPath)
-{
-    if (!isPathSepChar(sprayPath[0]) || (sprayPath[0] != sprayPath[1]))
-        return false;
-
-    splitUNCFilename(sprayPath, &hostInPath, &localPath, &localPath, &localPath);
-    hostInPath.remove(0, 2); //Skip the leading "//"
-    if (hostInPath.isEmpty())
-        throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Invalid SourcePath %s.", sprayPath);
-
-    return true;
-}
-
 static bool parseUNCPath(const char* sprayPath, StringBuffer& localPath, StringBuffer& hostInPath)
 {
     if (!isPathSepChar(sprayPath[0]) || (sprayPath[0] != sprayPath[1]))
@@ -2044,6 +2030,9 @@ void CFileSprayEx::readAndCheckSpraySourceReq(IEspContext& context, MemoryBuffer
                 sourcePathReq.append("//").append(hostInPath);
             sourcePathReq.append(path);
         }
+        // fill in sourceIPReq based on dropzone if not provided
+        if (dropZone && sourceIPReq.isEmpty())
+            getDropZoneHost(sourcePlaneReq, dropZone, sourceIPReq);
     }
 }
 
