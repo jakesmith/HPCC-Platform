@@ -2012,16 +2012,14 @@ void CFileSprayEx::readAndCheckSpraySourceReq(IEspContext& context, MemoryBuffer
                 }
             }
 
-            //Based on the tests, the dfuserver only supports the wildcard inside the file name, like '/path/f*'.
-            //The dfuserver throws an error if the wildcard is inside the path, like /p*ath/file.
             if (dropZone)
             {
+                //Based on the tests, the dfuserver only supports the wildcard inside the file name, like '/path/f*'.
+                //The dfuserver throws an error if the wildcard is inside the path, like /p*ath/file.
                 SecAccessFlags permission = getDZFileScopePermissions(context, sourcePlaneReq, path, nullptr);
                 if (permission < SecAccess_Read)
                     throw makeStringExceptionV(ECLWATCH_INVALID_INPUT, "Access DropZone Scope %s %s not allowed for user %s (permission:%s). Read Access Required.",
                         sourcePlaneReq.str(), path, context.queryUserId(), getSecAccessFlagName(permission));
-                if (sourceIPReq.isEmpty())
-                    getDropZoneHost(sourcePlaneReq, dropZone, sourceIPReq);
             }
 
             if (!sourcePathReq.isEmpty())
