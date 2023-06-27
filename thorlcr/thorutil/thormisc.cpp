@@ -1649,6 +1649,13 @@ StringBuffer &getExpertOptPath(const char *opt, StringBuffer &out)
 #endif
 }
 
+bool hasExpertOpt(const char *opt)
+{
+    StringBuffer xpath;
+    getExpertOptPath(opt, xpath);
+    return globals->hasProp(xpath);
+}
+
 bool getExpertOptBool(const char *opt, bool dft)
 {
     StringBuffer xpath;
@@ -1669,4 +1676,11 @@ StringBuffer &getExpertOptString(const char *opt, StringBuffer &out)
     getExpertOptPath(opt, xpath);
     globals->getProp(xpath, out);
     return out;
+}
+
+void setExpertOpt(const char *opt, const char *value)
+{
+    StringBuffer xpath;
+    getExpertOptPath(opt, xpath);
+    globals->setProp(xpath, value);
 }
