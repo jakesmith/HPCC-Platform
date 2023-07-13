@@ -145,7 +145,7 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Create Build Image
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v4
         with:
           builder: ${{ steps.buildx.outputs.name }}
           file: ${{ needs.preamble.outputs.folder_platform }}/dockerfiles/vcpkg/${{ matrix.os }}.dockerfile
@@ -155,18 +155,20 @@ jobs:
             VCPKG_REF=${{ steps.vars.outputs.vcpkg_sha_short }}
           tags: |
             ${{ steps.vars.outputs.docker_label }}
+          cache-from: type=registry,ref=${{ steps.vars.outputs.docker_label }}
+          cache-to: type=inline
 
-      - name: Update Docker Image (vcpkg_overlays)
-        run: |
-          mkdir -p ${{ needs.preamble.outputs.folder_build }}
-          CONTAINER=$(docker run -d \
-            --mount ${{ needs.preamble.outputs.mount_platform }} \
-            --mount ${{ needs.preamble.outputs.mount_build }} \
-            ${{ steps.vars.outputs.docker_label }} \
-            "tail -f /dev/null")
-          docker exec $CONTAINER /bin/bash -c "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/build ${{ needs.preamble.outputs.cmake_docker_config }} -DSIGN_MODULES=OFF -DINCLUDE_PLUGINS=ON -DSUPPRESS_V8EMBED=ON" 
-          docker commit $CONTAINER ${{ steps.vars.outputs.docker_label }}
-          docker rm -f $CONTAINER
+      # - name: Update Docker Image (vcpkg_overlays)
+      #   run: |
+      #     mkdir -p ${{ needs.preamble.outputs.folder_build }}
+      #     CONTAINER=$(docker run -d \
+      #       --mount ${{ needs.preamble.outputs.mount_platform }} \
+      #       --mount ${{ needs.preamble.outputs.mount_build }} \
+      #       ${{ steps.vars.outputs.docker_label }} \
+      #       "tail -f /dev/null")
+      #     docker exec $CONTAINER /bin/bash -c "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/build ${{ needs.preamble.outputs.cmake_docker_config }} -DSIGN_MODULES=OFF -DINCLUDE_PLUGINS=ON -DSUPPRESS_V8EMBED=ON" 
+      #     docker commit $CONTAINER ${{ steps.vars.outputs.docker_label }}
+      #     docker rm -f $CONTAINER
 
       - name: CMake Packages
         if: ${{ !matrix.container && !matrix.ln && !matrix.documentation }}
