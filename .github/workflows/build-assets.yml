@@ -127,6 +127,7 @@ jobs:
         working-directory: ${{ needs.preamble.outputs.folder_platform }}/vcpkg
         run: |
           echo "vcpkg_sha_short=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
+          echo "docker_label=hpccsystems/platform-build-${{ matrix.os }}:$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
 
       - name: Print vars
         run: |
@@ -149,11 +150,11 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
           file: ${{ needs.preamble.outputs.folder_platform }}/dockerfiles/vcpkg/${{ matrix.os }}.dockerfile
           context: ${{ needs.preamble.outputs.folder_platform }}/dockerfiles/vcpkg
-          load: true
+          push: true
           build-args: |
             VCPKG_REF=${{ steps.vars.outputs.vcpkg_sha_short }}
           tags: |
-            build-${{ matrix.os }}:latest
+            ${{ steps.vars.outputs.docker_label }}
 
       - name: CMake Packages
         if: ${{ !matrix.container && !matrix.ln && !matrix.documentation }}
