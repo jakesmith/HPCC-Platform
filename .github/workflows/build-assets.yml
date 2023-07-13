@@ -156,6 +156,18 @@ jobs:
           tags: |
             ${{ steps.vars.outputs.docker_label }}
 
+      - name: Update Docker Image (vcpkg_overlays)
+        run: |
+          mkdir -p ${{ needs.preamble.outputs.folder_build }}
+          CONTAINER=$(docker run -d \
+            --mount ${{ needs.preamble.outputs.mount_platform }} \
+            --mount ${{ needs.preamble.outputs.mount_build }} \
+            ${{ steps.vars.outputs.docker_label }} \
+            "tail -f /dev/null")
+          docker exec $CONTAINER /bin/bash -c "cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/build ${{ needs.preamble.outputs.cmake_docker_config }} -DSIGN_MODULES=OFF -DINCLUDE_PLUGINS=ON -DSUPPRESS_V8EMBED=ON" 
+          docker commit $CONTAINER ${{ steps.vars.outputs.docker_label }}
+          docker rm -f $CONTAINER
+
       - name: CMake Packages
         if: ${{ !matrix.container && !matrix.ln && !matrix.documentation }}
         run: |
