@@ -1090,6 +1090,7 @@ class CDeltaWriter
 {
     IStoreHelper *iStoreHelper = nullptr;
     StringBuffer dataPath;
+    StringBuffer backupPath;
     unsigned transactionWriteThreshold = 0;
     cycle_t nextTimeThreshold = 0;
     cycle_t thresholdDuration = 0;
@@ -1105,7 +1106,7 @@ class CDeltaWriter
         StringBuffer deltaFilename(dataPath);
         iStoreHelper->getCurrentDeltaFilename(deltaFilename);
         OwnedIFile iFileDelta = createIFile(deltaFilename.str());
-        deltaFilename.clear().append(remoteBackupLocation);
+        deltaFilename.clear().append(backupPath);
         iStoreHelper->getCurrentDeltaFilename(deltaFilename);
         OwnedIFile iFileDeltaBackup = createIFile(deltaFilename.str());
         if (!compareFiles(iFileDeltaBackup, iFileDelta, false))
@@ -1114,7 +1115,16 @@ class CDeltaWriter
             copyFile(iFileDeltaBackup, iFileDelta);
         }
     }
-
+    bool writeBackupDelta(StringBuffer &xml, unsigned edition, bool first)
+    {
+        StringBuffer deltaFilename(backupPath);
+        constructStoreName(DELTANAME, edition, deltaFilename);
+        OwnedIFile iFile = createIFile(deltaFilename.str());
+        if (!first && !iFile->exists())
+            return false; // discard
+        ::writeDelta(xml, *iFile, "CBackupHandler - ", 60, 30);
+        return true;
+    }
     void writeXml()
     {
         StringBuffer fname(dataPath);
@@ -1160,11 +1170,13 @@ class CDeltaWriter
             }
             catch (IException *e) { EXCLOG(e, NULL); e->Release(); }
         }
+        bool first = false;
         try
         {
             StringBuffer deltaFilename(dataPath);
             iStoreHelper->getCurrentDeltaFilename(deltaFilename);
             OwnedIFile iFile = createIFile(deltaFilename.str());
+            first = !iFile->exists() || 0 == iFile->size();
             writeDelta(deltaXml, *iFile);
         }
         catch (IException *e)
@@ -1175,7 +1187,7 @@ class CDeltaWriter
             e->Release();
             return;
         }
-        if (remoteBackupLocation.length())
+        if (backupPath.length())
         {
             try
             {
@@ -1189,8 +1201,12 @@ class CDeltaWriter
                 }
                 else
                 {
-                    // TBD
-                    //backupHandler.addDelta(blockedDelta, iStoreHelper->queryCurrentEdition(), first);
+                    StringBuffer deltaFilename(backupPath);
+                    constructStoreName(DELTANAME, iStoreHelper->queryCurrentEdition(), deltaFilename);
+                    OwnedIFile iFile = createIFile(deltaFilename.str());
+                    if (first || iFile->exists())
+                        ::writeDelta(deltaXml, *iFile, "CBackupHandler - ", 60, 30);
+                    //else // discard
                 }
             }
             catch (IException *e)
@@ -1204,6 +1220,73 @@ class CDeltaWriter
             deltaXml.kill();
         else
             deltaXml.clear();
+    }
+    void writeExt(const char *basePath, const char *name, const unsigned length, const void *data, unsigned retrySecs=0, unsigned retryAttempts=10)
+    {
+        Owned<IException> exception;
+        unsigned _retryAttempts = retryAttempts;
+        StringBuffer rL(basePath);
+        for (;;)
+        {
+            try
+            {
+                rL.append(name);
+                Owned<IFile> iFile = createIFile(rL.str());
+                Owned<IFileIO> fileIO = iFile->open(IFOcreate);
+                fileIO->write(0, length, data);
+            }
+            catch (IException *e)
+            {
+                exception.setown(e);
+                StringBuffer err("Saving external (backup): ");
+                LOG(MCoperatorError, unknownJob, e, err.append(rL).str());
+            }
+            if (!exception.get())
+                break;
+            if (0 == retrySecs)
+                return;
+            if (0 == --_retryAttempts)
+            {
+                IWARNLOG("writeExt, too many retry attempts [%d]", retryAttempts);
+                return;
+            }
+            exception.clear();
+            DBGLOG("writeExt, retrying");
+            MilliSleep(retrySecs*1000);
+        }
+    }
+    void deleteExt(const char *basePath, const char *name, unsigned retrySecs=0, unsigned retryAttempts=10)
+    {
+        Owned<IException> exception;
+        unsigned _retryAttempts = retryAttempts;
+        StringBuffer rL(basePath);
+        for (;;)
+        {
+            try
+            {
+                rL.append(name);
+                Owned<IFile> iFile = createIFile(rL.str());
+                iFile->remove();
+            }
+            catch (IException *e)
+            {
+                exception.setown(e);
+                StringBuffer err("Removing external (backup): ");
+                LOG(MCoperatorWarning, unknownJob, e, err.append(rL).str());
+            }
+            if (!exception.get())
+                break;
+            if (0 == retrySecs)
+                return;
+            if (0 == --_retryAttempts)
+            {
+                IWARNLOG("deleteExt, too many retry attempts [%d]", retryAttempts);
+                return;
+            }
+            exception.clear();
+            DBGLOG("deleteExt, retrying");
+            MilliSleep(retrySecs*1000);
+        }
     }
     void checkSave()
     {
@@ -1233,15 +1316,19 @@ class CDeltaWriter
 
                 // commit accumulated delta 1st (so write order is consistent)
                 if (deltaXml.length())
-                    writeXml();
+                    writeXml(); // also handles backup if needed
 
-                Owned<IFile> iFile = createIFile(item->name);
-                if (nullptr == item->data) // means this is a removeExt
-                    iFile->remove();
-                else // i.e. has data == addExt
+                if (item->data)
                 {
-                    Owned<IFileIO> fileIO = iFile->open(IFOcreate);
-                    fileIO->write(0, item->dataLength, item->data);
+                    writeExt(dataPath, item->name, item->dataLength, item->data);
+                    if (backupPath.length())
+                        writeExt(backupPath, item->name, item->dataLength, item->data, 60, 30);
+                }
+                else
+                {
+                    deleteExt(dataPath, item->name);
+                    if (backupPath.length())
+                        deleteExt(backupPath, item->name, 60, 30);
                 }
             }
             pending.pop();
@@ -1258,6 +1345,7 @@ public:
     {
         iStoreHelper = _iStoreHelper;
         iStoreHelper->getPrimaryLocation(dataPath);
+        iStoreHelper->getBackupLocation(backupPath);
         thresholdDuration = queryOneSecCycles() * deltaSaveThresholdSecs;
         nextTimeThreshold = get_cycles_now() + thresholdDuration;
         transactionWriteThreshold = deltaSaveTransactionThreshold;
