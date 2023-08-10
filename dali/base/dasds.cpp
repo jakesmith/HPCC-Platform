@@ -1124,16 +1124,6 @@ class CDeltaWriter
             copyFile(iFileDeltaBackup, iFileDelta);
         }
     }
-    bool writeBackupDelta(StringBuffer &xml, unsigned edition, bool first)
-    {
-        StringBuffer deltaFilename(backupPath);
-        constructStoreName(DELTANAME, edition, deltaFilename);
-        OwnedIFile iFile = createIFile(deltaFilename.str());
-        if (!first && !iFile->exists())
-            return false; // discard
-        ::writeDelta(xml, *iFile, "CBackupHandler - ", 60, 30);
-        return true;
-    }
     void writeXml()
     {
         StringBuffer fname(dataPath);
@@ -1191,7 +1181,7 @@ class CDeltaWriter
         catch (IException *e)
         {
             // NB: writeDelta retries a few times before giving up.
-            VStringBuffer errMsg("saveDelta: failed to save delta data, blockedDelta size=%d", deltaXml.length());
+            VStringBuffer errMsg("writeXml: failed to save delta data, blockedDelta size=%d", deltaXml.length());
             OWARNLOG(e, errMsg.str());
             e->Release();
             return;
@@ -1214,13 +1204,13 @@ class CDeltaWriter
                     constructStoreName(DELTANAME, iStoreHelper->queryCurrentEdition(), deltaFilename);
                     OwnedIFile iFile = createIFile(deltaFilename.str());
                     if (first || iFile->exists())
-                        ::writeDelta(deltaXml, *iFile, "CBackupHandler - ", 60, 30);
+                        ::writeDelta(deltaXml, *iFile, "backup - ", 60, 30);
                     //else // discard
                 }
             }
             catch (IException *e)
             {
-                OERRLOG(e, "saveDelta: failed to save backup delta data");
+                OERRLOG(e, "writeXml: failed to save backup delta data");
                 e->Release();
                 backupOutOfSync = true;
             }
@@ -2316,7 +2306,6 @@ public:
     CServerRemoteTree *getRegisteredTree(__int64 uniqId);
     CServerRemoteTree *queryRoot();
     void serializeDelta(const char *path, IPropertyTree *changeTree);
-    void saveDelta();
     CSubscriberContainerList *getSubscribers(const char *xpath, CPTStack &stack);
     void getExternalValue(__int64 index, MemoryBuffer &mb);
     IPropertyTree *getXPathsSortLimitMatchTree(const char *baseXPath, const char *matchXPath, const char *sortby, bool caseinsensitive, bool ascending, unsigned from, unsigned limit);
@@ -2427,7 +2416,6 @@ private:
     IStoreHelper *iStoreHelper;
     bool doTimeComparison;
     StringBuffer blockedDelta;
-    CBackupHandler backupHandler;
     CDeltaWriter deltaWriter;
     bool backupOutOfSync = false;
 };
@@ -5594,7 +5582,7 @@ class CStoreHelper : implements IStoreHelper, public CInterface
             while (deltaIPIFile->exists())
             {
                 if (0 == d++ % 50)
-                    PROGLOG("Waiting for a saveDelta in progress");
+                    PROGLOG("Waiting for a writeXml in progress");
                 MilliSleep(100);
             }
         }
@@ -6087,7 +6075,7 @@ IStoreHelper *createStoreHelper(const char *storeName, const char *location, con
 #endif
 
 CCovenSDSManager::CCovenSDSManager(ICoven &_coven, IPropertyTree &_config, const char *_dataPath, const char *_daliName)
-    : coven(_coven), config(_config), server(*this), dataPath(_dataPath), daliName(_daliName), backupHandler(_config)
+    : coven(_coven), config(_config), server(*this), dataPath(_dataPath), daliName(_daliName)
 {
     config.Link();
     restartOnError = config.getPropBool("@restartOnUnhandled");
@@ -6176,10 +6164,7 @@ CCovenSDSManager::CCovenSDSManager(ICoven &_coven, IPropertyTree &_config, const
     properties->setProp("@dataPathUrl", path.str());
     properties->setPropInt("@keepStores", keepLastN);
     if (remoteBackupLocation.length())
-    {
         properties->setProp("@backupPathUrl", remoteBackupLocation.get());
-        backupHandler.init(remoteBackupLocation, config.getPropBool("@asyncBackup", true));
-    }
 
     const char *storeName = config.queryProp("@store");
     if (!storeName) storeName = "dalisds";
@@ -6212,7 +6197,6 @@ CCovenSDSManager::CCovenSDSManager(ICoven &_coven, IPropertyTree &_config, const
 
 CCovenSDSManager::~CCovenSDSManager()
 {
-    backupHandler.stop();
     if (unhandledThread) unhandledThread->join();
     if (coalesce) coalesce->stop();
     scanNotifyPool.clear();
@@ -6814,98 +6798,6 @@ void CCovenSDSManager::serializeDelta(const char *path, IPropertyTree *changeTre
         }
     }
     deltaWriter.addDelta(path, ownedChangeTree.getClear());
-}
-
-void CCovenSDSManager::saveDelta()
-{
-    CHECKEDCRITICALBLOCK(saveIncCrit, fakeCritTimeout);
-
-    StringBuffer fname(dataPath);
-    OwnedIFile deltaIPIFile = createIFile(fname.append(DELTAINPROGRESS).str());
-    OwnedIFileIO deltaIPIFileIO = deltaIPIFile->open(IFOcreate);
-    deltaIPIFileIO.clear();
-    struct RemoveDIPBlock
-    {
-        IFile &iFile;
-        bool done;
-        void doit() { done = true; iFile.remove(); }
-        RemoveDIPBlock(IFile &_iFile) : iFile(_iFile), done(false) { }
-        ~RemoveDIPBlock () { if (!done) doit(); }
-    } removeDIP(*deltaIPIFile);
-    StringBuffer detachIPStr(dataPath);
-    OwnedIFile detachIPIFile = createIFile(detachIPStr.append(DETACHINPROGRESS).str());
-    if (detachIPIFile->exists()) // very small window where this can happen.
-    {
-        // implies other operation about to access current delta
-        // CHECK session is really alive, otherwise it has been orphaned, so remove it.
-        try
-        {
-            SessionId sessId = 0;
-            OwnedIFileIO detachIPIO = detachIPIFile->open(IFOread);
-            if (detachIPIO)
-            {
-                size_t s = detachIPIO->read(0, sizeof(sessId), &sessId);
-                detachIPIO.clear();
-                if (sizeof(sessId) == s)
-                {
-                    // double check session is really alive
-                    if (querySessionManager().sessionStopped(sessId, 0))
-                        detachIPIFile->remove();
-                    else
-                    {
-                        // *cannot block* because other op (sasha) accessing remote dali files, can access dali.
-                        removeDIP.doit();
-                        PROGLOG("blocked");
-                        return;
-                    }
-                }
-            }
-        }
-        catch (IException *e) { EXCLOG(e, NULL); e->Release(); }
-    }
-    bool first = false;
-    try
-    {
-        StringBuffer deltaFilename(dataPath);
-        iStoreHelper->getCurrentDeltaFilename(deltaFilename);
-        OwnedIFile iFile = createIFile(deltaFilename.str());
-        first = !iFile->exists() || 0 == iFile->size();
-        writeDelta(blockedDelta, *iFile);
-    }
-    catch (IException *e)
-    {
-        // NB: writeDelta retries a few times before giving up.
-        VStringBuffer errMsg("saveDelta: failed to save delta data, blockedDelta size=%d", blockedDelta.length());
-        OWARNLOG(e, errMsg.str());
-        e->Release();
-        return;
-    }
-    if (remoteBackupLocation.length())
-    {
-        try
-        {
-            if (backupOutOfSync) // true if there was previously an exception during synchronously writing delta to backup.
-            {
-                OWARNLOG("Backup delta is out of sync due to a prior backup write error, attempting to resync");
-                // catchup - check and copy primary delta to backup
-                validateDeltaBackup();
-                backupOutOfSync = false;
-                OWARNLOG("Backup delta resynchronized");
-            }
-            else
-                backupHandler.addDelta(blockedDelta, iStoreHelper->queryCurrentEdition(), first);
-        }
-        catch (IException *e)
-        {
-            OERRLOG(e, "saveDelta: failed to save backup delta data");
-            e->Release();
-            backupOutOfSync = true;
-        }
-    }
-    if (blockedDelta.length() > 0x100000)
-        blockedDelta.kill();
-    else
-        blockedDelta.clear();
 }
 
 CSubscriberContainerList *CCovenSDSManager::getSubscribers(const char *xpath, CPTStack &stack)
