@@ -1056,7 +1056,7 @@ void cleanChangeTree(IPropertyTree &tree)
 
 struct WriterQueueItem
 {
-    enum flagt : byte { f_none, f_delta, f_addext, f_delext } flags = f_none;
+    enum flagt : byte { f_none, f_delta, f_addext, f_delext } type = f_none;
     char *name;
     union
     {
@@ -1070,18 +1070,27 @@ struct WriterQueueItem
 
     WriterQueueItem(const char *path, IPropertyTree *_deltaTree) : deltaTree(_deltaTree)
     {
+        type = f_delta;
         name = strdup(path);
     }
-    WriterQueueItem(char *_name, size32_t _dataLength, void *_data) : name(_name), dataLength(_dataLength), data(_data) { }
+    WriterQueueItem(char *_name, size32_t _dataLength, void *_data) : name(_name), dataLength(_dataLength), data(_data)
+    {
+        type = data ? f_addext : f_delext;
+    }
     ~WriterQueueItem()
     {
-        if (deltaTree)
-            deltaTree->Release();
-        else
+        free(name);
+        switch (type)
         {
-            free(name);
-            if (data)
+            case f_delta:
+                ::Release(deltaTree);
+                break;
+            case f_addext:
                 free(data);
+                break;
+            case f_delext:
+            default:
+                break;
         }
     }
 };
@@ -1296,7 +1305,7 @@ class CDeltaWriter
         while (!pending.empty())
         {
             WriterQueueItem *item = pending.front();
-            if (item->deltaTree)
+            if (WriterQueueItem::f_delta == item->type)
             {
                 Owned<IPropertyTree> changeTree = item->deltaTree;
                 item->deltaTree = nullptr;
@@ -1318,7 +1327,7 @@ class CDeltaWriter
                 if (deltaXml.length())
                     writeXml(); // also handles backup if needed
 
-                if (item->data)
+                if (WriterQueueItem::f_addext == item->type)
                 {
                     writeExt(dataPath, item->name, item->dataLength, item->data);
                     if (backupPath.length())
@@ -1326,6 +1335,7 @@ class CDeltaWriter
                 }
                 else
                 {
+                    dbgassertex(WriterQueueItem::f_delext == item->type);
                     deleteExt(dataPath, item->name);
                     if (backupPath.length())
                         deleteExt(backupPath, item->name, 60, 30);
@@ -1352,7 +1362,6 @@ public:
     }
     void addDelta(const char *path, IPropertyTree *delta)
     {
-        dbglogXML(delta, 2, XML_Format);
         {
             CriticalBlock b(pendingCrit);
             pending.push(new WriterQueueItem(path, delta));
@@ -1745,9 +1754,9 @@ public:
 
 class CExternalFile : public CInterface
 {
-    StringAttr ext, dataPath;
 protected:
     CDeltaWriter &deltaWriter;
+    StringAttr ext, dataPath;
 public:
     CExternalFile(const char *_ext, const char *_dataPath, CDeltaWriter &_deltaWriter) : ext(_ext), dataPath(_dataPath), deltaWriter(_deltaWriter) { }
     const char *queryExt() { return ext; }
@@ -1768,8 +1777,8 @@ public:
     }
     void remove(const char *name)
     {
-        StringBuffer filename;
-        getFilename(filename, name);
+        StringBuffer filename(name);
+        filename.append(ext);
         deltaWriter.removeExt(filename.detach());
     }
 };
@@ -1858,14 +1867,15 @@ public:
     }
     virtual void write(const char *name, IPropertyTree &tree)
     {
-        StringBuffer filename;
-        getFilename(filename, name);
+        StringBuffer filename(name);
+        filename.append(ext);
 
         MemoryBuffer out;
         ((PTree &)tree).queryValue()->serialize(out);
         StringBuffer fname(name);
         fname.append(queryExt());
-        deltaWriter.addExt(fname.detach(), out.length(), out.detach());
+        size32_t len = out.length();
+        deltaWriter.addExt(fname.detach(), len, out.detach());
     }
     virtual void remove(const char *name) { CExternalFile::remove(name); }
     virtual bool isValid(const char *name) { return CExternalFile::isValid(name); }
@@ -1953,12 +1963,13 @@ public:
     }
     virtual void write(const char *name, IPropertyTree &tree)
     {
-        StringBuffer filename;
-        getFilename(filename, name);
+        StringBuffer filename(name);
+        filename.append(ext);
 
         MemoryBuffer out;
         ((PTree &)tree).queryValue()->serialize(out);
-        deltaWriter.addExt(filename.detach(), out.length(), out.detach());
+        size32_t len = out.length();
+        deltaWriter.addExt(filename.detach(), len, out.detach());
     }
     virtual void remove(const char *name) { CExternalFile::remove(name); }
     virtual bool isValid(const char *name) { return CExternalFile::isValid(name); }
@@ -2033,11 +2044,12 @@ public:
     }
     virtual void write(const char *name, IPropertyTree &tree)
     {
-        StringBuffer filename;
-        getFilename(filename, name);
+        StringBuffer filename(name);
+        filename.append(ext);
         StringBuffer str;
         toXML(&tree, str);
-        deltaWriter.addExt(filename.detach(), str.length(), str.detach());
+        size32_t len = str.length();
+        deltaWriter.addExt(filename.detach(), len, str.detach());
     }
     virtual void remove(const char *name) { CExternalFile::remove(name); }
     virtual bool isValid(const char *name) { return CExternalFile::isValid(name); }

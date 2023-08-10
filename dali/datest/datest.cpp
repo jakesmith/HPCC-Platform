@@ -1914,6 +1914,20 @@ void TestSDS1()
     IRemoteConnection *conn;
     IPropertyTree *root;
 
+#if 1
+    {
+        Owned<IRemoteConnection> conn = querySDS().connect("/", myProcessSession(), RTM_LOCK_WRITE | RTM_LOCK_SUB, 2000*MDELAY);
+        IPropertyTree *root = conn->queryRoot();
+
+        MemoryBuffer big;
+        fillRandomData(100*1024, big);
+        const char *prop = testParams.item(0);
+        PROGLOG("Setting '%s' to big (len=%u)", prop, big.length());
+        root->setPropBin(prop, big.length(), big.toByteArray());
+        conn->commit();
+        return;
+    }
+#endif
 #ifdef TSUB
     Owned<TestSubscription> ts = new TestSubscription();
     SubscriptionId id = querySDS().subscribe("/subtest", *ts, false, true);
