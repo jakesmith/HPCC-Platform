@@ -1060,7 +1060,11 @@ struct WriterQueueItem
     char *name;
     union
     {
-        IPropertyTree *deltaTree;
+        struct
+        {
+            IPropertyTree *deltaTree;
+            unsigned edition;
+        };
         struct
         {       
             void *data;
@@ -1068,7 +1072,7 @@ struct WriterQueueItem
         };
     };
 
-    WriterQueueItem(const char *path, IPropertyTree *_deltaTree) : deltaTree(_deltaTree)
+    WriterQueueItem(unsigned _edition, const char *path, IPropertyTree *_deltaTree) : edition(_edition), deltaTree(_deltaTree)
     {
         type = f_delta;
         name = strdup(path);
@@ -1095,19 +1099,36 @@ struct WriterQueueItem
     }
 };
 
-class CDeltaWriter
+static constexpr unsigned defaultDeltaSaveThresholdSecs = 10;
+static constexpr unsigned defaultDeltaSaveTransactionThreshold = INFINITE;
+static constexpr unsigned defaultSoftQueueLimit = 200;
+static constexpr unsigned defaultSoftQueueLimitDelay = 200;
+static constexpr unsigned defaultHardQueueLimit = 10000;
+class CDeltaWriter : implements IThreaded
 {
     IStoreHelper *iStoreHelper = nullptr;
     StringBuffer dataPath;
     StringBuffer backupPath;
     unsigned transactionWriteThreshold = 0;
+    unsigned softQueueLimit = defaultSoftQueueLimit; // threshold over which transactions will be delay by small delay, to allow catchup.
+    unsigned softQueueLimitDelay = defaultSoftQueueLimitDelay; // delay for above
+    unsigned hardQueueLimit = defaultHardQueueLimit; // absolute limit, will block if this far behind
     cycle_t nextTimeThreshold = 0;
     cycle_t thresholdDuration = 0;
+
     std::queue<OwnedPtr<WriterQueueItem>> pending;
     CriticalSection pendingCrit;
     CCycleTimer timer;
     StringBuffer deltaXml;
+    CThreaded threaded;
+    Semaphore sem;
+    cycle_t timeThrottled = 0;
+    unsigned throttleCounter = 0;
+    Semaphore queueLimitSem;
+    bool waiting = true;
     bool backupOutOfSync = false;
+    bool aborted = false;
+    bool addQueueWaiting = false;
 
     void validateDeltaBackup()
     {
@@ -1126,49 +1147,6 @@ class CDeltaWriter
     }
     void writeXml()
     {
-        StringBuffer fname(dataPath);
-        OwnedIFile deltaIPIFile = createIFile(fname.append(DELTAINPROGRESS).str());
-        OwnedIFileIO deltaIPIFileIO = deltaIPIFile->open(IFOcreate);
-        deltaIPIFileIO.clear();
-        struct RemoveDIPBlock
-        {
-            IFile &iFile;
-            bool done;
-            void doit() { done = true; iFile.remove(); }
-            RemoveDIPBlock(IFile &_iFile) : iFile(_iFile), done(false) { }
-            ~RemoveDIPBlock () { if (!done) doit(); }
-        } removeDIP(*deltaIPIFile);
-        StringBuffer detachIPStr(dataPath);
-        OwnedIFile detachIPIFile = createIFile(detachIPStr.append(DETACHINPROGRESS).str());
-        if (detachIPIFile->exists()) // very small window where this can happen.
-        {
-            // implies other operation about to access current delta
-            // CHECK session is really alive, otherwise it has been orphaned, so remove it.
-            try
-            {
-                SessionId sessId = 0;
-                OwnedIFileIO detachIPIO = detachIPIFile->open(IFOread);
-                if (detachIPIO)
-                {
-                    size_t s = detachIPIO->read(0, sizeof(sessId), &sessId);
-                    detachIPIO.clear();
-                    if (sizeof(sessId) == s)
-                    {
-                        // double check session is really alive
-                        if (querySessionManager().sessionStopped(sessId, 0))
-                            detachIPIFile->remove();
-                        else
-                        {
-                            // *cannot block* because other op (sasha) accessing remote dali files, can access dali.
-                            removeDIP.doit();
-                            PROGLOG("blocked");
-                            return;
-                        }
-                    }
-                }
-            }
-            catch (IException *e) { EXCLOG(e, NULL); e->Release(); }
-        }
         bool first = false;
         try
         {
@@ -1290,24 +1268,85 @@ class CDeltaWriter
     void checkSave()
     {
         CriticalBlock b(pendingCrit);
-        if ((get_cycles_now() < nextTimeThreshold) && (pending.size() < transactionWriteThreshold))
+        // NB: could be configured to trigger on >= 1 transaction
+        // which would mean that the processing thread would try to keep up, but would still
+        // handle in batches if fell behind.
+        if (!addQueueWaiting && (get_cycles_now() < nextTimeThreshold) && (pending.size() < transactionWriteThreshold))
             return;
-        while (!pending.empty())
+        if (waiting)
         {
-            WriterQueueItem *item = pending.front();
+            waiting = false;
+            sem.signal();
+        }
+    }
+
+    void save(std::queue<OwnedPtr<WriterQueueItem>> &todo)
+    {
+        StringBuffer fname(dataPath);
+        OwnedIFile deltaIPIFile = createIFile(fname.append(DELTAINPROGRESS).str());
+        OwnedIFileIO deltaIPIFileIO = deltaIPIFile->open(IFOcreate);
+        deltaIPIFileIO.clear();
+        struct RemoveDIPBlock
+        {
+            IFile &iFile;
+            bool done;
+            void doit() { done = true; iFile.remove(); }
+            RemoveDIPBlock(IFile &_iFile) : iFile(_iFile), done(false) { }
+            ~RemoveDIPBlock () { if (!done) doit(); }
+        } removeDIP(*deltaIPIFile);
+        StringBuffer detachIPStr(dataPath);
+        OwnedIFile detachIPIFile = createIFile(detachIPStr.append(DETACHINPROGRESS).str());
+        if (detachIPIFile->exists()) // very small window where this can happen.
+        {
+            // implies other operation about to access current delta
+            // CHECK session is really alive, otherwise it has been orphaned, so remove it.
+            try
+            {
+                SessionId sessId = 0;
+                OwnedIFileIO detachIPIO = detachIPIFile->open(IFOread);
+                if (detachIPIO)
+                {
+                    size_t s = detachIPIO->read(0, sizeof(sessId), &sessId);
+                    detachIPIO.clear();
+                    if (sizeof(sessId) == s)
+                    {
+                        // double check session is really alive
+                        if (querySessionManager().sessionStopped(sessId, 0))
+                            detachIPIFile->remove();
+                        else
+                        {
+                            // *cannot block* because other op (sasha) accessing remote dali files, can access dali.
+                            removeDIP.doit();
+                            PROGLOG("blocked");
+                            return;
+                        }
+                    }
+                }
+            }
+            catch (IException *e) { EXCLOG(e, NULL); e->Release(); }
+        }
+
+        unsigned currentEdition = iStoreHelper->queryCurrentEdition();
+
+        while (!todo.empty())
+        {
+            WriterQueueItem *item = todo.front();
             if (WriterQueueItem::f_delta == item->type)
             {
-                Owned<IPropertyTree> changeTree = item->deltaTree;
-                item->deltaTree = nullptr;
-                cleanChangeTree(*changeTree);
+                if (currentEdition == item->edition) // if different, then they are stale(something else has written a new store)
+                {
+                    Owned<IPropertyTree> changeTree = item->deltaTree;
+                    item->deltaTree = nullptr;
+                    cleanChangeTree(*changeTree);
 
-                // write out with header details (e.g. path)
-                Owned<IPropertyTree> header = createPTree("Header");
-                header->setProp("@path", item->name);
-                IPropertyTree *delta = header->addPropTree("Delta", createPTree());
-                const char *nodeName = changeTree->queryName();
-                delta->addPropTree(nodeName, changeTree.getClear());
-                toXML(header, deltaXml);
+                    // write out with header details (e.g. path)
+                    Owned<IPropertyTree> header = createPTree("Header");
+                    header->setProp("@path", item->name);
+                    IPropertyTree *delta = header->addPropTree("Delta", createPTree());
+                    const char *nodeName = changeTree->queryName();
+                    delta->addPropTree(nodeName, changeTree.getClear());
+                    toXML(header, deltaXml);
+                }
             }
             else
             {
@@ -1331,30 +1370,77 @@ class CDeltaWriter
                         deleteExt(backupPath, item->name, 60, 30);
                 }
             }
-            pending.pop();
+            todo.pop();
         }
         if (deltaXml.length())
             writeXml();
         nextTimeThreshold = get_cycles_now() + thresholdDuration;
     }
+    void addToQueue(WriterQueueItem *item)
+    {
+        // NB: this method is called inside pendingCrit
+        pending.push(item);
+        size_t items = pending.size();
+        if (items >= softQueueLimit)
+        {
+            ++throttleCounter;
+            CCycleTimer timer;
+            {
+                bool hard = items >= hardQueueLimit;
+                addQueueWaiting = true;
+                {
+                    CriticalUnblock b(pendingCrit);
+                    queueLimitSem.wait(hard ? INFINITE : softQueueLimitDelay);
+                }
+                addQueueWaiting = false;
+                if (aborted)
+                    return;
+            }
+            timeThrottled += timer.elapsedCycles();
+            if (timeThrottled >= queryOneSecCycles())
+            {
+                IWARNLOG("Transactions are being throttled (write not keeping up) - current items = %u, time/tracactions throttled since last message = { %u ms, %u }", (unsigned)items, (unsigned)cycle_to_millisec(timeThrottled/(queryOneSecCycles()/1000)), throttleCounter);
+                timeThrottled = 0;
+                throttleCounter = 0;
+            }
+        }
+
+        // if (items >= softQueueLimit)
+        // {
+        // }
+    }
 public:
-    CDeltaWriter()
+    CDeltaWriter() : threaded("CDeltaWriter")
     {
     }
-    void init(IStoreHelper *_iStoreHelper, unsigned deltaSaveThresholdSecs, unsigned deltaSaveTransactionThreshold)
+    void init(const IPropertyTree &config, IStoreHelper *_iStoreHelper)
     {
         iStoreHelper = _iStoreHelper;
         iStoreHelper->getPrimaryLocation(dataPath);
         iStoreHelper->getBackupLocation(backupPath);
+
+        constexpr unsigned defaultDeltaSaveThresholdSecs = 10;
+        constexpr unsigned defaultDeltaSaveTransactionThreshold = INFINITE;
+        unsigned deltaSaveThresholdSecs = config.getPropInt("@deltaSaveThresholdSecs", defaultDeltaSaveThresholdSecs);
+        transactionWriteThreshold = config.getPropInt("@deltaSaveTransactionThreshold", defaultDeltaSaveTransactionThreshold);
+        constexpr unsigned defaultSoftQueueLimit = 200;
+        constexpr unsigned defaultSoftQueueLimitDelay = 200;
+        softQueueLimit = config.getPropInt("@backupSoftQueueLimit", defaultSoftQueueLimit);
+        softQueueLimitDelay = config.getPropInt("@backupSoftQueueLimitDelay", defaultSoftQueueLimitDelay);
+
         thresholdDuration = queryOneSecCycles() * deltaSaveThresholdSecs;
         nextTimeThreshold = get_cycles_now() + thresholdDuration;
-        transactionWriteThreshold = deltaSaveTransactionThreshold;
+
+        aborted = false;
+        waiting = true;
+        threaded.init(this);
+        PROGLOG("CDeltaWriter started");
     }
-    void addDelta(const char *path, IPropertyTree *delta)
+    void addDelta(const char *path, IPropertyTree *delta, unsigned edition)
     {
         {
             CriticalBlock b(pendingCrit);
-            pending.push(new WriterQueueItem(path, delta));
+            addToQueue(new WriterQueueItem(edition, path, delta));
         }
         checkSave();
     }
@@ -1362,7 +1448,7 @@ public:
     {
         {
             CriticalBlock b(pendingCrit);
-            pending.push(new WriterQueueItem(name, length, content));
+            addToQueue(new WriterQueueItem(name, length, content));
         }
         checkSave();
     }
@@ -1370,9 +1456,49 @@ public:
     {
         {
             CriticalBlock b(pendingCrit);
-            pending.push(new WriterQueueItem(name, 0, nullptr));
+            addToQueue(new WriterQueueItem(name, 0, nullptr));
         }
         checkSave();
+    }
+    void stop()
+    {
+        if (!aborted)
+        {
+            aborted = true;
+            sem.signal();
+            queueLimitSem.signal();
+            threaded.join();
+        }
+    }
+// IThreaded
+    virtual void threadmain() override
+    {
+        while (!aborted)
+        {
+            sem.wait();
+            if (aborted)
+                break;
+            // keep going whilst there's things pending
+            while (true)
+            {
+                std::queue<OwnedPtr<WriterQueueItem>> todo;
+                {
+                    CriticalBlock b(pendingCrit);
+                    todo = std::move(pending);
+                    if (0 == todo.size())
+                    {
+                        waiting = true;
+                        break;
+                    }
+                    else
+                    {
+                        if (addQueueWaiting)
+                            queueLimitSem.signal();
+                    }
+                }
+                save(todo);
+            }
+        }
     }
 };
 
@@ -6674,12 +6800,7 @@ void CCovenSDSManager::loadStore(const char *storeName, const bool *abort)
         throw;
     }
 
-    static constexpr unsigned defaultDeltaSaveThresholdSecs = 10;
-    static constexpr unsigned defaultDeltaSaveTransactionThreshold = INFINITE;
-    unsigned deltaSaveThresholdSecs = config.getPropInt("@deltaSaveThresholdSecs", defaultDeltaSaveThresholdSecs);
-    unsigned deltaSaveTransactionThreshold = config.getPropInt("@deltaSaveTransactionThreshold", defaultDeltaSaveTransactionThreshold);
-
-    deltaWriter.init(iStoreHelper, deltaSaveThresholdSecs, deltaSaveTransactionThreshold);
+    deltaWriter.init(config, iStoreHelper);
 
     if (!root)
     {
@@ -6797,7 +6918,7 @@ void CCovenSDSManager::serializeDelta(const char *path, IPropertyTree *changeTre
             return;
         }
     }
-    deltaWriter.addDelta(path, ownedChangeTree.getClear());
+    deltaWriter.addDelta(path, ownedChangeTree.getClear(), iStoreHelper->queryCurrentEdition());
 }
 
 CSubscriberContainerList *CCovenSDSManager::getSubscribers(const char *xpath, CPTStack &stack)
