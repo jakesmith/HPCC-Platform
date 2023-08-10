@@ -15,6 +15,8 @@
     limitations under the License.
 ############################################################################## */
 
+#include <queue>
+
 #include "platform.h"
 #include "jhash.hpp"
 #include "jlib.hpp"
@@ -948,6 +950,29 @@ void serializeVisibleAttributes(IPropertyTree &tree, MemoryBuffer &mb)
     mb.append(""); // attribute terminator. i.e. blank attr name.
 }
 
+bool compareFiles(IFile *file1, IFile *file2, bool compareTimes=true)
+{
+    if (file1->exists())
+    {
+        if (file2->exists())
+        {
+            if (file1->size() == file2->size())
+            {
+                if (!compareTimes) return true;
+                CDateTime modifiedTimeBackup;
+                file1->getTime(NULL, &modifiedTimeBackup, NULL);
+                CDateTime modifiedTime;
+                file2->getTime(NULL, &modifiedTime, NULL);
+                if (0 == modifiedTimeBackup.compare(modifiedTime, false))
+                    return true;
+            }
+        }
+    }
+    else
+        return !file2->exists();
+    return false;
+}
+
 void writeDelta(StringBuffer &xml, IFile &iFile, const char *msg="", unsigned retrySecs=0, unsigned retryAttempts=10)
 {
     Owned<IException> exception;
@@ -1014,6 +1039,255 @@ void writeDelta(StringBuffer &xml, IFile &iFile, const char *msg="", unsigned re
         MilliSleep(retrySecs*1000);
     }
 }
+
+void cleanChangeTree(IPropertyTree &tree)
+{
+    tree.removeProp("@id");
+    Owned<IPropertyTreeIterator> iter = tree.getElements(RENAME_TAG);
+    ForEach (*iter)
+        iter->query().removeProp("@id");
+    iter.setown(tree.getElements(DELETE_TAG));
+    ForEach (*iter)
+        iter->query().removeProp("@id");
+    iter.setown(tree.getElements(RESERVED_CHANGE_NODE));
+    ForEach (*iter)
+        cleanChangeTree(iter->query());
+}
+
+struct WriterQueueItem
+{
+    enum flagt : byte { f_none, f_delta, f_addext, f_delext } flags = f_none;
+    char *name;
+    union
+    {
+        IPropertyTree *deltaTree;
+        struct
+        {       
+            void *data;
+            unsigned dataLength;
+        };
+    };
+
+    WriterQueueItem(const char *path, IPropertyTree *_deltaTree) : deltaTree(_deltaTree)
+    {
+        name = strdup(path);
+    }
+    WriterQueueItem(char *_name, size32_t _dataLength, void *_data) : name(_name), dataLength(_dataLength), data(_data) { }
+    ~WriterQueueItem()
+    {
+        if (deltaTree)
+            deltaTree->Release();
+        else
+        {
+            free(name);
+            if (data)
+                free(data);
+        }
+    }
+};
+
+class CDeltaWriter
+{
+    IStoreHelper *iStoreHelper = nullptr;
+    StringBuffer dataPath;
+    unsigned transactionWriteThreshold = 0;
+    cycle_t nextTimeThreshold = 0;
+    cycle_t thresholdDuration = 0;
+    std::queue<OwnedPtr<WriterQueueItem>> pending;
+    CriticalSection pendingCrit;
+    CCycleTimer timer;
+    StringBuffer deltaXml;
+    bool backupOutOfSync = false;
+
+    void validateDeltaBackup()
+    {
+        // check consistency of delta
+        StringBuffer deltaFilename(dataPath);
+        iStoreHelper->getCurrentDeltaFilename(deltaFilename);
+        OwnedIFile iFileDelta = createIFile(deltaFilename.str());
+        deltaFilename.clear().append(remoteBackupLocation);
+        iStoreHelper->getCurrentDeltaFilename(deltaFilename);
+        OwnedIFile iFileDeltaBackup = createIFile(deltaFilename.str());
+        if (!compareFiles(iFileDeltaBackup, iFileDelta, false))
+        {
+            OWARNLOG("Delta file backup doesn't exist or differs, filename=%s", deltaFilename.str());
+            copyFile(iFileDeltaBackup, iFileDelta);
+        }
+    }
+
+    void writeXml()
+    {
+        StringBuffer fname(dataPath);
+        OwnedIFile deltaIPIFile = createIFile(fname.append(DELTAINPROGRESS).str());
+        OwnedIFileIO deltaIPIFileIO = deltaIPIFile->open(IFOcreate);
+        deltaIPIFileIO.clear();
+        struct RemoveDIPBlock
+        {
+            IFile &iFile;
+            bool done;
+            void doit() { done = true; iFile.remove(); }
+            RemoveDIPBlock(IFile &_iFile) : iFile(_iFile), done(false) { }
+            ~RemoveDIPBlock () { if (!done) doit(); }
+        } removeDIP(*deltaIPIFile);
+        StringBuffer detachIPStr(dataPath);
+        OwnedIFile detachIPIFile = createIFile(detachIPStr.append(DETACHINPROGRESS).str());
+        if (detachIPIFile->exists()) // very small window where this can happen.
+        {
+            // implies other operation about to access current delta
+            // CHECK session is really alive, otherwise it has been orphaned, so remove it.
+            try
+            {
+                SessionId sessId = 0;
+                OwnedIFileIO detachIPIO = detachIPIFile->open(IFOread);
+                if (detachIPIO)
+                {
+                    size_t s = detachIPIO->read(0, sizeof(sessId), &sessId);
+                    detachIPIO.clear();
+                    if (sizeof(sessId) == s)
+                    {
+                        // double check session is really alive
+                        if (querySessionManager().sessionStopped(sessId, 0))
+                            detachIPIFile->remove();
+                        else
+                        {
+                            // *cannot block* because other op (sasha) accessing remote dali files, can access dali.
+                            removeDIP.doit();
+                            PROGLOG("blocked");
+                            return;
+                        }
+                    }
+                }
+            }
+            catch (IException *e) { EXCLOG(e, NULL); e->Release(); }
+        }
+        try
+        {
+            StringBuffer deltaFilename(dataPath);
+            iStoreHelper->getCurrentDeltaFilename(deltaFilename);
+            OwnedIFile iFile = createIFile(deltaFilename.str());
+            writeDelta(deltaXml, *iFile);
+        }
+        catch (IException *e)
+        {
+            // NB: writeDelta retries a few times before giving up.
+            VStringBuffer errMsg("saveDelta: failed to save delta data, blockedDelta size=%d", deltaXml.length());
+            OWARNLOG(e, errMsg.str());
+            e->Release();
+            return;
+        }
+        if (remoteBackupLocation.length())
+        {
+            try
+            {
+                if (backupOutOfSync) // true if there was previously an exception during synchronously writing delta to backup.
+                {
+                    OWARNLOG("Backup delta is out of sync due to a prior backup write error, attempting to resync");
+                    // catchup - check and copy primary delta to backup
+                    validateDeltaBackup();
+                    backupOutOfSync = false;
+                    OWARNLOG("Backup delta resynchronized");
+                }
+                else
+                {
+                    // TBD
+                    //backupHandler.addDelta(blockedDelta, iStoreHelper->queryCurrentEdition(), first);
+                }
+            }
+            catch (IException *e)
+            {
+                OERRLOG(e, "saveDelta: failed to save backup delta data");
+                e->Release();
+                backupOutOfSync = true;
+            }
+        }
+        if (deltaXml.length() > (0x100000 * 10)) // >= 10MB
+            deltaXml.kill();
+        else
+            deltaXml.clear();
+    }
+    void checkSave()
+    {
+        CriticalBlock b(pendingCrit);
+        if ((get_cycles_now() < nextTimeThreshold) && (pending.size() < transactionWriteThreshold))
+            return;
+        while (!pending.empty())
+        {
+            WriterQueueItem *item = pending.front();
+            if (item->deltaTree)
+            {
+                Owned<IPropertyTree> changeTree = item->deltaTree;
+                item->deltaTree = nullptr;
+                cleanChangeTree(*changeTree);
+
+                // write out with header details (e.g. path)
+                Owned<IPropertyTree> header = createPTree("Header");
+                header->setProp("@path", item->name);
+                IPropertyTree *delta = header->addPropTree("Delta", createPTree());
+                const char *nodeName = changeTree->queryName();
+                delta->addPropTree(nodeName, changeTree.getClear());
+                toXML(header, deltaXml);
+            }
+            else
+            {
+                // external file
+
+                // commit accumulated delta 1st (so write order is consistent)
+                if (deltaXml.length())
+                    writeXml();
+
+                Owned<IFile> iFile = createIFile(item->name);
+                if (nullptr == item->data) // means this is a removeExt
+                    iFile->remove();
+                else // i.e. has data == addExt
+                {
+                    Owned<IFileIO> fileIO = iFile->open(IFOcreate);
+                    fileIO->write(0, item->dataLength, item->data);
+                }
+            }
+            pending.pop();
+        }
+        if (deltaXml.length())
+            writeXml();
+        nextTimeThreshold = get_cycles_now() + thresholdDuration;
+    }
+public:
+    CDeltaWriter()
+    {
+    }
+    void init(IStoreHelper *_iStoreHelper, unsigned deltaSaveThresholdSecs, unsigned deltaSaveTransactionThreshold)
+    {
+        iStoreHelper = _iStoreHelper;
+        iStoreHelper->getPrimaryLocation(dataPath);
+        thresholdDuration = queryOneSecCycles() * deltaSaveThresholdSecs;
+        nextTimeThreshold = get_cycles_now() + thresholdDuration;
+        transactionWriteThreshold = deltaSaveTransactionThreshold;
+    }
+    void addDelta(const char *path, IPropertyTree *delta)
+    {
+        dbglogXML(delta, 2, XML_Format);
+        {
+            CriticalBlock b(pendingCrit);
+            pending.push(new WriterQueueItem(path, delta));
+        }
+        checkSave();
+    }
+    void addExt(char *name, size32_t length, void *content)
+    {
+        {
+            CriticalBlock b(pendingCrit);
+            pending.push(new WriterQueueItem(name, length, content));
+        }
+        checkSave();
+    }
+    void removeExt(char *name)
+    {
+        {
+            CriticalBlock b(pendingCrit);
+            pending.push(new WriterQueueItem(name, 0, nullptr));
+        }
+        checkSave();
+    }
+};
 
 struct BackupQueueItem
 {
@@ -1385,9 +1659,9 @@ class CExternalFile : public CInterface
 {
     StringAttr ext, dataPath;
 protected:
-    CBackupHandler &backupHandler;
+    CDeltaWriter &deltaWriter;
 public:
-    CExternalFile(const char *_ext, const char *_dataPath, CBackupHandler &_backupHandler) : ext(_ext), dataPath(_dataPath), backupHandler(_backupHandler) { }
+    CExternalFile(const char *_ext, const char *_dataPath, CDeltaWriter &_deltaWriter) : ext(_ext), dataPath(_dataPath), deltaWriter(_deltaWriter) { }
     const char *queryExt() { return ext; }
     StringBuffer &getName(StringBuffer &fName, const char *base)
     {
@@ -1408,13 +1682,7 @@ public:
     {
         StringBuffer filename;
         getFilename(filename, name);
-        Owned<IFile> iFile = createIFile(filename.str());
-        iFile->remove();
-        if (remoteBackupLocation.length())
-        {
-            StringBuffer fname(name);
-            backupHandler.removeExt(fname.append(queryExt()).str());
-        }
+        deltaWriter.removeExt(filename.detach());
     }
 };
 
@@ -1423,7 +1691,7 @@ class CLegacyBinaryFileExternal : public CExternalFile, implements IExternalHand
 public:
     IMPLEMENT_IINTERFACE;
 
-    CLegacyBinaryFileExternal(const char *dataPath, CBackupHandler &backupHandler) : CExternalFile("." EF_LegacyBinaryValue, dataPath, backupHandler) { }
+    CLegacyBinaryFileExternal(const char *dataPath, CDeltaWriter &deltaWriter) : CExternalFile("." EF_LegacyBinaryValue, dataPath, deltaWriter) { }
     virtual void resetAsExternal(IPropertyTree &tree)
     {
         tree.setProp(NULL, (char *)NULL);
@@ -1504,19 +1772,12 @@ public:
     {
         StringBuffer filename;
         getFilename(filename, name);
-        Owned<IFile> iFile = createIFile(filename.str());
-        Owned<IFileIO> fileIO = iFile->open(IFOcreate);
 
         MemoryBuffer out;
         ((PTree &)tree).queryValue()->serialize(out);
-        const char *data = out.toByteArray();
-        unsigned length = out.length();
-        fileIO->write(0, length, data);
-        if (remoteBackupLocation.length())
-        {
-            StringBuffer fname(name);
-            backupHandler.addExt(fname.append(queryExt()).str(), length, out.detach());
-        }
+        StringBuffer fname(name);
+        fname.append(queryExt());
+        deltaWriter.addExt(fname.detach(), out.length(), out.detach());
     }
     virtual void remove(const char *name) { CExternalFile::remove(name); }
     virtual bool isValid(const char *name) { return CExternalFile::isValid(name); }
@@ -1529,7 +1790,7 @@ class CBinaryFileExternal : public CExternalFile, implements IExternalHandler
 public:
     IMPLEMENT_IINTERFACE;
 
-    CBinaryFileExternal(const char *dataPath, CBackupHandler &backupHandler) : CExternalFile("." EF_BinaryValue, dataPath, backupHandler) { }
+    CBinaryFileExternal(const char *dataPath, CDeltaWriter &deltaWriter) : CExternalFile("." EF_BinaryValue, dataPath, deltaWriter) { }
     virtual void resetAsExternal(IPropertyTree &tree)
     {
         tree.setProp(NULL, (char *)NULL);
@@ -1606,19 +1867,10 @@ public:
     {
         StringBuffer filename;
         getFilename(filename, name);
-        Owned<IFile> iFile = createIFile(filename.str());
-        Owned<IFileIO> fileIO = iFile->open(IFOcreate);
 
         MemoryBuffer out;
         ((PTree &)tree).queryValue()->serialize(out);
-        const char *data = out.toByteArray();
-        unsigned length = out.length();
-        fileIO->write(0, length, data);
-        if (remoteBackupLocation.length())
-        {
-            StringBuffer fname(name);
-            backupHandler.addExt(fname.append(queryExt()).str(), length, out.detach());
-        }
+        deltaWriter.addExt(filename.detach(), out.length(), out.detach());
     }
     virtual void remove(const char *name) { CExternalFile::remove(name); }
     virtual bool isValid(const char *name) { return CExternalFile::isValid(name); }
@@ -1631,7 +1883,7 @@ class CXMLFileExternal : public CExternalFile, implements IExternalHandler
 public:
     IMPLEMENT_IINTERFACE;
 
-    CXMLFileExternal(const char *dataPath, CBackupHandler &backupHandler) : CExternalFile("." EF_XML, dataPath, backupHandler) { }
+    CXMLFileExternal(const char *dataPath, CDeltaWriter &deltaWriter) : CExternalFile("." EF_XML, dataPath, deltaWriter) { }
     virtual void resetAsExternal(IPropertyTree &_tree)
     {
         PTree &tree = *QUERYINTERFACE(&_tree, PTree);
@@ -1695,18 +1947,9 @@ public:
     {
         StringBuffer filename;
         getFilename(filename, name);
-        Owned<IFile> iFile = createIFile(filename.str());
-        Owned<IFileIO> fileIO = iFile->open(IFOcreate);
-        Owned<IFileIOStream> fstream = createBufferedIOStream(fileIO);
-        toXML(&tree, *fstream);
-        if (remoteBackupLocation.length())
-        {
-            StringBuffer fname(name);
-            StringBuffer str;
-            toXML(&tree, str);
-            unsigned l = str.length();
-            backupHandler.addExt(fname.append(queryExt()).str(), l, str.detach());
-        }
+        StringBuffer str;
+        toXML(&tree, str);
+        deltaWriter.addExt(filename.detach(), str.length(), str.detach());
     }
     virtual void remove(const char *name) { CExternalFile::remove(name); }
     virtual bool isValid(const char *name) { return CExternalFile::isValid(name); }
@@ -1972,7 +2215,8 @@ public:
     CServerRemoteTree *queryRegisteredTree(__int64 uniqId);
     CServerRemoteTree *getRegisteredTree(__int64 uniqId);
     CServerRemoteTree *queryRoot();
-    void saveDelta(const char *path, IPropertyTree &changeTree);
+    void serializeDelta(const char *path, IPropertyTree *changeTree);
+    void saveDelta();
     CSubscriberContainerList *getSubscribers(const char *xpath, CPTStack &stack);
     void getExternalValue(__int64 index, MemoryBuffer &mb);
     IPropertyTree *getXPathsSortLimitMatchTree(const char *baseXPath, const char *matchXPath, const char *sortby, bool caseinsensitive, bool ascending, unsigned from, unsigned limit);
@@ -2084,6 +2328,7 @@ private:
     bool doTimeComparison;
     StringBuffer blockedDelta;
     CBackupHandler backupHandler;
+    CDeltaWriter deltaWriter;
     bool backupOutOfSync = false;
 };
 
@@ -2669,6 +2914,7 @@ private:
     PDState processData(IPropertyTree &changeTree, Owned<CBranchChange> &parentBranchChange, MemoryBuffer &newIds);
     PDState checkChange(IPropertyTree &tree, CBranchChange &parentBranchChange);
 friend class COrphanHandler;
+friend class CDeltaWriter;
 };
 
 class CNodeSubscriberContainer : public CSubscriberContainerBase
@@ -4407,7 +4653,7 @@ void CSDSTransactionServer::processMessage(CMessageBuffer &mb)
                         CheckTime block6("DAMP_SDSCMD_DATA.6");
                         StringBuffer path;
                         connection->queryPTreePath().getAbsolutePath(path);
-                        manager.saveDelta(path.str(), *changeTree);
+                        manager.serializeDelta(path.str(), changeTree.getClear());
                     }
                     mb.clear();
                     mb.append((int)DAMP_SDSREPLY_OK);
@@ -5796,11 +6042,11 @@ CCovenSDSManager::CCovenSDSManager(ICoven &_coven, IPropertyTree &_config, const
     registerSubscriptionManager(SDSNODE_PUBLISHER, nodeSubscriptionManager);
 
     // add external handlers
-    Owned<CXMLFileExternal> xmlExternalHandler = new CXMLFileExternal(dataPath, backupHandler);
+    Owned<CXMLFileExternal> xmlExternalHandler = new CXMLFileExternal(dataPath, deltaWriter);
     externalHandlers.replace(* new CExternalHandlerMapping(EF_XML, *xmlExternalHandler));
-    Owned<CLegacyBinaryFileExternal> legacyBinaryExternalHandler = new CLegacyBinaryFileExternal(dataPath, backupHandler);
+    Owned<CLegacyBinaryFileExternal> legacyBinaryExternalHandler = new CLegacyBinaryFileExternal(dataPath, deltaWriter);
     externalHandlers.replace(* new CExternalHandlerMapping(EF_LegacyBinaryValue, *legacyBinaryExternalHandler));
-    Owned<CBinaryFileExternal> binaryExternalHandler = new CBinaryFileExternal(dataPath, backupHandler);
+    Owned<CBinaryFileExternal> binaryExternalHandler = new CBinaryFileExternal(dataPath, deltaWriter);
     externalHandlers.replace(* new CExternalHandlerMapping(EF_BinaryValue, *binaryExternalHandler));
 
     properties.setown(createPTree("Properties"));
@@ -5878,29 +6124,6 @@ CCovenSDSManager::~CCovenSDSManager()
     else
         enableMemLeakChecking(false);
     config.Release();
-}
-
-bool compareFiles(IFile *file1, IFile *file2, bool compareTimes=true)
-{
-    if (file1->exists())
-    {
-        if (file2->exists())
-        {
-            if (file1->size() == file2->size())
-            {
-                if (!compareTimes) return true;
-                CDateTime modifiedTimeBackup;
-                file1->getTime(NULL, &modifiedTimeBackup, NULL);
-                CDateTime modifiedTime;
-                file2->getTime(NULL, &modifiedTime, NULL);
-                if (0 == modifiedTimeBackup.compare(modifiedTime, false))
-                    return true;
-            }
-        }
-    }
-    else
-        return !file2->exists();
-    return false;
 }
 
 void CCovenSDSManager::validateDeltaBackup()
@@ -6367,6 +6590,13 @@ void CCovenSDSManager::loadStore(const char *storeName, const bool *abort)
         throw;
     }
 
+    static constexpr unsigned defaultDeltaSaveThresholdSecs = 10;
+    static constexpr unsigned defaultDeltaSaveTransactionThreshold = INFINITE;
+    unsigned deltaSaveThresholdSecs = config.getPropInt("@deltaSaveThresholdSecs", defaultDeltaSaveThresholdSecs);
+    unsigned deltaSaveTransactionThreshold = config.getPropInt("@deltaSaveTransactionThreshold", defaultDeltaSaveTransactionThreshold);
+
+    deltaWriter.init(iStoreHelper, deltaSaveThresholdSecs, deltaSaveTransactionThreshold);
+
     if (!root)
     {
         root = (CServerRemoteTree *) createServerTree();
@@ -6465,29 +6695,15 @@ StringBuffer &transformToAbsolute(StringBuffer &result, const char *xpath, unsig
     return result;
 }
 
-void cleanChangeTree(IPropertyTree &tree)
+void CCovenSDSManager::serializeDelta(const char *path, IPropertyTree *changeTree)
 {
-    tree.removeProp("@id");
-    Owned<IPropertyTreeIterator> iter = tree.getElements(RENAME_TAG);
-    ForEach (*iter)
-        iter->query().removeProp("@id");
-    iter.setown(tree.getElements(DELETE_TAG));
-    ForEach (*iter)
-        iter->query().removeProp("@id");
-    iter.setown(tree.getElements(RESERVED_CHANGE_NODE));
-    ForEach (*iter)
-        cleanChangeTree(iter->query());
-}
-
-void CCovenSDSManager::saveDelta(const char *path, IPropertyTree &changeTree)
-{
-    CHECKEDCRITICALBLOCK(saveIncCrit, fakeCritTimeout);
+    Owned<IPropertyTree> ownedChangeTree = changeTree;
     // translate changeTree to inc format (e.g. remove id's)
     if (externalEnvironment)
     {
         // don't save any changed to /Environment if external
 
-        if (startsWith(path, "/Environment") || (streq(path, "/") && changeTree.hasProp("*[@name=\"Environment\"]")))
+        if (startsWith(path, "/Environment") || (streq(path, "/") && changeTree->hasProp("*[@name=\"Environment\"]")))
         {
             Owned<IMPServer> mpServer = getMPServer();
             IAllowListHandler *allowListHandler = mpServer->queryAllowListCallback();
@@ -6497,12 +6713,12 @@ void CCovenSDSManager::saveDelta(const char *path, IPropertyTree &changeTree)
             return;
         }
     }
-    cleanChangeTree(changeTree);
-    // write out with header details (e.g. path)
-    Owned<IPropertyTree> header = createPTree("Header");
-    header->setProp("@path", path);
-    IPropertyTree *delta = header->addPropTree("Delta", createPTree());
-    delta->addPropTree(changeTree.queryName(), LINK(&changeTree));
+    deltaWriter.addDelta(path, ownedChangeTree.getClear());
+}
+
+void CCovenSDSManager::saveDelta()
+{
+    CHECKEDCRITICALBLOCK(saveIncCrit, fakeCritTimeout);
 
     StringBuffer fname(dataPath);
     OwnedIFile deltaIPIFile = createIFile(fname.append(DELTAINPROGRESS).str());
@@ -6540,7 +6756,6 @@ void CCovenSDSManager::saveDelta(const char *path, IPropertyTree &changeTree)
                         // *cannot block* because other op (sasha) accessing remote dali files, can access dali.
                         removeDIP.doit();
                         PROGLOG("blocked");
-                        toXML(header, blockedDelta);
                         return;
                     }
                 }
@@ -6553,7 +6768,6 @@ void CCovenSDSManager::saveDelta(const char *path, IPropertyTree &changeTree)
     {
         StringBuffer deltaFilename(dataPath);
         iStoreHelper->getCurrentDeltaFilename(deltaFilename);
-        toXML(header, blockedDelta);
         OwnedIFile iFile = createIFile(deltaFilename.str());
         first = !iFile->exists() || 0 == iFile->size();
         writeDelta(blockedDelta, *iFile);
@@ -6900,7 +7114,7 @@ void CCovenSDSManager::commit(CRemoteConnection &connection, bool *disconnectDel
         { // something commited, if RTM_Create was used need to remember this.
             StringBuffer path;
             serverConnection->queryPTreePath().getAbsolutePath(path);
-            saveDelta(path.str(), *changeTree);
+            serializeDelta(path.str(), changeTree.getClear());
             bool lazyFetch = connection.setLazyFetch(false);
             tree->clearCommitChanges(&newIds);
             assertex(newIds.getPos() == newIds.length()); // must have read it all
@@ -7722,8 +7936,8 @@ void CCovenSDSManager::createConnection(SessionId sessionId, unsigned mode, unsi
         {
             if (deltaChange.get())
             {
-                PROGLOG("Exception on RTM_CREATE caused call to saveDelta, xpath=%s", xpath);
-                saveDelta(deltaPath, *deltaChange);
+                PROGLOG("Exception on RTM_CREATE caused call to serializeDelta, xpath=%s", xpath);
+                serializeDelta(deltaPath, deltaChange.getClear());
             }
             throw;
         }
@@ -7743,7 +7957,7 @@ void CCovenSDSManager::createConnection(SessionId sessionId, unsigned mode, unsi
             connection->notify();
             SDSManager->startNotification(*deltaChange, stack, *branchChange);
 
-            saveDelta(deltaPath, *deltaChange);
+            serializeDelta(deltaPath, deltaChange.getClear());
         }
 
         connectionId = connection->queryConnectionId();
@@ -7923,7 +8137,7 @@ void CCovenSDSManager::disconnect(ConnectionId id, bool deleteRoot, CLCLockBlock
                 const char *tail = splitXPath(path.str(), head);
                 CHECKEDCRITICALBLOCK(blockedSaveCrit, fakeCritTimeout);
                 if (NotFound != index)
-                    saveDelta(head.str(), *changeTree);
+                    serializeDelta(head.str(), changeTree.getClear());
                 else
                 { // NB: don't believe this can happen, but last thing want to do is save duff delete delta.
                     IERRLOG("** CCovenSDSManager::disconnect - index position lost **");

@@ -520,9 +520,12 @@ int main(int argc, const char* argv[])
                     return 0;
                 }
             }
-            // JCSMORE remoteBackupLocation should not be a property of SDS section really.
-            if (!getConfigurationDirectory(serverConfig->queryPropTree("Directories"),"mirror","dali",serverConfig->queryProp("@name"),mirrorPath))
-                serverConfig->getProp("SDS/@remoteBackupLocation",mirrorPath);
+            if (!serverConfig->getPropBool("SDS/@nobackup"))
+            {
+                // JCSMORE remoteBackupLocation should not be a property of SDS section really.
+                if (!getConfigurationDirectory(serverConfig->queryPropTree("Directories"),"mirror","dali",serverConfig->queryProp("@name"),mirrorPath))
+                    serverConfig->getProp("SDS/@remoteBackupLocation",mirrorPath);
+            }
         }
         PROGLOG("Build %s", hpccBuildInfo.buildTag);
 
