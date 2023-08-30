@@ -1028,8 +1028,8 @@ int main( int argc, const char *argv[]  )
             workerNSInstalled = k8s::applyYaml("thorworker", workunit, cloudJobName, "networkpolicy", { }, false, true);
             if (workerNSInstalled)
             {
-                k8s::KeepK8sJobs keepJob = k8s::translateKeepJobs(globals->queryProp("@keepJobs"));
-                workerJobInstalled = k8s::applyYaml("thorworker", workunit, cloudJobName, "job", { { "graphName", graphName}, { "master", myEp.str() }, { "_HPCC_NUM_WORKERS_", std::to_string(numWorkers/numWorkersPerPod)} }, false, KeepK8sJobs::none == keepJob);
+                k8s::KeepJobs keepJob = k8s::translateKeepJobs(globals->queryProp("@keepJobs"));
+                workerJobInstalled = k8s::applyYaml("thorworker", workunit, cloudJobName, "job", { { "graphName", graphName}, { "master", myEp.str() }, { "_HPCC_NUM_WORKERS_", std::to_string(numWorkers/numWorkersPerPod)} }, false, k8s::KeepJobs::none == keepJob);
                 if (workerJobInstalled)
                     doWorkerRegistration = true;
             }
@@ -1149,17 +1149,17 @@ int main( int argc, const char *argv[]  )
             {
                 try
                 {
-                    KeepK8sJobs keepJob = translateKeepJobs(globals->queryProp("@keepJobs"));
+                    k8s::KeepJobs keepJob = k8s::translateKeepJobs(globals->queryProp("@keepJobs"));
                     switch (keepJob)
                     {
-                        case KeepK8sJobs::all:
+                        case k8s::KeepJobs::all:
                             // do nothing
                             break;
-                        case KeepK8sJobs::podfailures:
+                        case k8s::KeepJobs::podfailures:
                             if (nullptr == exception)
                                 k8s::deleteResource("thorworker", "job", cloudJobName);
                             break;
-                        case KeepK8sJobs::none:
+                        case k8s::KeepJobs::none:
                             k8s::deleteResource("thorworker", "job", cloudJobName);
                             break;
                     }

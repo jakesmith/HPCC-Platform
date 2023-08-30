@@ -270,7 +270,7 @@ public:
                     Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
                     Owned<IWorkUnit> workunit = factory->updateWorkUnit(wuid);
                     if (isContainerized())
-                        workunit->setContainerizedProcessInfo("AgentExec", compConfig->queryProp("@name"), queryMyPodName(), nullptr);
+                        workunit->setContainerizedProcessInfo("AgentExec", compConfig->queryProp("@name"), k8s::queryMyPodName(), nullptr);
                     addTimeStamp(workunit, wfid, graphName, StWhenK8sLaunched);
                 }
                 k8s::runJob(jobSpecName, wuid, jobName, params);
@@ -281,7 +281,7 @@ public:
                 {
                     Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
                     Owned<IWorkUnit> workunit = factory->updateWorkUnit(wuid.str());
-                    workunit->setContainerizedProcessInfo("AgentExec", compConfig->queryProp("@name"), queryMyPodName(), nullptr);
+                    workunit->setContainerizedProcessInfo("AgentExec", compConfig->queryProp("@name"), k8s::queryMyPodName(), nullptr);
                 }
                 bool useValgrind = compConfig->getPropBool("@valgrind", false);
                 VStringBuffer exec("%s%s --workunit=%s --daliServers=%s", useValgrind ? "valgrind " : "", processName.get(), wuid.str(), dali.str());

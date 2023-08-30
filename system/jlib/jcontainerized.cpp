@@ -11,6 +11,7 @@
     limitations under the License.
 ############################################################################## */
 
+#include "jexcept.hpp"
 #include "jcontainerized.hpp"
 
 
@@ -46,16 +47,16 @@ static void setResources(IPropertyTree *workerConfig, const IConstWorkUnit *work
     setResourcesItem("limits", "cpu", cpuRequest, "m");
 }
 
-KeepK8sJobs translateKeepJobs(const char *keepJob)
+KeepJobs translateKeepJobs(const char *keepJob)
 {
     if (!isEmptyString(keepJob)) // common case
     {
         if (streq("podfailures", keepJob))
-            return KeepK8sJobs::podfailures;
+            return KeepJobs::podfailures;
         else if (streq("all", keepJob))
-            return KeepK8sJobs::all;
+            return KeepJobs::all;
     }
-    return KeepK8sJobs::none;
+    return KeepJobs::none;
 }
 
 bool isActiveService(const char *serviceName)
@@ -82,7 +83,7 @@ void deleteResource(const char *componentName, const char *resourceType, const c
     remove(k8sResourcesFilename);
 }
 
-void waitJob(const char *componentName, const char *resourceType, const char *job, unsigned pendingTimeoutSecs, KeepK8sJobs keepJob)
+void waitJob(const char *componentName, const char *resourceType, const char *job, unsigned pendingTimeoutSecs, KeepJobs keepJob)
 {
     VStringBuffer jobName("%s-%s-%s", componentName, resourceType, job);
     jobName.toLowerCase();
@@ -132,10 +133,10 @@ void waitJob(const char *componentName, const char *resourceType, const char *jo
         EXCLOG(e, nullptr);
         exception.setown(e);
     }
-    if (keepJob != KeepK8sJobs::all)
+    if (keepJob != KeepJobs::all)
     {
         // Delete jobs unless the pod failed and keepJob==podfailures
-        if ((nullptr == exception) || (KeepK8sJobs::podfailures != keepJob) || schedulingTimeout)
+        if ((nullptr == exception) || (KeepJobs::podfailures != keepJob) || schedulingTimeout)
             deleteResource(componentName, "job", job);
     }
     if (exception)
@@ -208,11 +209,11 @@ static constexpr unsigned defaultPendingTimeSecs = 600;
 void runJob(const char *componentName, const char *wuid, const char *jobName, const std::list<std::pair<std::string, std::string>> &extraParams)
 {
     Owned<IPropertyTree> compConfig = getComponentConfig();
-    KeepK8sJobs keepJob = translateKeepJobs(compConfig->queryProp("@keepJobs"));
+    KeepJobs keepJob = translateKeepJobs(compConfig->queryProp("@keepJobs"));
     unsigned pendingTimeoutSecs = compConfig->getPropInt("@pendingTimeoutSecs", defaultPendingTimeSecs);
 
     bool removeNetwork = applyYaml(componentName, wuid, jobName, "networkpolicy", extraParams, true, true);
-    applyYaml(componentName, wuid, jobName, "job", extraParams, false, KeepK8sJobs::none == keepJob);
+    applyYaml(componentName, wuid, jobName, "job", extraParams, false, KeepJobs::none == keepJob);
     Owned<IException> exception;
     try
     {
@@ -303,7 +304,12 @@ MODULE_EXIT()
 
 #else
 
-KeepK8sJobs translateKeepJobs(const char *keepJobs)
+const char *queryMyPodName()
+{
+    throwUnexpected();
+}
+
+KeepJobs translateKeepJobs(const char *keepJobs)
 {
     throwUnexpected();
 }
@@ -318,7 +324,7 @@ void deleteResource(const char *componentName, const char *job, const char *reso
     throwUnexpected();
 }
 
-void waitJob(const char *componentName, const char *resourceType, const char *job, unsigned pendingTimeoutSecs, KeepK8sJobs keepJob)
+void waitJob(const char *componentName, const char *resourceType, const char *job, unsigned pendingTimeoutSecs, KeepJobs keepJob)
 {
     throwUnexpected();
 }

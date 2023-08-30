@@ -897,7 +897,7 @@ public:
                 {
                     Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
                     Owned<IWorkUnit> wu = factory->updateWorkUnit(wuid.get());
-                    wu->setContainerizedProcessInfo("EclCCServer", getComponentConfigSP()->queryProp("@name"), queryMyPodName(), nullptr);
+                    wu->setContainerizedProcessInfo("EclCCServer", getComponentConfigSP()->queryProp("@name"), k8s::queryMyPodName(), nullptr);
                 }
                 compileViaK8sJob(true);
                 return;
@@ -913,7 +913,7 @@ public:
         }
 
         if (isContainerized())
-            workunit->setContainerizedProcessInfo("EclCC", getComponentConfigSP()->queryProp("@name"), queryMyPodName(), nullptr);
+            workunit->setContainerizedProcessInfo("EclCC", getComponentConfigSP()->queryProp("@name"), k8s::queryMyPodName(), nullptr);
 
         if (workunit->aborting() || workunit->getState()==WUStateAborted)
         {
