@@ -12,6 +12,8 @@
 ############################################################################## */
 
 #include "jexcept.hpp"
+#include "jfile.hpp"
+#include "jmisc.hpp"
 #include "jcontainerized.hpp"
 
 
