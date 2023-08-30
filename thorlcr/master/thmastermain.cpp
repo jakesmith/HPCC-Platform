@@ -30,6 +30,7 @@
 #endif
 
 #include "jlib.hpp"
+#include "jcontainerized.hpp"
 #include "jdebug.hpp"
 #include "jfile.hpp"
 #include "jmisc.hpp"
@@ -1024,11 +1025,11 @@ int main( int argc, const char *argv[]  )
             StringBuffer myEp;
             queryMyNode()->endpoint().getUrlStr(myEp);
 
-            workerNSInstalled = applyK8sYaml("thorworker", workunit, cloudJobName, "networkpolicy", { }, false, true);
+            workerNSInstalled = k8s::applyYaml("thorworker", workunit, cloudJobName, "networkpolicy", { }, false, true);
             if (workerNSInstalled)
             {
-                KeepK8sJobs keepJob = translateKeepJobs(globals->queryProp("@keepJobs"));
-                workerJobInstalled = applyK8sYaml("thorworker", workunit, cloudJobName, "job", { { "graphName", graphName}, { "master", myEp.str() }, { "_HPCC_NUM_WORKERS_", std::to_string(numWorkers/numWorkersPerPod)} }, false, KeepK8sJobs::none == keepJob);
+                k8s::KeepK8sJobs keepJob = k8s::translateKeepJobs(globals->queryProp("@keepJobs"));
+                workerJobInstalled = k8s::applyYaml("thorworker", workunit, cloudJobName, "job", { { "graphName", graphName}, { "master", myEp.str() }, { "_HPCC_NUM_WORKERS_", std::to_string(numWorkers/numWorkersPerPod)} }, false, KeepK8sJobs::none == keepJob);
                 if (workerJobInstalled)
                     doWorkerRegistration = true;
             }
@@ -1156,10 +1157,10 @@ int main( int argc, const char *argv[]  )
                             break;
                         case KeepK8sJobs::podfailures:
                             if (nullptr == exception)
-                                deleteK8sResource("thorworker", "job", cloudJobName);
+                                k8s::deleteResource("thorworker", "job", cloudJobName);
                             break;
                         case KeepK8sJobs::none:
-                            deleteK8sResource("thorworker", "job", cloudJobName);
+                            k8s::deleteResource("thorworker", "job", cloudJobName);
                             break;
                     }
                 }
@@ -1173,7 +1174,7 @@ int main( int argc, const char *argv[]  )
             {
                 try
                 {
-                    deleteK8sResource("thorworker", "networkpolicy", cloudJobName);
+                    k8s::deleteResource("thorworker", "networkpolicy", cloudJobName);
                 }
                 catch (IException *e)
                 {

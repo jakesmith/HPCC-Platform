@@ -14,7 +14,9 @@
     See the License for the specific language governing permissions and
     limitations under the License.
 ############################################################################## */
+
 #include "jfile.hpp"
+#include "jcontainerized.hpp"
 #include "daclient.hpp"
 #include "wujobq.hpp"
 #include "jmisc.hpp"
@@ -271,7 +273,7 @@ public:
                         workunit->setContainerizedProcessInfo("AgentExec", compConfig->queryProp("@name"), queryMyPodName(), nullptr);
                     addTimeStamp(workunit, wfid, graphName, StWhenK8sLaunched);
                 }
-                runK8sJob(jobSpecName, wuid, jobName, params);
+                k8s::runJob(jobSpecName, wuid, jobName, params);
             }
             else
             {

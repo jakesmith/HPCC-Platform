@@ -16,6 +16,7 @@
 ############################################################################## */
 
 #include "jlib.hpp"
+#include "jcontainerized.hpp"
 #include "jmisc.hpp"
 #include "jisem.hpp"
 #include "jfile.hpp"
@@ -854,7 +855,7 @@ public:
                     addTimeStamp(wu, SSTcompilestage, "compile", StWhenDequeued, 0);
                 addTimeStamp(wu, SSTcompilestage, "compile", StWhenK8sLaunched, 0);
             }
-            runK8sJob("compile", wuid, wuid);
+            k8s::runJob("compile", wuid, wuid);
         }
         catch (IException *E)
         {
