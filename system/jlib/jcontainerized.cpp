@@ -25,28 +25,6 @@ const char *queryMyPodName()
     return myPodName;
 }
 
-static void setResources(IPropertyTree *workerConfig, const IConstWorkUnit *workunit, const char *process)
-{
-    auto setResourcesItem = [&workerConfig](const char *category, const char *resourceName,  unsigned value, const char *units)
-    {
-        if (!value) return;
-        VStringBuffer xpath("spec/template/spec/containers/resources/%s@%s", category, resourceName);
-        ensurePTree(workerConfig, xpath.str());
-
-        VStringBuffer v("%u%s", value, units);
-        workerConfig->setProp(xpath.str(), v.str());
-    };
-
-    StringBuffer s;
-    unsigned memRequest = workunit->getDebugValueInt(s.clear().appendf("resource-%s-memory", process), 0);
-    setResourcesItem("requests", "memory", memRequest, "Mi");
-    setResourcesItem("limits", "memory", memRequest, "Mi");
-
-    unsigned cpuRequest = workunit->getDebugValueInt(s.clear().appendf("resource-%s-cpu", process), 0);
-    setResourcesItem("requests", "cpu", cpuRequest, "m");
-    setResourcesItem("limits", "cpu", cpuRequest, "m");
-}
-
 KeepJobs translateKeepJobs(const char *keepJob)
 {
     if (!isEmptyString(keepJob)) // common case
@@ -172,24 +150,6 @@ bool applyYaml(const char *componentName, const char *wuid, const char *job, con
             args.append(" \"--").append(p.first.c_str()).append('=').append(p.second.c_str()).append("\"");
     }
     jobYaml.replaceString("_HPCC_ARGS_", args.str());
-
-// Disable ability change resources from within workunit
-// - all values are unquoted by toYAML.  This caused problems when previous string values are
-// outputted unquoted and then treated as a non string type -e.g. labels in metadata.
-// - Also, ability to control if and how much users may change resources should be provided.
-#if 0
-    Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
-    if (factory)
-    {
-        Owned<IConstWorkUnit> workunit = factory->openWorkUnit(wuid);
-        if (workunit)
-        {
-            Owned<IPropertyTree> workerConfig = createPTreeFromYAMLString(jobYaml.length(), jobYaml.str(), 0, ptr_none, nullptr);
-            setResources(workerConfig, workunit, componentName);
-            toYAML(workerConfig, jobYaml.clear(), 2, 0);
-        }
-    }
-#endif
 
     runKubectlCommand(componentName, "kubectl replace --force -f -", jobYaml, nullptr);
 
@@ -344,6 +304,6 @@ std::vector<std::vector<std::string>> getPodNodes(const char *selector)
     throwUnexpected();
 }
 
-} // end of k8s namespace
-
 #endif // _CONTAINERIZED
+
+} // end of k8s namespace
