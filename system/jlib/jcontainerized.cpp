@@ -245,6 +245,7 @@ std::vector<std::vector<std::string>> getPodNodes(const char *selector)
     }
 }
 
+static unsigned podInfoInitCBId = 0;
 MODULE_INIT(INIT_PRIORITY_STANDARD)
 {
     auto updateFunc = [&](const IPropertyTree *oldComponentConfiguration, const IPropertyTree *oldGlobalConfiguration)
