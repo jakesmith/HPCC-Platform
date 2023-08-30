@@ -19,6 +19,7 @@
 #include <unordered_set>
 
 #include "jlib.hpp"
+#include "jcontainerized.hpp"
 #include "workunit.hpp"
 #include "jprop.hpp"
 #include "jmisc.hpp"
