@@ -1035,7 +1035,7 @@ bool CJobManager::executeGraph(IConstWorkUnit &workunit, const char *graphName, 
             {
                 // collate pod distribution
                 VStringBuffer selector("thorworker-job-%s-%s", wuid.get(), graphName);
-                std::vector<std::vector<std::string>> pods = getPodNodes(selector.toLowerCase());
+                std::vector<std::vector<std::string>> pods = k8s::getPodNodes(selector.toLowerCase());
                 std::unordered_map<std::string, unsigned> podPerNodeCounts;
                 for (const auto &podNode: pods)
                 {
