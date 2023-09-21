@@ -545,7 +545,7 @@ void TopologyManager::_setRoles(const std::vector<RoxieEndpointInfo> &myRoles, b
         default: throwUnexpected();
         }
         topoBuf.append(role.channel).append('|');
-        role.ep.getUrlStr(topoBuf);
+        conditionalGetHostUrlStr(topoBuf, role.ep);
         topoBuf.append('|').append(role.replicationLevel);
         topoBuf.append('\t').append((__uint64) myInstance);
         topoBuf.append('\n');

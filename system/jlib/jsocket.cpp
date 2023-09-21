@@ -3634,29 +3634,32 @@ inline char * addbyte(char *s,byte b)
     *(s++) = b+'0';
     return s;
 }
-        
 
-
-StringBuffer & IpAddress::getIpText(StringBuffer & out) const
+StringBuffer & IpAddress::getResolvedIpText(StringBuffer & out) const
 {
-    if (hostname)
-        return out.append(hostname);
     if (::isIp4(netaddr)) {
         const byte *ip = (const byte *)&netaddr[3];
-        char ips[16]; 
+        char ips[16];
         char *s = ips;
         for (unsigned i=0;i<4;i++) {
             if (i)
                 *(s++) = '.';
             s = addbyte(s,ip[i]);
         }
-        return out.append(s-ips,ips); 
+        return out.append(s-ips,ips);
     }
     char tmp[INET6_ADDRSTRLEN];
     const char *res = _inet_ntop(AF_INET6, &netaddr, tmp, sizeof(tmp));
     if (!res) 
         throw makeOsException(errno);
     return out.append(res);
+}
+
+StringBuffer & IpAddress::getIpText(StringBuffer & out) const
+{
+    if (hostname)
+        return out.append(hostname);
+    return getResolvedIpText(out);
 }
 
 void IpAddress::ipserialize(MemoryBuffer & out) const
@@ -3864,6 +3867,7 @@ void SocketEndpoint::getUrlStr(char * str, size32_t len) const
     memcpy(str,_str.str(),l);
 }
 
+// NB: this and getIpText returns stored hostname if available
 StringBuffer &SocketEndpoint::getUrlStr(StringBuffer &str) const
 {
     getIpText(str);
@@ -3872,12 +3876,30 @@ StringBuffer &SocketEndpoint::getUrlStr(StringBuffer &str) const
     return str;
 }
 
+// NB: this and getResolvedIpUrlStr returns a resolved IP
+StringBuffer &SocketEndpoint::getResolvedIpUrlStr(StringBuffer &str) const
+{
+    getResolvedIpText(str);
+    if (port)
+        str.append(':').append((unsigned)port);         // TBD IPv6 put [] on
+    return str;
+}
 
 unsigned SocketEndpoint::hash(unsigned prev) const
 {
     return hashc((const byte *)&port,sizeof(port),iphash(prev));
 }
 
+
+// Conditionally return endpoint hostname or resolved IP (may want condtion to differ in future, e.g. depending on dns configuration)
+// In k8s by default pod hostnames are not resolvable from other pods, use this function when serializing the text of a host to another host
+StringBuffer &conditionalGetHostUrlStr(StringBuffer &str, const SocketEndpoint &ep)
+{
+    if (isContainerized())
+        return ep.getResolvedIpUrlStr(str);
+    else
+        return ep.getUrlStr(str);
+}
 
 
 

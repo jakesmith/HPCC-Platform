@@ -1019,7 +1019,7 @@ int main( int argc, const char *argv[]  )
             cloudJobName.appendf("%s-%s", workunit, graphName);
 
             StringBuffer myEp;
-            queryMyNode()->endpoint().getUrlStr(myEp);
+            conditionalGetHostUrlStr(myEp, queryMyNode()->endpoint());
 
             workerNSInstalled = k8s::applyYaml("thorworker", workunit, cloudJobName, "networkpolicy", { }, false, true);
             if (workerNSInstalled)

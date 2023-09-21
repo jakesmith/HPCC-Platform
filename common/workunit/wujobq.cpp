@@ -109,7 +109,7 @@ public:
         item->setProp("@wuid",qi->queryWUID());
         item->setProp("@owner",qi->queryOwner());
         StringBuffer eps;
-        qi->queryEndpoint().getUrlStr(eps);
+        conditionalGetHostUrlStr(eps, qi->queryEndpoint());
         item->setProp("@node",eps.str());
         StringBuffer dts;
         qi->queryEnqueuedTime().getString(dts);

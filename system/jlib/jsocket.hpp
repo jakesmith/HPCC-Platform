@@ -84,6 +84,9 @@ class jlib_decl IpAddress
 {
     unsigned netaddr[4] = { 0, 0, 0, 0 };
     StringAttr hostname; // not currently serialized
+
+protected:
+    StringBuffer &getIpText(StringBuffer & out, bool ip) const;
 public:
     IpAddress() = default;
     explicit IpAddress(const char *text)                { ipset(text); }
@@ -100,6 +103,7 @@ public:
     bool isLocal() const;                               // matches local interface 
     bool isIp4() const;
     StringBuffer &getIpText(StringBuffer & out) const;
+    StringBuffer &getResolvedIpText(StringBuffer &out) const;
     void ipserialize(MemoryBuffer & out) const;         
     void ipdeserialize(MemoryBuffer & in);          
     unsigned ipdistance(const IpAddress &ip,unsigned offset=0) const;       // network order distance (offset: 0-3 word (leat sig.), 0=Ipv4)
@@ -144,6 +148,7 @@ extern jlib_decl bool queryKeepAlive(int &time, int &intvl, int &probes);
 
 class jlib_decl SocketEndpoint : extends IpAddress
 {
+    StringBuffer &getUrlStr(StringBuffer &str, bool ip) const;
 public:
     SocketEndpoint() = default;
     SocketEndpoint(const char *name,unsigned short _port=0)     { set(name,_port); };
@@ -161,6 +166,7 @@ public:
     inline bool equals(const SocketEndpoint &ep) const          { return ((port==ep.port)&&ipequals(ep)); }
     void getUrlStr(char * str, size32_t len) const;             // in form ip4:port or [ip6]:port
     StringBuffer &getUrlStr(StringBuffer &str) const;           // in form ip4:port or [ip6]:port
+    StringBuffer &getResolvedIpUrlStr(StringBuffer &str) const;
 
     inline SocketEndpoint & operator = ( const SocketEndpoint &other )
     {
@@ -177,6 +183,8 @@ public:
     // Ensure that all the bytes in the data structure are initialised to avoid complains from valgrind when it is written to a socket
     unsigned short portPadding = 0;
 };
+
+extern jlib_decl StringBuffer &conditionalGetHostUrlStr(StringBuffer &str, const SocketEndpoint &ep);
 
 class jlib_decl SocketEndpointArray : public StructArrayOf<SocketEndpoint>
 { 
