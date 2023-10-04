@@ -1,0 +1,20 @@
+name: Runner packages
+
+on:
+  push:
+    branches:
+    - 'master*'
+    - "candidate-*"
+  pull_request:
+    branches:
+      - "master"
+      - "candidate-*"
+
+jobs:
+  build:
+    name: "List package sizes"
+    runs-on: ubuntu-22.04
+    steps:
+      - name: sizes
+        run: |
+          dpkg-query -Wf '${Installed-Size}\t${Package}\n' | sort -n -r
