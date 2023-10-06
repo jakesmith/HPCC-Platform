@@ -147,6 +147,8 @@ extern DAFSCLIENT_API byte traceFlags;
 #define TF_TRACE_CLIENT_STATS (traceFlags&0x20)
 
 
+constexpr LogMsgCategory MCclientDebugInfo(MCdebugInfo(DebugMsgThreshold+2)); // above default debug logging threshold
+
 class CRemoteBase : public CSimpleInterfaceOf<IDaFsConnection>
 {
     Owned<ISocket>          socket;

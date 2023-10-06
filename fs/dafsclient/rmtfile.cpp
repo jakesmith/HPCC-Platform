@@ -357,6 +357,7 @@ public:
         StringBuffer endpointStr;
         ep.getEndpointHostText(endpointStr);
 
+        PROGLOG("Looking for secret for : '%s'", endpointStr.str());
         CriticalBlock b(secretCrit);
         auto it = urls.find(endpointStr.str());
         if (it != urls.end())
@@ -368,6 +369,7 @@ public:
     }
     virtual void addSecretUrl(const char *url) override
     {
+        PROGLOG("addSecretUrl : '%s'", url);
         CriticalBlock b(secretCrit);
         urls[url]++; // NB: if doesn't exist std::unordered_map will insert with default values, i.e. with an initial unsigned value of 0
     }
@@ -2230,6 +2232,8 @@ public:
         RemoteFilename rfn;
         rfn.setPath(ep, filename);
         queryDaFileSrvHook()->getSecretBased(storageSecret, rfn);
+        if (storageSecret.length())
+            PROGLOG("CRemoteFilteredFileIOBase with secret: '%s'", storageSecret.str());
 
         // NB: inputGrouped == outputGrouped for now, but may want output to be ungrouped
 

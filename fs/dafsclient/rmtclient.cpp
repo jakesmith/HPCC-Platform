@@ -722,6 +722,9 @@ void CRemoteBase::connectSocket(SocketEndpoint &ep, unsigned connectTimeoutMs, u
                     // The context would be 'owned' by the hook, and would expire when the mappings are removed (when removeMappedDafileSrvSecrets is called).
                     if (storageSecret)
                     {
+
+                        PROGLOG("Dafilesrv connecting with secret: '%s'", storageSecret.str());
+
                         Owned<IPropertyTree> secretPTree = getSecret("storage", storageSecret);
                         if (!secretPTree)
                             throw makeStringExceptionV(-1, "secret %s.%s not found", "storage", storageSecret.str());
@@ -1005,6 +1008,7 @@ CRemoteBase::CRemoteBase(const SocketEndpoint &_ep, DAFSConnectCfg _connectMetho
 CRemoteBase::CRemoteBase(const SocketEndpoint &_ep, const char *_storageSecret, const char * _filename)
     : ep(_ep), storageSecret(_storageSecret), filename(_filename)
 {
+    PROGLOG("CRemoteBase with secret: '%s'", storageSecret.str());
 }
 
 void CRemoteBase::disconnect()

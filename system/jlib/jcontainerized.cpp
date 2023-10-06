@@ -333,7 +333,7 @@ std::pair<std::string, unsigned> getExternalService(const char *serviceName)
     StringBuffer output;
     try
     {
-        VStringBuffer getServiceCmd("kubectl get svc --selector=server=%s --output=jsonpath={.items[0].status.loadBalancer.ingress[0].hostname},{.items[0].status.loadBalancer.ingress[0].ip},{.items[0].spec.ports[0].port}", serviceName);
+        VStringBuffer getServiceCmd("kubectl get svc --selector=server=%s --output=jsonpath={.items[0].metadata.annotations.external-dns\\.alpha\\.kubernetes\\.io/hostname},{.items[0].status.loadBalancer.ingress[0].hostname},{.items[0].status.loadBalancer.ingress[0].ip},{.items[0].spec.ports[0].port}", serviceName);
         k8s::runKubectlCommand("get-external-service", getServiceCmd, nullptr, &output);
     }
     catch (IException *e)
@@ -349,12 +349,17 @@ std::pair<std::string, unsigned> getExternalService(const char *serviceName)
 
     // NB: add even if no result, want non-result to be cached too
     std::string host, port;
-    if (fields.ordinality() == 3) // hostname,ip,port. NB: hostname may be missing, but still present as a blank field
+    if (fields.ordinality() == 4) // fqdn,hostname,ip,port. NB: fqdn and hostname may be missing, but still present as a blank fields
     {
-        host = fields.item(0); // hostname
+        // prefer fqdn, failover to ingress hostname, then ip
+        host = fields.item(0); // fqdn
         if (0 == host.length())
-            host = fields.item(1); // ip
-        port = fields.item(2);
+        {
+            host = fields.item(1); // hostname
+            if (0 == host.length())
+                host = fields.item(2); // ip
+        }
+        port = fields.item(3);
     }
     auto servicePair = std::make_pair(host, atoi(port.c_str()));
     externalServiceCache.add(serviceName, servicePair);

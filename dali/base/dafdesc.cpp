@@ -1405,10 +1405,12 @@ class CFileDescriptor:  public CFileDescriptorBase, implements ISuperFileDescrip
     // These will remain associated in the hook, until this CFileDescriptor object is destroyed, and removeMappedDafileSrvSecrets is called.
     void mapDafileSrvSecrets(IClusterInfo &cluster)
     {
+        PROGLOG("mapDafileSrvSecrets");
         Owned<INodeIterator> groupIter = cluster.queryGroup()->getIterator();
 
         ForEach(*groupIter)
         {
+            PROGLOG("mapDafileSrvSecrets - groupIter");
             INode &node = groupIter->query();
             StringBuffer endpointString;
             node.endpoint().getEndpointHostText(endpointString);
@@ -1507,11 +1509,16 @@ public:
             IPropertyTree *remoteStoragePlaneMeta = attr->queryPropTree("_remoteStoragePlane");
             if (remoteStoragePlaneMeta)
             {
+                dbglogYAML(remoteStoragePlaneMeta);
                 assertex(1 == clusters.ordinality()); // only one cluster per logical remote file supported/will have resolved to 1
                 remoteStoragePlane.setown(createStoragePlane(remoteStoragePlaneMeta));
                 if (attr->getPropBool("@_remoteSecure"))
                     mapDafileSrvSecrets(clusters.item(0));
+                else
+                    PROGLOG("Missing @_remoteSecure");
             }
+            else
+                PROGLOG("remoteStoragePlaneMeta = null");
         }
         else
             attr.setown(createPTree("Attr")); // doubt can happen
