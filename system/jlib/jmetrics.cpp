@@ -179,7 +179,11 @@ bool MetricsManager::addMetric(const std::shared_ptr<IMetric> &pMetric)
                 {
 #ifdef _DEBUG
                     // In debug throw an exception so the developer knows when a duplicate metric name is being added
-                    throw makeStringExceptionV(MSGAUD_operator, "addMetric - Attempted to add duplicate named metric with name '%s'", name.c_str());
+                    //throw makeStringExceptionV(MSGAUD_operator, "addMetric - Attempted to add duplicate named metric with name '%s'", name.c_str());
+
+                    PrintStackReport();
+                    Owned<IException> e = makeStringExceptionV(MSGAUD_operator, "addMetric - Attempted to add metric with invalid name ('%s')", name.c_str());
+                    EXCLOG(e);
 #else
                     // In release notify the operator of the error, but don't prevent the system from loading
                     OERRLOG("addMetric - Adding a duplicate named metric '%s', old metric replaced", name.c_str());
