@@ -87,6 +87,7 @@ public:
     void setForeign(const SocketEndpoint &daliip,bool checklocal);
     void clearForeign();
     bool isForeign(SocketEndpoint *ep=nullptr) const;
+    bool getForeignHost(StringBuffer & host) const;
     /*
      * External files are non-distributed files. Most of the time
      * they refer to an input source, like files on a drop-zone

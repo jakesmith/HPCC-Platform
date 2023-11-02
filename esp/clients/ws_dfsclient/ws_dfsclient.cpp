@@ -15,6 +15,7 @@
     limitations under the License.
 ############################################################################## */
 
+#include <unordered_map>
 #include <vector>
 
 #include "jliball.hpp"
@@ -800,6 +801,10 @@ IDistributedFile *lookupLegacyDFSFile(const char *logicalName, AccessMode access
     return createLegacyDFSFile(dfsFile);
 }
 
+static CConfigUpdateHook foreignRemoteTranslationConfigUpdateHook;
+static std::unordered_map<std::string, std::string> foreignTranslationMap;
+static CriticalSection foreignTranslationMapCS;
+
 IDistributedFile *lookup(CDfsLogicalFileName &lfn, IUserDescriptor *user, AccessMode accessMode, bool hold, bool lockSuperOwner, IDistributedFileTransaction *transaction, bool priviledged, unsigned timeout)
 {
     bool viaDali = false;
@@ -830,6 +835,36 @@ IDistributedFile *lookup(CDfsLogicalFileName &lfn, IUserDescriptor *user, Access
         viaDali = true;
     else
     {
+        if (isForeign)
+        {
+            auto updateFunc = [](const IPropertyTree *oldComponentConfiguration, const IPropertyTree *oldGlobalConfiguration)
+            {
+                Owned<IPropertyTree> globalConfig = getGlobalConfig();
+                Owned<IPropertyTreeIterator> iter = globalConfig->getElements("storage/foreignMap");
+                foreignTranslationMap.clear();
+                ForEach(*iter)
+                {
+                    const IPropertyTree &elem = iter->query();
+                    foreignTranslationMap[elem.queryProp("@foreignHost")] = elem.queryProp("@remoteName");
+                }
+            };
+
+            foreignRemoteTranslationConfigUpdateHook.installOnce(updateFunc, true);
+            StringBuffer host;
+            lfn.getForeignHost(host);
+
+            CLeavableCriticalBlock b(foreignTranslationMapCS);
+            auto it = foreignTranslationMap.find(host.str());
+            if (it != foreignTranslationMap.end())
+            {
+                StringBuffer remoteLfn("~remote::");
+                remoteLfn.append(it->second.c_str());
+                b.leave();
+                remoteLfn.append("::");
+                lfn.getScopes(remoteLfn);
+                lfn.set(remoteLfn);
+            }
+        }
         // switch to Dali if non-remote file, unless "dfsesp-localfiles" enabled (and non-external) 
         if (!lfn.isRemote())
         {

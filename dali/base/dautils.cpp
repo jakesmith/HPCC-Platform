@@ -495,6 +495,18 @@ bool CDfsLogicalFileName::isForeign(SocketEndpoint *ep) const
     return false;
 }
 
+bool CDfsLogicalFileName::getForeignHost(StringBuffer & host) const
+{
+    if (!isForeign())
+        return false;
+
+    const char * start = lfn.str() + strlen(FOREIGN_SCOPE "::");
+    const char * end = strstr(start,"::");
+    assertex(end);
+    host.append(end-start, start);
+    return true;
+}
+
 bool CDfsLogicalFileName::isExpanded() const
 {
     if (multi)
