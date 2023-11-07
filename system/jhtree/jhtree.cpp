@@ -573,10 +573,11 @@ public:
         filter->describe(out);
     }
 
-    virtual void mergeStats(CRuntimeStatisticCollection & stats) const
+    virtual void mergeStats(CRuntimeStatisticCollection & _stats) const
     {
         if (keyCursor)
-            keyCursor->mergeStats(stats);
+            keyCursor->mergeStats(_stats);
+        stats.ctx->mergeStats(_stats);
     }
 };
 

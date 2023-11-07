@@ -959,6 +959,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     {
     protected:
         CKeyedJoinSlave &activity;
+        CStatsContextLogger contextLogger;
+        CStatsCtxLoggerDeltaUpdater statsUpdater;
         IThorRowInterfaces *rowIf;
         IHThorKeyedJoinArg *helper = nullptr;
         std::vector<CThorExpandingRowArray *> queues;
@@ -995,7 +997,8 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
     public:
         CLookupHandler(CKeyedJoinSlave &_activity, IThorRowInterfaces *_rowIf, unsigned _batchProcessLimit) : threaded("CLookupHandler", this),
-            activity(_activity), rowIf(_rowIf), batchProcessLimit(_batchProcessLimit)
+            activity(_activity), rowIf(_rowIf), batchProcessLimit(_batchProcessLimit),
+            contextLogger(jhtreeCacheStatistics, thorJob), statsUpdater(jhtreeCacheStatistics, _activity, contextLogger)
         {
             helper = activity.helper;
         }
@@ -1084,6 +1087,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
         void stop()
         {
+            CStatsScopedDeltaUpdater scoped(statsUpdater);
             stopped = true;
             join();
             for (auto &queue : queues)
@@ -1155,6 +1159,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
         void flush()
         {
+            CStatsScopedThresholdDeltaUpdater scoped(statsUpdater);
             // NB: queueLookup() must be protected from re-entry by caller
             for (unsigned b=0; b<batchArrays.size(); b++)
             {
@@ -1283,7 +1288,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
         }
         void processRows(CThorExpandingRowArray &processing, unsigned partNo, IKeyManager *keyManager)
         {
-            CStatsScopedThresholdDeltaUpdater scoped(activity.statsUpdater);
+            CStatsScopedThresholdDeltaUpdater scoped(statsUpdater);
             for (unsigned r=0; r<processing.ordinality() && !stopped; r++)
             {
                 OwnedConstThorRow row = processing.getClear(r);
@@ -1308,7 +1313,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
                         joinGroup->setAtMostLimitHit(); // also clears existing rows
                         break;
                     }
-                    KLBlobProviderAdapter adapter(keyManager, &activity.contextLogger);
+                    KLBlobProviderAdapter adapter(keyManager, &contextLogger);
                     byte const * keyRow = keyManager->queryKeyBuffer();
                     size_t fposOffset = keyManager->queryRowSize() - sizeof(offset_t);
                     offset_t fpos = rtlReadBigUInt8(keyRow + fposOffset);
@@ -2222,8 +2227,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     CPartDescriptorArray allIndexParts;
     std::vector<unsigned> localIndexParts, localFetchPartMap;
     IArrayOf<IKeyIndex> tlkKeyIndexes;
-    CStatsContextLogger contextLogger;
-    CStatsCtxLoggerDeltaUpdater statsUpdater;
     Owned<IEngineRowAllocator> joinFieldsAllocator;
     OwnedConstThorRow defaultRight;
     unsigned joinFlags = 0;
@@ -2616,7 +2619,6 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
     }
     void stopReadAhead()
     {
-        CStatsScopedThresholdDeltaUpdater scoped(statsUpdater);
         keyLookupHandlers.flush();
         keyLookupHandlers.join(); // wait for pending handling, there may be more fetch items as a result
         fetchLookupHandlers.flushTS();
@@ -2938,7 +2940,7 @@ class CKeyedJoinSlave : public CSlaveActivity, implements IJoinProcessor, implem
 public:
     IMPLEMENT_IINTERFACE_USING(PARENT);
 
-    CKeyedJoinSlave(CGraphElementBase *_container) : PARENT(_container, keyedJoinActivityStatistics), readAheadThread(*this), contextLogger(jhtreeCacheStatistics, thorJob), statsUpdater(jhtreeCacheStatistics, *this, contextLogger)
+    CKeyedJoinSlave(CGraphElementBase *_container) : PARENT(_container, keyedJoinActivityStatistics), readAheadThread(*this)
     {
         helper = static_cast <IHThorKeyedJoinArg *> (queryHelper());
         reInit = 0 != (helper->getFetchFlags() & (FFvarfilename|FFdynamicfilename)) || (helper->getJoinFlags() & JFvarindexfilename);
@@ -3368,7 +3370,6 @@ public:
     }
     virtual void stop() override
     {
-        CStatsScopedDeltaUpdater scoped(statsUpdater);
         endOfInput = true; // signals to readAhead which is reading input, that is should stop asap.
 
         // could be blocked in readAhead(), because CJoinGroup's are no longer being processed
