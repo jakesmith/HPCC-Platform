@@ -655,6 +655,13 @@ void CMasterActivity::updateFileReadCostStats()
         for (unsigned i=0; i<readFiles.size();i++)
         {
             IDistributedFile *file = queryReadFile(i);
+            if (getKind() == TAKkeyedjoin || TAKindexread == getKind()
+            {
+                if (0 == i)
+                {
+                    // this is an index
+                }
+            }
             if (file)
             {
                 IDistributedSuperFile *super = file->querySuperFile();
@@ -664,10 +671,22 @@ void CMasterActivity::updateFileReadCostStats()
                     for (unsigned i=0; i<numSubFiles; i++)
                     {
                         IDistributedFile &subFile = super->querySubFile(i, true);
-                        stat_type numDiskReads = fileStats[fileIndex]->getStatisticSum(StNumDiskReads);
                         StringBuffer clusterName;
                         subFile.getClusterName(0, clusterName);
-                        diskAccessCost += money2cost_type(calcFileAccessCost(clusterName, 0, numDiskReads));
+                        stat_type numDiskReads = fileStats[fileIndex]->getStatisticSum(StNumDiskReads);
+                        if (isIndex)
+                        {
+                            for (auto &stat: mapping) // CStatisticMapping mapping{StNumDiskFetches .....}
+                            {
+                                stat_type val = fileStats[fileIndex]->getStatisticSum(stat);
+                                diskAccessCost += money2cost_type(calcFileAccessCost(clusterName, 0, val));
+                            }
+                        }
+                        else
+                        {
+                            stat_type numDiskReads = fileStats[fileIndex]->getStatisticSum(StNumDiskReads);
+                            diskAccessCost += money2cost_type(calcFileAccessCost(clusterName, 0, numDiskReads));
+                        }
                         subFile.addAttrValue("@numDiskReads", numDiskReads);
                         fileIndex++;
                     }
@@ -680,6 +699,12 @@ void CMasterActivity::updateFileReadCostStats()
                     diskAccessCost += money2cost_type(calcFileAccessCost(clusterName, 0, numDiskReads));
                     file->addAttrValue("@numDiskReads", numDiskReads);
                     fileIndex++;
+                }
+                if (isIndex)
+                {
+                        stat_type fetches = fileStats[fileIndex]->getStatisticSum(StNumDiskReads);
+                        diskAccessCost += money2cost_type(calcFileAccessCost(clusterName, 0, numDiskReads));
+
                 }
             }
         }
