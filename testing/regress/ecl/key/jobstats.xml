@@ -1,0 +1,15 @@
+<Dataset name='Result 1'>
+</Dataset>
+<Dataset name='Result 2'>
+ <Row><Result_2>9998</Result_2></Row>
+</Dataset>
+<Dataset name='Result 3'>
+ <Row><name>NumDiskWrites</name><value>9</value></Row>
+ <Row><name>NumDuplicateKeys</name><value>0</value></Row>
+ <Row><name>SizeDiskWrite</name><value>245760</value></Row>
+</Dataset>
+<Dataset name='Result 4'>
+ <Row><name>NumIndexScans</name><value>9998</value></Row>
+ <Row><name>NumIndexSeeks</name><value>9998</value></Row>
+ <Row><name>NumIndexWildSeeks</name><value>9996</value></Row>
+</Dataset>
