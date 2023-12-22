@@ -56,6 +56,13 @@ jobs:
         run: |
           echo "${{ toJSON(steps.vars.outputs) }})"
 
+      - name: Release HPCC-Platform
+        uses: ncipollo/release-action@v1.12.0
+        with:
+          allowUpdates: true
+          generateReleaseNotes: false
+          prerelease: ${{ contains(github.ref, '-rc') }}
+
   build-docker:
     name: Build Docker
     needs: preamble
@@ -142,7 +149,7 @@ jobs:
           for plugin in "${plugins[@]}"; do
             sudo rm -f ${{ needs.preamble.outputs.folder_build }}/CMakeCache.txt
             sudo rm -rf ${{ needs.preamble.outputs.folder_build }}/CMakeFiles
-            docker run --rm --mount ${{ needs.preamble.outputs.mount_platform }} --mount ${{ needs.preamble.outputs.mount_build }} ${{ steps.vars.outputs.docker_tag_candidate_base }} "${{ needs.preamble.outputs.gpg_import }} && \
+            docker run --rm --mount ${{ needs.preamble.outputs.mount_platform }} --mount ${{ needs.preamble.outputs.mount_build }} ${{ steps.vars.outputs.docker_tag_candidate_base }} "\
               cmake -S /hpcc-dev/HPCC-Platform -B /hpcc-dev/build ${{ needs.preamble.outputs.cmake_docker_config }} -DSIGN_MODULES_PASSPHRASE=${{ secrets.SIGN_MODULES_PASSPHRASE }} -DSIGN_MODULES_KEYID=${{ secrets.SIGN_MODULES_KEYID }} -D$plugin=ON -DCONTAINERIZED=OFF -DCPACK_STRIP_FILES=OFF ${{ matrix.cmake_options_extra }} && \
               cmake --build /hpcc-dev/build --parallel $(nproc) --target package" 
             # Disabled as not currently needed ---
