@@ -15,7 +15,8 @@ on:
         default: 'docker-ubuntu-22_04-containerized'
 
 jobs:
-  build-docker-ubuntu-22_04:
+  build-docker:
+    name: build-docker-${{ inputs.os }}
     if: ${{ contains('pull_request,push', github.event_name) }}
     uses: ./.github/workflows/build-docker.yml
     with:
@@ -27,7 +28,7 @@ jobs:
 
   main:
     name: K8s Regression Suite
-    needs: build-docker-ubuntu-22_04
+    needs: build-docker
     runs-on: ${{ inputs.os }}
     steps:
       - name: Checkout PR
