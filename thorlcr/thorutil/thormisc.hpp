@@ -310,13 +310,15 @@ public:
 class graph_decl CFileOwner : public CSimpleInterface, implements IInterface
 {
     OwnedIFile iFile;
+    ISpillTracker *spillTracker;
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
-    CFileOwner(IFile *_iFile) : iFile(_iFile)
+    CFileOwner(IFile *_iFile, ISpillTracker *_spillTracker) : iFile(_iFile), spillTracker(_spillTracker)
     {
     }
     ~CFileOwner()
     {
+        spillTracker->deconsume(iFile->size());
         iFile->remove();
     }
     IFile &queryIFile() const { return *iFile; }

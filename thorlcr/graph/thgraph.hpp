@@ -1094,7 +1094,14 @@ inline activity_id createCompoundActSeqId(activity_id actId, byte seq)
     return actId;
 }
 
-class graph_decl CActivityBase : implements CInterfaceOf<IThorRowInterfaces>, implements IExceptionHandler
+
+interface ISpillTracker
+{
+    void consume(size_t sz) = 0;
+    void deconsume(size_t sz) = 0;
+};
+
+class graph_decl CActivityBase : implements CInterfaceOf<IThorRowInterfaces>, implements IExceptionHandler, implements ISpillTracker
 {
     Owned<IEngineRowAllocator> rowAllocator;
     Owned<IOutputRowSerializer> rowSerializer;

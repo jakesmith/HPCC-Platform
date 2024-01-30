@@ -1659,9 +1659,10 @@ protected:
         Owned<IFile> iFile = createIFile(tempName.str());
         VStringBuffer spillPrefixStr("%sRowCollector(%d)", tracingPrefix.str(), spillPriority);
         spillableRows.save(*iFile, spillCompInfo, false, spillPrefixStr.str()); // saves committed rows
-        spillFiles.append(new CFileOwner(iFile.getLink()));
+        spillFiles.append(new CFileOwner(iFile.getLink(), spillTracker));
         ++overflowCount;
         statOverflowCount.fastAdd(1); // NB: this is total over multiple uses of this class
+        spillTracker->consume(iFile->size());
         statSizeSpill.fastAdd(iFile->size());
         statSpillCycles.fastAdd(spillTimer.elapsedCycles());
         return true;

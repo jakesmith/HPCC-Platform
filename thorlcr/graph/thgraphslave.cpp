@@ -563,6 +563,19 @@ unsigned __int64 CSlaveActivity::queryLocalCycles() const
     return localCycles-blockedCycles;
 }
 
+void CSlaveActivity::consume(size_t sz)
+{
+    total + sz;
+    if (total>peak)
+        peak = sz;
+    queryGraph().consume(sz);
+}
+
+void CSlaveActivity::deconsume(size_t sz)
+{
+    total += sz;
+}
+
 void CSlaveActivity::serializeStats(MemoryBuffer &mb)
 {
     CriticalBlock b(crit); // JCSMORE not sure what this is protecting..
