@@ -448,6 +448,8 @@ class CMPConnectThread: public Thread
     ISocket *listensock;
     CMPServer *parent;
     int mpSoMaxConn;
+    Owned<IThreadPool> threadPool;
+
     Owned<IAllowListHandler> allowListCallback;
     void checkSelfDestruct(void *p,size32_t sz);
 
@@ -478,6 +480,7 @@ public:
     {
         return allowListCallback;
     }
+    void handleAcceptedSocket(ISocket *sock);
 };
 
 class PingPacketHandler;
@@ -2042,6 +2045,7 @@ CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port, bool _list
     parent = _parent;
     listen = _listen;
     mpSoMaxConn = 0;
+    bool useThreadPool = true;
 #ifndef _CONTAINERIZED
     Owned<IPropertyTree> env = getHPCCEnvironment();
     if (env)
@@ -2068,9 +2072,11 @@ CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port, bool _list
                 parent->mpTraceLevel = MPVerboseMsgThreshold;
                 break;
         }
+        useThreadPool = env->getPropInt("EnvSettings/useThreadPool", true);
     }
 #else
     parent->mpTraceLevel = getComponentConfigSP()->getPropInt("logging/@detail", InfoMsgThreshold);
+    useThreadPool = getComponentConfigSP()->getPropBool("useThreadPool", true);
 #endif
 
     if (mpSoMaxConn)
@@ -2134,6 +2140,50 @@ CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port, bool _list
     if (parent->useTLS)
         secureContextServer.setown(createSecureSocketContextSecretSrv("local", nullptr, true));
 #endif
+    if (useThreadPool)
+    {
+        class CFactory : public CInterfaceOf<IThreadFactory>
+        {
+            CMPConnectThread &owner;
+        public:
+            CFactory(CMPConnectThread &_owner) : owner(_owner)
+            {
+            }
+        // IThreadFactory
+            IPooledThread *createNew() override
+            {
+                class CMPConnectionThread : public CInterfaceOf<IPooledThread>
+                {
+                    CMPConnectThread &owner;
+                    Owned<ISocket> sock;
+                public:
+                    CMPConnectionThread(CMPConnectThread &_owner) : owner(_owner)
+                    {
+                    }
+                // IPooledThread
+                    virtual void init(void *param) override
+                    {
+                        sock.set((ISocket *)param);
+                    }
+                    virtual void threadmain() override
+                    {
+                        owner.handleAcceptedSocket(sock);
+                    }
+                    virtual bool stop() override
+                    {
+                        return true;
+                    }
+                    virtual bool canReuse() const override
+                    {
+                        return true;
+                    }
+                };
+                return new CMPConnectionThread(owner);
+            }
+        };
+        Owned<IThreadFactory> factory = new CFactory(*this);
+        threadPool.setown(createThreadPool("MPConnectPool", factory));
+    }
 }
 
 void CMPConnectThread::checkSelfDestruct(void *p,size32_t sz)
@@ -2181,6 +2231,178 @@ void CMPConnectThread::startPort(unsigned short port)
     Thread::start();
 }
 
+void CMPConnectThread::handleAcceptedSocket(ISocket *_sock)
+{
+    SocketEndpoint peerEp;
+    _sock->getPeerEndpoint(peerEp);
+    Linked<ISocket> sock = _sock;
+    try
+    {
+#if defined(_USE_OPENSSL)
+        if (parent->useTLS)
+        {
+            Owned<ISecureSocket> ssock = secureContextServer->createSecureSocket(sock.getClear());
+            int tlsTraceLevel = SSLogMin;
+            if (parent->mpTraceLevel >= MPVerboseMsgThreshold)
+                tlsTraceLevel = SSLogMax;
+            int status = ssock->secure_accept(tlsTraceLevel);
+            if (status < 0)
+            {
+                ssock->close();
+                PROGLOG("MP Connect Thread: failed to accept secure connection");
+                return;
+            }
+            sock.setown(ssock.getClear());
+        }
+#endif // OPENSSL
+
+#ifdef _FULLTRACE
+        StringBuffer s;
+        SocketEndpoint ep1;
+        sock->getPeerEndpoint(ep1);
+        PROGLOG("MP: Connect Thread: socket accepted from %s",ep1.getEndpointHostText(s).str());
+#endif
+
+        sock->set_keep_alive(true);
+
+        size32_t rd = 0;
+        SocketEndpoint _remoteep;
+        SocketEndpoint hostep;
+        ConnectHdr connectHdr;
+        bool legacyClient = false;
+
+        // NB: min size is ConnectHdr.id for legacy clients, can thus distinguish old from new
+        traceSlowReadTms("MP: initial accept packet from", sock, &connectHdr, sizeof(connectHdr.id), sizeof(connectHdr), rd, CONFIRM_TIMEOUT, CONFIRM_TIMEOUT_INTERVAL);
+        if (0 == rd)
+        {
+            if (parent->mpTraceLevel >= MPVerboseMsgThreshold)
+            {
+                // cannot get peer addresss as socket state is now ss_shutdown (unless we want to allow this in getPeerEndpoint())
+                PROGLOG("MP Connect Thread: connect with no msg received, assumed port monitor check");
+            }
+            sock->close();
+            return;
+        }
+        else
+        {
+            if (rd == sizeof(connectHdr.id)) // legacy client
+            {
+                legacyClient = true;
+                connectHdr.hdr.size = sizeof(PacketHeader);
+                connectHdr.hdr.tag = TAG_SYS_BCAST;
+                connectHdr.hdr.flags = 0;
+                connectHdr.hdr.version = MP_PROTOCOL_VERSION;
+                connectHdr.setRole(0); // unknown
+            }
+            else if (rd < sizeof(connectHdr.id) || rd > sizeof(connectHdr))
+            {
+                // not sure how to get here as this is not one of the possible outcomes of above: rd == 0 or rd == sizeof(id) or an exception
+                StringBuffer errMsg("MP Connect Thread: invalid number of connection bytes serialized from ");
+                peerEp.getEndpointHostText(errMsg);
+                FLLOG(MCoperatorWarning, unknownJob, "%s", errMsg.str());
+                sock->close();
+                return;
+            }
+        }
+
+        if (allowListCallback)
+        {
+            StringBuffer ipStr;
+            peerEp.getHostText(ipStr);
+            StringBuffer responseText; // filled if denied, NB: if amount sent is > sizeof(ConnectHdr) we can differentiate exception from success
+            if (!allowListCallback->isAllowListed(ipStr, connectHdr.getRole(), &responseText))
+            {
+                Owned<IException> e = makeStringException(-1, responseText);
+                OWARNLOG(e, nullptr);
+
+                if (legacyClient)
+                {
+                    /* NB: legacy client can't handle exception response
+                        * Acknowledge legacy connection, then close socket
+                        * The effect will be the client sees an MPERR_link_closed
+                        */
+                    size32_t reply = sizeof(connectHdr.id);
+                    sock->write(&reply, sizeof(reply));
+                }
+                else
+                {
+                    MemoryBuffer mb;
+                    DelayedSizeMarker marker(mb);
+                    serializeException(e, mb);
+                    marker.write();
+                    sock->write(mb.toByteArray(), mb.length());
+                }
+
+                sock->close();
+                return;
+            }
+        }
+
+        connectHdr.id[0].get(_remoteep);
+        connectHdr.id[1].get(hostep);
+
+        unsigned __int64 addrval = DIGIT1*connectHdr.id[0].ip[0] + DIGIT2*connectHdr.id[0].ip[1] + DIGIT3*connectHdr.id[0].ip[2] + DIGIT4*connectHdr.id[0].ip[3] + connectHdr.id[0].port;
+#ifdef _TRACE
+        PROGLOG("MP: Connect Thread: addrval = %" I64F "u", addrval);
+#endif
+
+        if (_remoteep.isNull() || hostep.isNull())
+        {
+            StringBuffer errMsg;
+            SocketEndpointV4 zeroTest[2];
+            memset(zeroTest, 0x0, sizeof(zeroTest));
+            if (memcmp(connectHdr.id, zeroTest, sizeof(connectHdr.id)))
+            {
+                // JCSMORE, I think _remoteep really must/should match a IP of this local host
+                errMsg.append("MP Connect Thread: invalid remote and/or host ep serialized from ");
+                peerEp.getEndpointHostText(errMsg);
+                FLLOG(MCoperatorWarning, unknownJob, "%s", errMsg.str());
+            }
+            else if (parent->mpTraceLevel >= MPVerboseMsgThreshold)
+            {
+                // all zeros msg received
+                errMsg.append("MP Connect Thread: connect with empty msg received, assumed port monitor check from ");
+                peerEp.getEndpointHostText(errMsg);
+                PROGLOG("%s", errMsg.str());
+            }
+            sock->close();
+            return;
+        }
+#ifdef _FULLTRACE       
+        StringBuffer tmp1;
+        _remoteep.getEndpointHostText(tmp1);
+        tmp1.append(' ');
+        hostep.getEndpointHostText(tmp1);
+        PROGLOG("MP: Connect Thread: after read %s",tmp1.str());
+#endif
+        checkSelfDestruct(&connectHdr.id[0],sizeof(connectHdr.id));
+        Owned<CMPChannel> channel = parent->lookup(_remoteep);
+        if (!channel->attachSocket(sock.getClear(),_remoteep,hostep,false,&rd,addrval))
+        {
+#ifdef _FULLTRACE       
+            PROGLOG("MP Connect Thread: lookup failed");
+#endif
+        }
+        else
+        {
+#ifdef _TRACE
+            StringBuffer str1;
+            StringBuffer str2;
+            LOG(MCdebugInfo, unknownJob, "MP Connect Thread: connected to %s",_remoteep.getEndpointHostText(str1).str());
+#endif
+        }
+#ifdef _FULLTRACE       
+        PROGLOG("MP: Connect Thread: after write");
+#endif
+    }
+    catch (IException *e)
+    {
+        FLLOG(MCoperatorWarning, unknownJob, e,"MP Connect Thread: Failed to make connection(1)");
+        sock->close();
+        e->Release();
+    }
+}
+
 int CMPConnectThread::run()
 {
 #ifdef _TRACE
@@ -2201,6 +2423,12 @@ int CMPConnectThread::run()
         }
         if (sock)
         {
+            if (threadPool)
+                threadPool->start(sock);
+            else
+                handleAcceptedSocket(sock);
+            continue;
+
             try
             {
 #if defined(_USE_OPENSSL)
