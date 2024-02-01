@@ -2038,6 +2038,7 @@ bool CMPChannel::sendPingReply(unsigned timeout,bool identifyself)
     return ret;
 }
     
+static constexpr unsigned defaultAcceptThreadPoolSize = 100;
 // --------------------------------------------------------
 CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port, bool _listen)
     : Thread("MP Connection Thread")
@@ -2045,7 +2046,7 @@ CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port, bool _list
     parent = _parent;
     listen = _listen;
     mpSoMaxConn = 0;
-    bool useThreadPool = true;
+    unsigned acceptThreadPoolSize = defaultAcceptThreadPoolSize;
 #ifndef _CONTAINERIZED
     Owned<IPropertyTree> env = getHPCCEnvironment();
     if (env)
@@ -2072,11 +2073,11 @@ CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port, bool _list
                 parent->mpTraceLevel = MPVerboseMsgThreshold;
                 break;
         }
-        useThreadPool = env->getPropInt("EnvSettings/useThreadPool", true);
+        acceptThreadPoolSize = env->getPropInt("EnvSettings/acceptThreadPoolSize", defaultAcceptThreadPoolSize);
     }
 #else
     parent->mpTraceLevel = getComponentConfigSP()->getPropInt("logging/@detail", InfoMsgThreshold);
-    useThreadPool = getComponentConfigSP()->getPropBool("useThreadPool", true);
+    acceptThreadPoolSize = getComponentConfigSP()->getPropBool("acceptThreadPoolSize", defaultAcceptThreadPoolSize);
 #endif
 
     if (mpSoMaxConn)
@@ -2140,7 +2141,7 @@ CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port, bool _list
     if (parent->useTLS)
         secureContextServer.setown(createSecureSocketContextSecretSrv("local", nullptr, true));
 #endif
-    if (useThreadPool)
+    if (acceptThreadPoolSize)
     {
         class CFactory : public CInterfaceOf<IThreadFactory>
         {
@@ -2182,7 +2183,7 @@ CMPConnectThread::CMPConnectThread(CMPServer *_parent, unsigned port, bool _list
             }
         };
         Owned<IThreadFactory> factory = new CFactory(*this);
-        threadPool.setown(createThreadPool("MPConnectPool", factory));
+        threadPool.setown(createThreadPool("MPConnectPool", factory, nullptr, acceptThreadPoolSize));
     }
 }
 
