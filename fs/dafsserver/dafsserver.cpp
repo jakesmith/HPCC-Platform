@@ -1240,8 +1240,7 @@ public:
     }
     virtual void restoreCursor(MemoryBuffer &src) override
     {
-        throw makeStringExceptionV(0, "restoreCursor not supported in: %s", typeid(*this).name());
-        throwUnimplemented();
+        UNIMPLEMENTED_C;
     }
     virtual void flushStatistics(CClientStats &stats) override
     {
@@ -2402,7 +2401,7 @@ public:
     }
     virtual void restoreCursor(MemoryBuffer &src) override
     {
-        throw makeStringExceptionV(0, "restoreCursor not supported in: %s", typeid(*this).name());
+        UNIMPLEMENTED_C;
     }
     virtual StringBuffer &getInfoStr(StringBuffer &out) const override
     {
