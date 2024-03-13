@@ -2845,6 +2845,7 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
         MemoryBuffer msg;
         bool selecthandled;
         size32_t left;
+        bool gotSize = false;
         StructArrayOf<OpenFileInfo> openFiles;
         Owned<IDirectoryIterator> opendir;
         unsigned            lasttick, lastInactiveTick;
@@ -2915,92 +2916,91 @@ class CRemoteFileServer : implements IRemoteFileServer, public CInterface
             }
         }
         bool isRowServiceClient() const { return calledByRowService; }
-        bool notifySelected(ISocket *sock,unsigned selected)
+        bool notifySelected(ISocket *sock, unsigned selected)
         {
             if (TF_TRACE_FULL)
                 PROGLOG("notifySelected(%p)",this);
             if (sock!=socket)
                 WARNLOG("notifySelected - invalid socket passed");
-            size32_t avail = (size32_t)socket->avail_read();
-            if (avail)
-                touch();
-            else if (left)
+            touch();
+            try
             {
-                WARNLOG("notifySelected: Closing mid packet, %d remaining", left);
-                msg.clear();
-                parent->notify(this, msg); // notifying of graceful close
-                return false;
-            }
-            if (left==0)
-            {
-                try
+                if (!gotSize)
                 {
-                    left = avail?receiveDaFsBufferSize(socket):0;
-                }
-                catch (IException *e)
-                {
-                    EXCLOG(e,"notifySelected(1)");
-                    e->Release();
-                    left = 0;
-                }
-                if (left)
-                {
-                    // TLS TODO: avail_read() may not return accurate amount of pending bytes
-                    avail = (size32_t)socket->avail_read();
-                    try
+                    // left represents amount we have read of leading size32_t (normally expect to be read in 1 go)
+                    size32_t gotLength;
+                    byte *p = (byte *)&gotLength;
+                    size32_t szRead = sock->rawread(p+left, sizeof(gotLength)-left);
+                    left += szRead;
+                    if (left == sizeof(gotLength))
                     {
-                        msg.ensureCapacity(left);
+                        gotSize = true;
+                        _WINREV(gotLength);
+                        left = gotLength;
                     }
-                    catch (IException *e)
+                }
+                else // left represents length of message left to receive
+                {
+                    if (0 == msg.capacity()) // 1st time
                     {
-                        EXCLOG(e,"notifySelected(2)");
-                        e->Release();
-                        left = 0;
-                        // if too big then corrupted packet so read avail to try and consume
-                        char fbuf[1024];
-                        while (avail)
+                        try
                         {
-                            size32_t rd = avail>sizeof(fbuf)?sizeof(fbuf):avail;
-                            try
-                            {
-                                socket->read(fbuf, rd); // don't need timeout here
-                                avail -= rd;
-                            }
-                            catch (IException *e)
-                            {
-                                EXCLOG(e,"notifySelected(2) flush");
-                                e->Release();
-                                break;
-                            }
+                            msg.ensureCapacity(left);
                         }
-                        avail = 0;
-                        left = 0;
+                        catch (IException *e)
+                        {
+                            EXCLOG(e,"notifySelected(1)");
+                            e->Release();
+                            gotSize = false;
+                            left = 0;
+                            // if too big then corrupted packet so read avail to try and consume
+                            // JCSMORE this seems a bit pointless, it used to only read last 'avail' bef
+                            char fbuf[1024];
+                            while (avail)
+                            {
+                                try
+                                {
+                                    socket->rawread(fbuf, 1024);
+                                }
+                                catch (IException *e)
+                                {
+                                    EXCLOG(e,"notifySelected(2)");
+                                    e->Release();
+                                    break;
+                                }
+                            }
+                            gotSize = false;
+                            left = 0;
+                            parent->onCloseSocket(client, 5);
+                            return false;
+                        }
+                    }
+                    szRead = sock->rawread(p+left, left);
+                    left -= szRead;
+                    if (0 == left)
+                    {
+                        gotSize = false; // reset for next packet
+                        parent->notify(this, msg); // consumes msg
+                        return true;
                     }
                 }
             }
-            size32_t toread = left>avail?avail:left;
-            if (toread)
+            catch (IJSOCK_Exception *e)
             {
-                try
+                if (JSOCKERR_graceful_close == e->errorCode())
                 {
-                    socket->read(msg.reserve(toread), toread);  // don't need timeout here
+                    parent->onCloseSocket(client, 5);
+                    if (gotSize)
+                        WARNLOG("notifySelected: Closing mid packet, %u remaining", left);
+                    else
+                        WARNLOG("notifySelected: Closing mid packet. Received %u bytes of initial size", left);
                 }
-                catch (IException *e)
-                {
+                else
                     EXCLOG(e,"notifySelected(3)");
-                    e->Release();
-                    toread = left;
-                    msg.clear();
-                }
+                e->Release();
             }
-            if (TF_TRACE_FULL)
-                PROGLOG("notifySelected %d,%d",toread,left);
-            left -= toread;
-            if (left==0)
-            {
-                // DEBUG
-                parent->notify(this, msg); // consumes msg
-            }
+            gotSize = false;
+            left = 0;
             return false;
         }
 
@@ -5536,6 +5536,8 @@ public:
                         sock.setown(acceptsock->accept(true));
                         if (!sock||stopping)
                             break;
+                        bool prevBlocking = sock->set_nonblock(true);
+                        PROGLOG("prevBlocking=%s", boolToStr(prevBlocking));
                     }
                     catch (IException *e)
                     {

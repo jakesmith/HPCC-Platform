@@ -512,6 +512,7 @@ public:
     void        read(void* buf, size32_t min_size, size32_t max_size, size32_t &size_read,unsigned timeoutsecs);
     void        readtms(void* buf, size32_t min_size, size32_t max_size, size32_t &size_read, unsigned timedelaysecs);
     void        read(void* buf, size32_t size);
+    size32_t    rawread(void* buf, size32_t size);
     size32_t    write(void const* buf, size32_t size);
     size32_t    writetms(void const* buf, size32_t size, unsigned timeoutms=WAIT_FOREVER);
     size32_t    write_multiple(unsigned num,void const**buf, size32_t *size);
@@ -2152,7 +2153,52 @@ EintrRetry:
     stats.ioReadCycles += elapsedCycles;
 }
 
+size32_t CSocket::rawread(void *buf, size32_t size)
+{
+    if (0 == size)
+        return 0;
+    cycle_t startcycles = get_cycles_now();
+    size32_t maxReadSize = 1024;
+    size32_t totalRead = 0;
+    while (true)
+    {
+        if (size<maxReadSize) 
+            maxReadSize = size;
+        int readBytes = ::read(sock, buf, maxReadSize);
+        if (-1 == readBytes)
+        {
+            if (errno != EAGAIN && errno != EWOULDBLOCK) // if EGAIN or EWOULDBLOCK - no more data to read
+            {
+                // Handle errors appropriately
+                LOGERR2(errno, 5, "read");
+                if ((errno==JSE_CONNRESET)||(errno==JSE_INTR)||(errno==JSE_CONNABORTED))
+                {
+                    errclose();
+                    errno = JSOCKERR_broken_pipe;
+                }
+                THROWJSOCKEXCEPTION(errno);
+            }
+        }
+        else if (0 == readBytes)
+        {
+            state = ss_shutdown;
+            THROWJSOCKEXCEPTION(JSOCKERR_graceful_close);
+        }
 
+        totalRead += readBytes;
+        buf = (char*)buf + readBytes;
+        size -= readBytes;
+    }
+
+    cycle_t elapsedCycles = get_cycles_now()-startcycles;
+    STATS.reads++;
+    STATS.readsize += totalRead;
+    STATS.readtimecycles +=elapsedCycles;
+    stats.ioReads++;
+    stats.ioReadBytes += totalRead;
+    stats.ioReadCycles += elapsedCycles;
+    return totalRead;
+}
 
 size32_t CSocket::write(void const* buf, size32_t size)
 {

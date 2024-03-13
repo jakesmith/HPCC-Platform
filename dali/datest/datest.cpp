@@ -3329,6 +3329,13 @@ void usage(const char *error=NULL)
 struct ReleaseAtomBlock { ~ReleaseAtomBlock() { releaseAtoms(); } };
 
 
+void aPause(const char *msg=nullptr)
+{
+    PROGLOG("%s: press a key", msg ? msg : "pause");
+    getchar();
+    PROGLOG("continuing...");
+}
+
 int main(int argc, char* argv[])
 {   
     ReleaseAtomBlock rABlock;
@@ -3337,6 +3344,33 @@ int main(int argc, char* argv[])
     EnableSEHtoExceptionMapping();
 
     try {
+
+        {
+            SocketEndpoint ep;
+            ep.set("localhost", 7100);
+            Owned<ISocket> sock = ISocket::connect_timeout(ep, 1000*60);
+
+            size32_t sz = 10;
+            MemoryBuffer mb;
+            byte *tgt = (byte *)mb.reserveTruncate(sizeof(sz));
+            size32_t rsz = sz;
+            _WINREV(rsz);
+            memcpy(tgt, &rsz, sizeof(rsz));
+            aPause();
+            sock->write(&rsz, 1);
+            aPause();
+            sock->write(((byte *)&rsz)+1, 1);
+            aPause();
+            sock->write(((byte *)&rsz)+2, 2);
+            aPause();
+            tgt = (byte *)mb.reserve(sz);
+            memcpy(tgt, "1234567890", sz);
+            sock->write(tgt, 5);
+            aPause();
+            sock->write(tgt+5, 5);
+            aPause("END");
+        }
+
         StringBuffer cmd;
         splitFilename(argv[0], NULL, NULL, &cmd, NULL);
         StringBuffer lf;

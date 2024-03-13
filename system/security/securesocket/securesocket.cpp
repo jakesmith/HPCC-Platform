@@ -177,6 +177,7 @@ public:
     virtual int wait_read(unsigned timeoutms);
     virtual void read(void* buf, size32_t min_size, size32_t max_size, size32_t &size_read,unsigned timeoutsecs);
     virtual void readtms(void* buf, size32_t min_size, size32_t max_size, size32_t &size_read, unsigned timeoutms);
+    virtual size32_t rawread(void* buf, size32_t size) override;
     virtual size32_t write(void const* buf, size32_t size);
     virtual size32_t writetms(void const* buf, size32_t size, unsigned timeoutms=WAIT_FOREVER);
 
@@ -880,6 +881,41 @@ void CSecureSocket::readtms(void* buf, size32_t min_size, size32_t max_size, siz
 void CSecureSocket::read(void* buf, size32_t min_size, size32_t max_size, size32_t &size_read,unsigned timeoutsecs)
 {
     readTimeout(buf, min_size, max_size, size_read, timeoutsecs, true);
+}
+
+size32_t CSecureSocket::rawread(void* buf, size32_t size)
+{
+    size32_t maxReadSize = 1024;
+    size32_t totalRead = 0;
+    while (true)
+    {
+        if (size<maxReadSize) 
+            maxReadSize = size;
+        ERR_clear_error();
+        int readBytes = SSL_read(m_ssl, (char*)buf, size);
+        if (0 == readBytes)
+            throw createJSocketException(JSOCKERR_graceful_close, nullptr);
+
+        int ssl_err = SSL_get_error(m_ssl, readBytes);
+        if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE)
+            return totalRead;
+        else
+        {
+            char errbuf[512];
+            ERR_error_string_n(ssl_err, errbuf, 512);
+            ERR_clear_error();
+            VStringBuffer errmsg("SSL_read error %d - %s", ssl_err, errbuf);
+            if (m_loglevel >= SSLogMax)
+                DBGLOG("Warning: %s", errmsg.str());
+            throw createJSocketException(ssl_err, errmsg);
+        }
+        totalRead += readBytes;
+        buf = (char*)buf + readBytes;
+        size -= readBytes;
+        if (0 == size)
+            return totalRead;
+    }
+    return totalRead;
 }
 
 size32_t CSecureSocket::write(void const* buf, size32_t size)
