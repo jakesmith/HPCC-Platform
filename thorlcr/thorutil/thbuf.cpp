@@ -71,7 +71,7 @@ class CSmartRowBuffer: public CSimpleInterface, implements ISmartRowBuffer, impl
     ThorRowQueue *out;
     Linked<IFile> file;
     Owned<IFileIO> fileio;
-    SpinLock lock;
+    CriticalSection lock;
     bool waiting;
     Semaphore waitsem;
     bool waitflush;
@@ -140,7 +140,7 @@ class CSmartRowBuffer: public CSimpleInterface, implements ISmartRowBuffer, impl
             return;
         }
         if (!fileio) {
-            SpinUnblock unblock(lock);
+            CriticalUnblock unblock(lock);
             fileio.setown(file->open(IFOcreaterw));
             if (!fileio)
             {
@@ -154,7 +154,7 @@ class CSmartRowBuffer: public CSimpleInterface, implements ISmartRowBuffer, impl
         if (!waiting) {
             mb.ensureCapacity(blocksize);
             {
-                SpinUnblock unblock(lock);
+                CriticalUnblock unblock(lock);
                 byte b;
                 for (unsigned i=0;i<csavein.rq->ordinality();i++) {
                     if (waiting)
@@ -177,7 +177,7 @@ class CSmartRowBuffer: public CSimpleInterface, implements ISmartRowBuffer, impl
         if (!waiting) {
             nb = (mb.length()+blocksize-1)/blocksize;
             blk = allocblk(nb);
-            SpinUnblock unblock(lock);
+            CriticalUnblock unblock(lock);
             if (mb.length()<nb*blocksize) { // bit overkill!
                 size32_t left = nb*blocksize-mb.length();
                 memset(mb.reserve(left),0,left);
@@ -215,7 +215,7 @@ class CSmartRowBuffer: public CSimpleInterface, implements ISmartRowBuffer, impl
         diskin.remove(0);  // better as q but given reading from disk...
         diskinlen.remove(0);  
         {
-            SpinUnblock unblock(lock);
+            CriticalUnblock unblock(lock);
             MemoryAttr ma;
             size32_t readBlockSize = nb*blocksize;
             byte *buf = (byte *)ma.allocate(readBlockSize);
@@ -293,7 +293,7 @@ public:
     {
         REENTRANCY_CHECK(putrecheck)
         size32_t sz = thorRowMemoryFootprint(serializer, row);
-        SpinBlock block(lock);
+        CriticalBlock block(lock);
         if (eoi) {
             ReleaseThorRow(row);
             
@@ -315,7 +315,7 @@ public:
 #ifdef _FULL_TRACE
         ActPrintLog(activity, "SmartBuffer stop %x",(unsigned)(memsize_t)this);
 #endif
-        SpinBlock block(lock);
+        CriticalBlock block(lock);
 #ifdef _DEBUG
         if (waiting)
         {
@@ -330,7 +330,7 @@ public:
         while (NULL == in)
         {
             waiting = true;
-            SpinUnblock unblock(lock);
+            CriticalUnblock unblock(lock);
             waitsem.wait();
         }
         while (out&&out->ordinality()) 
@@ -356,7 +356,7 @@ public:
         assertex(!waiting);  // reentrancy checks
         for (;;) {
             {
-                SpinBlock block(lock);
+                CriticalBlock block(lock);
                 if (out->ordinality()) {
                     ret = out->dequeue();
                     break;
@@ -399,7 +399,7 @@ public:
 #ifdef _FULL_TRACE
         ActPrintLog(activity, "SmartBuffer flush %x",(unsigned)(memsize_t)this);
 #endif
-        SpinBlock block(lock);
+        CriticalBlock block(lock);
         if (eoi) return;
         for (;;) {
             assertex(in);  // reentry check
@@ -412,7 +412,7 @@ public:
             if (out&&!out->ordinality()&&!diskin.ordinality()&&!in->ordinality()) 
                 break;
             waitflush = true;
-            SpinUnblock unblock(lock);
+            CriticalUnblock unblock(lock);
             while (!waitflushsem.wait(1000*60))
                 ActPrintLogEx(&activity->queryContainer(), thorlog_null, MCwarning, "CSmartRowBuffer::flush stalled");
         }
@@ -432,7 +432,7 @@ class CSmartRowInMemoryBuffer: public CSimpleInterface, implements ISmartRowBuff
     IThorRowInterfaces *rowIf;
     ThorRowQueue *in;
     size32_t insz;
-    SpinLock lock; // MORE: This lock is held for quite long periods.  I suspect it could be significantly optimized.
+    CriticalSection lock; // MORE: This lock is held for quite long periods.  I suspect it could be significantly optimized.
     bool waitingin;
     Semaphore waitinsem;
     bool waitingout;
@@ -483,13 +483,13 @@ public:
 #endif
         }
         {
-            SpinBlock block(lock);
+            CriticalBlock block(lock);
             if (!eoi) {
                 assertex(in);  // reentry check
                 while ((sz+insz>blocksize)&&insz) {
                     waitingin = true;
                     {
-                        SpinUnblock unblock(lock);
+                        CriticalUnblock unblock(lock);
                         waitinsem.wait();
                     }
                     if (eoi)
@@ -517,7 +517,7 @@ public:
     {
         REENTRANCY_CHECK(getrecheck)
         const void * ret;
-        SpinBlock block(lock);
+        CriticalBlock block(lock);
         assertex(!waitingout);  // reentrancy checks
         for (;;) {
             if (in->ordinality()) {
@@ -541,7 +541,7 @@ public:
             }
             assertex(!waitingout);  // reentrancy check
             waitingout = true;
-            SpinUnblock unblock(lock);
+            CriticalUnblock unblock(lock);
             waitoutsem.wait();
         }
         if (waitingin) {
@@ -556,7 +556,7 @@ public:
 #ifdef _FULL_TRACE
         ActPrintLog(activity, "CSmartRowInMemoryBuffer stop %x",(unsigned)(memsize_t)this);
 #endif
-        SpinBlock block(lock);
+        CriticalBlock block(lock);
 #ifdef _DEBUG
         if (waitingout) {
             ActPrintLogEx(&activity->queryContainer(), thorlog_null, MCwarning, "CSmartRowInMemoryBuffer::stop while nextRow waiting");
@@ -577,14 +577,14 @@ public:
 
 //  offset_t getPosition()
 //  {
-//      SpinBlock block(lock);
+//      CriticalBlock block(lock);
 //      return pos;
 //  }
 
     void flush()
     {
         // I think flush should wait til all rows read
-        SpinBlock block(lock);
+        CriticalBlock block(lock);
         eoi = true;
         for (;;) {
             assertex(in);  // reentry check
@@ -595,7 +595,7 @@ public:
             if (!in->ordinality()) 
                 break;
             waitingin = true;
-            SpinUnblock unblock(lock);
+            CriticalUnblock unblock(lock);
             while (!waitinsem.wait(1000*60))
                 ActPrintLogEx(&activity->queryContainer(), thorlog_null, MCwarning, "CSmartRowInMemoryBuffer::flush stalled");
         }
