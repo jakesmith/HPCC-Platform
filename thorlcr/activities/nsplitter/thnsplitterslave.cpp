@@ -80,6 +80,7 @@ class NSplitterSlaveActivity : public CSlaveActivity, implements ISharedSmartBuf
     typedef CSlaveActivity PARENT;
 
     bool spill = false;
+    bool newSplitter = false;
     bool eofHit = false;
     bool writeBlocked = false, pagedOut = false;
     CriticalSection connectLock, prepareInputLock, writeAheadCrit;
@@ -161,6 +162,12 @@ public:
             spill = dV>0;
         ForEachItemIn(o, container.outputs)
             appendOutput(new CSplitterOutput(*this, o));
+        newSplitter = getOptInt("newsplitter", false);
+        if (getOptInt("alwaysnewsplitter", false))
+        {
+            newSplitter = true;
+            spill = true;
+        }
     }
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
@@ -227,7 +234,10 @@ public:
                     {
                         StringBuffer tempname;
                         GetTempFilePath(tempname, "nsplit");
-                        smartBuf.setown(createSharedSmartDiskBuffer(this, tempname.str(), numOutputs, queryRowInterfaces(input)));
+                        if (newSplitter)
+                            smartBuf.setown(createSharedFullSpillingWriteAhead(this, numOutputs, inputStream, isGrouped(), queryRowInterfaces(input), tempname.str()));
+                        else
+                            smartBuf.setown(createSharedSmartDiskBuffer(this, tempname.str(), numOutputs, queryRowInterfaces(input)));
                         ActPrintLog("Using temp spill file: %s", tempname.str());
                     }
                     else
@@ -476,10 +486,16 @@ void CSplitterOutput::stop()
 const void *CSplitterOutput::nextRow()
 {
     ActivityTimer t(slaveTimerStats, activity.queryTimeActivities());
-    if (rec == max) // NB: max will be RCMAX if activeOutputCount == 1
-        max = activity.writeahead(max, activity.queryAbortSoon(), writeBlockSem, outIdx);
-    const void *row = activity.nextRow(outIdx, rec); // pass ptr to max if need more
-    ++rec;
+    const void *row;
+    if (activity.newSplitter)
+        row = activity.smartBuf->queryOutput(outIdx)->nextRow();
+    else
+    {
+        if (rec == max) // NB: max will be RCMAX if activeOutputCount == 1
+            max = activity.writeahead(max, activity.queryAbortSoon(), writeBlockSem, outIdx);
+        row = activity.nextRow(outIdx, rec); // pass ptr to max if need more
+        ++rec;
+    }
     if (row)
         dataLinkIncrement();
     return row;

@@ -73,7 +73,7 @@ interface ISharedSmartBuffer : extends IRowWriter
 
 extern graph_decl ISharedSmartBuffer *createSharedSmartMemBuffer(CActivityBase *activity, unsigned outputs, IThorRowInterfaces *rowif, unsigned buffSize=((unsigned)-1));
 extern graph_decl ISharedSmartBuffer *createSharedSmartDiskBuffer(CActivityBase *activity, const char *tempname, unsigned outputs, IThorRowInterfaces *rowif);
-
+extern graph_decl ISharedSmartBuffer *createSharedFullSpillingWriteAhead(CActivityBase *_activity, unsigned numOutputs, IRowStream *_input, bool _inputGrouped, IThorRowInterfaces *_rowIf, const char *tempFileName);
 
 interface IRowWriterMultiReader : extends IRowWriter
 {
