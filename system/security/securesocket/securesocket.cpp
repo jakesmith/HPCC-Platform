@@ -1228,6 +1228,32 @@ static bool usePrivateKeyPEMBuffer(SSL_CTX *ctx, const char *privKeyBuf, int pri
     return true;
 }
 
+// Function to log the certificate details
+static void log_certificate(X509 *cert)
+{
+    BIO *bio = BIO_new(BIO_s_mem());
+    if (bio == NULL)
+    {
+        DBGLOG("Failed to create BIO\n");
+        return;
+    }
+ 
+    // Print certificate to BIO
+    if (X509_print(bio, cert) == 0)
+    {
+        DBGLOG("Failed to print X509 certificate\n");
+        BIO_free(bio);
+        return;
+    }
+ 
+    // Read the BIO into a buffer and print it to stdout
+    char *data;
+    long len = BIO_get_mem_data(bio, &data);
+    DBGLOG("Certificate details:\n%.*s\n", (int)len, data);
+ 
+    BIO_free(bio);
+}
+
 static bool useCertificateChainPEMBuffer(SSL_CTX *ctx, const char *certBuf, int certLen=-1)
 {
     // this routine based on code originally from:
@@ -1258,10 +1284,19 @@ static bool useCertificateChainPEMBuffer(SSL_CTX *ctx, const char *certBuf, int 
                 // Set server certificate. Note that this operation increments the
                 // reference count, which means that it is okay for cleanup to free it.
                 if (!SSL_CTX_use_certificate(ctx, infoVal->x509))
+                {
+                    DBGLOG("SSL_CTX_use_certificate failed");
+                    log_certificate(infoVal->x509);
                     return false;
+                }
 
-                if (ERR_peek_last_error() != 0)
-                    return false;
+                int err = ERR_peek_last_error();
+                if (err != 0)
+                {
+                    DBGLOG("ERR_peek_last_error code: %d - NB: NOT RETURNING FALSE!", err);
+                    log_certificate(infoVal->x509);
+                    //return false;
+                }
 
                 // Get ready to store intermediate certs, if any.
                 SSL_CTX_clear_chain_certs(ctx);
@@ -1413,6 +1448,9 @@ private:
 
         if (config)
         {
+            DBGLOG("CSecureSocketContext: Creating secure socket context from config:");
+            dbglogYAML(config);
+            DBGLOG("End of config");
             const char *cipherList = config->queryProp("cipherList");
             if (!cipherList || !*cipherList)
                 cipherList = "ECDH+AESGCM:DH+AESGCM:ECDH+AES256:DH+AES256:ECDH+AES128:DH+AES:ECDH+3DES:DH+3DES:RSA+AESGCM:RSA+AES:RSA+3DES:!aNULL:!MD5";
