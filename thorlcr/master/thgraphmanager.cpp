@@ -1306,7 +1306,7 @@ void closeThorServerStatus()
  *  0 = unrecognised format, or wuid mismatch
  *  1 = success. new graph/wuid received.
  */
-static int recvNextGraph(unsigned timeoutMs, const char *wuid, StringBuffer &retWuid, StringBuffer &retGraphName)
+static int recvNextGraph(unsigned timeoutMs, const char *wuid, StringBuffer &retWfid, StringBuffer &retWuid, StringBuffer &retGraphName)
 {
     StringBuffer next;
     CMessageBuffer msg;
@@ -1343,6 +1343,7 @@ static int recvNextGraph(unsigned timeoutMs, const char *wuid, StringBuffer &ret
         WARNLOG("Unrecognised job format received: %s", next.str());
         return 0; // unrecognised format, ignore
     }
+    retWfid.set(sArray.item(0));
     retWuid.set(sArray.item(1));
     retGraphName.set(sArray.item(2));
     return 1; // success
@@ -1463,9 +1464,12 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
                 }
 
                 queryMyNode()->endpoint().getEndpointHostText(instance);
+                StringBuffer currentWfId; // not filled/not used until recvNextGraph() is called.
                 StringBuffer currentGraphName(graphName);
                 StringBuffer currentWuid(wuid);
 
+                CTimeMon lingerTimer(lingerPeriod); // NB: reset after it actually runs a job
+                StringBuffer runtimePlatformVersion;
                 while (true)
                 {
                     {
@@ -1473,53 +1477,140 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
                         Owned<IConstWorkUnit> workunit;
                         factory.setown(getWorkUnitFactory());
                         workunit.setown(factory->openWorkUnit(currentWuid));
-                        SessionId agentSessionID = workunit->getAgentSession();
-                        if (agentSessionID <= 0)
+                        if (!workunit)
                         {
-                            WARNLOG("Discarding job with invalid sessionID: wuid=%s, graph=%s (sessionID=%" I64F "d)", currentWuid.str(), currentGraphName.str(), agentSessionID);
-                            currentWuid.clear();
-                        }
-                        else if (querySessionManager().sessionStopped(agentSessionID, 0))
-                        {
-                            WARNLOG("Discarding agentless job: wuid=%s, graph=%s", currentWuid.str(), currentGraphName.str());
+                            WARNLOG("Discarding unknown wuid: wuid=%s, graph=%s", currentWuid.str(), currentGraphName.str());
                             currentWuid.clear();
                         }
                         else
                         {
-                            JobNameScope activeJobName(currentWuid.str());
-                            saveWuidToFile(currentWuid);
-                            PROGLOG("Executing: wuid=%s, graph=%s", currentWuid.str(), currentGraphName.str());
-
+                            SessionId agentSessionID = workunit->getAgentSession();
+                            if (agentSessionID <= 0)
                             {
-                                Owned<IWorkUnit> wu = &workunit->lock();
-                                publishPodNames(wu, currentGraphName, nullptr);
+                                WARNLOG("Discarding job with invalid sessionID: wuid=%s, graph=%s (sessionID=%" I64F "d)", currentWuid.str(), currentGraphName.str(), agentSessionID);
+                                currentWuid.clear();
                             }
-                            SocketEndpoint dummyAgentEp;
-                            jobManager->execute(workunit, currentWuid, currentGraphName, dummyAgentEp);
-
-                            Owned<IWorkUnit> w = &workunit->lock();
-                            if (!multiJobLinger && lingerPeriod)
-                                w->setDebugValue(instance, "1", true);
-
-                            if (jobManager->queryExitException())
+                            else if (querySessionManager().sessionStopped(agentSessionID, 0))
                             {
-                                // NB: exitException has already been relayed.
-                                jobManager->clearExitException();
+                                WARNLOG("Discarding agentless job: wuid=%s, graph=%s", currentWuid.str(), currentGraphName.str());
+                                currentWuid.clear();
                             }
                             else
                             {
-                                switch (w->getState())
+                                SCMStringBuffer jobVersion;
+                                workunit->getDebugValue("platformVersion", jobVersion);
+                                if (jobVersion.length() && !thorQueue)
                                 {
-                                    case WUStateRunning:
-                                        w->setState(WUStateWait);
-                                        break;
-                                    case WUStateAborting:
-                                    case WUStateAborted:
-                                    case WUStateFailed:
-                                        break;
-                                    default:
-                                        w->setState(WUStateFailed);
-                                        break;
+                                    Owned<IException> exception = MakeStringException(TE_AbortException, "Custom platformVersion with multiJobLinger=false not supported");
+                                    relayWuidException(workunit, exception);
+                                }
+                                else
+                                {
+                                    bool mismatch = false;
+                                    const char *imagePattern = getenv("imagePattern");
+                                    const char *imageVersion = nullptr;
+                                    if (isEmptyString(imagePattern))
+                                        IWARNLOG("imagePattern not set in environment");
+                                    else
+                                    {
+                                        imageVersion = strrchr(imagePattern, ':');
+                                        if (!imageVersion)
+                                            IWARNLOG("imagePattern has unexpected format: %s", imagePattern);
+                                        else
+                                        {
+                                            imageVersion++;
+                                            if (jobVersion.length())
+                                            {
+                                                if (0 == runtimePlatformVersion.length()) // 1st time
+                                                {
+                                                    // check if jobVersion is same as original helm chart image
+                                                    // if it is, then we are not a custom runtime version
+                                                    if (!streq(jobVersion.str(), imageVersion))
+                                                    {
+                                                        // record the runtime job version, to be checked on subsequent runs
+                                                        runtimePlatformVersion.set(jobVersion.str());
+                                                    }
+                                                }
+                                                else if (!streq(jobVersion.str(), runtimePlatformVersion.str()))
+                                                    mismatch = true;
+                                            }
+                                            else
+                                            {
+                                                if (runtimePlatformVersion.length())
+                                                {
+                                                    if (!streq(imageVersion, runtimePlatformVersion.str()))
+                                                    {
+                                                        // this is a custom runtime version, but this job has not specified a jobVersion
+                                                        // therefore we mismatch
+                                                        mismatch = true;
+                                                    }
+                                                }
+                                                else
+                                                    runtimePlatformVersion.set(imageVersion);
+                                            }
+                                        }
+                                    }
+
+                                    if (mismatch)
+                                    {
+                                        // This Thor has picked up a job that has submitted with a different #option platformVersion.
+                                        // requeue it, and wait a bit, so that it can either be picked up by an existing compatible Thor, or
+                                        // an agent
+
+                                        VStringBuffer job("%s/%s/%s", currentWfId.str(), currentWuid.str(), currentGraphName.str());
+                                        Owned<IJobQueueItem> item = createJobQueueItem(job);
+                                        item->setOwner(workunit->queryUser());
+                                        item->setPriority(workunit->getPriorityValue());
+                                        thorQueue->enqueue(item.getClear());
+                                        currentWuid.clear();
+                                        constexpr unsigned pauseSecs = 10;
+                                        const char *version = jobVersion.length() ? jobVersion.str() : imageVersion;
+                                        WARNLOG("Job=%s requeued due to version mismatch (this Thor version=%s, Job version=%s). Pausing for %u seconds", job.str(), runtimePlatformVersion.str(), version, pauseSecs);
+                                        MilliSleep(pauseSecs*1000);
+                                    }
+                                    else
+                                    {
+                                        JobNameScope activeJobName(currentWuid.str());
+                                        saveWuidToFile(currentWuid);
+                                        VStringBuffer msg("Executing: wuid=%s, graph=%s", currentWuid.str(), currentGraphName.str());
+                                        if (!streq(imageVersion, runtimePlatformVersion.str()))
+                                            msg.appendf(" (custom runtime version=%s)", runtimePlatformVersion.str());
+                                        PROGLOG("%s", msg.str());
+
+                                        {
+                                            Owned<IWorkUnit> wu = &workunit->lock();
+                                            publishPodNames(wu, currentGraphName, nullptr);
+                                        }
+                                        SocketEndpoint dummyAgentEp;
+                                        jobManager->execute(workunit, currentWuid, currentGraphName, dummyAgentEp);
+
+                                        Owned<IWorkUnit> w = &workunit->lock();
+                                        if (!multiJobLinger && lingerPeriod)
+                                            w->setDebugValue(instance, "1", true);
+
+                                        if (jobManager->queryExitException())
+                                        {
+                                            // NB: exitException has already been relayed.
+                                            jobManager->clearExitException();
+                                        }
+                                        else
+                                        {
+                                            switch (w->getState())
+                                            {
+                                                case WUStateRunning:
+                                                    w->setState(WUStateWait);
+                                                    break;
+                                                case WUStateAborting:
+                                                case WUStateAborted:
+                                                case WUStateFailed:
+                                                    break;
+                                                default:
+                                                    w->setState(WUStateFailed);
+                                                    break;
+                                            }
+                                        }
+                                        lingerTimer.reset(lingerPeriod);
+                                    }
                                 }
                             }
                         }
@@ -1528,14 +1619,15 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
 
                     if (lingerPeriod)
                     {
-                        PROGLOG("Lingering time left: %.2f", ((float)lingerPeriod)/1000);
+                        unsigned lingerRemaining;
+                        if (lingerTimer.timedout(&lingerRemaining))
+                            break;
+                        PROGLOG("Lingering time left: %.2f", ((float)lingerRemaining)/1000);
                         StringBuffer nextJob;
-                        CTimeMon timer(lingerPeriod);
-                        unsigned remaining;
-                        while (!timer.timedout(&remaining))
+                        do
                         {
                             StringBuffer wuid;
-                            int ret = recvNextGraph(remaining, currentWuid.str(), wuid, currentGraphName);
+                            int ret = recvNextGraph(lingerRemaining, currentWuid.str(), currentWfId, wuid, currentGraphName);
                             if (ret > 0)
                             {
                                 currentWuid.set(wuid); // NB: will always be same if !multiJobLinger
@@ -1545,6 +1637,8 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
                                 break; // timeout/abort
                             // else - reject/ignore duff message.
                         }
+                        while (!lingerTimer.timedout(&lingerRemaining));
+
                         if (0 == currentGraphName.length()) // only ever true if !multiJobLinger
                         {
                             // De-register the idle lingering entry.

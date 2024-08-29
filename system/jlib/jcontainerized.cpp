@@ -224,6 +224,27 @@ bool applyYaml(const char *componentName, const char *wuid, const char *job, con
     args.append(" \"--k8sJob=true\"");
     for (const auto &p: extraParams)
     {
+        if (streq(p.first.c_str(), "_HPCC_JOB_VERSION_"))
+        {
+            const char *imagePattern = getenv("imagePattern");
+            if (imagePattern)
+            {
+                DBGLOG("Changing image version");
+                DBGLOG("Old yaml");
+                PROGLOG("%s", jobYaml.str());
+                PROGLOG("========");
+                const char *imageVersionStart = strstr(imagePattern, ":");
+                if (imageVersionStart)
+                {
+                    VStringBuffer oriImagePatternSpec("image: %s", imagePattern);
+                    VStringBuffer newImagePatternSpec("image: %.*s:%s", (int)(imageVersionStart-imagePattern), imagePattern, p.second.c_str());
+                    jobYaml.replaceString(oriImagePatternSpec, newImagePatternSpec);
+                    DBGLOG("New yaml");
+                    PROGLOG("%s", jobYaml.str());
+                    PROGLOG("========");
+                }
+            }
+        }
         if (hasPrefix(p.first.c_str(), "_HPCC_", false)) // job yaml substitution
             jobYaml.replaceString(p.first.c_str(), p.second.c_str());
         else
