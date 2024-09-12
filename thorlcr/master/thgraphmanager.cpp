@@ -1362,7 +1362,7 @@ void publishPodNames(IWorkUnit *workunit, const char *graphName, std::vector<Con
         }
         for (unsigned workerNum=0; workerNum<connectedWorkers.size(); workerNum++)
         {
-            ConnectedWorkerDetail &worker = connectedWorkers[workerNum];
+            const ConnectedWorkerDetail &worker = connectedWorkers[workerNum];
             const char *workerPodName = std::get<1>(worker).c_str();
             const char *workerContainerName = std::get<2>(worker).c_str();
             workunit->setContainerizedProcessInfo("ThorWorker", globals->queryProp("@name"), workerPodName, workerContainerName, nullptr, std::to_string(workerNum+1).c_str());

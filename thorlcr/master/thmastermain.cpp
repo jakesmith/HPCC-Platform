@@ -305,18 +305,17 @@ public:
             else
             {
                 Owned<INode> sender = _sender;
-                SocketEndpoint ep = sender->endpoint();
-                StringBuffer workerHostEPStr;
-                ep.getEndpointHostText(workerHostEPStr);
+                StringBuffer workerEPStr;
+                sender->endpoint().getEndpointHostText(workerEPStr);
 
-                auto findFunc = [&workerHostEPStr](ConnectedWorkerDetail& t)
+                auto findFunc = [&workerEPStr](ConnectedWorkerDetail& t)
                 {
-                    return std::get<0>(t) == std::string(workerHostEPStr.str());
+                    return std::get<0>(t) == std::string(workerEPStr.str());
                 };
                 if (connectedWorkers.end() != std::find_if(connectedWorkers.begin(), connectedWorkers.end(), findFunc))
                 {
                     StringBuffer epStr;
-                    throw makeStringExceptionV(TE_AbortException, "Same slave registered twice!! : %s", workerHostEPStr.str());
+                    throw makeStringExceptionV(TE_AbortException, "Same slave registered twice!! : %s", workerEPStr.str());
                 }
 
                 /* NB: in base metal setup, the slaves know which slave number they are in advance, and send their slavenum at registration.
@@ -332,7 +331,8 @@ public:
                         msg.read(workerPodName);
                         msg.read(workerContainerName);
                     }
-                    connectedWorkers.emplace_back(workerHostEPStr.str(), workerPodName, workerContainerName);
+                    connectedWorkers.emplace_back(workerEPStr.str(), workerPodName, workerContainerName);
+                    PROGLOG("Slave connected from %s", workerEPStr.str());
                 }
                 else
                 {
@@ -340,12 +340,11 @@ public:
                     while (connectedWorkers.size() < pos)
                         connectedWorkers.emplace_back(std::string(), std::string(), std::string());
                     if (connectedWorkers.size() == pos)
-                        connectedWorkers.emplace_back(workerHostEPStr.str(), std::string(), std::string());
+                        connectedWorkers.emplace_back(workerEPStr.str(), std::string(), std::string());
                     else
-                        connectedWorkers[pos] = {workerHostEPStr.str(), std::string(), std::string()};
+                        connectedWorkers[pos] = {workerEPStr.str(), std::string(), std::string()};
+                    PROGLOG("Slave %u connected from %s", slaveNum, workerEPStr.str());
                 }
-                StringBuffer epStr;
-                PROGLOG("Slave %u connected from %s", slaveNum, sender->endpoint().getEndpointHostText(epStr).str());
                 --remaining;
             }
         }
@@ -375,8 +374,8 @@ public:
             else // NB: currently not used. Group is pre-setup in BM (clusterInitialized() already true)
             {
                 /* sort by {port, ip}
-                * So that workers are not bunched on same node, but striped across the pod ips
-                */
+                 * So that workers are not bunched on same node, but striped across the pod ips
+                 */
                 auto sortFunc = [](const ConnectedWorkerDetail& a, const ConnectedWorkerDetail& b)
                 {
                     return std::get<0>(a) < std::get<0>(b);
