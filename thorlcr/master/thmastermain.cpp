@@ -22,7 +22,7 @@
 #include <vector>
 #include <tuple>
 #include <string>
-#include <algorithm> 
+#include <algorithm>
 
 #include <stddef.h>
 #include <stdlib.h>
