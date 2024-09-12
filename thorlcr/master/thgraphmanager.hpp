@@ -31,8 +31,8 @@ void abortThor(IException *e, unsigned errCode, bool abortCurrentJob=true);
 void setExitCode(int code);
 int queryExitCode();
 
-void addConnectedWorkerPod(const char *podName, const char *containerName);
-void publishPodNames(IWorkUnit *workunit, const char *graphName);
+typedef std::tuple<std::string, std::string, std::string> ConnectedWorkerDetail;
+void publishPodNames(IWorkUnit *workunit, const char *graphName, std::vector<ConnectedWorkerDetail> *connectedWorkers);
 void relayWuidException(IConstWorkUnit *wu, const IException *exception);
 void auditThorSystemEvent(const char *eventName);
 void auditThorSystemEvent(const char *eventName, std::initializer_list<const char*> args);
