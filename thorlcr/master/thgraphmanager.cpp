@@ -1499,118 +1499,111 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
                             {
                                 SCMStringBuffer jobVersion;
                                 workunit->getDebugValue("platformVersion", jobVersion);
-                                if (jobVersion.length() && !thorQueue)
+                                bool mismatch = false;
+                                const char *imagePattern = getenv("imagePattern");
+                                const char *imageVersion = nullptr;
+                                if (isEmptyString(imagePattern))
                                 {
-                                    Owned<IException> exception = MakeStringException(TE_AbortException, "Custom platformVersion with multiJobLinger=false not supported");
-                                    relayWuidException(workunit, exception);
+                                    IWARNLOG("imagePattern not set in environment");
+                                    imageVersion = "unknown";
+                                    runtimePlatformVersion.set(imageVersion);
                                 }
                                 else
                                 {
-                                    bool mismatch = false;
-                                    const char *imagePattern = getenv("imagePattern");
-                                    const char *imageVersion = nullptr;
-                                    if (isEmptyString(imagePattern))
-                                        IWARNLOG("imagePattern not set in environment");
-                                    else
+                                    imageVersion = strrchr(imagePattern, ':');
+                                    if (!imageVersion)
                                     {
-                                        imageVersion = strrchr(imagePattern, ':');
-                                        if (!imageVersion)
-                                            IWARNLOG("imagePattern has unexpected format: %s", imagePattern);
-                                        else
-                                        {
-                                            imageVersion++;
-                                            if (jobVersion.length())
-                                            {
-                                                if (0 == runtimePlatformVersion.length()) // 1st time
-                                                {
-                                                    // check if jobVersion is same as original helm chart image
-                                                    // if it is, then we are not a custom runtime version
-                                                    if (!streq(jobVersion.str(), imageVersion))
-                                                    {
-                                                        // record the runtime job version, to be checked on subsequent runs
-                                                        runtimePlatformVersion.set(jobVersion.str());
-                                                    }
-                                                }
-                                                else if (!streq(jobVersion.str(), runtimePlatformVersion.str()))
-                                                    mismatch = true;
-                                            }
-                                            else
-                                            {
-                                                if (runtimePlatformVersion.length())
-                                                {
-                                                    if (!streq(imageVersion, runtimePlatformVersion.str()))
-                                                    {
-                                                        // this is a custom runtime version, but this job has not specified a jobVersion
-                                                        // therefore we mismatch
-                                                        mismatch = true;
-                                                    }
-                                                }
-                                                else
-                                                    runtimePlatformVersion.set(imageVersion);
-                                            }
-                                        }
-                                    }
-
-                                    if (mismatch)
-                                    {
-                                        // This Thor has picked up a job that has submitted with a different #option platformVersion.
-                                        // requeue it, and wait a bit, so that it can either be picked up by an existing compatible Thor, or
-                                        // an agent
-
-                                        VStringBuffer job("%s/%s/%s", currentWfId.str(), currentWuid.str(), currentGraphName.str());
-                                        Owned<IJobQueueItem> item = createJobQueueItem(job);
-                                        item->setOwner(workunit->queryUser());
-                                        item->setPriority(workunit->getPriorityValue());
-                                        thorQueue->enqueue(item.getClear());
-                                        currentWuid.clear();
-                                        constexpr unsigned pauseSecs = 10;
-                                        const char *version = jobVersion.length() ? jobVersion.str() : imageVersion;
-                                        WARNLOG("Job=%s requeued due to version mismatch (this Thor version=%s, Job version=%s). Pausing for %u seconds", job.str(), runtimePlatformVersion.str(), version, pauseSecs);
-                                        MilliSleep(pauseSecs*1000);
+                                        IWARNLOG("imagePattern has unexpected format: %s", imagePattern);
+                                        imageVersion = "unknown";
+                                        runtimePlatformVersion.set(imageVersion);
                                     }
                                     else
                                     {
-                                        JobNameScope activeJobName(currentWuid.str());
-                                        saveWuidToFile(currentWuid);
-                                        VStringBuffer msg("Executing: wuid=%s, graph=%s", currentWuid.str(), currentGraphName.str());
-                                        if (!streq(imageVersion, runtimePlatformVersion.str()))
-                                            msg.appendf(" (custom runtime version=%s)", runtimePlatformVersion.str());
-                                        PROGLOG("%s", msg.str());
-
+                                        imageVersion++;
+                                        if (jobVersion.length())
                                         {
-                                            Owned<IWorkUnit> wu = &workunit->lock();
-                                            publishPodNames(wu, currentGraphName, nullptr);
+                                            if (0 == runtimePlatformVersion.length()) // 1st time
+                                                runtimePlatformVersion.set(jobVersion.str());
+                                            else if (!streq(jobVersion.str(), runtimePlatformVersion.str()))
+                                                mismatch = true;
                                         }
-                                        SocketEndpoint dummyAgentEp;
-                                        jobManager->execute(workunit, currentWuid, currentGraphName, dummyAgentEp);
-
-                                        Owned<IWorkUnit> w = &workunit->lock();
-                                        if (!multiJobLinger && lingerPeriod)
-                                            w->setDebugValue(instance, "1", true);
-
-                                        if (jobManager->queryExitException())
+                                        else if (runtimePlatformVersion.length())
                                         {
-                                            // NB: exitException has already been relayed.
-                                            jobManager->clearExitException();
-                                        }
-                                        else
-                                        {
-                                            switch (w->getState())
+                                            if (!streq(imageVersion, runtimePlatformVersion.str())) // can only happen if a previous job had launched instance with a jobVersion
                                             {
-                                                case WUStateRunning:
-                                                    w->setState(WUStateWait);
-                                                    break;
-                                                case WUStateAborting:
-                                                case WUStateAborted:
-                                                case WUStateFailed:
-                                                    break;
-                                                default:
-                                                    w->setState(WUStateFailed);
-                                                    break;
+                                                // this is a custom runtime version, but this job has not specified a jobVersion
+                                                // therefore we mismatch
+                                                mismatch = true;
                                             }
                                         }
-                                        lingerTimer.reset(lingerPeriod);
+                                        else
+                                            runtimePlatformVersion.set(imageVersion);
                                     }
+                                }
+
+                                if (mismatch)
+                                {
+                                    assertex(thorQueue); // it should never be possible for a non-lingering Thor to have a mismatch
+
+                                    // This Thor has picked up a job that has submitted with a different #option platformVersion.
+                                    // requeue it, and wait a bit, so that it can either be picked up by an existing compatible Thor, or
+                                    // an agent
+
+                                    VStringBuffer job("%s/%s/%s", currentWfId.str(), currentWuid.str(), currentGraphName.str());
+                                    Owned<IJobQueueItem> item = createJobQueueItem(job);
+                                    item->setOwner(workunit->queryUser());
+                                    item->setPriority(workunit->getPriorityValue());
+                                    thorQueue->enqueue(item.getClear());
+                                    currentWuid.clear();
+                                    constexpr unsigned pauseSecs = 10;
+                                    if (jobVersion.length())
+                                        WARNLOG("Job=%s requeued due to version mismatch (this Thor version=%s, Job version=%s). Pausing for %u seconds", job.str(), runtimePlatformVersion.str(), jobVersion.str(), pauseSecs);
+                                    else
+                                        WARNLOG("Job=%s requeued due to version mismatch (this Thor version=%s, Job version not specified, uses helm version=%s). Pausing for %u seconds", job.str(), runtimePlatformVersion.str(), imageVersion, pauseSecs);
+                                    MilliSleep(pauseSecs*1000);
+                                }
+                                else
+                                {
+                                    JobNameScope activeJobName(currentWuid.str());
+                                    saveWuidToFile(currentWuid);
+                                    VStringBuffer msg("Executing: wuid=%s, graph=%s", currentWuid.str(), currentGraphName.str());
+                                    if (!streq(imageVersion, runtimePlatformVersion.str()))
+                                        msg.appendf(" (custom runtime version=%s)", runtimePlatformVersion.str());
+                                    PROGLOG("%s", msg.str());
+
+                                    {
+                                        Owned<IWorkUnit> wu = &workunit->lock();
+                                        publishPodNames(wu, currentGraphName, nullptr);
+                                    }
+                                    SocketEndpoint dummyAgentEp;
+                                    jobManager->execute(workunit, currentWuid, currentGraphName, dummyAgentEp);
+
+                                    Owned<IWorkUnit> w = &workunit->lock();
+                                    if (!multiJobLinger && lingerPeriod)
+                                        w->setDebugValue(instance, "1", true);
+
+                                    if (jobManager->queryExitException())
+                                    {
+                                        // NB: exitException has already been relayed.
+                                        jobManager->clearExitException();
+                                    }
+                                    else
+                                    {
+                                        switch (w->getState())
+                                        {
+                                            case WUStateRunning:
+                                                w->setState(WUStateWait);
+                                                break;
+                                            case WUStateAborting:
+                                            case WUStateAborted:
+                                            case WUStateFailed:
+                                                break;
+                                            default:
+                                                w->setState(WUStateFailed);
+                                                break;
+                                        }
+                                    }
+                                    lingerTimer.reset(lingerPeriod);
                                 }
                             }
                         }

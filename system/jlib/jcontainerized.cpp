@@ -229,23 +229,17 @@ bool applyYaml(const char *componentName, const char *wuid, const char *job, con
             const char *imagePattern = getenv("imagePattern");
             if (imagePattern)
             {
-                DBGLOG("Changing image version");
-                DBGLOG("Old yaml");
-                PROGLOG("%s", jobYaml.str());
-                PROGLOG("========");
                 const char *imageVersionStart = strstr(imagePattern, ":");
                 if (imageVersionStart)
                 {
                     VStringBuffer oriImagePatternSpec("image: %s", imagePattern);
                     VStringBuffer newImagePatternSpec("image: %.*s:%s", (int)(imageVersionStart-imagePattern), imagePattern, p.second.c_str());
                     jobYaml.replaceString(oriImagePatternSpec, newImagePatternSpec);
-                    DBGLOG("New yaml");
-                    PROGLOG("%s", jobYaml.str());
-                    PROGLOG("========");
+                    DBGLOG("Job image version changed from '%s' to '%s'", imageVersionStart, p.second.c_str());
                 }
             }
         }
-        if (hasPrefix(p.first.c_str(), "_HPCC_", false)) // job yaml substitution
+        else if (hasPrefix(p.first.c_str(), "_HPCC_", false)) // job yaml substitution
             jobYaml.replaceString(p.first.c_str(), p.second.c_str());
         else
             args.append(" \"--").append(p.first.c_str()).append('=').append(p.second.c_str()).append("\"");

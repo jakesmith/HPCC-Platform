@@ -799,35 +799,6 @@ Pass in dict with root, component (in case of error), optional (true if daliArg 
 {{- end -}}
 
 {{/*
-Returns the image pattern
-*/}}
-{{- define "hpcc.getImagePattern" -}}
-{{- /* Pass in a dictionary with root and me defined */ -}}
-{{- $imageRoot := "" -}}
-{{- $imageName := "" -}}
-{{- $imageVersion := "" -}}
-{{- if .me.image -}}
-{{-   $imageRoot = .me.image.root | default .root.Values.global.image.root | default "hpccsystems" -}}
-{{-   $imageName = .me.image.name | default .root.Values.global.image.name | default "platform-core" -}}
-{{-   $imageVersion = .me.image.version | default .root.Values.global.image.version | default .root.Chart.Version -}}
-{{- else -}}
-{{-   $imageRoot = .root.Values.global.image.root | default "hpccsystems" -}}
-{{-   $imageName = .root.Values.global.image.name | default "platform-core" -}}
-{{-   $imageVersion = .root.Values.global.image.version | default .root.Chart.Version -}}
-{{- end -}}
-{{- printf "%s/%s:%s" $imageRoot $imageName $imageVersion -}}
-{{- end -}}
-
-{{/*
-Generates imagePattern as env variable
-*/}}
-{{- define "hpcc.generateImageEnv" -}}
-{{- /* Pass in a dictionary with root and me defined */ -}}
-- name: imagePattern
-  value: {{ include "hpcc.getImagePattern" . }}
-{{- end -}}
-
-{{/*
 Get image name
 */}}
 {{- define "hpcc.imageName" -}}
@@ -837,6 +808,15 @@ Get image name
 {{- else -}}
 {{ .root.Values.global.image.root | default "hpccsystems" }}/{{ .root.Values.global.image.name | default "platform-core" }}:{{ .root.Values.global.image.version | default .root.Chart.Version }}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Generates imagePattern as env variable
+*/}}
+{{- define "hpcc.generateImageEnv" -}}
+{{- /* Pass in a dictionary with root and me defined */ -}}
+- name: imagePattern
+  value: {{ include "hpcc.imageName" . }}
 {{- end -}}
 
 {{/*
