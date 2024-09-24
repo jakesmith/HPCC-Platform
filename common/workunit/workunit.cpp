@@ -14855,10 +14855,15 @@ bool executeGraphOnLingeringThor(IConstWorkUnit &workunit, unsigned wfid, const 
                 */
                 const char *instanceName = strchr(thorInstance.str(), '_') + 1;
 
+                PROGLOG("Trying to queue graph %s to lingering Thor %s", nullText(graphName), instanceName);
                 Owned<INode> masterNode = createINode(instanceName);
+                StringBuffer thorInstanceValue;
+                masterNode->endpoint().getEndpointIpText(thorInstanceValue);
+                PROGLOG("masterNode IP=%s", thorInstanceValue.str());
                 CMessageBuffer msg;
                 VStringBuffer jobStr("%u/%s/%s", wfid, workunit.queryWuid(), graphName?graphName:"");
                 msg.append(jobStr);
+                PROGLOG("Sending job %s", jobStr.str());
                 if (queryWorldCommunicator().sendRecv(msg, masterNode, MPTAG_THOR, 10000))
                 {
                     bool ok;
@@ -14869,6 +14874,8 @@ bool executeGraphOnLingeringThor(IConstWorkUnit &workunit, unsigned wfid, const 
                             return true;
                     }
                 }
+                else
+                    PROGLOG("Failed to send to manager");
             }
         }
     }
