@@ -1463,7 +1463,7 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
                     thorQueue->connect(false);
                 }
 
-                queryMyNode()->endpoint().getEndpointHostText(instance);
+                queryMyNode()->endpoint().getEndpointIpText(instance);
                 StringBuffer currentWfId; // not filled/not used until recvNextGraph() is called.
                 StringBuffer currentGraphName(graphName);
                 StringBuffer currentWuid(wuid);
