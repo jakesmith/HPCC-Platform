@@ -31,6 +31,7 @@ jlib_decl const char *queryMyContainerName();
 
 enum class KeepJobs { none, podfailures, all };
 jlib_decl KeepJobs translateKeepJobs(const char *keepJobs);
+constexpr unsigned defaultDeleteJobGracePeriod = 120; // this is time during deleteResource. Time for pod containers to stop and capture any info.
 
 jlib_decl bool isActiveService(const char *serviceName);
 jlib_decl void deleteResource(const char *componentName, const char *job, const char *resource);

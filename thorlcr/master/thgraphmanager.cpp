@@ -1594,6 +1594,7 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
                                                 break;
                                         }
                                     }
+                                    saveWuidToFile(""); // clear wuid file. Signifies that no wuid is running.
                                     lingerTimer.reset(lingerPeriod);
                                 }
                             }
