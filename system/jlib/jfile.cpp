@@ -1876,7 +1876,7 @@ static const std::array<const char*, PlaneAttributeCount> planeAttributeTypeStri
 };
 
 static constexpr bool defaultGlobalFileSyncWriteCloseEnabled = false;
-static bool globalFileSyncWriteCloseEnabled = false;
+static bool globalFileSyncWriteCloseEnabled = defaultGlobalFileSyncWriteCloseEnabled;
 static std::atomic<bool> globalFileSyncWriteCloseConfigured{false};
 static CriticalSection globalFileSyncCS;
 static bool getGlobalFileSyncWriteCloseEnabled()
@@ -1893,8 +1893,7 @@ static bool getGlobalFileSyncWriteCloseEnabled()
                 globalFileSyncWriteCloseEnabled = config->getPropBool(propName.c_str());
             else if (global->hasProp(propName.c_str()))
                 globalFileSyncWriteCloseEnabled = global->getPropBool(propName.c_str());
-            else
-                globalFileSyncWriteCloseEnabled = defaultGlobalFileSyncWriteCloseEnabled;
+            // else leave at default
             globalFileSyncWriteCloseConfigured = true;
         }
     }
