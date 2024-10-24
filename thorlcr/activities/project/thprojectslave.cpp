@@ -24,6 +24,7 @@ class CProjecStrandProcessor : public CThorStrandProcessor
 {
     IHThorProjectArg *helper;
     Owned<IEngineRowAllocator> allocator;
+    bool lastWasNull = false;
 
 public:
     explicit CProjecStrandProcessor(CThorStrandedActivity &parent, IEngineRowStream *inputStream, unsigned outputId)
@@ -43,6 +44,14 @@ public:
             OwnedConstThorRow in = inputStream->nextRow();
             if (!in)
             {
+                if (lastWasNull)
+                {
+                    ActPrintLog(&parent, "Double null row detected in write ahead buffer");
+                }
+                else
+                {
+                    lastWasNull = true;
+                }
                 if (numProcessedLastGroup == rowsProcessed)
                     in.setown(inputStream->nextRow());
                 if (!in)
@@ -50,6 +59,14 @@ public:
                     numProcessedLastGroup = rowsProcessed;
                     return nullptr;
                 }
+                else
+                {
+                    lastWasNull = false;
+                }
+            }
+            else
+            {
+                lastWasNull = false;
             }
 
             RtlDynamicRowBuilder rowBuilder(allocator);
