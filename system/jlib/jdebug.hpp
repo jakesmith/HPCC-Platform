@@ -258,7 +258,8 @@ public:
 
     bool hasElapsed(cycle_t nowCycles)
     {
-        if ((nowCycles - lastElapsedCycles) < timePeriodCycles)
+        __uint64 diff = (__uint64)nowCycles - (__uint64)lastElapsedCycles;
+        if (diff < (__uint64)timePeriodCycles)
             return false;
 
         lastElapsedCycles = nowCycles;

@@ -4517,6 +4517,17 @@ public:
         ActivityTimer s(slaveTimerStats, timeActivities);
         PARENT::start();
         doNextGroup(); // or local set if !grouped
+
+        /* It is imperitive to stop the input now if this is global aggregate, because this worker will proceed to perform
+         * a pulling distribute operation which will be dependent on other workers to start.
+         * Other workers on this may not yet be here, because they are blocked by upstream blocking activities (e.g. blocking splitter).
+         * Blocking splitter could be blocked because a different global aggregate was similarly stuck here, and thereby not releasing
+         * its upstream splitter output, causing a deadlock.
+         */
+        // ActPrintLog("HASHAGGREGATE2: Stopping input");
+        // stopInput(0);
+        // ActPrintLog("HASHAGGREGATE2: Input stopped");
+
         if (!container.queryGrouped())
             ::ActPrintLog(this, thorDetailedLogLevel, "Table before distribution contains %d entries", localAggTable->elementCount());
         if (!container.queryLocalOrGrouped() && container.queryJob().querySlaves()>1)
