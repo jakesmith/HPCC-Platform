@@ -327,7 +327,8 @@ public:
             if (!resize(numRows+1))
                 return false;
         }
-        rows[numRows++] = row;
+        rows[numRows] = row;
+        numRows++;
         return true;
     }
     bool binaryInsert(const void *row, ICompare &compare, bool dropLast=false); // NB: takes ownership on success
