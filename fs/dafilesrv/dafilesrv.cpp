@@ -578,6 +578,15 @@ int main(int argc, const char* argv[])
             if (componentExpert)
                 synchronizePTree(expert, componentExpert, false, true);
 
+            // merge in bare-metal dafilesrv component cert settings into newConfig
+            IPropertyTree *componentCert = nullptr;
+            componentCert = daFileSrv->queryPropTree("cert");
+            if (componentCert)
+            {
+                IPropertyTree *cert = ensurePTree(newConfig, "cert");
+                synchronizePTree(cert, componentCert, false, true);
+            }
+
             // any overrides by Instance definitions?
             Owned<IPropertyTreeIterator> iter = daFileSrv->getElements("Instance");
             ForEach(*iter)
