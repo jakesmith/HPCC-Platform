@@ -3689,7 +3689,7 @@ void remapGroupsToDafilesrv(IPropertyTree *file, bool foreign, bool secure)
         IPropertyTree &cluster = iter->query();
         const char *planeName = cluster.queryProp("@name");
         Owned<IStoragePlane> plane = getDataStoragePlane(planeName, true);
-        if (isAbsolutePath(plane->queryPrefix())) // if url (i.e. not absolute prefix path) don't touch
+        if ((0 == plane->queryHosts().size()) && isAbsolutePath(plane->queryPrefix())) // if hosts group, or url, don't touch
         {
             if (isContainerized())
             {
@@ -3718,15 +3718,8 @@ void remapGroupsToDafilesrv(IPropertyTree *file, bool foreign, bool secure)
             }
 
             Owned<IGroup> group;
-            std::vector<INode *> nodes;
             if (cluster.hasProp("Group"))
                 group.setown(createIGroup(cluster.queryProp("Group")));
-            else if (plane->queryHosts().size())
-            {
-                unsigned port = getPreferredDafsClientPort(true);
-                for (auto &host: plane->queryHosts())
-                    nodes.push_back(createINode(host.c_str(), port));
-            }
             else
             {
                 // JCSMORE only expected here if via foreign access (not entirely sure if this route is ever possible anymore)
@@ -3736,34 +3729,32 @@ void remapGroupsToDafilesrv(IPropertyTree *file, bool foreign, bool secure)
                 group.setown(queryNamedGroupStore().lookup(planeName, defaultDir, groupType));
             }
 
-            if (0 == nodes.size())
+            std::vector<INode *> nodes;
+            if (isContainerized())
             {
-                if (isContainerized())
+                Linked<INode> dafileSrvNodeCopy;
                 {
-                    Linked<INode> dafileSrvNodeCopy;
-                    {
-                        // in case config hook above changes tlsDirectIONode/nonTlsDirectIONode
-                        CriticalBlock b(dafileSrvNodeCS);
-                        dafileSrvNodeCopy.set(secure ? tlsDirectIONode : nonTlsDirectIONode);
-                    }
-                    if (!dafileSrvNodeCopy)
-                    {
-                        const char *typeText = secure ? "secure" : "non-secure";
-                        throw makeStringExceptionV(0, "%s DFS service request made, but no %s directio service available", typeText, typeText);
-                    }
-                    for (unsigned n=0; n<group->ordinality(); n++)
-                        nodes.push_back(dafileSrvNodeCopy);
+                    // in case config hook above changes tlsDirectIONode/nonTlsDirectIONode
+                    CriticalBlock b(dafileSrvNodeCS);
+                    dafileSrvNodeCopy.set(secure ? tlsDirectIONode : nonTlsDirectIONode);
                 }
-                else
+                if (!dafileSrvNodeCopy)
                 {
-                    // remap the group url's to explicitly contain the baremetal dafilesrv port configuration
-                    unsigned port = getPreferredDafsClientPort(true);
-                    for (unsigned n=0; n<group->ordinality(); n++)
-                    {
-                        SocketEndpoint ep = group->queryNode(n).endpoint();
-                        Owned<INode> newNode = createINodeIP(group->queryNode(n).endpoint(), port);
-                        nodes.push_back(newNode);
-                    }
+                    const char *typeText = secure ? "secure" : "non-secure";
+                    throw makeStringExceptionV(0, "%s DFS service request made, but no %s directio service available", typeText, typeText);
+                }
+                for (unsigned n=0; n<group->ordinality(); n++)
+                    nodes.push_back(dafileSrvNodeCopy);
+            }
+            else
+            {
+                // remap the group url's to explicitly contain the baremetal dafilesrv port configuration
+                unsigned port = getPreferredDafsClientPort(true);
+                for (unsigned n=0; n<group->ordinality(); n++)
+                {
+                    SocketEndpoint ep = group->queryNode(n).endpoint();
+                    Owned<INode> newNode = createINodeIP(group->queryNode(n).endpoint(), port);
+                    nodes.push_back(newNode);
                 }
             }
             Owned<IGroup> newGroup = createIGroup((rank_t)group->ordinality(), &nodes[0]);
@@ -3772,7 +3763,6 @@ void remapGroupsToDafilesrv(IPropertyTree *file, bool foreign, bool secure)
             cluster.setProp("Group", groupText);
         }
     }
-    dbglogXML(file, 2);
 }
 
 #ifdef NULL_DALIUSER_STACKTRACE

@@ -148,6 +148,7 @@ static ISecureSocket *createSecureSocket(ISocket *sock, bool disableClientCertVe
             }
             else
             {
+                // check and use "cert" configuration if dafilesrv has one
                 IPropertyTree *cert = getComponentConfigSP()->getPropTree("cert");
                 if (cert)
                 {

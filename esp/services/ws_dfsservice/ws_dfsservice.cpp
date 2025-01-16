@@ -133,6 +133,7 @@ static void populateLFNMeta(IUserDescriptor *userDesc, const char *logicalName, 
                 Owned<IPropertyTree> hostGroup = getHostGroup(hostGroupName, false);
                 if (hostGroup)
                 {
+                    // If there's a 'hostGroup', expand it out to hosts for the client which will not have knowledge of the hostGroup
                     dataPlane.setown(createPTreeFromIPT(dataPlane));
                     unsigned daFsSrvPort = getBareMetalDaFsServerPort();
                     Owned<IPropertyTreeIterator> iter = hostGroup->getElements("hosts");
