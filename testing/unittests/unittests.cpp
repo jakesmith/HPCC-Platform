@@ -123,6 +123,7 @@ unittests:
 
 int main(int argc, const char *argv[])
 {
+    // blah2
     InitModuleObjects();
 
     StringArray includeNames;
