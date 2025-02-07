@@ -433,9 +433,7 @@
           "description": "Global component annotations, generated into all components"
         },
         "plugins": {
-          "description": "plugin configurations",
-          "type": "object",
-          "additionalProperties": true
+          "$ref": "#/definitions/plugins"
         }
       },
       "additionalProperties": false
@@ -3525,6 +3523,11 @@
     "expert": {
       "description": "Settings for developers, debugging and testing",
       "type": "object"
-    }
+    },
+	"plugins": {
+	  "description": "plugin configurations",
+	  "type": "object",
+	  "additionalProperties": true
+	}
   }
 }
