@@ -3524,10 +3524,10 @@
       "description": "Settings for developers, debugging and testing",
       "type": "object"
     },
-	"plugins": {
-	  "description": "plugin configurations",
-	  "type": "object",
-	  "additionalProperties": true
+    "plugins": {
+      "description": "plugin configurations",
+      "type": "object",
+      "additionalProperties": true
 	}
   }
 }
