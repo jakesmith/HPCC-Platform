@@ -16,7 +16,6 @@ jobs:
   build:
     name: "Check helm chart lint"
     runs-on: ubuntu-20.04
-    if: ${{ github.repository == 'hpcc-systems/HPCC-Platform' && needs.pre_job.outputs.helm }}
     steps:
       - uses: actions/checkout@v4
         with:
