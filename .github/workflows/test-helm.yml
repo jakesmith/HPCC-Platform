@@ -13,17 +13,6 @@ on:
       - "!candidate-6.*"
 
 jobs:
-  pre_job:
-     # continue-on-error: true # Uncomment once integration is finished
-     runs-on: ubuntu-20.04
-     # Map a step output to a job output
-     outputs:
-       helm: ${{ steps.skip_check.outputs.helm }}
-     steps:
-       - id: skip_check
-         uses: hpcc-systems/github-actions/changed-modules@main
-         with:
-           github_token: ${{ github.token }}
   build:
     name: "Check helm chart lint"
     runs-on: ubuntu-20.04
