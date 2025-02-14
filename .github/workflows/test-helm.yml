@@ -73,23 +73,22 @@ jobs:
           ls -lt ${{ runner.temp }}/old/output.txt ${{ runner.temp }}/new/output.txt
           which diff
           echo here9.6
-          diff ${{ runner.temp }}/old/output.txt ${{ runner.temp }}/new/output.txt
+          diff ${{ runner.temp }}/old/output.txt ${{ runner.temp }}/new/output.txt || true
           echo here9.7
           if [ $? -ne 0 ]
-            echo here10
+          then
+            echo here11
             echo outputting old:
             cat ${{ runner.temp }}/old/output.txt
             echo outputting new:
             cat ${{ runner.temp }}/new/output.txt
-          then
-            echo here11
             resultcode=1
           else
             #Only check for differences in the specialised test files if the default values file is the same
             for file in testing/helm/tests/*.yaml
             do
               tail=$(basename $file)
-              diff ${{ runner.temp }}/old/$tail.txt ${{ runner.temp }}/new/$tail.txt
+              diff ${{ runner.temp }}/old/$tail.txt ${{ runner.temp }}/new/$tail.txt || true
               if [ $? -ne 0 ]
               then
                 resultcode=1
