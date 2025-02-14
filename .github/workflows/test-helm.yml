@@ -69,7 +69,10 @@ jobs:
           done
 
           echo here9
+          echo here9.5
+          ls -lt ${{ runner.temp }}/old/output.txt ${{ runner.temp }}/new/output.txt
           diff ${{ runner.temp }}/old/output.txt ${{ runner.temp }}/new/output.txt
+          echo here9.7
           if [ $? -ne 0 ]
             echo here10
             echo outputting old:
