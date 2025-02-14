@@ -71,7 +71,13 @@ jobs:
           echo here9
           diff ${{ runner.temp }}/old/output.txt ${{ runner.temp }}/new/output.txt
           if [ $? -ne 0 ]
+            echo here10
+            echo outputting old:
+            cat ${{ runner.temp }}/old/output.txt
+            echo outputting new:
+            cat ${{ runner.temp }}/new/output.txt
           then
+            echo here11
             resultcode=1
           else
             #Only check for differences in the specialised test files if the default values file is the same
