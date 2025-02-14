@@ -38,26 +38,37 @@ jobs:
           mkdir ${{ runner.temp }}/new
           mkdir ${{ runner.temp }}/old
 
+          echo base_ref is ${{ github.base_ref }}
+
           #Generate the output for the default values file, and each of the specialised test files.
           #Check to see if anything has changed between old and new, and report the differences
           helm template helm/hpcc > ${{ runner.temp }}/new/output.txt
+
+          echo here1
           for file in testing/helm/tests/*.yaml
           do
             tail=$(basename $file)
             helm template helm/hpcc --values $file > ${{ runner.temp }}/new/$tail.txt
+            echo here2: $file
           done
 
           git fetch --no-tags --prune --progress --no-recurse-submodules --quiet --depth=1 origin ${{ github.base_ref }}
+          echo here3
           echo git checkout ${{ github.base_ref }}
+          echo here4
           git checkout ${{ github.base_ref }}
+          echo here5
 
           helm template helm/hpcc > ${{ runner.temp }}/old/output.txt
+          echo here7
           for file in testing/helm/tests/*.yaml
           do
             tail=$(basename $file)
             helm template helm/hpcc --values $file > ${{ runner.temp }}/old/$tail.txt
+            echo here8: $file
           done
 
+          echo here9
           diff ${{ runner.temp }}/old/output.txt ${{ runner.temp }}/new/output.txt
           if [ $? -ne 0 ]
           then
@@ -75,4 +86,5 @@ jobs:
             done
           fi
 
+          echo here15
           exit $resultcode
