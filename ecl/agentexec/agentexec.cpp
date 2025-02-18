@@ -508,6 +508,21 @@ int main(int argc, const char *argv[])
         return 1;
     }
 
+    try
+    {
+        CRuntimeStatisticCollection stats(jhtreeCacheStatistics);
+
+        CRuntimeStatistic &stat = stats.queryStatistic(StNumAllocationScans);
+        __int64 x = stat.get();
+        PROGLOG("stat x=%llu", x);
+    }
+    catch (IException *e)
+    {
+        EXCLOG(e);
+        e->Release();
+    }
+
+
     int retcode = 0;
     try
     {
