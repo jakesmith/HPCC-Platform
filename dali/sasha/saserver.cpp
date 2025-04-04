@@ -54,7 +54,7 @@ extern void LDStest();
 Owned<IPropertyTree> serverConfig;
 static IArrayOf<ISashaServer> servers;
 static std::atomic<unsigned> StopSuspendCount{0};
-static bool stopped{false};
+static std::atomic<bool> stopped{false};
 static Semaphore stopSem;
 static bool isDaliClient{false};
 
@@ -245,7 +245,7 @@ void SashaMain()
         bool stopped = false;
         class AbortHandler : implements CSimpleInterfaceOf<IAbortHandler>
         {
-            bool stopped = false;
+            bool& stopped;
         public:
             AbortHandler(bool &_stopped) : stopped(_stopped) {}
             virtual bool onAbort() override
@@ -505,7 +505,9 @@ int main(int argc, const char* argv[])
                             }
                         }
                     }
-                } *stopThread = new CStopThread;
+                } *stopThread{};
+                if (isDaliClient)
+                    stopThread = new CStopThread;
                 addThreadExceptionHandler(&exceptionStopHandler);
 #ifdef _CONTAINERIZED
                 if (!serverConfig->getPropBool("@inDaliPod"))
@@ -516,9 +518,11 @@ int main(int argc, const char* argv[])
                 SashaMain();
                 removeThreadExceptionHandler(&exceptionStopHandler);
 
-                stopSem.signal();
                 if (isDaliClient)
+                {
+                    stopSem.signal();
                     delete stopThread;
+                }
 
                 PROGLOG("SASERVER exiting");
 #ifndef _CONTAINERIZED
