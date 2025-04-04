@@ -96,10 +96,13 @@ public:
 
             if (iFile.isDirectory() == fileBool::foundYes)
             {
-                // Process directories, exclude the ".", "..", and non expired directories from housekeeping
+                // Process directories
+                
+                // Exclude the ".", ".."
                 if (streq(filePath, ".") || streq(filePath, ".."))
                     continue;
 
+                // Process expired directories for housekeeping
                 if (hasExpired(iFile))
                 {
                     recursiveRemoveDirectory(&iFile);
