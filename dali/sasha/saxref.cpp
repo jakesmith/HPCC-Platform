@@ -400,7 +400,9 @@ struct cDirDesc
         unsigned filenameLen;
         StringAttr mask;
         const char *fn = decodeName(drv,name,node,numnodes,mask,pf,nf,filenameLen);
-        bool misplaced = nf!=grp.ordinality() || pf>=grp.ordinality() || !grp.queryNode(pf).endpoint().equals(ep);
+        // TODO: Add better check for misplaced in isContainerized
+        // If plane being scanned is host based (i.e. not locally mounted), misplaced could still make sense
+        bool misplaced = !isContainerized() && (nf!=grp.ordinality() || pf>=grp.ordinality() || !grp.queryNode(pf).endpoint().equals(ep));
         cFileDesc *file = files.find(fn,false);
         if (file) {
             if (misplaced) {
@@ -465,6 +467,84 @@ struct cMessage: public CInterface
     {
     }
 };
+
+
+unsigned getDirPerPartNum(cDirDesc *dir)
+{
+    StringBuffer dirName;
+    dir->getName(dirName);
+    const char *name = dirName.str();
+    unsigned num = 0;
+    while (*name)
+    {
+        if (isdigit(*name))
+            num = num * 10 + (*name - '0');
+        else
+            return 0;
+        name++;
+    }
+    return num;
+}
+
+void normalizeFileDesc(cDirDesc *parent, cDirDesc *dir, const char *currentPath, CLargeMemoryAllocator *mem)
+{
+    if (!isContainerized())
+        return;
+    if (dir->files.ordinality() == 0 || dir->dirs.ordinality() != 0)
+        return;
+
+    unsigned dirPerPartNum = getDirPerPartNum(dir);
+    if (dirPerPartNum == 0)
+        return;
+
+    unsigned i = 0;
+    cFileDesc *file = dir->files.first(i);
+    while (file)
+    {
+        if (dirPerPartNum <= file->N && file->N <= parent->dirs.ordinality())
+        {
+            unsigned present = 0;
+            for (unsigned j=0;j<file->N;j++)
+            {
+                if (file->testpresent(0, j))
+                    present++;
+            }
+
+            // Only one part should be marked present if a dir-per-part file
+            if (present == 1)
+            {
+                StringBuffer fname;
+                file->getNameMask(fname);
+
+                for (unsigned k=0;k<file->N;k++)
+                {
+                    cDirDesc *dirPerPartDir = parent->dirs.find(std::to_string(k+1).c_str(), false);
+                    if (dirPerPartDir)
+                    {
+                        cFileDesc *dirPerPartFile = dirPerPartDir->files.find(fname,false);
+                        if (dirPerPartFile)
+                        {
+                            // Ensure file is created in parent dir
+                            cFileDesc *file = parent->files.find(fname, false);
+                            if (!file) {
+                                if (!mem)
+                                    return;
+                                file = cFileDesc::create(*mem,fname.str(),dirPerPartFile->N,true,dirPerPartFile->filenameLen);
+                                parent->files.add(file);
+                            }
+                            // mark part present in parent dir
+                            file->setpresent(0, k);
+                            // delete part from dir-per-part cDirDesc
+                            dirPerPartDir->files.remove(dirPerPartFile);
+                        }
+                    }
+                }
+            }
+        }
+
+        file = dir->files.next(i);
+    }
+}
 
 
 class CNewXRefManagerBase
@@ -955,6 +1035,7 @@ public:
                 fname.toLowerCase();
             addPathSepChar(path).append(fname);
             if (iter->isDir())  {
+#if 0
                 // Check if subdirectory is a dirPerPart or stripe directory
                 const char *dir = fname.str();
                 bool isDirStriped = dir[0] == 'd' && dir[1] != '\0'; // Directory may be striped if it starts with 'd' and longer than one character
@@ -986,6 +1067,7 @@ public:
                     }
                 }
                 else
+#endif
                     dirs.append(fname.str());
             }
             else {
@@ -1515,20 +1597,21 @@ public:
         d->getName(scope);
         listDirectory(d,basedir.str(),abort);
         unsigned i = 0;
+        cDirDesc *dir = d->dirs.first(i);
+        while (dir) {
+            normalizeFileDesc(d,dir,basedir,&mem);
+            listOrphans(dir,basedir,scope,abort,recentCutoffDays);
+            if (abort)
+                return;
+            dir = d->dirs.next(i);
+        }
+        i = 0;
         cFileDesc *file = d->files.first(i);
         while (file) {
             listOrphans(file,basedir,scope,abort,recentCutoffDays);
             if (abort)
                 return;
             file = d->files.next(i);
-        }
-        i = 0;
-        cDirDesc *dir = d->dirs.first(i);
-        while (dir) {
-            listOrphans(dir,basedir,scope,abort,recentCutoffDays);
-            if (abort)
-                return;
-            dir = d->dirs.next(i);
         }
         basedir.setLength(bds);
         scope.setLength(scopeLen);
