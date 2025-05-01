@@ -351,7 +351,7 @@ struct cDirDesc
     }
 
 
-    cFileDesc *addFile(unsigned drv,const char *name,__int64 sz,CDateTime &dt,unsigned node, const SocketEndpoint &ep, IGroup &grp, unsigned numnodes, CLargeMemoryAllocator *mem, bool isDirPerPart)
+    cFileDesc *addFile(unsigned drv,const char *name,__int64 sz,CDateTime &dt,unsigned node, const SocketEndpoint &ep, IGroup &grp, unsigned numnodes, CLargeMemoryAllocator *mem)
     {
 
         unsigned nf;          // num parts
@@ -366,7 +366,7 @@ struct cDirDesc
         if (!file) {
             if (!mem)
                 return NULL;
-            file = cFileDesc::create(*mem,fn,nf,isDirPerPart,filenameLen);
+            file = cFileDesc::create(*mem,fn,nf,false,filenameLen);
             files.add(file);
         }
         if (misplaced) {
@@ -997,7 +997,7 @@ public:
     }
 
 
-    bool scanDirectory(unsigned node,const SocketEndpoint &ep,StringBuffer &path, unsigned drv, cDirDesc *pdir, IFile *cachefile, bool isDirPerPart=false)
+    bool scanDirectory(unsigned node,const SocketEndpoint &ep,StringBuffer &path, unsigned drv, cDirDesc *pdir, IFile *cachefile)
     {
         size32_t dsz = path.length();
         if (pdir==NULL) 
@@ -1035,40 +1035,34 @@ public:
                 fname.toLowerCase();
             addPathSepChar(path).append(fname);
             if (iter->isDir())  {
-#if 0
                 // Check if subdirectory is a dirPerPart or stripe directory
                 const char *dir = fname.str();
                 bool isDirStriped = dir[0] == 'd' && dir[1] != '\0'; // Directory may be striped if it starts with 'd' and longer than one character
-                if (isDirStriped)
+                if (isDirStriped) {
                     dir++;
-                bool isSpecialDir = true;
-                while (*dir) {
-                    if (!isdigit(*(dir++))) {
-                        isSpecialDir = false;
-                        isDirStriped = false;
-                        break;
+                    while (*dir) {
+                        if (!isdigit(*(dir++))) {
+                            isDirStriped = false;
+                            break;
+                        }
+                    }
+                    // Check that top level subdirectories match isPlaneStriped from plane details
+                    if ((pdir==root) && (isPlaneStriped != isDirStriped))
+                        OERRLOG(LOGPFX "Top-level directory striping mismatch for %s: isPlaneStriped=%d", path.str(), isPlaneStriped);
+                    if (isDirStriped) {
+                        // To properly match all file parts, we need to remove the stripe directory from the path
+                        // so that the cDirDesc hierarchy matches the logical scope hierarchy
+                        // /var/lib/HPCCSystems/hpcc-data/d1/somescope/otherscope/afile.1_of_2
+                        // /var/lib/HPCCSystems/hpcc-data/d2/somescope/otherscope/afile.2_of_2
+                        // These files would never be matched if we didn't build up the cDirDesc structure without the stripe directory
+                        if (!scanDirectory(node,ep,path,drv,pdir,NULL))
+                            return false;
+
+                        path.setLength(dsz);
+                        continue;
                     }
                 }
-                // Check that top level subdirectories match isPlaneStriped from plane details
-                if ((pdir==root) && (isPlaneStriped != isDirStriped))
-                    OERRLOG(LOGPFX "Top-level directory striping mismatch for %s: isPlaneStriped=%d", path.str(), isPlaneStriped);
-                if (isSpecialDir) {
-                    // To properly match all file parts, we need to remove the stripe and dir-per-part directories from the path
-                    // so that the cDirDesc heirarchy matches the logical scope hierarchy
-                    // /var/lib/HPCCSystems/hpcc-data/d1/somescope/otherscope/1/afile.1_of_2
-                    // /var/lib/HPCCSystems/hpcc-data/d2/somescope/otherscope/2/afile.2_of_2
-                    // These files would never be matched if we didn't build up the cDirDesc structure without the stripe and dir-per-part directories
-                    if (!scanDirectory(node,ep,path,drv,pdir,NULL,!isDirStriped))
-                        return false;
-                    if (!isDirStriped && pdir->dirs.ordinality()>0)
-                    {
-                        OERRLOG(LOGPFX "Directory Per Part %s contains other subdirectories.", path.str());
-                        return false;
-                    }
-                }
-                else
-#endif
-                    dirs.append(fname.str());
+                dirs.append(fname.str());
             }
             else {
                 CDateTime dt;
@@ -1076,7 +1070,7 @@ public:
                 nsz += fsz;
                 iter->getModifiedTime(dt);
                 if (!fileFiltered(path.str(),dt)) {
-                    pdir->addFile(drv,fname.str(),fsz,dt,node,ep,*grp,numnodes,&mem,isDirPerPart);
+                    pdir->addFile(drv,fname.str(),fsz,dt,node,ep,*grp,numnodes,&mem);
                 }
             }
             path.setLength(dsz);
@@ -1086,7 +1080,7 @@ public:
             addPathSepChar(path).append(dirs.item(i));
             if (file.get()&&!resetRemoteFilename(file,path.str())) // sneaky way of avoiding cache
                 file.clear();
-            if (!scanDirectory(node,ep,path,drv,pdir->lookupDir(dirs.item(i),&mem),file,isDirPerPart))
+            if (!scanDirectory(node,ep,path,drv,pdir->lookupDir(dirs.item(i),&mem),file))
                 return false;
             path.setLength(dsz);
         }
