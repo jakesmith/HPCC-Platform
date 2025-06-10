@@ -1,5 +1,7 @@
 //TBD check min time from when *finished*
 
+#include <unordered_set>
+
 #include "platform.h"
 
 #include "jlib.hpp"
@@ -2314,9 +2316,12 @@ public:
         if (stopped)
             return;
         PROGLOG(LOGPFX2 "Started");
+
+        bool dryRun = getComponentConfigSP()->hasProp("@dryRun");
+
         unsigned defaultExpireDays = props->getPropInt("@expiryDefault", DEFAULT_EXPIRYDAYS);
         unsigned defaultPersistExpireDays = props->getPropInt("@persistExpiryDefault", DEFAULT_PERSISTEXPIRYDAYS);
-        StringArray expirylist;
+        std::unordered_set<std::string> expiryList;
 
         StringBuffer filterBuf;
         // all non-superfiles
@@ -2326,61 +2331,111 @@ public:
         // hasProp,Attr/@expireDays,"true" - meaning file has @expireDays attribute
         filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFexpiredays)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
 
-        bool allMatchingFilesReceived;
-        Owned<IPropertyTreeIterator> iter = queryDistributedFileDirectory().getDFAttributesTreeIterator(filterBuf,
-            nullptr, nullptr, udesc, true, allMatchingFilesReceived);
-        ForEach(*iter)
-        {
-            IPropertyTree &attr=iter->query();
-            if (attr.hasProp("@expireDays"))
-            {
-                unsigned expireDays = attr.getPropInt("@expireDays");
-                const char * name = attr.queryProp("@name");
-                const char *lastAccessed = attr.queryProp("@accessed");
-                if (lastAccessed && name&&*name)
-                {
-                    if (0 == expireDays)
-                    {
-                        bool isPersist = attr.getPropBool("@persistent");
-                        expireDays = isPersist ? defaultPersistExpireDays : defaultExpireDays;
-                    }
-                    CDateTime now;
-                    now.setNow();
-                    CDateTime expires;
-                    try
-                    {
-                        expires.setString(lastAccessed);
-                        expires.adjustTime(60*24*expireDays);
-                        if (now.compare(expires,false)>0)
-                        {
-                            expirylist.append(name);
-                            StringBuffer expiresStr;
-                            expires.getString(expiresStr);
-                            PROGLOG(LOGPFX2 "%s expired on %s", name, expiresStr.str());
-                        }
-                    }
-                    catch (IException *e)
-                    {
-                        StringBuffer s;
-                        EXCLOG(e, LOGPFX2 "setdate");
-                        e->Release();
-                    }
-                }
-            }
-        }
-        iter.clear();
-        ForEachItemIn(i,expirylist)
+        bool skipNSupport = queryDaliServerVersion().compare("3.17") >= 0;
+        unsigned skipN = 0;
+        for (;;)
         {
             if (stopped)
                 break;
-            const char *lfn = expirylist.item(i);
+
+            StringBuffer pagedFilter;
+            pagedFilter.append(filterBuf.str());
+            pagedFilter.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFSkip)
+                .append(DFUQFilterSeparator).append(skipN).append(DFUQFilterSeparator);
+
+            bool allMatchingFilesReceived = true;
+            unsigned returnedCount = 0;
+            Owned<IPropertyTreeIterator> iter = queryDistributedFileDirectory().getDFAttributesTreeIterator(pagedFilter.str(),
+                nullptr, nullptr, udesc, true, allMatchingFilesReceived, returnedCount);
+
+            if (!iter || returnedCount == 0)
+            {
+                iter.clear();
+                break;
+            }
+
+            unsigned dups = 0;
+            ForEach(*iter)
+            {
+                IPropertyTree &attr = iter->query();
+                const char *name = attr.queryProp("@name");
+                if (dryRun)
+                    PROGLOG("Considering file %s", name ? name : "<unknown>");
+                if (!name || !*name)
+                    continue;
+                if (attr.hasProp("@expireDays"))
+                {
+                    unsigned expireDays = attr.getPropInt("@expireDays");
+                    const char *lastAccessed = attr.queryProp("@accessed");
+                    if (lastAccessed && *lastAccessed)
+                    {
+                        if (expireDays == 0)
+                        {
+                            bool isPersist = attr.getPropBool("@persistent");
+                            expireDays = isPersist ? defaultPersistExpireDays : defaultExpireDays;
+                        }
+                        CDateTime now;
+                        now.setNow();
+                        CDateTime expires;
+                        try
+                        {
+                            expires.setString(lastAccessed);
+                            expires.adjustTime(60 * 24 * expireDays);
+                            if (now.compare(expires, false) > 0)
+                            {
+                                if (!dryRun)
+                                {
+                                    if (expiryList.find(name) != expiryList.end())
+                                        dups++;
+                                    else
+                                        expiryList.insert(name);
+                                }
+                                StringBuffer expiresStr;
+                                expires.getString(expiresStr);
+                                PROGLOG(LOGPFX2 "%s expired on %s%s", name, expiresStr.str(), dryRun ? " (dry run)" : "");
+                            }
+                        }
+                        catch (IException *e)
+                        {
+                            StringBuffer s;
+                            EXCLOG(e, LOGPFX2 "setdate");
+                            e->Release();
+                        }
+                    }
+                }
+            }
+            iter.clear();
+
+            if (allMatchingFilesReceived)
+                break;
+            if (skipN>0) // IOW, this is not the 1st time
+            {
+                if (dups>=1000) // this is a very crude way to detect that the server did not support skipN
+                {
+                    // NB: we can't tell by Dali serverion alone if skipN is supported because feature introduced between versions.
+                    // Really the server version discovery mechanism should be enhanced to return a list of capabilities
+                    WARNLOG("Sasha expiry was not able to process all the files (too many and skip not supported). File limit hit at: %u", returnedCount);
+                    break;
+                }
+            }
+            // in theory, some of the previous files have been removed in the interim, therefore we start the next batch
+            // from <previous> + <returnedCount> - <fudge-factor>
+            skipN += returnedCount;
+            if (returnedCount > 10000)
+                skipN -= 1000;
+        }
+        PROGLOG("Found %u files to expire", (unsigned)expiryList.size());
+        for (const auto& lfn : expiryList)
+        {
+            if (stopped)
+                break;
             try
             {
                 /* NB: 0 timeout, meaning fail and skip, if there is any locking contention.
                  * If the file is locked, it implies it is being accessed.
                  */
-                queryDistributedFileDirectory().removeEntry(lfn, udesc, NULL, 0, true);
-                PROGLOG(LOGPFX2 "Deleted %s",lfn);
+                queryDistributedFileDirectory().removeEntry(lfn.c_str(), udesc, NULL, 0, true);
+                PROGLOG(LOGPFX2 "Deleted %s",lfn.c_str());
             }
             catch (IException *e) // may want to just detach if fails
             {
