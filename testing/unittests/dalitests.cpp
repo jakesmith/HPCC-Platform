@@ -1870,14 +1870,6 @@ class CDaliDFSStressTests : public CppUnit::TestFixture
         CPPUNIT_TEST(testDFSRemoveSuperSub);
 // This test requires access to an external IP with dafilesrv running
 //        CPPUNIT_TEST(testDFSRename3);
-
-        CPPUNIT_TEST(testIteratorSetup);
-        CPPUNIT_TEST(testDirectoryIterator);
-        CPPUNIT_TEST(testDFAttrIteratorSimple);
-        CPPUNIT_TEST(testDFAttrIterator);
-        CPPUNIT_TEST(testDFAttrIteratorSelectFields);
-        CPPUNIT_TEST(testGetLogicalFilesSorted);
-
     CPPUNIT_TEST_SUITE_END();
 
     void testGrp(SocketEndpointArray &epa)
@@ -2592,7 +2584,38 @@ public:
         ASSERT(!dir.exists("regress::removesupersub::sub1", user, true, false) && "regress::removesupersub::sub1 should NOT exist");
         ASSERT(!dir.exists("regress::removesupersub::sub4", user, true, false) && "regress::removesupersub::sub4 should NOT exist");
     }
+};
 
+CPPUNIT_TEST_SUITE_REGISTRATION( CDaliDFSStressTests );
+CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( CDaliDFSStressTests, "CDaliDFSStressTests" );
+
+
+class CDaliDFSIteratorTests : public CppUnit::TestFixture
+{
+    CPPUNIT_TEST_SUITE(CDaliDFSIteratorTests);
+        CPPUNIT_TEST(testInit);
+        CPPUNIT_TEST(testIteratorSetup);
+        CPPUNIT_TEST(testDirectoryIterator);
+        CPPUNIT_TEST(testDFAttrIteratorSimple);
+        CPPUNIT_TEST(testDFAttrIterator);
+        CPPUNIT_TEST(testDFAttrIteratorSelectFields);
+        CPPUNIT_TEST(testGetLogicalFilesSorted);
+    CPPUNIT_TEST_SUITE_END();
+
+    const IContextLogger &logctx;
+
+public:
+    CDaliDFSIteratorTests() : logctx(queryDummyContextLogger())
+    {
+    }
+    ~CDaliDFSIteratorTests()
+    {
+        daliClientEnd();
+    }
+    void testInit()
+    {
+        daliClientInit();
+    }
     void testIteratorSetup()
     {
         setupDFS(logctx, "iterator", 1, 4);
@@ -2698,7 +2721,15 @@ public:
 
         unsigned count = 0;
         ForEach(*iter)
+        {
+            const IPropertyTree &attrs = iter->query();
+            CPPUNIT_ASSERT_MESSAGE("testDFAttrIterator: missing 'name' attribute", attrs.hasProp(getDFUQResultFieldName(DFUQResultField::name)));
+            CPPUNIT_ASSERT_MESSAGE("testDFAttrIterator: missing 'group' attribute", attrs.hasProp(getDFUQResultFieldName(DFUQResultField::nodegroup)));
+            CPPUNIT_ASSERT_MESSAGE("testDFAttrIterator: missing 'modified' attribute", attrs.hasProp(getDFUQResultFieldName(DFUQResultField::timemodified)));
+            CPPUNIT_ASSERT_MESSAGE("testDFAttrIterator: missing 'numparts' attribute", attrs.hasProp(getDFUQResultFieldName(DFUQResultField::numparts)));
+            CPPUNIT_ASSERT_MESSAGE("testDFAttrIterator: missing 'partmask' attribute", attrs.hasProp(getDFUQResultFieldName(DFUQResultField::partmask)));
             ++count;
+        }
         VStringBuffer msg("testDFAttrIterator: expected %u files", numStdFiles);
         CPPUNIT_ASSERT_MESSAGE(msg, count == numStdFiles);
 
@@ -2749,9 +2780,45 @@ public:
 
         unsigned count = 0;
         ForEach(*iter)
+        {
+            const IPropertyTree &attrs = iter->query();
+            CPPUNIT_ASSERT_MESSAGE("testDFAttrIteratorSelectFields: recordSize attribute should be present", attrs.hasProp("@recordSize"));
+            CPPUNIT_ASSERT_MESSAGE("testDFAttrIteratorSelectFields: directory attribute should NOT be present", !attrs.hasProp("@directory"));
             ++count;
-        VStringBuffer msg("testDFAttrIteratorSelectFields: expected 1 file");
-        CPPUNIT_ASSERT_MESSAGE(msg, count == 1);
+        }
+        CPPUNIT_ASSERT_MESSAGE("testDFAttrIteratorSelectFields: expected 1 file", count == 1);
+
+        auto testInclusionExclusion = [&](bool inclusion)
+        {
+            // test includeAll with an exclusion
+            if (inclusion)
+                fields = { DFUQResultField::includeAll, DFUQResultField::recordsize|DFUQResultField::exclude, DFUQResultField::term};
+            else
+                fields = { DFUQResultField::includeAll|DFUQResultField::exclude, DFUQResultField::recordsize, DFUQResultField::term};
+
+            iter.setown(dir.getDFAttributesFilteredIterator(filterBuf,
+                nullptr,                      // no local filters
+                fields.data(),                // select fields
+                user,                         // user context
+                true,                         // recursive
+                allReceived                   // output parameter
+            ));
+            CPPUNIT_ASSERT(allReceived);
+            count = 0;
+            ForEach(*iter)
+            {
+                const IPropertyTree &attrs = iter->query();
+                CPPUNIT_ASSERT(inclusion == attrs.hasProp("@directory"));
+                CPPUNIT_ASSERT(inclusion == attrs.hasProp("@job"));
+                CPPUNIT_ASSERT(inclusion == attrs.hasProp("@owner"));
+                CPPUNIT_ASSERT(inclusion == attrs.hasProp("@workunit"));
+                CPPUNIT_ASSERT(inclusion == !attrs.hasProp("@recordSize"));
+                ++count;
+            }
+            CPPUNIT_ASSERT_MESSAGE("testDFAttrIteratorSelectFields: expected 1 file", count == 1);
+        };
+        testInclusionExclusion(true);
+        testInclusionExclusion(false);
     }
 
     void testGetLogicalFilesSorted()
@@ -2784,12 +2851,14 @@ public:
             expectedJob.setf("sub%u", --subJobs);
             bool costAttrsPresent = attrs.hasProp("@cost") && attrs.hasProp("@readCost") && attrs.hasProp("@writeCost") && attrs.hasProp("@atRestCost");
             CPPUNIT_ASSERT_MESSAGE("testGetLogicalFilesSorted: Missing cost attributes", costAttrsPresent);
+            bool dirAttrsPresent = attrs.hasProp("@directory");
+            CPPUNIT_ASSERT_MESSAGE("testGetLogicalFilesSorted: directory attribute should NOT be present", !dirAttrsPresent);
         }
     }
 };
 
-CPPUNIT_TEST_SUITE_REGISTRATION( CDaliDFSStressTests );
-CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( CDaliDFSStressTests, "CDaliDFSStressTests" );
+CPPUNIT_TEST_SUITE_REGISTRATION( CDaliDFSIteratorTests );
+CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( CDaliDFSIteratorTests, "CDaliDFSIteratorTests" );
 
 class CDaliDFSRetrySlowTests : public CppUnit::TestFixture
 {
