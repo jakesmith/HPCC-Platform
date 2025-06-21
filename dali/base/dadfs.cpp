@@ -13947,7 +13947,7 @@ const char* getDFUQResultFieldTypeName(DFUQResultFieldType type)
     }
 }
 
-static std::vector<DFUQResultField> dfuQRsultFieldToVector(const DFUQResultField *fields, bool includeTerminator)
+static std::vector<DFUQResultField> dfuQResultFieldsToVector(const DFUQResultField *fields, bool includeTerminator)
 {
     std::vector<DFUQResultField> result;
     if (fields)
@@ -14328,7 +14328,7 @@ IPropertyTreeIterator* CDistributedFileDirectory::getLogicalFiles(
             sortOrder(_sortOrder), recursive(_recursive), sorted(_sorted)
         {
             allMatchingFilesReceived = true;
-            fields = dfuQRsultFieldToVector(_fields, true);
+            fields = dfuQResultFieldsToVector(_fields, true);
         }
         virtual IRemoteConnection* getElements(IArrayOf<IPropertyTree> &elements)
         {
@@ -14351,7 +14351,7 @@ IPropertyTreeIterator* CDistributedFileDirectory::getLogicalFiles(
             CDaliVersion serverVersionNeeded("3.19");
             if (queryDaliServerVersion().compare(serverVersionNeeded) >= 0)
             {
-                fieldsWithSorted = dfuQRsultFieldToVector(fields, false);
+                fieldsWithSorted = dfuQResultFieldsToVector(fields, false);
 
                 // NB: could add sort fields here, that are already in fields, that's okay, they will take precedence by being last 
                 for (unsigned s=0; sortOrder[s] != DFUQResultField::term; s++)
