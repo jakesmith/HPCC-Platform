@@ -2176,6 +2176,156 @@ public:
 };
 
 
+// NB: the order must match the order of the enum DFUQResultField.
+// However, DFUQResultField's are always translated to these strings before being transmitted to Dali,
+// so there is they can be reordered without fear of breaking compatibility as long as DFUQResultField is in same order.
+// "includeAll" is a pecial field values that are used by field filtering on the server side,
+// but are only sent to a server version that supports them. NB: it can be negated, i.e. : -includeAll
+// These fields are used to specify sort order, and to specify which fields are to be returned.
+
+struct DFUQFieldInfo
+{
+    DFUQResultField field;
+    std::string_view name;
+    DFUQResultFieldType type;
+};
+
+// enum field, name, type
+static const DFUQFieldInfo dfuqFieldInfos[] =
+{
+    {DFUQResultField::name,            "@name",             DFUQResultFieldType::stringType},
+    {DFUQResultField::description,     "@description",      DFUQResultFieldType::stringType},
+    {DFUQResultField::nodegroups,      "@group",            DFUQResultFieldType::stringType},
+    {DFUQResultField::kind,            "@kind",             DFUQResultFieldType::stringType},
+    {DFUQResultField::timemodified,    "@modified",         DFUQResultFieldType::stringType},
+    {DFUQResultField::job,             "@job",              DFUQResultFieldType::stringType},
+    {DFUQResultField::owner,           "@owner",            DFUQResultFieldType::stringType},
+    {DFUQResultField::recordcount,     "@DFUSFrecordCount", DFUQResultFieldType::numericType},
+    {DFUQResultField::origrecordcount, "@recordCount",      DFUQResultFieldType::numericType},
+    {DFUQResultField::recordsize,      "@recordSize",       DFUQResultFieldType::numericType},
+    {DFUQResultField::size,            "@DFUSFsize",        DFUQResultFieldType::numericType},
+    {DFUQResultField::origsize,        "@size",             DFUQResultFieldType::numericType},
+    {DFUQResultField::workunit,        "@workunit",         DFUQResultFieldType::stringType},
+    {DFUQResultField::nodegroup,       "@DFUSFcluster",     DFUQResultFieldType::stringType},
+    {DFUQResultField::numsubfiles,     "@numsubfiles",      DFUQResultFieldType::numericType},
+    {DFUQResultField::accessed,        "@accessed",         DFUQResultFieldType::stringType},
+    {DFUQResultField::numparts,        "@numparts",         DFUQResultFieldType::numericType},
+    {DFUQResultField::compressedsize,  "@compressedSize",   DFUQResultFieldType::numericType},
+    {DFUQResultField::directory,       "@directory",        DFUQResultFieldType::stringType},
+    {DFUQResultField::partmask,        "@partmask",         DFUQResultFieldType::stringType},
+    {DFUQResultField::superowners,     "@superowners",      DFUQResultFieldType::stringType},
+    {DFUQResultField::persistent,      "@persistent",       DFUQResultFieldType::boolType},
+    {DFUQResultField::protect,         "@protect",          DFUQResultFieldType::stringType},
+    {DFUQResultField::iscompressed,    "@compressed",       DFUQResultFieldType::boolType},
+    {DFUQResultField::cost,            "@cost",             DFUQResultFieldType::floatType},
+    {DFUQResultField::numDiskReads,    "@numDiskReads",     DFUQResultFieldType::numericType},
+    {DFUQResultField::numDiskWrites,   "@numDiskWrites",    DFUQResultFieldType::numericType},
+    {DFUQResultField::atRestCost,      "@atRestCost",       DFUQResultFieldType::floatType},
+    {DFUQResultField::accessCost,      "@accessCost",       DFUQResultFieldType::floatType},
+    {DFUQResultField::maxSkew,         "@maxSkew",          DFUQResultFieldType::numericType},
+    {DFUQResultField::minSkew,         "@minSkew",          DFUQResultFieldType::numericType},
+    {DFUQResultField::maxSkewPart,     "@maxSkewPart",      DFUQResultFieldType::numericType},
+    {DFUQResultField::minSkewPart,     "@minSkewPart",      DFUQResultFieldType::numericType},
+    {DFUQResultField::readCost,        "@readCost",         DFUQResultFieldType::floatType},
+    {DFUQResultField::writeCost,       "@writeCost",        DFUQResultFieldType::floatType},
+    {DFUQResultField::expireDays,      "@expireDays",       DFUQResultFieldType::numericType},
+    {DFUQResultField::includeAll,      "includeAll",        DFUQResultFieldType::unknown}
+};
+const size_t dfuqFieldInfosCount = sizeof(dfuqFieldInfos)/sizeof(dfuqFieldInfos[0]);
+static_assert(dfuqFieldInfosCount == static_cast<size_t>(DFUQResultField::term),
+              "Field info array and enum out of sync!");
+
+typedef std::unordered_map<std::string_view, std::pair<DFUQResultField, DFUQResultFieldType>, CaseInsensitiveHash, CaseInsensitiveEqual> DFUQResultFieldMap;
+static const DFUQResultFieldMap dfuResultFieldStringMap = []
+{
+    DFUQResultFieldMap map;
+    for (size_t i = 0; i < dfuqFieldInfosCount; ++i)
+    {
+        DFUQResultField field = dfuqFieldInfos[i].field;
+        assertex(field == (DFUQResultField)i);
+
+        // Use the name as the map key, but skip '@' prefix if present
+        std::string_view mapKey = dfuqFieldInfos[i].name;
+        if (mapKey.length() > 0 && mapKey[0] == '@')
+            mapKey = mapKey.substr(1);
+
+        map.emplace(mapKey, std::make_pair(field, dfuqFieldInfos[i].type));
+    }
+    return map;
+}();
+
+
+const char* getDFUQResultFieldKey(DFUQResultField field)
+{
+    assertex(static_cast<size_t>(field) < static_cast<size_t>(DFUQResultField::term));
+    std::string_view mapKey = dfuqFieldInfos[static_cast<size_t>(field)].name;
+    if (mapKey.length() > 0 && mapKey[0] == '@')
+        mapKey = mapKey.substr(1);
+    return mapKey.data();
+}
+
+const char* getDFUQResultFieldName(DFUQResultField field)
+{
+    assertex(static_cast<size_t>(field) < static_cast<size_t>(DFUQResultField::term));
+    return dfuqFieldInfos[static_cast<size_t>(field)].name.data();
+}
+
+DFUQResultFieldType getDFUQResultFieldType(DFUQResultField field)
+{
+    assertex(static_cast<size_t>(field) < static_cast<size_t>(DFUQResultField::term));
+    return dfuqFieldInfos[static_cast<size_t>(field)].type;
+}
+
+DFUQResultField getDFUQResultField(const char *fieldName)
+{
+    auto it = dfuResultFieldStringMap.find(fieldName);
+    if (it != dfuResultFieldStringMap.end())
+        return it->second.first;
+    return DFUQResultField::unknown;
+}
+
+DFUQResultField getDFUQResultFieldAndType(const char *fieldName)
+{
+    auto it = dfuResultFieldStringMap.find(fieldName);
+    if (it != dfuResultFieldStringMap.end())
+        return it->second.first | it->second.second;
+    return DFUQResultField::unknown;
+}
+
+const char* getDFUQResultFieldTypeName(DFUQResultFieldType type)
+{
+    switch (type)
+    {
+        case DFUQResultFieldType::stringType: return "string";
+        case DFUQResultFieldType::numericType: return "numeric";
+        case DFUQResultFieldType::boolType: return "bool";
+        case DFUQResultFieldType::floatType: return "float";
+        default:
+            return "unknown";
+    }
+}
+
+static std::vector<DFUQResultField> dfuQResultFieldsToVector(const DFUQResultField *fields, bool includeTerminator)
+{
+    std::vector<DFUQResultField> result;
+    if (fields)
+    {
+        while (true)
+        {
+            bool term = *fields == DFUQResultField::term;
+            if (term)
+            {
+                if (includeTerminator)
+                    result.push_back(*fields);
+                break;
+            }
+            result.push_back(*fields);
+            ++fields;
+        }
+    }
+    return result;
+}
+
 struct SerializeFileAttrOptions
 {
     std::unordered_map<std::string, bool> fields;
@@ -13816,156 +13966,6 @@ bool CDistributedFileDirectory::isProtectedFile(const CDfsLogicalFileName &logic
 IDFProtectedIterator *CDistributedFileDirectory::lookupProtectedFiles(const char *owner,bool notsuper,bool superonly)
 {
     return new CDFProtectedIterator(owner,notsuper,superonly,defaultTimeout);
-}
-
-// NB: the order must match the order of the enum DFUQResultField.
-// However, DFUQResultField's are always translated to these strings before being transmitted to Dali,
-// so there is they can be reordered without fear of breaking compatibility as long as DFUQResultField is in same order.
-// "includeAll" is a pecial field values that are used by field filtering on the server side,
-// but are only sent to a server version that supports them. NB: it can be negated, i.e. : -includeAll
-// These fields are used to specify sort order, and to specify which fields are to be returned.
-
-struct DFUQFieldInfo
-{
-    DFUQResultField field;
-    std::string_view name;
-    DFUQResultFieldType type;
-};
-
-// enum field, name, type
-static const DFUQFieldInfo dfuqFieldInfos[] =
-{
-    {DFUQResultField::name,            "@name",             DFUQResultFieldType::stringType},
-    {DFUQResultField::description,     "@description",      DFUQResultFieldType::stringType},
-    {DFUQResultField::nodegroups,      "@group",            DFUQResultFieldType::stringType},
-    {DFUQResultField::kind,            "@kind",             DFUQResultFieldType::stringType},
-    {DFUQResultField::timemodified,    "@modified",         DFUQResultFieldType::stringType},
-    {DFUQResultField::job,             "@job",              DFUQResultFieldType::stringType},
-    {DFUQResultField::owner,           "@owner",            DFUQResultFieldType::stringType},
-    {DFUQResultField::recordcount,     "@DFUSFrecordCount", DFUQResultFieldType::numericType},
-    {DFUQResultField::origrecordcount, "@recordCount",      DFUQResultFieldType::numericType},
-    {DFUQResultField::recordsize,      "@recordSize",       DFUQResultFieldType::numericType},
-    {DFUQResultField::size,            "@DFUSFsize",        DFUQResultFieldType::numericType},
-    {DFUQResultField::origsize,        "@size",             DFUQResultFieldType::numericType},
-    {DFUQResultField::workunit,        "@workunit",         DFUQResultFieldType::stringType},
-    {DFUQResultField::nodegroup,       "@DFUSFcluster",     DFUQResultFieldType::stringType},
-    {DFUQResultField::numsubfiles,     "@numsubfiles",      DFUQResultFieldType::numericType},
-    {DFUQResultField::accessed,        "@accessed",         DFUQResultFieldType::stringType},
-    {DFUQResultField::numparts,        "@numparts",         DFUQResultFieldType::numericType},
-    {DFUQResultField::compressedsize,  "@compressedSize",   DFUQResultFieldType::numericType},
-    {DFUQResultField::directory,       "@directory",        DFUQResultFieldType::stringType},
-    {DFUQResultField::partmask,        "@partmask",         DFUQResultFieldType::stringType},
-    {DFUQResultField::superowners,     "@superowners",      DFUQResultFieldType::stringType},
-    {DFUQResultField::persistent,      "@persistent",       DFUQResultFieldType::boolType},
-    {DFUQResultField::protect,         "@protect",          DFUQResultFieldType::stringType},
-    {DFUQResultField::iscompressed,    "@compressed",       DFUQResultFieldType::boolType},
-    {DFUQResultField::cost,            "@cost",             DFUQResultFieldType::floatType},
-    {DFUQResultField::numDiskReads,    "@numDiskReads",     DFUQResultFieldType::numericType},
-    {DFUQResultField::numDiskWrites,   "@numDiskWrites",    DFUQResultFieldType::numericType},
-    {DFUQResultField::atRestCost,      "@atRestCost",       DFUQResultFieldType::floatType},
-    {DFUQResultField::accessCost,      "@accessCost",       DFUQResultFieldType::floatType},
-    {DFUQResultField::maxSkew,         "@maxSkew",          DFUQResultFieldType::numericType},
-    {DFUQResultField::minSkew,         "@minSkew",          DFUQResultFieldType::numericType},
-    {DFUQResultField::maxSkewPart,     "@maxSkewPart",      DFUQResultFieldType::numericType},
-    {DFUQResultField::minSkewPart,     "@minSkewPart",      DFUQResultFieldType::numericType},
-    {DFUQResultField::readCost,        "@readCost",         DFUQResultFieldType::floatType},
-    {DFUQResultField::writeCost,       "@writeCost",        DFUQResultFieldType::floatType},
-    {DFUQResultField::expireDays,      "@expireDays",       DFUQResultFieldType::numericType},
-    {DFUQResultField::includeAll,      "includeAll",        DFUQResultFieldType::unknown}
-};
-const size_t dfuqFieldInfosCount = sizeof(dfuqFieldInfos)/sizeof(dfuqFieldInfos[0]);
-static_assert(dfuqFieldInfosCount == static_cast<size_t>(DFUQResultField::term),
-              "Field info array and enum out of sync!");
-
-typedef std::unordered_map<std::string_view, std::pair<DFUQResultField, DFUQResultFieldType>, CaseInsensitiveHash, CaseInsensitiveEqual> DFUQResultFieldMap;
-static const DFUQResultFieldMap dfuResultFieldStringMap = []
-{
-    DFUQResultFieldMap map;
-    for (size_t i = 0; i < dfuqFieldInfosCount; ++i)
-    {
-        DFUQResultField field = dfuqFieldInfos[i].field;
-        assertex(field == (DFUQResultField)i);
-
-        // Use the name as the map key, but skip '@' prefix if present
-        std::string_view mapKey = dfuqFieldInfos[i].name;
-        if (mapKey.length() > 0 && mapKey[0] == '@')
-            mapKey = mapKey.substr(1);
-
-        map.emplace(mapKey, std::make_pair(field, dfuqFieldInfos[i].type));
-    }
-    return map;
-}();
-
-
-const char* getDFUQResultFieldKey(DFUQResultField field)
-{
-    assertex(static_cast<size_t>(field) < static_cast<size_t>(DFUQResultField::term));
-    std::string_view mapKey = dfuqFieldInfos[static_cast<size_t>(field)].name;
-    if (mapKey.length() > 0 && mapKey[0] == '@')
-        mapKey = mapKey.substr(1);
-    return mapKey.data();
-}
-
-const char* getDFUQResultFieldName(DFUQResultField field)
-{
-    assertex(static_cast<size_t>(field) < static_cast<size_t>(DFUQResultField::term));
-    return dfuqFieldInfos[static_cast<size_t>(field)].name.data();
-}
-
-DFUQResultFieldType getDFUQResultFieldType(DFUQResultField field)
-{
-    assertex(static_cast<size_t>(field) < static_cast<size_t>(DFUQResultField::term));
-    return dfuqFieldInfos[static_cast<size_t>(field)].type;
-}
-
-DFUQResultField getDFUQResultField(const char *fieldName)
-{
-    auto it = dfuResultFieldStringMap.find(fieldName);
-    if (it != dfuResultFieldStringMap.end())
-        return it->second.first;
-    return DFUQResultField::unknown;
-}
-
-DFUQResultField getDFUQResultFieldAndType(const char *fieldName)
-{
-    auto it = dfuResultFieldStringMap.find(fieldName);
-    if (it != dfuResultFieldStringMap.end())
-        return it->second.first | it->second.second;
-    return DFUQResultField::unknown;
-}
-
-const char* getDFUQResultFieldTypeName(DFUQResultFieldType type)
-{
-    switch (type)
-    {
-        case DFUQResultFieldType::stringType: return "string";
-        case DFUQResultFieldType::numericType: return "numeric";
-        case DFUQResultFieldType::boolType: return "bool";
-        case DFUQResultFieldType::floatType: return "float";
-        default:
-            return "unknown";
-    }
-}
-
-static std::vector<DFUQResultField> dfuQResultFieldsToVector(const DFUQResultField *fields, bool includeTerminator)
-{
-    std::vector<DFUQResultField> result;
-    if (fields)
-    {
-        while (true)
-        {
-            bool term = *fields == DFUQResultField::term;
-            if (term)
-            {
-                if (includeTerminator)
-                    result.push_back(*fields);
-                break;
-            }
-            result.push_back(*fields);
-            ++fields;
-        }
-    }
-    return result;
 }
 
 static IPropertyTreeIterator *deserializeFileAttrIterator(MemoryBuffer& mb, unsigned numFiles, const char *localFilters, const char *fields)
