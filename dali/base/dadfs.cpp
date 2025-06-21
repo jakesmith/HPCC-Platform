@@ -2300,9 +2300,10 @@ public:
         {
             countpos = mb.length();
             mb.append(count);
+            const char *propName = nullptr;
             if (issuper)
             {
-                const char *propName = getDFUQResultFieldName(DFUQResultField::numsubfiles);
+                propName = getDFUQResultFieldName(DFUQResultField::numsubfiles);
                 if (options.includeField(propName))
                 {
                     mb.append(propName);
@@ -2313,7 +2314,7 @@ public:
             }
             else
             {
-                const char *propName = getDFUQResultFieldName(DFUQResultField::directory);
+                propName = getDFUQResultFieldName(DFUQResultField::directory);
                 if (options.includeField(propName))
                 {
                     mb.append(propName).append(root.queryProp(propName));
@@ -2332,6 +2333,12 @@ public:
                     mb.append(propName).append(root.queryProp(propName));
                     ++count;
                 }
+            }
+            propName = getDFUQResultFieldName(DFUQResultField::timemodified);
+            if (options.includeField(propName))
+            {
+                mb.append(propName).append(root.queryProp(propName));
+                ++count;
             }
         }
         Owned<IPropertyTree> attrs = root.getPropTree("Attr");
