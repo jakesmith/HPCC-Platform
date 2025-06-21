@@ -3924,7 +3924,9 @@ bool CWsDfuEx::doLogicalFileSearch(IEspContext &context, IUserDescriptor* udesc,
 
     //Now, set filters which are used to filter query result received from dali server.
     StringBuffer localFilterBuf;
-    localFilterBuf.append(DFUQFTwildcardMatch).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFgroup)).append(DFUQFilterSeparator).append(req.getNodeGroup());
+    const char *reqNodeGroup = req.getNodeGroup();
+    if (!isEmptyString(reqNodeGroup))
+        localFilterBuf.append(DFUQFTwildcardMatch).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFgroup)).append(DFUQFilterSeparator).append(reqNodeGroup);
 
     StringBuffer sortBy;
     bool descending = false;
