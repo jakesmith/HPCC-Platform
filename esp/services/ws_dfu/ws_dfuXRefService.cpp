@@ -693,12 +693,8 @@ IPropertyTreeIterator *CWsDfuXRefEx::getAllLogicalFilesInCluster(IEspContext &co
     unsigned totalFiles = 0, pageStart = 0, pageSize = ITERATE_FILTEREDFILES_LIMIT;
     Owned<IUserDescriptor> userDesc = getUserDescriptor(context);
 
-    PROGLOG("getLogicalFilesSorted() called");
-    Owned<IPropertyTreeIterator> it = queryDistributedFileDirectory().getLogicalFilesSorted(userDesc, sortOrder, filterBuf,
+    return queryDistributedFileDirectory().getLogicalFilesSorted(userDesc, sortOrder, filterBuf,
         localFilterBuf, nullptr, pageStart, pageSize, &cacheHint, &totalFiles, &allMatchingFilesReceived);
-    PROGLOG("() done");
-
-    return it.getClear();
 }
 
 void CWsDfuXRefEx::findUnusedFilesWithDetailsInDFS(IEspContext &context, const char *process, const MapStringTo<bool> &usedFileMap, IArrayOf<IEspDFULogicalFile> &unusedFiles)

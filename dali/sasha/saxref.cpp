@@ -2557,7 +2557,7 @@ public:
 
         bool allMatchingFilesReceived;
         Owned<IPropertyTreeIterator> iter = queryDistributedFileDirectory().getDFAttributesFilteredIterator(filterBuf,
-            nullptr, nullptr, udesc, true, allMatchingFilesReceived);
+            nullptr, selectiveFields.data(), udesc, true, allMatchingFilesReceived);
         ForEach(*iter)
         {
             IPropertyTree &attr=iter->query();

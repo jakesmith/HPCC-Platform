@@ -806,13 +806,7 @@ struct CaseInsensitiveHash
 {
     std::size_t operator()(std::string_view key) const
     {
-        std::size_t hash = 0;
-        for (char c : key)
-        {
-            hash ^= static_cast<std::size_t>(std::tolower(static_cast<unsigned char>(c)))
-                    + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-        }
-        return hash;
+        return hashnc_fnv1a((const byte *)key.data(), key.size(), fnvInitialHash32);
     }
 };
 
@@ -823,12 +817,7 @@ struct CaseInsensitiveEqual
     {
         if (lhs.size() != rhs.size())
             return false;
-        for (size_t i = 0; i < lhs.size(); ++i)
-        {
-            if (std::tolower(static_cast<unsigned char>(lhs[i])) != std::tolower(static_cast<unsigned char>(rhs[i])))
-                return false;
-        }
-        return true;
+        return 0 == memicmp(lhs.data(), rhs.data(), lhs.size());
     }
 };
 

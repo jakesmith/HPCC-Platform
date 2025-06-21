@@ -260,14 +260,13 @@ enum DFUQFilterField
     DFUQFFwild = 2048
 };
 
-#pragma once
 #include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <cctype>
 
-// 1. Enum definitions
-enum class DFUQResultField
+// NB: these are not serialized / are only used by the client. They are mapped to string equivalent before being transmitted to the server.
+enum class DFUQResultField : unsigned
 {
     name,               // some code will assume this is the first field (and all other up to 'term' follow in order)
     description,
@@ -315,10 +314,10 @@ enum class DFUQResultField
     typeMask = 0x0f<<8, // Masks bits 8-11 (type flags). Could compact the type bits into 2 bits if really wanted to save space
     reverse = 1<<12,
     nocase = 1<<13,
-    unknown = 1<<14,
 // for field filtering
-    include = 1<<15,
-    exclude = 1<<16
+    include = 1<<14,
+    exclude = 1<<15,
+    unknown = 0xffffffff
 };
 BITMASK_ENUM(DFUQResultField);
 

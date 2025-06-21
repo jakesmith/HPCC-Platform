@@ -2179,7 +2179,7 @@ public:
 // NB: the order must match the order of the enum DFUQResultField.
 // However, DFUQResultField's are always translated to these strings before being transmitted to Dali,
 // so there is they can be reordered without fear of breaking compatibility as long as DFUQResultField is in same order.
-// "includeAll" is a pecial field values that are used by field filtering on the server side,
+// "includeAll" is a special field values that are used by field filtering on the server side,
 // but are only sent to a server version that supports them. NB: it can be negated, i.e. : -includeAll
 // These fields are used to specify sort order, and to specify which fields are to be returned.
 
@@ -2235,7 +2235,16 @@ const size_t dfuqFieldInfosCount = sizeof(dfuqFieldInfos)/sizeof(dfuqFieldInfos[
 static_assert(dfuqFieldInfosCount == static_cast<size_t>(DFUQResultField::term),
               "Field info array and enum out of sync!");
 
+//DFUQResultFieldMap a case-insensitive map : key = field name, value = pair<field, type>
 typedef std::unordered_map<std::string_view, std::pair<DFUQResultField, DFUQResultFieldType>, CaseInsensitiveHash, CaseInsensitiveEqual> DFUQResultFieldMap;
+
+/* Statically populate DFUQResultFieldMap by iterating over the dfuqFieldInfos array above.
+   Validate that the table above order matches DFUQResultField enum order.
+   key = field name (derived from attribute name without leading '@')
+   value = { field-enum, field-type }
+
+   This map is used to quickly lookup field enum and type by field name.
+ */
 static const DFUQResultFieldMap dfuResultFieldStringMap = []
 {
     DFUQResultFieldMap map;
@@ -2334,7 +2343,7 @@ struct SerializeFileAttrOptions
 
     SerializeFileAttrOptions()
     {
-        // this is default behavior for bwrd compat
+        // this is default behavior for backward compatibility
         // DFUQResultField::nodegroups is always required (client functionality depends on it)
         includeAll = true;
         const char *superOwnerFieldName = getDFUQResultFieldName(DFUQResultField::superowners);
@@ -2425,8 +2434,8 @@ public:
     {
         StringBuffer buf;
         mb.append(name);
-        unsigned count{0};
-        size32_t countpos{0};
+        unsigned count = 0;
+        size32_t countpos = 0;
         if (!options.filterFields())
         {
             // legacy format
@@ -2578,13 +2587,20 @@ public:
     {
         unsigned count;
         mb.read(count);
-        StringAttr at;
-        StringAttr val;
-        while (count--)
+        if (count)
         {
-            mb.read(at);
-            mb.read(val);
-            attr->setProp(at.get(),val.get());
+            StringBuffer at;
+            StringBuffer val;
+            while (true)
+            {
+                mb.read(at);
+                mb.read(val);
+                attr->setProp(at, val);
+                if (0 == --count)
+                    break;
+                at.clear();
+                val.clear();
+            }
         }
     }
 
@@ -11538,7 +11554,7 @@ public:
         return 0;
     }
 
-    // NB: this is legacy, only old clients < HPCC v9.14 will use, new cilents use iterateFilteredFiles3
+    // NB: this is legacy, only old clients < HPCC v9.14 will use, new clients use iterateFilteredFiles3
     void iterateFiles(CMessageBuffer &mb,StringBuffer &trc)
     {
         TransactionLog transactionLog(*this, MDFS_ITERATE_FILES, mb.getSender());
@@ -14072,7 +14088,7 @@ static IPropertyTreeIterator *deserializeFileAttrIterator(MemoryBuffer& mb, unsi
             const char *propName = getDFUQResultFieldName(DFUQResultField::size);
             if (options.includeField(propName))
             {
-                // JCSMORE - I am not sure what the point of this is, with or without it, a blank @size does not affefct sort order
+                // JCSMORE - I am not sure what the point of this is, with or without it, a blank @size does not affect sort order
                 // and EclWatch seems to use the @size (DFUQResultField::origsize) for size column anyway
                 // See special handling in SerializeFileAttrOptions::readFields() to include origsize if size is requested
                 attr->setPropInt64(propName, attr->getPropInt64(getDFUQResultFieldName(DFUQResultField::origsize), -1));//Sort the files with empty size to front
