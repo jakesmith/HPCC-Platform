@@ -3041,13 +3041,13 @@ public:
         parent = _dir;
         bool recursive = (stricmp(wildname,"*")==0);
 
-        StringBuffer filterBuf;
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileNameWithPrefix).append(DFUQFilterSeparator).append(wildname).append(DFUQFilterSeparator);
+        CDFSFilterBuilder filterBuilder;
         if (!includesuper)
-            filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(DFUQFFTnonsuperfileonly).append(DFUQFilterSeparator);
+            filterBuilder.addNonSuperFilter();
+        filterBuilder.addWildFilter(wildname);
 
         bool allMatchingFilesReceived;
-        Owned<IPropertyTreeIterator> attriter = queryDistributedFileDirectory().getDFAttributesFilteredIterator(filterBuf,
+        Owned<IPropertyTreeIterator> attriter = queryDistributedFileDirectory().getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
             nullptr, nullptr, user, recursive, allMatchingFilesReceived);
 
         ForEach(*attriter) {
@@ -12170,14 +12170,14 @@ IPropertyTreeIterator *CDistributedFileDirectory::getDFAttributesIterator(const 
     if (!wildname||!*wildname||(strcmp(wildname,"*")==0))
         recursive = true;
 
-    StringBuffer filterBuf;
     // all non-superfiles
+    CDFSFilterBuilder filterBuilder;
     if (!includesuper)
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(DFUQFFTnonsuperfileonly).append(DFUQFilterSeparator);
-    filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileNameWithPrefix).append(DFUQFilterSeparator).append(wildname).append(DFUQFilterSeparator);
+        filterBuilder.addNonSuperFilter();
+    filterBuilder.addWildFilter(wildname);
 
     bool allMatchingFilesReceived;
-    return getDFAttributesFilteredIterator(filterBuf, nullptr, nullptr, user, recursive, allMatchingFilesReceived, foreigndali, foreigndalitimeout);
+    return getDFAttributesFilteredIterator(filterBuilder.queryFilter(), nullptr, nullptr, user, recursive, allMatchingFilesReceived, foreigndali, foreigndalitimeout);
 }
 
 IDFScopeIterator *CDistributedFileDirectory::getScopeIterator(IUserDescriptor *user, const char *basescope, bool recursive,bool includeempty)

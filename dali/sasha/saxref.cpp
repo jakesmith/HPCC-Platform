@@ -2546,8 +2546,9 @@ public:
         StringArray expirylist;
 
         StringBuffer filterBuf;
+        CDFSFilterBuilder filterBuilder(filterBuf);
         // all non-superfiles
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(DFUQFFTnonsuperfileonly).append(DFUQFilterSeparator);
+        filterBuilder.addNonSuperFilter();
         // hasProp,SuperOwner,"false" - meaning not owned by a superfile
         filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFsuperowner)).append(DFUQFilterSeparator).append("false").append(DFUQFilterSeparator);
         // hasProp,Attr/@expireDays,"true" - meaning file has @expireDays attribute

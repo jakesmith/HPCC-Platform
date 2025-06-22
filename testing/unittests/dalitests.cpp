@@ -2704,13 +2704,14 @@ public:
         IDistributedFileDirectory &dir = queryDistributedFileDirectory();
 
         const char *wildName = "regress::iterator::*";
-        StringBuffer filterBuf;
         // all non-superfiles
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(DFUQFFTnonsuperfileonly).append(DFUQFilterSeparator);
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileNameWithPrefix).append(DFUQFilterSeparator).append(wildName).append(DFUQFilterSeparator);
+        StringBuffer filterBuf;
+        CDFSFilterBuilder filterBuilder(filterBuf);
+        filterBuilder.addNonSuperFilter();
+        filterBuilder.addWildFilter(wildName);
 
         bool allReceived = false;
-        Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuf,
+        Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
             nullptr,                      // no local filters
             nullptr,                      // no fields specified (default all)
             user,                         // user context
@@ -2761,15 +2762,15 @@ public:
         IDistributedFileDirectory &dir = queryDistributedFileDirectory();
 
         const char *wildName = "regress::iterator::sub4";
-        StringBuffer filterBuf;
         // all non-superfiles
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(DFUQFFTnonsuperfileonly).append(DFUQFilterSeparator);
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileNameWithPrefix).append(DFUQFilterSeparator).append(wildName).append(DFUQFilterSeparator);
+        CDFSFilterBuilder filterBuilder;
+        filterBuilder.addNonSuperFilter();
+        filterBuilder.addWildFilter(wildName);
 
         std::vector<DFUQResultField> fields = {DFUQResultField::recordsize, DFUQResultField::term};
 
         bool allReceived = false;
-        Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuf,
+        Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
             nullptr,                      // no local filters
             fields.data(),                // select fields
             user,                         // user context
@@ -2796,7 +2797,7 @@ public:
             else
                 fields = { DFUQResultField::includeAll|DFUQResultField::exclude, DFUQResultField::recordsize, DFUQResultField::term};
 
-            iter.setown(dir.getDFAttributesFilteredIterator(filterBuf,
+            iter.setown(dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
                 nullptr,                      // no local filters
                 fields.data(),                // select fields
                 user,                         // user context
@@ -2826,10 +2827,10 @@ public:
         IDistributedFileDirectory &dir = queryDistributedFileDirectory();
 
         const char *wildName = "regress::iterator::sub*";
-        StringBuffer filterBuf;
         // all non-superfiles
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(DFUQFFTnonsuperfileonly).append(DFUQFilterSeparator);
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileNameWithPrefix).append(DFUQFilterSeparator).append(wildName).append(DFUQFilterSeparator);
+        CDFSFilterBuilder filterBuilder;
+        filterBuilder.addNonSuperFilter();
+        filterBuilder.addWildFilter(wildName);
 
         std::vector<DFUQResultField> fields = {DFUQResultField::size, DFUQResultField::cost, DFUQResultField::term};
 
@@ -2837,7 +2838,7 @@ public:
         __int64 hint;
         unsigned totalFiles;
         bool allMatchingFilesReceived;
-        Owned<IPropertyTreeIterator> iter = dir.getLogicalFilesSorted(nullptr, sortOrder, filterBuf.str(),
+        Owned<IPropertyTreeIterator> iter = dir.getLogicalFilesSorted(nullptr, sortOrder, filterBuilder.queryFilter(),
             nullptr, fields.data(), 0, INFINITE, &hint, &totalFiles, &allMatchingFilesReceived);
 
         unsigned subJobs = numStdFiles - 2; // -2 exclude iterator::othergroup files

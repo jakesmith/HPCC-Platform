@@ -260,6 +260,7 @@ enum DFUQFilterField
     DFUQFFwild = 2048
 };
 
+
 #include <string_view>
 #include <unordered_map>
 #include <utility>
@@ -329,6 +330,41 @@ extern da_decl DFUQResultFieldType getDFUQResultFieldType(DFUQResultField field)
 extern da_decl DFUQResultField getDFUQResultField(const char *fieldName);
 extern da_decl DFUQResultField getDFUQResultFieldAndType(const char *fieldName);
 extern da_decl const char* getDFUQResultFieldTypeName(DFUQResultField field);
+
+class CDFSFilterBuilder
+{
+    StringBuffer &filterBuf;
+    StringBuffer internalFilterBuf;
+
+    CDFSFilterBuilder &appendToken(unsigned token)
+    {
+        filterBuf.append(token).append(DFUQFilterSeparator);
+        return *this;
+    }
+    CDFSFilterBuilder &appendValue(const char *value)
+    {
+        filterBuf.append(value).append(DFUQFilterSeparator);
+        return *this;
+    }
+public:
+    explicit CDFSFilterBuilder(StringBuffer &buf) : filterBuf(buf)
+    {
+    }
+    explicit CDFSFilterBuilder() : filterBuf(internalFilterBuf)
+    {
+    }
+    const char *queryFilter() const { return filterBuf; }
+    CDFSFilterBuilder& addWildFilter(const char* wildName)
+    {
+        return appendToken(DFUQFTspecial).appendToken(DFUQSFFileNameWithPrefix).appendValue(wildName);
+    }
+    CDFSFilterBuilder& addNonSuperFilter()
+    {
+        return appendToken(DFUQFTspecial).appendToken(DFUQSFFileType).appendToken(DFUQFFTnonsuperfileonly);
+    }
+
+    // Add more helper methods here...
+};
 
 
 /**

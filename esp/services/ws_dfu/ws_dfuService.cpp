@@ -3667,7 +3667,8 @@ void CWsDfuEx::setFileNameFilter(const char* fname, const char* prefix, StringBu
         fileNameFilter.append("*");
     }
     fileNameFilter.toLowerCase();
-    filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileNameWithPrefix).append(DFUQFilterSeparator).append(fileNameFilter.str()).append(DFUQFilterSeparator);
+    CDFSFilterBuilder filterBuilder(filterBuf);
+    filterBuilder.addWildFilter(fileNameFilter.str());
 }
 
 void CWsDfuEx::setFileIterateFilter(unsigned maxFiles, StringBuffer &filterBuf)
