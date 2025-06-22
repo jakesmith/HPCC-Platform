@@ -2600,6 +2600,7 @@ class CDaliDFSIteratorTests : public CppUnit::TestFixture
         CPPUNIT_TEST(testDFAttrIterator);
         CPPUNIT_TEST(testDFAttrIteratorSelectFields);
         CPPUNIT_TEST(testGetLogicalFilesSorted);
+        CPPUNIT_TEST(testCDFSFilterBuilder);
     CPPUNIT_TEST_SUITE_END();
 
     const IContextLogger &logctx;
@@ -2739,7 +2740,7 @@ public:
         filterBuilder.addFieldContains(DFUQFFgroup, groupText);
 
         CDFSFilterBuilder localFilterBuilder;
-        localFilterBuilder.addFieldWildMatch(DFUQFFgroup, groupText);
+        localFilterBuilder.addFieldWildMatch(DFUQFFgroup, groupText, false);
 
         iter.setown(dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
             localFilterBuilder.queryFilter(), // local filters
@@ -2853,6 +2854,185 @@ public:
             CPPUNIT_ASSERT_MESSAGE("testGetLogicalFilesSorted: Missing cost attributes", costAttrsPresent);
             bool dirAttrsPresent = attrs.hasProp("@directory");
             CPPUNIT_ASSERT_MESSAGE("testGetLogicalFilesSorted: directory attribute should NOT be present", !dirAttrsPresent);
+        }
+    }
+
+    void testCDFSFilterBuilder()
+    {
+        IDistributedFileDirectory &dir = queryDistributedFileDirectory();
+
+        // addWildFilter functionality
+        {
+            CDFSFilterBuilder filterBuilder;
+            filterBuilder.addWildFilter("regress::iterator::*");
+            
+            bool allReceived = false;
+            Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
+                nullptr, nullptr, user, true, allReceived);
+            
+            unsigned count = 0;
+            ForEach(*iter)
+                ++count;
+            VStringBuffer msg("testCDFSFilterBuilder: addWildFilter should return %u files", numStdFiles + numSuperFiles);
+            CPPUNIT_ASSERT_MESSAGE(msg, count == (numStdFiles + numSuperFiles));
+        }
+
+        // addNonSuperFilter functionality
+        {
+            CDFSFilterBuilder filterBuilder;
+            filterBuilder.addNonSuperFilter();
+            filterBuilder.addWildFilter("regress::iterator::*");
+            
+            bool allReceived = false;
+            Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
+                nullptr, nullptr, user, true, allReceived);
+            
+            unsigned count = 0;
+            ForEach(*iter) 
+            {
+                const IPropertyTree &attrs = iter->query();
+                // Verify it's not a superfile by checking for absence of superfile attributes
+                CPPUNIT_ASSERT_MESSAGE("testCDFSFilterBuilder: addNonSuperFilter should exclude superfiles", !attrs.hasProp("@numsubfiles"));
+                ++count;
+            }
+            VStringBuffer msg("testCDFSFilterBuilder: addNonSuperFilter should return %u non-super files", numStdFiles);
+            CPPUNIT_ASSERT_MESSAGE(msg, count == numStdFiles);
+        }
+
+        // addFieldContains functionality
+        {
+            CDFSFilterBuilder filterBuilder;
+            filterBuilder.addFieldContains(DFUQFFattrjob, "sub1");
+            filterBuilder.addWildFilter("regress::iterator::*");
+
+            bool allReceived = false;
+            Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
+                nullptr, nullptr, user, true, allReceived);
+            
+            unsigned count = 0;
+            ForEach(*iter) 
+            {
+                const IPropertyTree &attrs = iter->query();
+                const char *job = attrs.queryProp("@job");
+                CPPUNIT_ASSERT_MESSAGE("testCDFSFilterBuilder: addFieldContains should match job containing 'sub1'", 
+                    job && streq(job, "sub1"));
+                ++count;
+            }
+            CPPUNIT_ASSERT_MESSAGE("testCDFSFilterBuilder: addFieldContains should return 1 matching file", count == 1);
+        }
+
+        // addFieldPresent functionality
+        {
+            CDFSFilterBuilder filterBuilder;
+            filterBuilder.addFieldPresent(DFUQFFattrjob, true);
+            filterBuilder.addWildFilter("regress::iterator::*");
+            
+            bool allReceived = false;
+            Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
+                nullptr, nullptr, user, true, allReceived);
+            
+            unsigned count = 0;
+            ForEach(*iter) 
+            {
+                const IPropertyTree &attrs = iter->query();
+                CPPUNIT_ASSERT_MESSAGE("testCDFSFilterBuilder: addFieldPresent should only return files with job field", 
+                    attrs.hasProp("@job"));
+                ++count;
+            }
+            VStringBuffer msg("testCDFSFilterBuilder: addFieldPresent should return %u files with job field", numStdFiles);
+            CPPUNIT_ASSERT_MESSAGE("testCDFSFilterBuilder: addFieldPresent should return files with job field", count == numStdFiles);
+        }
+
+        // addFieldWildMatch (inverse=false) functionality
+        {
+            CDFSFilterBuilder filterBuilder;
+            filterBuilder.addFieldWildMatch(DFUQFFattrjob, "sub1*", false);
+            filterBuilder.addWildFilter("regress::iterator::*");
+            
+            bool allReceived = false;
+            Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
+                nullptr, nullptr, user, true, allReceived);
+            
+            unsigned count = 0;
+            ForEach(*iter) 
+            {
+                const IPropertyTree &attrs = iter->query();
+                const char *job = attrs.queryProp("@job");
+                CPPUNIT_ASSERT_MESSAGE("testCDFSFilterBuilder: addFieldWildMatch should match job starting with 'sub1'", 
+                    job && streq(job, "sub1"));
+                ++count;
+            }
+            PROGLOG("testCDFSFilterBuilder: addFieldWildMatch returned %u files", count);
+            CPPUNIT_ASSERT_MESSAGE("testCDFSFilterBuilder: addFieldWildMatch should return 1 matching file", count == 1);
+        }
+
+        // addFieldWildMatch (inverse=true) functionality
+        {
+            CDFSFilterBuilder filterBuilder;
+            filterBuilder.addFieldWildMatch(DFUQFFattrjob, "sub1*", true);
+            filterBuilder.addWildFilter("regress::iterator::*");
+            
+            bool allReceived = false;
+            Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
+                nullptr, nullptr, user, true, allReceived);
+            
+            unsigned count = 0;
+            ForEach(*iter) 
+            {
+                const IPropertyTree &attrs = iter->query();
+                const char *job = attrs.queryProp("@job");
+                CPPUNIT_ASSERT_MESSAGE("testCDFSFilterBuilder: addFieldWildMatch inverse=true should exclude 'sub1'", 
+                    !job || !streq(job, "sub1"));
+                ++count;
+            }
+            VStringBuffer msg("testCDFSFilterBuilder: addFieldWildMatch (inverse=true) should return %u files not matching pattern", numSuperFiles + numStdFiles - 1);
+            CPPUNIT_ASSERT_MESSAGE(msg, numSuperFiles + numStdFiles - 1);
+        }
+
+        // addFileType functionality
+        {
+            CDFSFilterBuilder filterBuilder;
+            filterBuilder.addFileType(DFUQFFTnonsuperfileonly);
+            filterBuilder.addWildFilter("regress::iterator::*");
+            
+            bool allReceived = false;
+            Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
+                nullptr, nullptr, user, true, allReceived);
+            
+            unsigned count = 0;
+            ForEach(*iter) 
+            {
+                const IPropertyTree &attrs = iter->query();
+                // All files should have typical file attributes
+                CPPUNIT_ASSERT_MESSAGE("testCDFSFilterBuilder: addFileType(non-super) should not return super files", !attrs.hasProp("@numsubfiles"));
+                ++count;
+            }
+            VStringBuffer msg("testCDFSFilterBuilder: addFileType(non-super) should return %u files", numStdFiles);
+            CPPUNIT_ASSERT_MESSAGE(msg, count > 0);
+        }
+
+        // Method chaining functionality
+        {
+            CDFSFilterBuilder filterBuilder;
+            CDFSFilterBuilder &chainResult = filterBuilder.addWildFilter("regress::iterator::*")
+                                                        .addNonSuperFilter()
+                                                        .addFieldPresent(DFUQFFattrjob, true)
+                                                        .addFileType(DFUQFFTnonsuperfileonly)
+                                                        .addFieldWildMatch(DFUQFFattrjob, "sub1*", false);
+            
+            bool allReceived = false;
+            Owned<IPropertyTreeIterator> iter = dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
+                nullptr, nullptr, user, true, allReceived);
+            
+            unsigned count = 0;
+            ForEach(*iter) 
+            {
+                const IPropertyTree &attrs = iter->query();
+                CPPUNIT_ASSERT_MESSAGE("Matches should container @job", attrs.hasProp("@job"));
+                CPPUNIT_ASSERT_MESSAGE("Matches should not be a superfile", !attrs.hasProp("@numsubfiles"));
+                ++count;
+            }
+            CPPUNIT_ASSERT_MESSAGE("testCDFSFilterBuilder: chained filters should return 1 matching file", count == 1);
         }
     }
 };
