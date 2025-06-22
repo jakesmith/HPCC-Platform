@@ -359,15 +359,15 @@ public:
     {
     }
     const char *queryFilter() const { return filterBuf; }
-    CDFSFilterBuilder& addWildFilter(const char* wildName)
+    CDFSFilterBuilder &addWildFilter(const char* wildName)
     {
         return appendToken(DFUQFTspecial).appendToken(DFUQSFFileNameWithPrefix).appendValue(wildName);
     }
-    CDFSFilterBuilder& addNonSuperFilter()
+    CDFSFilterBuilder &addNonSuperFilter()
     {
         return appendToken(DFUQFTspecial).appendToken(DFUQSFFileType).appendToken(DFUQFFTnonsuperfileonly);
     }
-    CDFSFilterBuilder& addFieldContains(DFUQFilterField field, const char *value)
+    CDFSFilterBuilder &addFieldContains(DFUQFilterField field, const char *value)
     {
         appendToken(DFUQFTcontainString);
         appendFieldName(field);
@@ -375,11 +375,18 @@ public:
         appendValue(",");
         return *this;
     }
-    CDFSFilterBuilder& addFieldPresent(DFUQFilterField field, bool tf)
+    CDFSFilterBuilder &addFieldPresent(DFUQFilterField field, bool tf)
     {
         appendToken(DFUQFThasProp);
         appendFieldName(field);
         appendValue(boolToStr(tf));
+        return *this;
+    }
+    CDFSFilterBuilder &addFieldWildMatch(DFUQFilterField field, const char *value)
+    {
+        appendToken(DFUQFTwildcardMatch);
+        appendFieldName(field);
+        appendValue(value);
         return *this;
     }
 };

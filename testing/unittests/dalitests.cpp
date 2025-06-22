@@ -2738,11 +2738,11 @@ public:
         // server side filter to get only files with this group
         filterBuilder.addFieldContains(DFUQFFgroup, groupText);
 
-        StringBuffer localFilterBuf;
-        localFilterBuf.append(DFUQFTwildcardMatch).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFgroup)).append(DFUQFilterSeparator).append(groupText);
+        CDFSFilterBuilder localFilterBuilder;
+        localFilterBuilder.addFieldWildMatch(DFUQFFgroup, groupText);
 
         iter.setown(dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
-            localFilterBuf,
+            localFilterBuilder.queryFilter(), // local filters
             nullptr,                      // no fields specified (default all)
             user,                         // user context
             true,                         // recursive
