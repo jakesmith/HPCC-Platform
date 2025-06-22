@@ -3757,7 +3757,7 @@ void CWsDfuEx::setDFUQuerySortOrder(IEspDFUQueryRequest& req, StringBuffer& sort
         {"IsCompressed", "compressed"},
         {"Records", "recordcount"},
         {"Parts", "numparts"},
-        {"NodeGroup", "cluster"}
+        {"NodeGroup", "DFUSFcluster"}
     };
 
     const char* sortByPtr = sortBy.str();
