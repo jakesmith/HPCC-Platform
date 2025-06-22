@@ -680,7 +680,10 @@ IPropertyTreeIterator *CWsDfuXRefEx::getAllLogicalFilesInCluster(IEspContext &co
 {
     StringBuffer filterBuf;
     //The filterBuf is sent to dali to retrieve the logical files whose @group attribute contains this cluster.
-    WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFgroup), DFUQFTcontainString, cluster, ",", filterBuf);
+
+    CDFSFilterBuilder filterBuilder(filterBuf);
+    filterBuilder.addFieldContains(DFUQFFgroup, cluster);
+    // WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFgroup), DFUQFTcontainString, cluster, ",", filterBuf);
 
     //If a logical file is for >1 clusters, the localFilterBuf is used to pick up the logical file which is for this cluster.
     StringBuffer localFilterBuf;

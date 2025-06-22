@@ -20,20 +20,20 @@
 
 #include "ws_dfuHelpers.hpp"
 
-void WsDFUHelpers::appendDFUQueryFilter(const char* name, DFUQFilterType type, const char* value, StringBuffer& filterBuf)
-{
-    if (isEmptyString(name) || isEmptyString(value))
-        return;
-    filterBuf.append(type).append(DFUQFilterSeparator).append(name).append(DFUQFilterSeparator).append(value).append(DFUQFilterSeparator);
-}
+// void WsDFUHelpers::appendDFUQueryFilter(const char* name, DFUQFilterType type, const char* value, StringBuffer& filterBuf)
+// {
+//     if (isEmptyString(name) || isEmptyString(value))
+//         return;
+//     filterBuf.append(type).append(DFUQFilterSeparator).append(name).append(DFUQFilterSeparator).append(value).append(DFUQFilterSeparator);
+// }
 
-void WsDFUHelpers::appendDFUQueryFilter(const char* name, DFUQFilterType type, const char* value, const char* valueHigh, StringBuffer& filterBuf)
-{
-    if (isEmptyString(name) || isEmptyString(value))
-        return;
-    filterBuf.append(type).append(DFUQFilterSeparator).append(name).append(DFUQFilterSeparator).append(value).append(DFUQFilterSeparator);
-    filterBuf.append(valueHigh).append(DFUQFilterSeparator);
-}
+// void WsDFUHelpers::appendDFUQueryFilter(const char* name, DFUQFilterType type, const char* value, const char* valueHigh, StringBuffer& filterBuf)
+// {
+//     if (isEmptyString(name) || isEmptyString(value))
+//         return;
+//     filterBuf.append(type).append(DFUQFilterSeparator).append(name).append(DFUQFilterSeparator).append(value).append(DFUQFilterSeparator);
+//     filterBuf.append(valueHigh).append(DFUQFilterSeparator);
+// }
 
 const char* WsDFUHelpers::getPrefixFromLogicalName(const char* logicalName, StringBuffer& prefix)
 {

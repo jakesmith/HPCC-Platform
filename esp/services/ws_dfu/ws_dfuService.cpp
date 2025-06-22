@@ -3632,10 +3632,11 @@ void CWsDfuEx::getAPageOfSortedLogicalFile(IEspContext &context, IUserDescriptor
 
 void CWsDfuEx::setFileTypeFilter(const char* fileType, StringBuffer& filterBuf)
 {
+    CDFSFilterBuilder filterBuilder(filterBuf);
     DFUQFileTypeFilter fileTypeFilter = DFUQFFTall;
-    if (!fileType || !*fileType)
+    if (isEmptyString(fileType))
     {
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(fileTypeFilter).append(DFUQFilterSeparator);
+        filterBuilder.addFileType(fileTypeFilter);
         return;
     }
     bool notInSuperfile = false;
@@ -3647,9 +3648,9 @@ void CWsDfuEx::setFileTypeFilter(const char* fileType, StringBuffer& filterBuf)
         notInSuperfile = true;
     else
         fileTypeFilter = DFUQFFTall;
-    filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(fileTypeFilter).append(DFUQFilterSeparator);
+    filterBuilder.addFileType(fileTypeFilter);
     if (notInSuperfile)
-        WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFsuperowner), DFUQFThasProp, "0", filterBuf);
+        filterBuilder.addFieldPresent(DFUQFFsuperowner, false);
 }
 
 void CWsDfuEx::setFileNameFilter(const char* fname, const char* prefix, StringBuffer &filterBuf)
@@ -3681,17 +3682,24 @@ void CWsDfuEx::setDFUQueryFilters(IEspDFUQueryRequest& req, StringBuffer& filter
 {
     setFileNameFilter(req.getLogicalName(), req.getPrefix(), filterBuf);
     setFileTypeFilter(req.getFileType(), filterBuf);
-    WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFattrowner), DFUQFTwildcardMatch, req.getOwner(), filterBuf);
+
+    CDFSFilterBuilder filterBuilder(filterBuf);
+    filterBuilder.addFieldWildMatch(DFUQFFattrowner, req.getOwner(), false);
+
+    //WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFattrowner), DFUQFTwildcardMatch, req.getOwner(), filterBuf);
 
     if (req.getInvertContent_isNull() || !req.getInvertContent())
     {
-        WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFkind), DFUQFTwildcardMatch, req.getContentType(), filterBuf);
+        filterBuilder.addFieldWildMatch(DFUQFFkind, req.getContentType(), false);
+        // WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFkind), DFUQFTwildcardMatch, req.getContentType(), filterBuf);
     }
     else
     {
-        WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFkind), DFUQFTinverseWildcardMatch, req.getContentType(), filterBuf);
+        filterBuilder.addFieldWildMatch(DFUQFFkind, req.getContentType(), true);
+        // WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFkind), DFUQFTinverseWildcardMatch, req.getContentType(), filterBuf);
     }
-    WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFgroup), DFUQFTcontainString, req.getNodeGroup(), ",", filterBuf);
+    filterBuilder.addFieldContains(DFUQFFgroup, req.getNodeGroup());
+    // WsDFUHelpers::appendDFUQueryFilter(getDFUQFilterFieldName(DFUQFFgroup), DFUQFTcontainString, req.getNodeGroup(), ",", filterBuf);
 
     setInt64RangeFilter(req.getFileSizeFrom(), req.getFileSizeTo(), DFUQFFattrsize, filterBuf);
     setInt64RangeFilter(req.getMaxSkewFrom(), req.getMaxSkewTo(), DFUQFFattrmaxskew, filterBuf);

@@ -369,6 +369,8 @@ public:
     }
     CDFSFilterBuilder &addFieldContains(DFUQFilterField field, const char *value)
     {
+        if (isEmptyString(value))
+            return *this;
         appendToken(DFUQFTcontainString);
         appendFieldName(field);
         appendValue(value);
@@ -382,11 +384,20 @@ public:
         appendValue(boolToStr(tf));
         return *this;
     }
-    CDFSFilterBuilder &addFieldWildMatch(DFUQFilterField field, const char *value)
+    CDFSFilterBuilder &addFieldWildMatch(DFUQFilterField field, const char *value, bool inverse)
     {
-        appendToken(DFUQFTwildcardMatch);
+        if (isEmptyString(value))
+            return *this;
+        appendToken(inverse ? DFUQFTinverseWildcardMatch : DFUQFTwildcardMatch);
         appendFieldName(field);
         appendValue(value);
+        return *this;
+    }
+    CDFSFilterBuilder &addFileType(DFUQFileTypeFilter fileTypeFilter)
+    {
+        appendToken(DFUQFTspecial);
+        appendToken(DFUQSFFileType);
+        filterBuf.append(fileTypeFilter).append(DFUQFilterSeparator);
         return *this;
     }
 };
