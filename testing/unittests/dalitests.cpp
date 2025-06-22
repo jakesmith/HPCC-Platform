@@ -2705,8 +2705,7 @@ public:
 
         const char *wildName = "regress::iterator::*";
         // all non-superfiles
-        StringBuffer filterBuf;
-        CDFSFilterBuilder filterBuilder(filterBuf);
+        CDFSFilterBuilder filterBuilder;
         filterBuilder.addNonSuperFilter();
         filterBuilder.addWildFilter(wildName);
 
@@ -2737,12 +2736,12 @@ public:
         // very fake local filter test - DFUQFFgroup is the only local filter supported
         const char *groupText = "grp2";
         // server side filter to get only files with this group
-        filterBuf.append(DFUQFTcontainString).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFgroup)).append(DFUQFilterSeparator).append(groupText).append(DFUQFilterSeparator).append(",").append(DFUQFilterSeparator);
+        filterBuilder.addFieldContains(DFUQFFgroup, groupText);
 
         StringBuffer localFilterBuf;
         localFilterBuf.append(DFUQFTwildcardMatch).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFgroup)).append(DFUQFilterSeparator).append(groupText);
 
-        iter.setown(dir.getDFAttributesFilteredIterator(filterBuf,
+        iter.setown(dir.getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
             localFilterBuf,
             nullptr,                      // no fields specified (default all)
             user,                         // user context

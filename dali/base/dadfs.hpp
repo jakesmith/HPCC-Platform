@@ -346,6 +346,11 @@ class CDFSFilterBuilder
         filterBuf.append(value).append(DFUQFilterSeparator);
         return *this;
     }
+    CDFSFilterBuilder &appendFieldName(DFUQFilterField field)
+    {
+        filterBuf.append(getDFUQFilterFieldName(field)).append(DFUQFilterSeparator);
+        return *this;
+    }
 public:
     explicit CDFSFilterBuilder(StringBuffer &buf) : filterBuf(buf)
     {
@@ -362,8 +367,21 @@ public:
     {
         return appendToken(DFUQFTspecial).appendToken(DFUQSFFileType).appendToken(DFUQFFTnonsuperfileonly);
     }
-
-    // Add more helper methods here...
+    CDFSFilterBuilder& addFieldContains(DFUQFilterField field, const char *value)
+    {
+        appendToken(DFUQFTcontainString);
+        appendFieldName(field);
+        appendValue(value);
+        appendValue(",");
+        return *this;
+    }
+    CDFSFilterBuilder& addFieldPresent(DFUQFilterField field, bool tf)
+    {
+        appendToken(DFUQFThasProp);
+        appendFieldName(field);
+        appendValue(boolToStr(tf));
+        return *this;
+    }
 };
 
 

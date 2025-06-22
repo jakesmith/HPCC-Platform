@@ -2545,19 +2545,18 @@ public:
         unsigned defaultPersistExpireDays = props->getPropInt("@persistExpiryDefault", DEFAULT_PERSISTEXPIRYDAYS);
         StringArray expirylist;
 
-        StringBuffer filterBuf;
-        CDFSFilterBuilder filterBuilder(filterBuf);
+        CDFSFilterBuilder filterBuilder;
         // all non-superfiles
         filterBuilder.addNonSuperFilter();
         // hasProp,SuperOwner,"false" - meaning not owned by a superfile
-        filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFsuperowner)).append(DFUQFilterSeparator).append("false").append(DFUQFilterSeparator);
+        filterBuilder.addFieldPresent(DFUQFFsuperowner, false);
         // hasProp,Attr/@expireDays,"true" - meaning file has @expireDays attribute
-        filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFexpiredays)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
+        filterBuilder.addFieldPresent(DFUQFFexpiredays, true);
 
         std::vector<DFUQResultField> selectiveFields = {DFUQResultField::expireDays, DFUQResultField::accessed, DFUQResultField::persistent, DFUQResultField::term};
 
         bool allMatchingFilesReceived;
-        Owned<IPropertyTreeIterator> iter = queryDistributedFileDirectory().getDFAttributesFilteredIterator(filterBuf,
+        Owned<IPropertyTreeIterator> iter = queryDistributedFileDirectory().getDFAttributesFilteredIterator(filterBuilder.queryFilter(),
             nullptr, selectiveFields.data(), udesc, true, allMatchingFilesReceived);
         ForEach(*iter)
         {
