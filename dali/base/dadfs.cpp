@@ -2186,7 +2186,7 @@ public:
 struct DFUQFieldInfo
 {
     DFUQResultField field;
-    std::string_view name;
+    std::string name;
     DFUQResultFieldType type;
 };
 
@@ -2236,7 +2236,7 @@ static_assert(dfuqFieldInfosCount == static_cast<size_t>(DFUQResultField::term),
               "Field info array and enum out of sync!");
 
 //DFUQResultFieldMap a case-insensitive map : key = field name, value = pair<field, type>
-typedef std::unordered_map<std::string_view, std::pair<DFUQResultField, DFUQResultFieldType>, CaseInsensitiveHash, CaseInsensitiveEqual> DFUQResultFieldMap;
+typedef std::unordered_map<std::string, std::pair<DFUQResultField, DFUQResultFieldType>, CaseInsensitiveHash, CaseInsensitiveEqual> DFUQResultFieldMap;
 
 /* Statically populate DFUQResultFieldMap by iterating over the dfuqFieldInfos array above.
    Validate that the table above order matches DFUQResultField enum order.
@@ -2261,7 +2261,7 @@ static const DFUQResultFieldMap dfuResultFieldStringMap = []
 const char* getDFUQResultFieldName(DFUQResultField field)
 {
     assertex(static_cast<size_t>(field) < static_cast<size_t>(DFUQResultField::term));
-    return dfuqFieldInfos[static_cast<size_t>(field)].name.data();
+    return dfuqFieldInfos[static_cast<size_t>(field)].name.c_str();
 }
 
 DFUQResultFieldType getDFUQResultFieldType(DFUQResultField field)
