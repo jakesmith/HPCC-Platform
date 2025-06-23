@@ -2322,18 +2322,17 @@ static std::vector<DFUQResultField> dfuQResultFieldsToVector(const DFUQResultFie
 
 struct SerializeFileAttrOptions
 {
-    std::unordered_map<std::string, bool> fields;
     bool includeAll = false;
     bool customFields = false;
+    std::vector<bool> fieldsList;
 
     SerializeFileAttrOptions()
     {
         // this is default behavior for backward compatibility
         // DFUQResultField::nodegroups is always required (client functionality depends on it)
+        fieldsList.assign(dfuqFieldInfosCount, true);
+        fieldsList[static_cast<unsigned>(DFUQResultField::superowners)] = false;
         includeAll = true;
-        const char *superOwnerFieldName = getDFUQResultFieldName(DFUQResultField::superowners);
-        const char *groupFieldname = getDFUQResultFieldName(DFUQResultField::nodegroups);
-        fields = {{superOwnerFieldName, false}, {groupFieldname, true}};
     }
     void readFields(const char *fieldList)
     {
@@ -2341,57 +2340,68 @@ struct SerializeFileAttrOptions
         includeAll = false; // default if custom fields specified.
 
         // DFUQResultField::nodegroups is always required (client functionality depends on it)
-        const char *groupFieldname = getDFUQResultFieldName(DFUQResultField::nodegroups);
-        fields = {{groupFieldname, true}};
+        std::fill(fieldsList.begin(), fieldsList.end(), false);
+        fieldsList[static_cast<unsigned>(DFUQResultField::nodegroups)] = true;
 
         StringArray fieldsArray;
         fieldsArray.appendList(fieldList, ",");
         ForEachItemIn(i, fieldsArray)
         {
-            const char *field = fieldsArray.item(i);
+            const char *fieldStr = fieldsArray.item(i);
             bool additive = true;
-            switch (field[0])
+            switch (fieldStr[0])
             {
                 case '-':
-                    field++;
+                    fieldStr++;
                     additive = false;
                     break;
                 case '+':
-                    field++;
+                    fieldStr++;
                     break;
             }
-            if (streq(getDFUQResultFieldName(DFUQResultField::includeAll), field))
-                includeAll = additive;
-            else
+            DFUQResultField field = getDFUQResultField(fieldStr);
+            switch (field)
             {
-                fields[field] = additive;
-                if (additive)
-                {
-                    if (streq(getDFUQResultFieldName(DFUQResultField::cost), field))
+                case DFUQResultField::unknown:
+                    // not sure this should this log a warning..
+                    break;
+                case DFUQResultField::includeAll:
+                    if (0 != i) // does not make sense to be anything but 1st specifier
+                        throw makeStringException(0, "SerializeFileAttrOptions::readFields 'includeAll' must be be leading specifier");
+                    std::fill(fieldsList.begin(), fieldsList.end(), additive);
+                    includeAll = additive;
+                    break;
+                case DFUQResultField::cost:
+                    fieldsList[static_cast<unsigned>(field)] = additive;
+                    if (additive)
                     {
                         // special handling if cost included, include other fields that are required for cost calculation
                         // another reason it would be better to compute server side.
                         // i.e. setCost could be moved to server during filtering/projecting, and then this could be removed.
-                        fields[getDFUQResultFieldName(DFUQResultField::timemodified)] = true;
-                        fields[getDFUQResultFieldName(DFUQResultField::compressedsize)] = true;
-                        fields[getDFUQResultFieldName(DFUQResultField::origsize)] = true;
-                        fields[getDFUQResultFieldName(DFUQResultField::readCost)] = true;
-                        fields[getDFUQResultFieldName(DFUQResultField::writeCost)] = true;
+                        fieldsList[static_cast<unsigned>(DFUQResultField::timemodified)] = true;
+                        fieldsList[static_cast<unsigned>(DFUQResultField::compressedsize)] = true;
+                        fieldsList[static_cast<unsigned>(DFUQResultField::origsize)] = true;
+                        fieldsList[static_cast<unsigned>(DFUQResultField::readCost)] = true;
+                        fieldsList[static_cast<unsigned>(DFUQResultField::writeCost)] = true;
                     }
-                    else if (streq(getDFUQResultFieldName(DFUQResultField::size), field))
-                    {
-                        // special handling if DFUSFsize is included (which is calculated client side), to also include dependent origsize
-                        fields[getDFUQResultFieldName(DFUQResultField::origsize)] = true;
-                    }
+                    break;
+                case DFUQResultField::size:
+                    fieldsList[static_cast<unsigned>(field)] = additive;
+                    // special handling if DFUSFsize is included (which is calculated client side), to also include dependent origsize
+                    fieldsList[static_cast<unsigned>(DFUQResultField::origsize)] = additive;
+                    break;
+                default:
+                {
+                    fieldsList[static_cast<unsigned>(field)] = additive;
+                    break;
                 }
             }
         }
     }
     void setField(DFUQResultField field, bool additive)
     {
-        // customFields deliberately not set, because setField is only called from code that is supporting legacy clients
-        const char *fieldName = getDFUQResultFieldName(field);
-        fields[fieldName] = additive;
+        // 'customFields' deliberately not set, because setField is only called from code that is supporting legacy clients
+        fieldsList[static_cast<unsigned>(field)] = additive;
     }
     bool filterFields() const
     {
@@ -2399,12 +2409,10 @@ struct SerializeFileAttrOptions
         // if true, then by implication, it is a newer client
         return customFields;
     }
-    bool includeField(const char *field) const
+    bool includeField(DFUQResultField field) const
     {
-        auto it = fields.find(field);
-        if (it == fields.end())
-            return includeAll;
-        return it->second;
+        dbgassertex(static_cast<size_t>(field) < static_cast<size_t>(DFUQResultField::term));
+        return fieldsList[static_cast<unsigned>(field)];
     }
 };
 
@@ -2444,12 +2452,11 @@ public:
         {
             countpos = mb.length();
             mb.append(count);
-            const char *propName = nullptr;
             if (issuper)
             {
-                propName = getDFUQResultFieldName(DFUQResultField::numsubfiles);
-                if (options.includeField(propName))
+                if (options.includeField(DFUQResultField::numsubfiles))
                 {
+                    const char *propName = getDFUQResultFieldName(DFUQResultField::numsubfiles);
                     mb.append(propName);
                     const char *val = root.queryProp(propName);
                     mb.append(val ? val : "0");
@@ -2458,29 +2465,29 @@ public:
             }
             else
             {
-                propName = getDFUQResultFieldName(DFUQResultField::directory);
-                if (options.includeField(propName))
+                if (options.includeField(DFUQResultField::directory))
                 {
+                    const char *propName = getDFUQResultFieldName(DFUQResultField::directory);
                     mb.append(propName).append(root.queryProp(propName));
                     ++count;
                 }
-                propName = getDFUQResultFieldName(DFUQResultField::numparts);
-                if (options.includeField(propName))
+                if (options.includeField(DFUQResultField::numparts))
                 {
+                    const char *propName = getDFUQResultFieldName(DFUQResultField::numparts);
                     const char *val = root.queryProp(propName);
                     mb.append(propName).append(val ? val : "0");
                     ++count;
                 }
-                propName = getDFUQResultFieldName(DFUQResultField::partmask);
-                if (options.includeField(propName))
+                if (options.includeField(DFUQResultField::partmask))
                 {
+                    const char *propName = getDFUQResultFieldName(DFUQResultField::partmask);
                     mb.append(propName).append(root.queryProp(propName));
                     ++count;
                 }
             }
-            propName = getDFUQResultFieldName(DFUQResultField::timemodified);
-            if (options.includeField(propName))
+            if (options.includeField(DFUQResultField::timemodified))
             {
+                const char *propName = getDFUQResultFieldName(DFUQResultField::timemodified);
                 mb.append(propName).append(root.queryProp(propName));
                 ++count;
             }
@@ -2494,18 +2501,22 @@ public:
             do
             {
                 const char *attrName = attriter->queryName();
-                if (options.includeField(attrName))
+                DFUQResultField field = getDFUQResultField(attrName);
+                if (DFUQResultField::unknown != field)
                 {
-                    mb.append(attriter->queryName());
-                    mb.append(attriter->queryValue());
-                    count++;
+                    if (options.includeField(field))
+                    {
+                        mb.append(attriter->queryName());
+                        mb.append(attriter->queryValue());
+                        count++;
+                    }
                 }
             }
             while (attriter->next());
         }
-        const char *propName = getDFUQResultFieldName(DFUQResultField::nodegroups);
-        if (options.includeField(propName))
+        if (options.includeField(DFUQResultField::nodegroups))
         {
+            const char *propName = getDFUQResultFieldName(DFUQResultField::nodegroups);
             const char *ps = root.queryProp(propName);
             if (ps&&*ps)
             {
@@ -2514,8 +2525,7 @@ public:
                 mb.append(ps);
             }
         }
-        propName = getDFUQResultFieldName(DFUQResultField::protect);
-        if (options.includeField(propName))
+        if (options.includeField(DFUQResultField::protect))
         {
             // add protected
             if (attrs)
@@ -2535,13 +2545,12 @@ public:
                 if (plist.length())
                 {
                     count++;
-                    mb.append(propName);
+                    mb.append(getDFUQResultFieldName(DFUQResultField::protect));
                     mb.append(plist.str());
                 }
             }
         }
-        propName = getDFUQResultFieldName(DFUQResultField::superowners);
-        if (options.includeField(propName))
+        if (options.includeField(DFUQResultField::superowners))
         {
             //add superowners
             StringBuffer soList;
@@ -2560,7 +2569,7 @@ public:
             if (soList.length())
             {
                 count++;
-                mb.append(propName);
+                mb.append(getDFUQResultFieldName(DFUQResultField::superowners));
                 mb.append(soList.str());
             }
         }
@@ -14070,28 +14079,28 @@ static IPropertyTreeIterator *deserializeFileAttrIterator(MemoryBuffer& mb, unsi
             if (group)
                 setFileNodeGroup(attr, group);
 
-            const char *propName = getDFUQResultFieldName(DFUQResultField::size);
-            if (options.includeField(propName))
+            if (options.includeField(DFUQResultField::size))
             {
                 // JCSMORE - I am not sure what the point of this is, with or without it, a blank @size does not affect sort order
                 // and EclWatch seems to use the @size (DFUQResultField::origsize) for size column anyway
                 // See special handling in SerializeFileAttrOptions::readFields() to include origsize if size is requested
+                const char *propName = getDFUQResultFieldName(DFUQResultField::size);
                 attr->setPropInt64(propName, attr->getPropInt64(getDFUQResultFieldName(DFUQResultField::origsize), -1));//Sort the files with empty size to front
             }
 
-            if (options.includeField(getDFUQResultFieldName(DFUQResultField::recordcount)))
+            if (options.includeField(DFUQResultField::recordcount))
             {
                 // JCSMORE - Is this really necessary/used? Sets @DFUSFrecordCount - if @recordSize missing, but @size and @recordCount present.. calculates..
                 setRecordCount(attr);
             }
 
-            if (options.includeField(getDFUQResultFieldName(DFUQResultField::iscompressed)))
+            if (options.includeField(DFUQResultField::iscompressed))
             {
                 // JCSMORE sets compressed if no compressed attribute, but is an index. Don't indexes already have this flag?
                 setIsCompressed(attr);
             }
 
-            if (options.includeField(getDFUQResultFieldName(DFUQResultField::cost)))
+            if (options.includeField(DFUQResultField::cost))
             {
                 // JCSMORE - cost could be computed in Dali instead - would simplify filtering/projecting code
                 // see special handling in SerializeFileAttrOptions::readFields()
@@ -14109,7 +14118,7 @@ static IPropertyTreeIterator *deserializeFileAttrIterator(MemoryBuffer& mb, unsi
             ForEach(*ai)
                 attr->setProp(ai->queryName(),ai->queryValue());
 
-            if (options.includeField(getDFUQResultFieldName(DFUQResultField::cost)))
+            if (options.includeField(DFUQResultField::cost))
             {
                 const char * nodeGroup = fileNodeGroups.item(fileNodeGroups.length()-1);
                 attr->setProp(getDFUQResultFieldName(DFUQResultField::nodegroup), nodeGroup);
