@@ -2252,26 +2252,11 @@ static const DFUQResultFieldMap dfuResultFieldStringMap = []
     {
         DFUQResultField field = dfuqFieldInfos[i].field;
         assertex(field == (DFUQResultField)i);
-
-        // Use the name as the map key, but skip '@' prefix if present
-        std::string_view mapKey = dfuqFieldInfos[i].name;
-        if (mapKey.length() > 0 && mapKey[0] == '@')
-            mapKey = mapKey.substr(1);
-
-        map.emplace(mapKey, std::make_pair(field, dfuqFieldInfos[i].type));
+        map.emplace(dfuqFieldInfos[i].name, std::make_pair(field, dfuqFieldInfos[i].type));
     }
     return map;
 }();
 
-
-const char* getDFUQResultFieldKey(DFUQResultField field)
-{
-    assertex(static_cast<size_t>(field) < static_cast<size_t>(DFUQResultField::term));
-    std::string_view mapKey = dfuqFieldInfos[static_cast<size_t>(field)].name;
-    if (mapKey.length() > 0 && mapKey[0] == '@')
-        mapKey = mapKey.substr(1);
-    return mapKey.data();
-}
 
 const char* getDFUQResultFieldName(DFUQResultField field)
 {

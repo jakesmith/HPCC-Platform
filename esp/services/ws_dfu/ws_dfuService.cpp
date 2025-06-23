@@ -345,7 +345,7 @@ bool CWsDfuEx::onDFUGetMetaInquiry(IEspContext &context, IEspDFUMetaInquiryReque
         while (true)
         {
             Owned<IEspDFUMetaFieldInfo> result = createDFUMetaFieldInfo();
-            const char *fieldName = getDFUQResultFieldKey(field);
+            const char *fieldName = getDFUQResultFieldName(field);
             DFUQResultFieldType type = getDFUQResultFieldType(field);
             const char *typeName = getDFUQResultFieldTypeName(type);
             result->setName(fieldName);
@@ -3752,12 +3752,12 @@ void CWsDfuEx::setDFUQuerySortOrder(IEspDFUQueryRequest& req, StringBuffer& sort
     // These mappings do not conform to DFS mapping (see dadfs getDFUQResultField())
     static const std::unordered_map<std::string_view, std::string_view> legacyMappings =
     {
-        {"FileSize", "DFUSFsize"},
-        {"ContentType", "kind"},
-        {"IsCompressed", "compressed"},
-        {"Records", "recordcount"},
-        {"Parts", "numparts"},
-        {"NodeGroup", "DFUSFcluster"}
+        {"FileSize", "@DFUSFsize"},
+        {"ContentType", "@kind"},
+        {"IsCompressed", "@compressed"},
+        {"Records", "@recordcount"},
+        {"Parts", "@numparts"},
+        {"NodeGroup", "@DFUSFcluster"}
     };
 
     const char* sortByPtr = sortBy.str();
@@ -3769,7 +3769,8 @@ void CWsDfuEx::setDFUQuerySortOrder(IEspDFUQueryRequest& req, StringBuffer& sort
     }
     else
     {
-        DFUQResultField fieldAndType = getDFUQResultFieldAndType(sortByPtr);
+        VStringBuffer key("@%s", sortByPtr);
+        DFUQResultField fieldAndType = getDFUQResultFieldAndType(key);
         if (DFUQResultField::unknown != fieldAndType) // odd, but previous semantics
             sortOrder[0] = fieldAndType;
         else

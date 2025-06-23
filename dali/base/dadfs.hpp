@@ -325,7 +325,6 @@ typedef DFUQResultField DFUQResultFieldType;
 
 extern da_decl const char* getDFUQFilterFieldName(DFUQFilterField field);
 extern da_decl const char* getDFUQResultFieldName(DFUQResultField field);
-extern da_decl const char* getDFUQResultFieldKey(DFUQResultField field);
 extern da_decl DFUQResultFieldType getDFUQResultFieldType(DFUQResultField field);
 extern da_decl DFUQResultField getDFUQResultField(const char *fieldName);
 extern da_decl DFUQResultField getDFUQResultFieldAndType(const char *fieldName);
