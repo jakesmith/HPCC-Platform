@@ -1,6 +1,3 @@
----
-applyTo: "**"
----
 # GitHub Copilot Instructions for HPCC Platform
 
 ## Repository Structure
@@ -15,26 +12,19 @@ This repository contains **two distinct projects**:
 ### Build System
 - **Build tool**: CMake with Ninja generator
 - **Configuration**: Use options from `vcpkg-linux.code-workspace`
-- **Key cmake arguments**:
-  ```
-  -DCONTAINERIZED=OFF
-  -DUSE_OPTIONAL=OFF
-  -DUSE_CPPUNIT=ON
-  -DINCLUDE_PLUGINS=ON
-  -DSUPPRESS_V8EMBED=ON
-  -DSUPPRESS_REMBED=ON
-  ```
+- **Key cmake arguments**: deduce cmake arguments from .vscode/settings.json
 
 ### Build Commands
+- **Build directory** (<build-dir>): Extract the current setting from "cmake.buildDirectory" in .vscode/settings.json which is based on $buildType
 ```bash
 # Configure the build
-cmake -B ./build -S . -G Ninja -DCONTAINERIZED=OFF -DUSE_OPTIONAL=OFF -DUSE_CPPUNIT=ON -DINCLUDE_PLUGINS=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_REMBED=ON -DCMAKE_BUILD_TYPE=Debug
+cmake -B <build-dir> -S . -G Ninja -DCONTAINERIZED=OFF -DUSE_OPTIONAL=OFF -DUSE_CPPUNIT=ON -DINCLUDE_PLUGINS=ON -DSUPPRESS_V8EMBED=ON -DSUPPRESS_REMBED=ON -DCMAKE_BUILD_TYPE=Debug
 
 # Build
-cmake --build ./build --parallel
+cmake --build <build-dir> --parallel
 
 # Create package
-cmake --build ./build --parallel --target package
+cmake --build <build-dir> --parallel --target package
 ```
 
 ### Key Directories
@@ -53,6 +43,15 @@ cmake --build ./build --parallel --target package
 - Follow the style guide in `devdoc/StyleGuide.md`
 - Review guidelines in `devdoc/CodeReviews.md`
 - Submission process in `devdoc/CodeSubmissions.md`
+- Never add trailing whitespace, be careful when copying code from other sources
+- Use Allman style for C++ code blocks
+- Do not use brace curly blocks for single line blocks, unless they are nested
+- Use camel case for variable names
+- Use constexpr's for constances not macros
+- Use Owned vs Linked for assigning ownership of objects
+- Avoid default parameters in function declarations (overload methods with different prototypes instead)
+- Use `#pragma once` for header guards
+- Use %u for unsigned integers, %d for signed integers
 
 ### Development Workflow
 - See `devdoc/Development.md` for testing and development guidelines
@@ -66,3 +65,11 @@ For the ECL Watch web interface, see the separate instructions in `esp/src/.gith
 ## Documentation
 - Contributing docs: `devdoc/docs/ContributeDocs.md`
 - GitHub Copilot tips: `devdoc/userdoc/copilot/CopilotPromptTips.md`
+
+## Code Reviews
+- Follow the guidelines in `devdoc/CodeReviews.md`
+- When reviewing code, pay particular attention to the following questions:
+- Are there any efficiency concerns?
+- Is the code thread safe?
+- Could the code be refactored to improve maintainability and reuse?
+- Are there any memory or resource leaks?
