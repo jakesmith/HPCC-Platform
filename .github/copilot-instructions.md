@@ -66,10 +66,10 @@ For the ECL Watch web interface, see the separate instructions in `esp/src/.gith
 - Contributing docs: `devdoc/docs/ContributeDocs.md`
 - GitHub Copilot tips: `devdoc/userdoc/copilot/CopilotPromptTips.md`
 
-## Code Reviews
+## When performing a code review
 - Follow the guidelines in `devdoc/CodeReviews.md`
-- When reviewing code, pay particular attention to the following questions:
-- Are there any efficiency concerns?
-- Is the code thread safe?
-- Could the code be refactored to improve maintainability and reuse?
-- Are there any memory or resource leaks?
+- Pay particular attention to the following questions:
+  - Are there any efficiency concerns?
+  - Is the code thread safe?
+  - Could the code be refactored to improve maintainability and reuse?
+  - Are there any memory or resource leaks?
