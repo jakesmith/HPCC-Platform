@@ -166,28 +166,6 @@ private:
 //   Result:   TimeoutThread demonstrates true throttling timeout - times out before throttle delay expires
 //   runTableDrivenScenario(scenario);
 
-struct ThreadSpec
-{
-    const char* name;
-    unsigned runtimeMs;
-    unsigned expectedStartDelayMs;  // Expected delay before thread starts when pool is at capacity (0 = immediate)
-    unsigned startTimeoutMs;        // Timeout for starting thread (INFINITE = no timeout)
-    bool expectStartException;      // Whether starting this thread should throw exception
-    bool useStartNoBlock;          // Whether to use startNoBlock instead of start
-};
-
-struct PoolTestScenario
-{
-    const char* testName;       // Used as both test name and pool name
-    unsigned maxThreads;        // Pool capacity (0 = unlimited)
-    unsigned throttleDelayMs;   // Throttling delay when pool is at capacity (INFINITE = infinite)
-    std::vector<ThreadSpec> threads;
-    
-    // Validation settings
-    unsigned durationWiggleMs = 50;    // Allowed timing variance in milliseconds
-    bool validateFinalCounts = true;   // Whether to validate final started/completed counts
-};
-
 class ThreadPoolTest : public CppUnit::TestFixture
 {
     CPPUNIT_TEST_SUITE(ThreadPoolTest);
@@ -700,6 +678,28 @@ public:
         CPPUNIT_ASSERT(pool->running());
     }
 
+    struct ThreadSpec
+    {
+        const char* name;
+        unsigned runtimeMs;
+        unsigned expectedStartDelayMs;  // Expected delay before thread starts when pool is at capacity (0 = immediate)
+        unsigned startTimeoutMs;        // Timeout for starting thread (INFINITE = no timeout)
+        bool expectStartException;      // Whether starting this thread should throw exception
+        bool useStartNoBlock;          // Whether to use startNoBlock instead of start
+    };
+
+    struct PoolTestScenario
+    {
+        const char* testName;       // Used as both test name and pool name
+        unsigned maxThreads;        // Pool capacity (0 = unlimited)
+        unsigned throttleDelayMs;   // Throttling delay when pool is at capacity (INFINITE = infinite)
+        std::vector<ThreadSpec> threads;
+        
+        // Validation settings
+        unsigned durationWiggleMs = 50;    // Allowed timing variance in milliseconds
+        bool validateFinalCounts = true;   // Whether to validate final started/completed counts
+    };
+
     void testTableDrivenScenarios()
     {
         // Define test scenarios using the table-driven framework
@@ -759,7 +759,7 @@ public:
                     {"Quick2", 100, 0, INFINITE, false, false},       // Fill pool, complete quickly
                     {"WaitForSlot", 200, 100, INFINITE, false, false}, // Wait ~100ms for Quick1/2 to complete
                     {"LongRunner", 1000, 0, INFINITE, false, false},   // Start immediately, run long
-                    {"Throttled", 200, 300, INFINITE, false, false},   // Pool full, wait full 300ms throttle
+                    {"Throttled", 200, 300, INFINITE, false, false},   // Pool full, wait full 300ms throttle // JCS should expectedStartDelayMs be 200, not 300?
                     {"FastTimeout", 200, 0, 50, true, false},          // Timeout before throttle expires
                 },
                 30,             // durationWiggleMs
