@@ -68,6 +68,23 @@ public:
     StringBuffer &toString(StringBuffer &str) const;
 };
 
+class da_decl CDaliUidAllocator: public CInterface
+{
+    __uint64        uidnext;
+    unsigned        uidsremaining;
+    SocketEndpoint  node;
+    unsigned        banksize;
+public:
+    CriticalSection crit;
+
+    CDaliUidAllocator();
+    CDaliUidAllocator(const SocketEndpoint &_node);
+    bool allocUIDs(DALI_UID &uid,unsigned num);
+    void addUIDs(__uint64 uids,unsigned num);
+    unsigned getBankSize();
+    static CDaliUidAllocator &find(CIArrayOf<CDaliUidAllocator> &uidallocators,const SocketEndpoint &foreignnode);
+};
+
 extern da_decl ICoven &queryCoven();
 extern da_decl bool isCovenActive();
 extern da_decl const CDaliVersion &queryDaliServerVersion();

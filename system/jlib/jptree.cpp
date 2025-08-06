@@ -3097,7 +3097,7 @@ void PTree::deserializeSelf(IBufferedSerialInputStream &src)
         std::pair<const char *, const char *> attrPair = peekKeyValuePair(src, len);
         if (attrPair.second == nullptr)
             throwUnexpectedX("PTree deserialization error: end of stream, expected attribute value");
-        setProp(attrPair.first, attrPair.second);
+        setAttribute(attrPair.first, attrPair.second, false);
         src.skip(len + 1); // +1 to skip over second null terminator.
     }
 

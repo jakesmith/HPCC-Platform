@@ -36,6 +36,8 @@
 #include "enginecontext.hpp"
 #include "environment.hpp"
 #include "ws_dfsclient.hpp"
+#include "ws_workunits_esp.ipp"
+#include "dacoven.hpp"
 
 #define USE_DALIDFS
 #define SDS_LOCK_TIMEOUT  10000
@@ -2723,15 +2725,45 @@ FILESERVICES_API  char * FILESERVICES_CALL fsfPromoteSuperFileList(ICodeContext 
     return addlist.detach();
 }
 
-FILESERVICES_API unsigned __int64 FILESERVICES_CALL fsGetUniqueInteger(ICodeContext * ctx, const char *foreigndali)
+static bool allowGetUniqueIdFromForeignDali()
 {
+    static const bool value = []
+    {
+        if (isContainerized())
+            return getComponentConfigSP()->getPropBool("expert/@allowGetUniqueIdFromForeignDali");
+        else
+            return true;
+    }();
+    return value;
+}
+
+FILESERVICES_API unsigned __int64 FILESERVICES_CALL fsGetUniqueInteger_deprecated(ICodeContext * ctx, const char *foreigndali)
+{
+    if (isEmptyString(foreigndali))
+    {
+        // Even though deprecated, can use preferred route via esp because no foreigndali
+        return fsGetUniqueInteger_esp(ctx, nullptr);
+    }
+    else
+    {
+        if (!allowGetUniqueIdFromForeignDali())
+            throw makeStringException(0, "GetUniqueInteger is deprecated, and foreignDali support is disabled in configuration");
+    }
     SocketEndpoint ep;
     if (foreigndali&&*foreigndali)
         ep.set(foreigndali);
     IEngineContext *engineContext = ctx->queryEngineContext();
     if (engineContext)
-        return engineContext->getGlobalUniqueIds(1,&ep);
-    return getGlobalUniqueIds(1,&ep);
+        return engineContext->getGlobalUniqueIds(1, &ep);
+    return getGlobalUniqueIds(1, &ep);
+}
+
+static CriticalSection uidcrit;
+static CDaliUidAllocator localUidAlloctor;
+static std::unordered_map<std::string, Owned<CDaliUidAllocator>> remoteEspUidAllocators;
+FILESERVICES_API unsigned __int64 FILESERVICES_CALL fsGetUniqueInteger_esp(ICodeContext * ctx, const char *remoteName)
+{
+    return wsdfs::getUniqueId(remoteName);
 }
 
 FILESERVICES_API void FILESERVICES_CALL fsAddFileRelationship(ICodeContext * ctx,const char *primary, const char *secondary, const char *primflds, const char *secflds, const char *kind, const char *cardinality, bool payload, const char *description)

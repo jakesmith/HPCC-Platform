@@ -41,6 +41,17 @@ EXPORT unsigned8 getUniqueInteger(varstring foreigndali='') :=
     lib_fileservices.FileServices.getUniqueInteger(foreigndali);
 
 /**
+ * Returns a number that is unique from a particular environment via esp service
+ *
+ * @param remoteName  The name of the remote environment defined under 'global/storage/remote' (k8s), or /Environment/Software/RemoteStorage/ (BM)
+ *                    Defaults to current environment.
+ * @returns           A 64bit integer which is unique (e.g., across all slaves) to the environment that provided it.
+ */
+
+EXPORT unsigned8 getUniqueIntegerEsp(varstring remoteName='') :=
+    lib_fileservices.FileServices.getUniqueIntegerEsp(remoteName);
+
+/**
  * Simple function that tests a full version string against the individual
  * platform version constants to determine if the platform's version is at
  * least as high as the argument.

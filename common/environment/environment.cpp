@@ -2533,9 +2533,7 @@ extern ENVIRONMENT_API void closeEnvironment()
 unsigned getAccessibleServiceURLList(const char *serviceType, std::vector<std::string> &list)
 {
     unsigned added = 0;
-    Owned<IEnvironmentFactory> factory = getEnvironmentFactory(true);
-    Owned<IConstEnvironment> daliEnv = factory->openEnvironment();
-    Owned<IPropertyTree> env = &daliEnv->getPTree();
+    Owned<IPropertyTree> env = getHPCCEnvironment();
     if (env.get())
     {
         StringBuffer fileMetaServiceUrl;

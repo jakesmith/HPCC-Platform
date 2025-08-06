@@ -48,17 +48,29 @@ ESPresponse [exceptions_inline] KeepAliveResponse
 {
 };
 
+ESPrequest [nil_remove] UniqueIdRequest
+{
+};
+
+ESPresponse [exceptions_inline] UniqueIdResponse
+{
+    int64 FirstUniqueId;
+    int64 NumIds;
+};
+
+
 //  ===========================================================================
 ESPservice [
     auth_feature("DEFERRED"),
-    version("1.01"),
-    default_client_version("1.01"),
+    version("1.02"),
+    default_client_version("1.02"),
     noforms,
     exceptions_inline("./smc_xslt/exceptions.xslt")] WsDfs
 {
     ESPmethod [auth_feature("DfsAccess:READ"), min_ver("1.01")] GetLease(LeaseRequest, LeaseResponse);
     ESPmethod [auth_feature("DfsAccess:READ"), min_ver("1.01")] KeepAlive(KeepAliveRequest, KeepAliveResponse);
     ESPmethod [auth_feature("DfsAccess:READ"), min_ver("1.01")] DFSFileLookup(DFSFileLookupRequest, DFSFileLookupResponse);
+    ESPmethod [min_ver("1.02")] GetUniqueId(UniqueIdRequest, UniqueIdResponse);
 };
 
 SCMexportdef(WsDfs);

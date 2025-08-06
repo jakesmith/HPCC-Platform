@@ -33,6 +33,7 @@ public:
     virtual bool onGetLease(IEspContext &context, IEspLeaseRequest &req, IEspLeaseResponse &resp);
     virtual bool onKeepAlive(IEspContext &context, IEspKeepAliveRequest &req, IEspKeepAliveResponse &resp);
     virtual bool onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &req, IEspDFSFileLookupResponse &resp);
+    virtual bool onGetUniqueId(IEspContext &context, IEspUniqueIdRequest &req, IEspUniqueIdResponse &resp);
 };
 
 

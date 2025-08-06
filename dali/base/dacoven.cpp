@@ -100,66 +100,55 @@ StringBuffer &CDaliVersion::toString(StringBuffer &str) const
     return str;
 }
 
-class CDaliUidAllocator: public CInterface
+CDaliUidAllocator::CDaliUidAllocator()
 {
-    __uint64        uidnext;
-    unsigned        uidsremaining;
-    SocketEndpoint  node;
-    unsigned        banksize;
-public:
-    CriticalSection crit;
+    uidsremaining = 0;
+    uidnext = 0;
+    banksize = 1024;
+}
 
-    CDaliUidAllocator()
-    {
-        uidsremaining = 0;
-        uidnext = 0;
-        banksize = 1024;
-    }
-    CDaliUidAllocator(const SocketEndpoint &_node) : CDaliUidAllocator()
-    {
-        node = _node;
-    }
-    bool allocUIDs(DALI_UID &uid,unsigned num)
-    {
-        // called in crit
-        if (uidsremaining<num) 
-            return false;
-        uid = (DALI_UID)uidnext; 
-        uidnext += num;
-        uidsremaining -= num;
-        return true;
-    }
+CDaliUidAllocator::CDaliUidAllocator(const SocketEndpoint &_node) : CDaliUidAllocator()
+{
+    node = _node;
+}
 
-    void addUIDs(__uint64 uids,unsigned num)
-    {
-        // called in crit
-        if (uidnext<uids) {
-            if (uidnext+uidsremaining==uids)
-                uidsremaining += num;
-            else {
-                uidnext = uids;
-                uidsremaining = num;
-            }
-        }
-        else if (uids+num==uidnext) {   
+bool CDaliUidAllocator::allocUIDs(DALI_UID &uid,unsigned num)
+{
+    // called in crit
+    if (uidsremaining<num) 
+        return false;
+    uid = (DALI_UID)uidnext; 
+    uidnext += num;
+    uidsremaining -= num;
+    return true;
+}
+
+void CDaliUidAllocator::addUIDs(__uint64 uids,unsigned num)
+{
+    // called in crit
+    if (uidnext<uids) {
+        if (uidnext+uidsremaining==uids)
             uidsremaining += num;
+        else {
             uidnext = uids;
+            uidsremaining = num;
         }
     }
-
-    static CDaliUidAllocator &find(CIArrayOf<CDaliUidAllocator> &uidallocators,const SocketEndpoint &foreignnode);
-
-    unsigned getBankSize()
-    {
-        // only used client side
-        // called in crit
-        unsigned ret = banksize;
-        if (banksize<UUID_BLOCK_SIZE_CLIENT)
-            banksize *= 2;
-        return ret;
+    else if (uids+num==uidnext) {   
+        uidsremaining += num;
+        uidnext = uids;
     }
+}
 
-};
+unsigned CDaliUidAllocator::getBankSize()
+{
+    // only used client side
+    // called in crit
+    unsigned ret = banksize;
+    if (banksize<UUID_BLOCK_SIZE_CLIENT)
+        banksize *= 2;
+    return ret;
+}
 
 static void checkDaliVersionInfo(ICommunicator *comm, CDaliVersion &serverVersion, CDaliVersion &minClientVersion)
 {

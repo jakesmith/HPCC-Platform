@@ -613,10 +613,13 @@ IClientWsDfs *getDfsClient(const char *serviceUrl, IUserDescriptor *userDesc)
     VStringBuffer dfsUrl("%s/WsDfs", serviceUrl);
     Owned<IClientWsDfs> dfsClient = createWsDfsClient();
     dfsClient->addServiceUrl(dfsUrl);
-    StringBuffer user, token;
-    userDesc->getUserName(user),
-    userDesc->getPassword(token);
-    dfsClient->setUsernameToken(user, token, "");
+    if (userDesc) // JCSMORE - is this necessary?
+    {
+        StringBuffer user, token;
+        userDesc->getUserName(user),
+        userDesc->getPassword(token);
+        dfsClient->setUsernameToken(user, token, "");
+    }
     return dfsClient.getClear();
 }
 
@@ -693,12 +696,54 @@ unsigned __int64 ensureClientLease(IClientWsDfs *dfsClient, const char *service,
 }
 
 
-#ifndef _CONTAINERIZED
 static std::vector<std::string> dfsServiceUrls;
 static CriticalSection dfsServiceUrlCrit;
 static std::atomic<unsigned> currentDfsServiceUrl{0};
 static bool dfsServiceUrlsDiscovered = false;
+
+static StringBuffer &getLocalDfsServiceUrl(StringBuffer &serviceUrl)
+{
+    CriticalBlock b(dfsServiceUrlCrit);
+    if (!dfsServiceUrlsDiscovered)
+    {
+        dfsServiceUrlsDiscovered = true;
+
+        // auto-discover local environment dfs service.
+        if (isContainerized())
+        {
+            // NB: only expected to be here if experimental option #option('dfsesp-localfiles', true); is in use.
+            // This finds and uses local dfs service for local read lookups.
+            Owned<IPropertyTreeIterator> eclWatchServices = getGlobalConfigSP()->getElements("services[@type='dfs']");
+            ForEach(*eclWatchServices)
+            {
+                // if (!eclWatchServices->first())
+                //     throw makeStringException(-1, "Dfs service not defined in esp services");
+                const IPropertyTree &eclWatch = eclWatchServices->query();
+                StringBuffer eclWatchName;
+                eclWatch.getProp("@name", eclWatchName);
+                const char *protocol = eclWatch.getPropBool("@tls") ? "https" : "http";
+                unsigned port = (unsigned)eclWatch.getPropInt("@port", NotFound);
+                if (NotFound == port)
+                {
+                    OWARNLOG("dfs '%s': service port not defined", eclWatchName.str());
+                    continue;
+                }
+                serviceUrl.appendf("%s://%s:%u", protocol, eclWatchName.str(), port);
+                dfsServiceUrls.push_back(serviceUrl.str());
+            }
+        }
+#ifndef _CONTAINERIZED // will never get here if containerized, but symbol is undefined in containerized..
+        else // BM from Environment
+            getAccessibleServiceURLList("WsSMC", dfsServiceUrls);
 #endif
+        if (0 == dfsServiceUrls.size())
+            throw makeStringException(-1, "Could not find any DFS services in the target HPCC configuration.");
+    }
+
+    serviceUrl.append(dfsServiceUrls[currentDfsServiceUrl].c_str());
+    currentDfsServiceUrl = (currentDfsServiceUrl+1 == dfsServiceUrls.size()) ? 0 : currentDfsServiceUrl+1;
+    return serviceUrl;
+}
 
 IDFSFile *lookupDFSFile(const char *logicalName, AccessMode accessMode, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc)
 {
@@ -740,36 +785,8 @@ IDFSFile *lookupDFSFile(const char *logicalName, AccessMode accessMode, unsigned
     }
     if (!serviceUrl.length())
     {
-        // auto-discover local environment dfs service.
-#ifdef _CONTAINERIZED
-        // NB: only expected to be here if experimental option #option('dfsesp-localfiles', true); is in use.
-        // This finds and uses local dfs service for local read lookups.
-        Owned<IPropertyTreeIterator> eclWatchServices = getGlobalConfigSP()->getElements("services[@type='dfs']");
-        if (!eclWatchServices->first())
-            throw makeStringException(-1, "Dfs service not defined in esp services");
-        const IPropertyTree &eclWatch = eclWatchServices->query();
-        StringBuffer eclWatchName;
-        eclWatch.getProp("@name", eclWatchName);
-        const char *protocol = eclWatch.getPropBool("@tls") ? "https" : "http";
-        unsigned port = (unsigned)eclWatch.getPropInt("@port", NotFound);
-        if (NotFound == port)
-            throw makeStringExceptionV(-1, "dfs '%s': service port not defined", eclWatchName.str());
-        serviceUrl.appendf("%s://%s:%u", protocol, eclWatchName.str(), port);
-#else
-        {
-            CriticalBlock b(dfsServiceUrlCrit);
-            if (!dfsServiceUrlsDiscovered)
-            {
-                dfsServiceUrlsDiscovered = true;
-                getAccessibleServiceURLList("WsSMC", dfsServiceUrls);
-                if (0 == dfsServiceUrls.size())
-                    throw makeStringException(-1, "Could not find any DFS services in the target HPCC configuration.");
-            }
-        }
-        serviceUrl.append(dfsServiceUrls[currentDfsServiceUrl].c_str());
-        currentDfsServiceUrl = (currentDfsServiceUrl+1 == dfsServiceUrls.size()) ? 0 : currentDfsServiceUrl+1;
+        getLocalDfsServiceUrl(serviceUrl);
         remoteName.clear(); // local
-#endif
     }
     bool useSSL = startsWith(serviceUrl, "https");
     if (useSSL && !secretProvided)
@@ -912,6 +929,76 @@ bool exists(const char *logicalFilename, IUserDescriptor *user, bool notSuper, b
     CDfsLogicalFileName lfn;
     lfn.set(logicalFilename);
     return exists(lfn, user, notSuper, superOnly, timeout);
+}
+
+
+static CriticalSection uidcrit;
+static CDaliUidAllocator localUidAlloctor;
+static std::unordered_map<std::string, Owned<CDaliUidAllocator>> remoteEspUidAllocators;
+static StringBuffer currentRemoteName;
+static StringBuffer currentServiceUrl;
+static StringBuffer currentRemoteSecret;
+static CDaliUidAllocator *currentRemoteUidAllocator = nullptr;
+DALI_UID getUniqueId(const char *remoteName)
+{
+    CriticalBlock block(uidcrit);
+    if (isEmptyString(remoteName)) // local environment
+    {
+        getLocalDfsServiceUrl(currentServiceUrl);
+        currentRemoteUidAllocator = &localUidAlloctor;
+        currentRemoteSecret.clear();
+    }
+    else
+    {
+        if (!streq(remoteName, currentRemoteName)) // likely same as last time
+        {
+            Owned<IPropertyTree> remote = getRemoteStorage(remoteName);
+            if (!remote)
+                throw makeStringExceptionV(0, "Remote definition '%s' not found", remoteName);
+            const char *_serviceUrl = remote->queryProp("@service");
+            if (isEmptyString(_serviceUrl))
+                throw makeStringExceptionV(0, "Remote definition '%s' does not define the service URL", remoteName);
+            currentServiceUrl.set(_serviceUrl);
+            if (startsWith(currentServiceUrl, "https"))
+            {
+                // NB: standard configuration should not supply a secret, the secret name will be auto-generated based on the URL
+                // If a manual secret name is defined, it will be used to connect to the DFS service and the dafilesrv services
+                // A blank secret name can be defined to support connecting to bare-metal DFS services/dafilesrv's that do not support client certificates.
+                if (remote->hasProp("@secret"))
+                    currentRemoteSecret.set(remote->queryProp("@secret"));
+                else
+                    generateDynamicUrlSecretName(currentRemoteSecret, currentServiceUrl, nullptr);
+            }
+            else
+                currentRemoteSecret.clear();
+
+            if (remoteEspUidAllocators.find(remoteName) == remoteEspUidAllocators.end())
+            {
+                currentRemoteUidAllocator = new CDaliUidAllocator();
+                remoteEspUidAllocators[remoteName].setown(currentRemoteUidAllocator);
+            }
+            else
+                currentRemoteUidAllocator = remoteEspUidAllocators[remoteName];
+            currentRemoteName.set(remoteName);
+        }
+    }
+
+    DALI_UID uid;
+    while (!currentRemoteUidAllocator->allocUIDs(uid, 1))
+    {
+        // Need to get more IDs from ESP service
+        Owned<IClientWsDfs> dfsClient = getDfsClient(currentServiceUrl, nullptr); // do I need a IUserDescriptor (from ICodeContext if so)
+        Owned<IClientUniqueIdRequest> req = dfsClient->createGetUniqueIdRequest();
+        if (!isEmptyString(currentRemoteSecret))
+            configureClientSSL(req->rpc(), currentRemoteSecret);
+        Owned<IClientUniqueIdResponse> result = dfsClient->GetUniqueId(req);
+        uid = result->getFirstUniqueId();
+        unsigned numIds = (unsigned) result->getNumIds();
+
+        // Add the batch to our allocator
+        currentRemoteUidAllocator->addUIDs(uid, numIds);
+    }
+    return uid;
 }
 
 

@@ -237,3 +237,20 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
     return true;
 }
 
+static constexpr unsigned myUIDBlockSize = 0x100000;
+bool CWsDfsEx::onGetUniqueId(IEspContext &context, IEspUniqueIdRequest &req, IEspUniqueIdResponse &resp)
+{
+    try
+    {
+        DALI_UID firstId = getGlobalUniqueIds(myUIDBlockSize, nullptr);        
+        resp.setFirstUniqueId(firstId);
+        resp.setNumIds(myUIDBlockSize);
+    }
+    catch(IException *e)
+    {
+        FORWARDEXCEPTION(context, e, ECLWATCH_INTERNAL_ERROR);
+    }
+    return true;
+}
+
+
