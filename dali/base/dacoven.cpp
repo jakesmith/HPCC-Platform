@@ -115,9 +115,9 @@ CDaliUidAllocator::CDaliUidAllocator(const SocketEndpoint &_node) : CDaliUidAllo
 bool CDaliUidAllocator::allocUIDs(DALI_UID &uid,unsigned num)
 {
     // called in crit
-    if (uidsremaining<num) 
+    if (uidsremaining<num)
         return false;
-    uid = (DALI_UID)uidnext; 
+    uid = (DALI_UID)uidnext;
     uidnext += num;
     uidsremaining -= num;
     return true;
@@ -134,7 +134,7 @@ void CDaliUidAllocator::addUIDs(__uint64 uids,unsigned num)
             uidsremaining = num;
         }
     }
-    else if (uids+num==uidnext) {   
+    else if (uids+num==uidnext) {
         uidsremaining += num;
         uidnext = uids;
     }

@@ -36,7 +36,6 @@
 #include "enginecontext.hpp"
 #include "environment.hpp"
 #include "ws_dfsclient.hpp"
-#include "ws_workunits_esp.ipp"
 #include "dacoven.hpp"
 
 #define USE_DALIDFS

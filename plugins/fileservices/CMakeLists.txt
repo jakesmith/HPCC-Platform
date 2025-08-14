@@ -29,7 +29,6 @@ set ( SRCS
       ${ESPSCM_GENERATED_DIR}/ws_dfu_common_esp.cpp
       ${ESPSCM_GENERATED_DIR}/ws_dfu_esp.cpp 
       ${ESPSCM_GENERATED_DIR}/ws_fs_esp.cpp 
-      ${ESPSCM_GENERATED_DIR}/ws_workunits_esp.cpp
       fileservices.cpp 
       ${HPCC_SOURCE_DIR}/esp/bindings/bindutil.cpp 
       ${HPCC_SOURCE_DIR}/dali/dfuplus/dfuplus.cpp 
@@ -78,7 +77,6 @@ target_link_libraries ( fileservices
          remote
          workunit
          ws_dfsclient
-         ws_workunits
     )
 
 if (NOT CONTAINERIZED)

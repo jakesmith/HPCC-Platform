@@ -242,7 +242,7 @@ bool CWsDfsEx::onGetUniqueId(IEspContext &context, IEspUniqueIdRequest &req, IEs
 {
     try
     {
-        DALI_UID firstId = getGlobalUniqueIds(myUIDBlockSize, nullptr);        
+        DALI_UID firstId = getGlobalUniqueIds(myUIDBlockSize, nullptr);
         resp.setFirstUniqueId(firstId);
         resp.setNumIds(myUIDBlockSize);
     }
@@ -252,5 +252,4 @@ bool CWsDfsEx::onGetUniqueId(IEspContext &context, IEspUniqueIdRequest &req, IEs
     }
     return true;
 }
-
 
