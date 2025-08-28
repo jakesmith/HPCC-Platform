@@ -148,6 +148,31 @@ int main(int argc, const char* argv[])
         return -1;
     }
 
+    unsigned *myvariablename = new unsigned;
+    *myvariablename = 10000;
+    printf("%d\n", *myvariablename);
+
+    unsigned __int64 sum = 0;
+    // sum up all the numbers from 0 to 9999
+    for (unsigned x=0; x<*myvariablename; x++)
+    {
+        sum += x;
+    }
+    printf("%llu\n", sum);
+    sum = 0;
+    // sum up all the numbers from 0 to 9999 N times
+    for (unsigned x=0; x<*myvariablename; x++)
+    {
+        for (unsigned y=0; y<*myvariablename; y++)
+        {
+            // nested loop
+            sum += x;
+        }
+    }
+    printf("%llu\n", sum);
+    
+
+
     Owned<IPropertyTree> globals = loadConfiguration(defaultYaml, argv, "daliadmin", "DALIADMIN", "daliadmin.xml", nullptr, nullptr, false);
     Owned<IProperties> props = createProperties("daliadmin.ini");
     StringArray params;
