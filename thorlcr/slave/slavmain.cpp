@@ -1984,6 +1984,9 @@ public:
                         graph_id subGraphId;
                         msg.read(subGraphId);
                         unsigned graphInitDataPos = msg.getPos();
+ 
+                        if (job->getOptBool("profile"))
+                            PROGLOG("enableJEMallocProfiling() %s", enableJEMallocProfiling() ? "SUCCEEDED" : "FAILED");
 
                         double perfInterval = job->getOptReal("perfInterval");
                         if (perfInterval)
@@ -1999,6 +2002,7 @@ public:
                         /* JCSMORE - should improve, create 1st graph with create context/init data and clone
                          * Should perhaps do this initialization in parallel..
                          */
+
                         for (unsigned c=0; c<job->queryJobChannels(); c++)
                         {
                             PROGLOG("GraphInit: %s, graphId=%" GIDPF "d, slaveChannel=%d", jobKey.get(), subGraphId, c);
@@ -2062,6 +2066,13 @@ public:
                                 }
                             }
                             job->reportGraphEnd(gid);
+                            
+                            if (job->getOptBool("profile"))
+                            {
+                                PROGLOG("Dumping JEMalloc profile and disabling");
+                                dumpJEMallocProfile();
+                                disableJEMallocProfiling();
+                            }
                         }
                         else
                         {

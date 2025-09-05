@@ -4420,3 +4420,87 @@ jlib_decl bool printLsOf(unsigned pid)
     return true;
 }
 
+typedef int (*mallctl_t)(const char *, void *, size_t *, void *, size_t);
+
+// Global static pointer to mallctl function used as enabled flag as well
+static mallctl_t cached_mallctl_func = nullptr;
+
+static mallctl_t get_mallctl()
+{
+    if (!cached_mallctl_func)
+    {
+        void* handle = dlopen("libjemalloc.so.2", RTLD_NOW | RTLD_NOLOAD);
+        if (!handle)
+        {
+            WARNLOG("Error: jemalloc not loaded: %s", dlerror());
+            return nullptr;
+        }
+        cached_mallctl_func = (mallctl_t)dlsym(handle, "mallctl");
+        if (!cached_mallctl_func)
+        {
+            WARNLOG("Error: mallctl symbol not found: %s", dlerror());
+            return nullptr;
+        }
+    }
+    return cached_mallctl_func;
+}
+
+bool enableJEMallocProfiling()
+{
+    if (cached_mallctl_func)
+        return true; // Already enabled
+
+    mallctl_t mallctl_func = get_mallctl();
+    if (!mallctl_func)
+        return false;
+
+    bool active = true;
+    size_t sz = sizeof(active);
+
+    int err = mallctl_func("prof.active", nullptr, nullptr, &active, sz);
+    if (err != 0)
+    {
+        WARNLOG("mallctl prof.active enable failed: %d", err);
+        return false;
+    }
+
+    PROGLOG("jemalloc profiling enabled");
+    cached_mallctl_func = mallctl_func;
+    return true;
+}
+
+bool disableJEMallocProfiling()
+{
+    if (!cached_mallctl_func)
+        return true; // Already disabled
+
+    bool active = false;
+    size_t sz = sizeof(active);
+
+    int err = cached_mallctl_func("prof.active", nullptr, nullptr, &active, sz);
+    if (err != 0)
+    {
+        WARNLOG("mallctl prof.active disable failed: %d", err);
+        return false;
+    }
+
+    PROGLOG("jemalloc profiling disabled");
+    cached_mallctl_func = nullptr;
+    return true;
+}
+
+bool dumpJEMallocProfile()
+{
+    if (!cached_mallctl_func)
+        return false;
+
+    int err = cached_mallctl_func("prof.dump", nullptr, nullptr, nullptr, 0);
+    if (err != 0)
+    {
+        WARNLOG("Failed to dump jemalloc profile: %d", err);
+        return false;
+    }
+
+    PROGLOG("jemalloc profile dumped to string");
+    return true;
+}

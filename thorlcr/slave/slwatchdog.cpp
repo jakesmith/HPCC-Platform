@@ -52,6 +52,15 @@ class CGraphProgressHandlerBase : public CInterfaceOf<ISlaveWatchdog>, implement
         size32_t packetSize = sendMb.length();
         sendMb.writeDirect(0, sizeof(hb.packetSize), &packetSize);
         sendData(sendMb);
+
+        CGraphBase *graph = activeGraphs.ordinality() ? &activeGraphs.item(0) : nullptr;
+        PROGLOG("here");
+        if (graph && graph->queryJob().getOptBool("profile"))
+        {
+            PROGLOG("gatherAndSend: Dumping JEMalloc profile and disabling");
+            dumpJEMallocProfile();
+            // disableJEMallocProfiling();
+        }
     }
     virtual void sendData(MemoryBuffer &mb) = 0;
 

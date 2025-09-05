@@ -669,6 +669,10 @@ extern jlib_decl bool printLsOf(unsigned pid=0); // returns false if fails
 extern jlib_decl bool areTransparentHugePagesEnabled(HugePageMode mode);
 extern jlib_decl HugePageMode queryTransparentHugePagesMode();
 extern jlib_decl memsize_t getHugePageSize();
+extern jlib_decl bool enableJEMallocProfiling();
+extern jlib_decl bool disableJEMallocProfiling();
+extern jlib_decl bool dumpJEMallocProfile();
+
 
 #endif
 
