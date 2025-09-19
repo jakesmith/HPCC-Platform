@@ -19,6 +19,11 @@
 
 #include <type_traits>
 #include <unordered_map>
+#ifdef __linux__
+#include <sys/wait.h>
+#include <unistd.h>
+#include <signal.h>
+#endif
 
 #include "jlib.hpp"
 #include "jexcept.hpp"
