@@ -175,10 +175,6 @@
                               hpcc:presetValue="0" hpcc:tooltip="Specifies interval between sasha server auto-restart (hours, 0 to disable"/>
                 <xs:attribute name="LDSroot" type="xs:string" hpcc:displayName="LDS Root"
                               hpcc:presetValue="LDS" hpcc:tooltip="Specifies the Sasha data store root directory"/>
-                <xs:attribute name="sashaUser" type="xs:string" hpcc:displayName="Sasha User" use="optional"
-                              hpcc:tooltip="Username for Sasha server to access DFS (legacy bare metal configurations)"/>
-                <xs:attribute name="user" type="xs:string" hpcc:displayName="User" use="optional"
-                              hpcc:tooltip="Username for Sasha server to access DFS (containerized configurations)"/>
                 <xs:attributeGroup ref="archiver"/>
                 <xs:attributeGroup ref="coalescer"/>
                 <xs:attributeGroup ref="dfuxref"/>

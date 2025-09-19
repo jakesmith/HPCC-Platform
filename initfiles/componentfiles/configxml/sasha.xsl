@@ -59,10 +59,6 @@
                 <xsl:value-of select="@sashaUser"/>
             </xsl:attribute>
 
-            <xsl:attribute name="user">
-                <xsl:value-of select="@user"/>
-            </xsl:attribute>
-
             <xsl:attribute name="enableSNMP">
                <xsl:call-template name="outputBool">
                   <xsl:with-param name="val" select="@enableSNMP"/>

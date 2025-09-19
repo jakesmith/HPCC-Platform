@@ -2897,6 +2897,10 @@
         },
         "terminationGracePeriodSeconds": {
           "$ref": "#/definitions/terminationGracePeriodSeconds"
+        },
+        "user": {
+          "type": "string",
+          "description": "Username for Sasha services to access DFS (containerized configurations)"
         }
       }
     },
