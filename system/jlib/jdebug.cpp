@@ -4510,6 +4510,8 @@ public:
 
         while (!stopping.load())
         {
+            unsigned waitTimeMs = intervalSecs * 1000; // Default wait time
+            
             try
             {
                 ProcessInfo memInfo(ReadMemoryInfo);
@@ -4521,13 +4523,6 @@ public:
                             (unsigned)currentMemMB, thresholdMB);
                     generateCoreDump();
                 }
-
-                // Wait for the monitoring interval or until stop is signaled
-                if (!stopping.load())
-                {
-                    if (stopSemaphore.wait(intervalSecs * 1000))
-                        break; // Stop was signaled
-                }
             }
             catch (IException *e)
             {
@@ -4535,13 +4530,16 @@ public:
                 e->errorMessage(errMsg);
                 OERRLOG("Error in memory monitor: %s", errMsg.str());
                 e->Release();
+                
+                // Use shorter wait time on error
+                waitTimeMs = 10000; // 10 seconds
+            }
 
-                // Wait before retrying on error
-                if (!stopping.load())
-                {
-                    if (stopSemaphore.wait(10000))
-                        break; // Stop was signaled
-                }
+            // Wait for the monitoring interval or until stop is signaled
+            if (!stopping.load())
+            {
+                if (stopSemaphore.wait(waitTimeMs))
+                    break; // Stop was signaled
             }
         }
 
