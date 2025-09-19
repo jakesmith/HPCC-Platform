@@ -19,11 +19,6 @@
 
 #include <type_traits>
 #include <unordered_map>
-#ifdef __linux__
-#include <sys/wait.h>
-#include <unistd.h>
-#include <signal.h>
-#endif
 
 #include "jlib.hpp"
 #include "jexcept.hpp"
@@ -33,7 +28,6 @@
 #include "jlzw.hpp"
 #include "jflz.hpp"
 #include "jdebug.hpp"
-#include "jsem.hpp"
 
 #include "jhtree.hpp"
 #include "mpcomm.hpp"
@@ -63,126 +57,6 @@
 bool recvShutdown = false;
 
 //---------------------------------------------------------------------------
-
-// Memory core dump monitor for thorslave processes
-class CMemoryCoreDumpMonitor : public CSimpleInterfaceOf<IThreaded>
-{
-private:
-    CThreaded threaded;
-    std::atomic<bool> stopping{false};
-    memsize_t thresholdMB{0};
-    unsigned intervalSecs{60};
-    bool enabled{false};
-    Semaphore stopSemaphore;
-
-    static void generateCoreDumpForkedChild()
-    {
-        // Generate a core dump in a child process without terminating the parent
-#ifdef __linux__
-        int childpid = fork();
-        if (childpid == 0)
-        {
-            // Child process - generate core dump and exit
-            signal(SIGABRT, SIG_DFL);
-            raise(SIGABRT);
-            _exit(1); // Fallback if raise doesn't work
-        }
-        else if (childpid > 0)
-        {
-            // Parent process - wait for child and continue
-            int status;
-            PROGLOG("Memory threshold exceeded - generating core dump using child process %d", childpid);
-            waitpid(childpid, &status, 0);
-            PROGLOG("Core dump generation completed, continuing operation");
-        }
-        else
-        {
-            OERRLOG("Failed to fork child process for core dump generation");
-        }
-#else
-        OWARNLOG("Core dump generation not supported on this platform");
-#endif
-    }
-
-public:
-    CMemoryCoreDumpMonitor() : threaded("CMemoryCoreDumpMonitor", this)
-    {
-        enabled = globals->getPropBool("@memoryCoreDumpEnabled", false);
-        thresholdMB = globals->getPropInt("@memoryCoreDumpThresholdMB", 0);
-        intervalSecs = globals->getPropInt("@memoryCoreDumpIntervalSecs", 60);
-
-        if (enabled && thresholdMB > 0)
-        {
-            PROGLOG("Memory core dump monitor enabled: threshold=%u MB, interval=%u seconds",
-                    (unsigned)thresholdMB, intervalSecs);
-            threaded.start(false);
-        }
-        else if (enabled)
-        {
-            OWARNLOG("Memory core dump monitor disabled: invalid threshold (%u MB)", (unsigned)thresholdMB);
-            enabled = false;
-        }
-    }
-
-    ~CMemoryCoreDumpMonitor()
-    {
-        stop();
-    }
-
-    void stop()
-    {
-        if (enabled && !stopping.load())
-        {
-            stopping = true;
-            stopSemaphore.signal();
-            threaded.join();
-        }
-    }
-
-    virtual void threadmain() override
-    {
-        PROGLOG("Memory core dump monitor thread started");
-
-        while (!stopping.load())
-        {
-            try
-            {
-                ProcessInfo memInfo(ReadMemoryInfo);
-                __uint64 currentMemMB = memInfo.getActiveResidentMemory() / (1024 * 1024);
-
-                if (currentMemMB >= thresholdMB)
-                {
-                    PROGLOG("Memory usage (%u MB) exceeded threshold (%u MB) - generating core dump",
-                            (unsigned)currentMemMB, (unsigned)thresholdMB);
-                    generateCoreDumpForkedChild();
-                }
-
-                // Wait for the monitoring interval or until stop is signaled
-                if (!stopping.load())
-                {
-                    if (stopSemaphore.wait(intervalSecs * 1000))
-                        break; // Stop was signaled
-                }
-            }
-            catch (IException *e)
-            {
-                StringBuffer errMsg;
-                e->errorMessage(errMsg);
-                OERRLOG("Error in memory core dump monitor: %s", errMsg.str());
-                e->Release();
-
-                // Wait before retrying on error
-                if (!stopping.load())
-                {
-                    if (stopSemaphore.wait(10000))
-                        break; // Stop was signaled
-                }
-            }
-        }
-
-        PROGLOG("Memory core dump monitor thread stopped");
-    }
-};
 
 //---------------------------------------------------------------------------
 
@@ -2527,8 +2401,19 @@ void slaveMain(bool &jobListenerStopped, ILogMsgHandler *logHandler)
     CJobListener jobListener(jobListenerStopped);
     setIThorResource(slaveResource);
 
-    // Start memory core dump monitor
-    Owned<CMemoryCoreDumpMonitor> memoryMonitor = new CMemoryCoreDumpMonitor();
+    // Start memory core dump monitor using the generalized interface
+    bool memoryMonitorEnabled = globals->getPropBool("@memoryCoreDumpEnabled", false);
+    memsize_t memoryThresholdMB = globals->getPropInt("@memoryCoreDumpThresholdMB", 0);
+    unsigned memoryIntervalSecs = globals->getPropInt("@memoryCoreDumpIntervalSecs", 60);
+    
+    Owned<IMemoryMonitor> memoryMonitor = createMemoryMonitor(memoryThresholdMB, memoryIntervalSecs, memoryMonitorEnabled);
+    if (memoryMonitor->isEnabled())
+    {
+        if (memoryThresholdMB > 0)
+            memoryMonitor->start();
+        else
+            OWARNLOG("Memory core dump monitor disabled: invalid threshold (%u MB)", (unsigned)memoryThresholdMB);
+    }
 
 #ifdef __linux__
     bool useMirrorMount = getExpertOptBool("useMirrorMount", false);

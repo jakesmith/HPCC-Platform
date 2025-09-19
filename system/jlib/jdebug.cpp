@@ -26,6 +26,9 @@
 #include "jmutex.hpp"
 #include "jtime.hpp"
 #include "jutil.hpp"
+#include "jthread.hpp"
+#include "jsem.hpp"
+#include "jlog.hpp"
 #include <stdio.h>
 #include <time.h>
 #include <atomic>
@@ -46,6 +49,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/klog.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <dirent.h>
 #endif
 #ifdef __APPLE__
@@ -4418,5 +4423,134 @@ jlib_decl bool printLsOf(unsigned pid)
 // JCSMORE - other OS implementations
 #endif
     return true;
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+// Memory monitoring and core dump functionality
+
+jlib_decl void generateCoreDump()
+{
+    // Generate a core dump in a child process without terminating the parent
+#ifdef __linux__
+    int childpid = fork();
+    if (childpid == 0)
+    {
+        // Child process - generate core dump and exit
+        signal(SIGABRT, SIG_DFL);
+        raise(SIGABRT);
+        _exit(1); // Fallback if raise doesn't work
+    }
+    else if (childpid > 0)
+    {
+        // Parent process - wait for child and continue
+        int status;
+        PROGLOG("Generating core dump using child process %d", childpid);
+        waitpid(childpid, &status, 0);
+        PROGLOG("Core dump generation completed, continuing operation");
+    }
+    else
+    {
+        OERRLOG("Failed to fork child process for core dump generation");
+    }
+#else
+    OWARNLOG("Core dump generation not supported on this platform");
+#endif
+}
+
+class CMemoryMonitor : public CSimpleInterfaceOf<IMemoryMonitor>, public IThreaded
+{
+private:
+    CThreaded threaded;
+    std::atomic<bool> stopping{false};
+    memsize_t thresholdMB{0};
+    unsigned intervalSecs{60};
+    bool enabled{false};
+    Semaphore stopSemaphore;
+
+public:
+    CMemoryMonitor(memsize_t _thresholdMB, unsigned _intervalSecs, bool _enabled)
+        : threaded("CMemoryMonitor", this), thresholdMB(_thresholdMB), intervalSecs(_intervalSecs), enabled(_enabled)
+    {
+    }
+
+    ~CMemoryMonitor()
+    {
+        stop();
+    }
+
+    virtual void start() override
+    {
+        if (enabled && thresholdMB > 0 && !threaded.isAlive())
+        {
+            stopping = false;
+            PROGLOG("Memory monitor started: threshold=%u MB, interval=%u seconds",
+                    (unsigned)thresholdMB, intervalSecs);
+            threaded.start(false);
+        }
+    }
+
+    virtual void stop() override
+    {
+        if (enabled && !stopping.load())
+        {
+            stopping = true;
+            stopSemaphore.signal();
+            threaded.join();
+        }
+    }
+
+    virtual bool isEnabled() const override
+    {
+        return enabled;
+    }
+
+    virtual void threadmain() override
+    {
+        PROGLOG("Memory monitor thread started");
+
+        while (!stopping.load())
+        {
+            try
+            {
+                ProcessInfo memInfo(ReadMemoryInfo);
+                __uint64 currentMemMB = memInfo.getActiveResidentMemory() / (1024 * 1024);
+
+                if (currentMemMB >= thresholdMB)
+                {
+                    PROGLOG("Memory usage (%u MB) exceeded threshold (%u MB) - generating core dump",
+                            (unsigned)currentMemMB, (unsigned)thresholdMB);
+                    generateCoreDump();
+                }
+
+                // Wait for the monitoring interval or until stop is signaled
+                if (!stopping.load())
+                {
+                    if (stopSemaphore.wait(intervalSecs * 1000))
+                        break; // Stop was signaled
+                }
+            }
+            catch (IException *e)
+            {
+                StringBuffer errMsg;
+                e->errorMessage(errMsg);
+                OERRLOG("Error in memory monitor: %s", errMsg.str());
+                e->Release();
+
+                // Wait before retrying on error
+                if (!stopping.load())
+                {
+                    if (stopSemaphore.wait(10000))
+                        break; // Stop was signaled
+                }
+            }
+        }
+
+        PROGLOG("Memory monitor thread stopped");
+    }
+};
+
+jlib_decl IMemoryMonitor *createMemoryMonitor(memsize_t thresholdMB, unsigned intervalSecs, bool enabled)
+{
+    return new CMemoryMonitor(thresholdMB, intervalSecs, enabled);
 }
 
