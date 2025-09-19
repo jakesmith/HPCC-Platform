@@ -4428,7 +4428,7 @@ jlib_decl bool printLsOf(unsigned pid)
 //---------------------------------------------------------------------------------------------------------------------
 // Memory monitoring and core dump functionality
 
-jlib_decl void generateCoreDump()
+void generateCoreDump()
 {
     // Generate a core dump in a child process without terminating the parent
 #ifdef __linux__
@@ -4462,13 +4462,13 @@ class CMemoryMonitor : public CSimpleInterfaceOf<IMemoryMonitor>, public IThread
 private:
     CThreaded threaded;
     std::atomic<bool> stopping{false};
-    memsize_t thresholdMB{0};
+    unsigned thresholdMB{0};
     unsigned intervalSecs{60};
     bool enabled{false};
     Semaphore stopSemaphore;
 
 public:
-    CMemoryMonitor(memsize_t _thresholdMB, unsigned _intervalSecs, bool _enabled)
+    CMemoryMonitor(unsigned _thresholdMB, unsigned _intervalSecs, bool _enabled)
         : threaded("CMemoryMonitor", this), thresholdMB(_thresholdMB), intervalSecs(_intervalSecs), enabled(_enabled)
     {
     }
@@ -4484,7 +4484,7 @@ public:
         {
             stopping = false;
             PROGLOG("Memory monitor started: threshold=%u MB, interval=%u seconds",
-                    (unsigned)thresholdMB, intervalSecs);
+                    thresholdMB, intervalSecs);
             threaded.start(false);
         }
     }
@@ -4518,7 +4518,7 @@ public:
                 if (currentMemMB >= thresholdMB)
                 {
                     PROGLOG("Memory usage (%u MB) exceeded threshold (%u MB) - generating core dump",
-                            (unsigned)currentMemMB, (unsigned)thresholdMB);
+                            (unsigned)currentMemMB, thresholdMB);
                     generateCoreDump();
                 }
 
@@ -4549,7 +4549,7 @@ public:
     }
 };
 
-jlib_decl IMemoryMonitor *createMemoryMonitor(memsize_t thresholdMB, unsigned intervalSecs, bool enabled)
+IMemoryMonitor *createMemoryMonitor(unsigned thresholdMB, unsigned intervalSecs, bool enabled)
 {
     return new CMemoryMonitor(thresholdMB, intervalSecs, enabled);
 }

@@ -682,7 +682,7 @@ interface IMemoryMonitor : extends IInterface
 };
 
 // Factory function for creating memory monitors
-extern jlib_decl IMemoryMonitor *createMemoryMonitor(memsize_t thresholdMB, unsigned intervalSecs, bool enabled);
+extern jlib_decl IMemoryMonitor *createMemoryMonitor(unsigned thresholdMB, unsigned intervalSecs, bool enabled);
 
 #endif
 

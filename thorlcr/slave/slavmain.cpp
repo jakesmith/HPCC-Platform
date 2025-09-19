@@ -2403,7 +2403,7 @@ void slaveMain(bool &jobListenerStopped, ILogMsgHandler *logHandler)
 
     // Start memory core dump monitor using the generalized interface
     bool memoryMonitorEnabled = globals->getPropBool("@memoryCoreDumpEnabled", false);
-    memsize_t memoryThresholdMB = globals->getPropInt("@memoryCoreDumpThresholdMB", 0);
+    unsigned memoryThresholdMB = globals->getPropInt("@memoryCoreDumpThresholdMB", 0);
     unsigned memoryIntervalSecs = globals->getPropInt("@memoryCoreDumpIntervalSecs", 60);
     
     Owned<IMemoryMonitor> memoryMonitor = createMemoryMonitor(memoryThresholdMB, memoryIntervalSecs, memoryMonitorEnabled);
@@ -2412,7 +2412,7 @@ void slaveMain(bool &jobListenerStopped, ILogMsgHandler *logHandler)
         if (memoryThresholdMB > 0)
             memoryMonitor->start();
         else
-            OWARNLOG("Memory core dump monitor disabled: invalid threshold (%u MB)", (unsigned)memoryThresholdMB);
+            OWARNLOG("Memory core dump monitor disabled: invalid threshold (%u MB)", memoryThresholdMB);
     }
 
 #ifdef __linux__
