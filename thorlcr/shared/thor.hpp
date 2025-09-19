@@ -62,6 +62,9 @@ thor:
   daliServers: dali
   watchdogEnabled: true
   watchdogProgressEnabled: true
+  memoryCoreDumpEnabled: false
+  memoryCoreDumpThresholdMB: 0
+  memoryCoreDumpIntervalSecs: 60
   logging:
     detail: 50
     thorworkerdetail: 20 // default = WarnMsgThreshold
@@ -73,6 +76,9 @@ constexpr const char * thorDefaultConfigYaml = R"!!(
       daliServers: dali
       watchdogEnabled: true
       watchdogProgressEnabled: true
+      memoryCoreDumpEnabled: false
+      memoryCoreDumpThresholdMB: 0
+      memoryCoreDumpIntervalSecs: 60
     )!!";
 #endif
 
