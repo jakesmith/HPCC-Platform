@@ -28,6 +28,7 @@
 #include "jlzw.hpp"
 #include "jflz.hpp"
 #include "jdebug.hpp"
+#include "jsem.hpp"
 
 #include "jhtree.hpp"
 #include "mpcomm.hpp"
@@ -59,21 +60,22 @@ bool recvShutdown = false;
 //---------------------------------------------------------------------------
 
 // Memory core dump monitor for thorslave processes
-class CMemoryCoreDumpMonitor : public CInterface, implements IThreaded
+class CMemoryCoreDumpMonitor : public CSimpleInterfaceOf<IThreaded>
 {
 private:
     CThreaded threaded;
-    std::atomic<bool> stopping;
-    memsize_t thresholdMB;
-    unsigned intervalSecs;
-    bool enabled;
-    
+    std::atomic<bool> stopping{false};
+    memsize_t thresholdMB{0};
+    unsigned intervalSecs{60};
+    bool enabled{false};
+    Semaphore stopSemaphore;
+
     static void generateCoreDumpForkedChild()
     {
         // Generate a core dump in a child process without terminating the parent
 #ifdef __linux__
         int childpid = fork();
-        if (childpid == 0) 
+        if (childpid == 0)
         {
             // Child process - generate core dump and exit
             signal(SIGABRT, SIG_DFL);
@@ -98,15 +100,15 @@ private:
     }
 
 public:
-    CMemoryCoreDumpMonitor() : threaded("CMemoryCoreDumpMonitor", this), stopping(false)
+    CMemoryCoreDumpMonitor() : threaded("CMemoryCoreDumpMonitor", this)
     {
         enabled = globals->getPropBool("@memoryCoreDumpEnabled", false);
         thresholdMB = globals->getPropInt("@memoryCoreDumpThresholdMB", 0);
         intervalSecs = globals->getPropInt("@memoryCoreDumpIntervalSecs", 60);
-        
+
         if (enabled && thresholdMB > 0)
         {
-            PROGLOG("Memory core dump monitor enabled: threshold=%u MB, interval=%u seconds", 
+            PROGLOG("Memory core dump monitor enabled: threshold=%u MB, interval=%u seconds",
                     (unsigned)thresholdMB, intervalSecs);
             threaded.start(false);
         }
@@ -116,43 +118,45 @@ public:
             enabled = false;
         }
     }
-    
+
     ~CMemoryCoreDumpMonitor()
     {
         stop();
     }
-    
+
     void stop()
     {
         if (enabled && !stopping.load())
         {
             stopping = true;
+            stopSemaphore.signal();
             threaded.join();
         }
     }
-    
+
     virtual void threadmain() override
     {
         PROGLOG("Memory core dump monitor thread started");
-        
+
         while (!stopping.load())
         {
             try
             {
                 ProcessInfo memInfo(ReadMemoryInfo);
                 __uint64 currentMemMB = memInfo.getActiveResidentMemory() / (1024 * 1024);
-                
+
                 if (currentMemMB >= thresholdMB)
                 {
-                    PROGLOG("Memory usage (%u MB) exceeded threshold (%u MB) - generating core dump", 
+                    PROGLOG("Memory usage (%u MB) exceeded threshold (%u MB) - generating core dump",
                             (unsigned)currentMemMB, (unsigned)thresholdMB);
                     generateCoreDumpForkedChild();
                 }
-                
-                // Sleep for the monitoring interval
-                for (unsigned i = 0; i < intervalSecs && !stopping.load(); i++)
+
+                // Wait for the monitoring interval or until stop is signaled
+                if (!stopping.load())
                 {
-                    Sleep(1000);
+                    if (stopSemaphore.wait(intervalSecs * 1000))
+                        break; // Stop was signaled
                 }
             }
             catch (IException *e)
@@ -161,15 +165,16 @@ public:
                 e->errorMessage(errMsg);
                 OERRLOG("Error in memory core dump monitor: %s", errMsg.str());
                 e->Release();
-                
-                // Sleep before retrying on error
-                for (unsigned i = 0; i < 10 && !stopping.load(); i++)
+
+                // Wait before retrying on error
+                if (!stopping.load())
                 {
-                    Sleep(1000);
+                    if (stopSemaphore.wait(10000))
+                        break; // Stop was signaled
                 }
             }
         }
-        
+
         PROGLOG("Memory core dump monitor thread stopped");
     }
 };
@@ -2443,7 +2448,7 @@ public:
         }
         write();
     }
-    
+
 // IFileInProgressHandler
     virtual void add(const char *fip)
     {
@@ -2538,7 +2543,7 @@ void slaveMain(bool &jobListenerStopped, ILogMsgHandler *logHandler)
 #endif
 
     jobListener.slaveMain(logHandler);
-    
+
     // Stop memory monitor when slave main completes
     if (memoryMonitor)
         memoryMonitor->stop();
