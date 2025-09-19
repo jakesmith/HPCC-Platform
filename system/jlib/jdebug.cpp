@@ -4464,12 +4464,14 @@ private:
     std::atomic<bool> stopping{false};
     unsigned thresholdMB{0};
     unsigned intervalSecs{60};
+    unsigned incrementMB{200};
     bool enabled{false};
     Semaphore stopSemaphore;
+    unsigned lastCoreDumpMemoryMB{0}; // Memory level when last core dump was created
 
 public:
-    CMemoryMonitor(unsigned _thresholdMB, unsigned _intervalSecs, bool _enabled)
-        : threaded("CMemoryMonitor", this), thresholdMB(_thresholdMB), intervalSecs(_intervalSecs), enabled(_enabled)
+    CMemoryMonitor(unsigned _thresholdMB, unsigned _intervalSecs, bool _enabled, unsigned _incrementMB)
+        : threaded("CMemoryMonitor", this), thresholdMB(_thresholdMB), intervalSecs(_intervalSecs), incrementMB(_incrementMB), enabled(_enabled)
     {
     }
 
@@ -4504,6 +4506,12 @@ public:
         return enabled;
     }
 
+    virtual void reset() override
+    {
+        lastCoreDumpMemoryMB = 0;
+        PROGLOG("Memory monitor reset for new subgraph");
+    }
+
     virtual void threadmain() override
     {
         PROGLOG("Memory monitor thread started");
@@ -4517,11 +4525,29 @@ public:
                 ProcessInfo memInfo(ReadMemoryInfo);
                 __uint64 currentMemMB = memInfo.getActiveResidentMemory() / (1024 * 1024);
 
+                bool shouldCreateCoreDump = false;
+                
                 if (currentMemMB >= thresholdMB)
                 {
-                    PROGLOG("Memory usage (%u MB) exceeded threshold (%u MB) - generating core dump",
-                            (unsigned)currentMemMB, thresholdMB);
+                    if (lastCoreDumpMemoryMB == 0)
+                    {
+                        // First time exceeding threshold
+                        shouldCreateCoreDump = true;
+                    }
+                    else if (incrementMB > 0 && currentMemMB >= (lastCoreDumpMemoryMB + incrementMB))
+                    {
+                        // Memory increased by configured increment since last core dump
+                        shouldCreateCoreDump = true;
+                    }
+                    // If incrementMB is 0, don't create additional core dumps
+                }
+
+                if (shouldCreateCoreDump)
+                {
+                    PROGLOG("Memory usage (%u MB) exceeded threshold (%u MB) - generating core dump (last dump at %u MB)",
+                            (unsigned)currentMemMB, thresholdMB, lastCoreDumpMemoryMB);
                     generateCoreDump();
+                    lastCoreDumpMemoryMB = (unsigned)currentMemMB;
                 }
             }
             catch (IException *e)
@@ -4547,8 +4573,8 @@ public:
     }
 };
 
-IMemoryMonitor *createMemoryMonitor(unsigned thresholdMB, unsigned intervalSecs, bool enabled)
+IMemoryMonitor *createMemoryMonitor(unsigned thresholdMB, unsigned intervalSecs, bool enabled, unsigned incrementMB)
 {
-    return new CMemoryMonitor(thresholdMB, intervalSecs, enabled);
+    return new CMemoryMonitor(thresholdMB, intervalSecs, enabled, incrementMB);
 }
 

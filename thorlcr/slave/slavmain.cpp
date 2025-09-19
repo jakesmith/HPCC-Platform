@@ -2003,6 +2003,13 @@ public:
                         for (unsigned c=0; c<job->queryJobChannels(); c++)
                         {
                             PROGLOG("GraphInit: %s, graphId=%" GIDPF "d, slaveChannel=%d", jobKey.get(), subGraphId, c);
+                            
+                            // Reset memory monitor for new subgraph
+                            CThorResourceSlave &thorResource = (CThorResourceSlave &)queryThor();
+                            IMemoryMonitor *memMonitor = thorResource.queryMemoryMonitor();
+                            if (memMonitor && memMonitor->isEnabled())
+                                memMonitor->reset();
+                            
                             CJobChannel &jobChannel = job->queryJobChannel(c);
                             Owned<CSlaveGraph> subGraph = (CSlaveGraph *)jobChannel.getGraph(subGraphId);
                             subGraph->setExecuteReplyTag(executeReplyTag);
@@ -2361,6 +2368,7 @@ class CThorResourceSlave : public CThorResourceBase
     Owned<IBackup> backupHandler;
     Owned<IFileInProgressHandler> fipHandler;
     Owned<IKJService> kjService;
+    Owned<IMemoryMonitor> memoryMonitor;
 public:
     CThorResourceSlave()
     {
@@ -2387,6 +2395,10 @@ public:
     virtual IBackup &queryBackup() override { return *backupHandler.get(); }
     virtual IFileInProgressHandler &queryFileInProgressHandler() override { return *fipHandler.get(); }
     virtual IKJService &queryKeyedJoinService() override { return *kjService.get(); }
+    
+    // Memory monitor access
+    void setMemoryMonitor(IMemoryMonitor *monitor) { memoryMonitor.set(monitor); }
+    IMemoryMonitor *queryMemoryMonitor() { return memoryMonitor.get(); }
 };
 
 void slaveMain(bool &jobListenerStopped, ILogMsgHandler *logHandler)
@@ -2405,8 +2417,10 @@ void slaveMain(bool &jobListenerStopped, ILogMsgHandler *logHandler)
     bool memoryMonitorEnabled = globals->getPropBool("@memoryCoreDumpEnabled", false);
     unsigned memoryThresholdMB = globals->getPropInt("@memoryCoreDumpThresholdMB", 0);
     unsigned memoryIntervalSecs = globals->getPropInt("@memoryCoreDumpIntervalSecs", 60);
+    unsigned memoryIncrementMB = globals->getPropInt("@memoryCoreDumpIncrementMB", 200);
     
-    Owned<IMemoryMonitor> memoryMonitor = createMemoryMonitor(memoryThresholdMB, memoryIntervalSecs, memoryMonitorEnabled);
+    Owned<IMemoryMonitor> memoryMonitor = createMemoryMonitor(memoryThresholdMB, memoryIntervalSecs, memoryMonitorEnabled, memoryIncrementMB);
+    slaveResource.setMemoryMonitor(memoryMonitor);
     if (memoryMonitor->isEnabled())
     {
         if (memoryThresholdMB > 0)

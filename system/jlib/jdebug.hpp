@@ -679,10 +679,11 @@ interface IMemoryMonitor : extends IInterface
     virtual void start() = 0;
     virtual void stop() = 0;
     virtual bool isEnabled() const = 0;
+    virtual void reset() = 0; // Reset core dump tracking for new subgraph
 };
 
 // Factory function for creating memory monitors
-extern jlib_decl IMemoryMonitor *createMemoryMonitor(unsigned thresholdMB, unsigned intervalSecs, bool enabled);
+extern jlib_decl IMemoryMonitor *createMemoryMonitor(unsigned thresholdMB, unsigned intervalSecs, bool enabled, unsigned incrementMB = 200);
 
 #endif
 
