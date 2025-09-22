@@ -883,6 +883,17 @@ thor:
   maxGraphs: 2
   #maxGraphStartupTime: 600
   #numWorkersPerPod: 1
+  
+  # Logical cluster configuration (optional)
+  # Expands a single Thor definition into multiple physical instances
+  #cluster:
+  #  instances: 3                            # Number of instances to create
+  #  instanceTemplate: "{name}-az{instance}" # Name template for instances
+  # When using logical clusters:
+  # - maxJobs and maxGraphs will be divided evenly among instances
+  # - Each instance will listen to the main queue via auxQueues
+  # - A logical queue with the cluster name will be created
+  
   #managerResources:
   #  cpu: "1"
   #  memory: "2G"

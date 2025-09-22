@@ -1,0 +1,12 @@
+thor:
+- name: thor-prod
+  cluster:
+    instances: 2
+    instanceTemplate: "{name}-node{instance}"
+  numWorkers: 4
+  maxJobs: 8
+  maxGraphs: 4
+- name: thor-dev
+  numWorkers: 1
+  maxJobs: 2
+  maxGraphs: 1

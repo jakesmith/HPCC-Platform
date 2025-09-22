@@ -346,7 +346,40 @@ data:
               job: "_HPCC_JOBNAME_"
 {{- end -}}
 
-{{ range $.Values.thor -}}
+{{- /* Expand logical clusters into physical instances */ -}}
+{{- $expandedThors := list -}}
+{{- range $.Values.thor -}}
+ {{- if not .disabled -}}
+  {{- if hasKey . "cluster" -}}
+   {{- $thorConfig := . -}}
+   {{- $cluster := .cluster -}}
+   {{- $instances := $cluster.instances | int -}}
+   {{- $instanceTemplate := $cluster.instanceTemplate | default "{name}-{instance}" -}}
+   
+   {{- /* Validate that maxJobs and maxGraphs are divisible by instances */ -}}
+   {{- $maxJobsPerInstance := div $thorConfig.maxJobs $instances -}}
+   {{- $maxGraphsPerInstance := div $thorConfig.maxGraphs $instances -}}
+   {{- if or (ne (mul $maxJobsPerInstance $instances | int) ($thorConfig.maxJobs | int)) (ne (mul $maxGraphsPerInstance $instances | int) ($thorConfig.maxGraphs | int)) -}}
+    {{- $_ := fail (printf "Thor cluster '%s': maxJobs (%d) and maxGraphs (%d) must be evenly divisible by instances (%d)" $thorConfig.name $thorConfig.maxJobs $thorConfig.maxGraphs $instances) -}}
+   {{- end -}}
+   
+   {{- /* Generate each instance */ -}}
+   {{- range $i := untilStep 1 (int (add1 $instances)) 1 -}}
+    {{- $instanceName := $instanceTemplate | replace "{name}" $thorConfig.name | replace "{instance}" (toString $i) -}}
+    {{- $instance := deepCopy $thorConfig -}}
+    {{- $_ := set $instance "name" $instanceName -}}
+    {{- $_ := set $instance "maxJobs" $maxJobsPerInstance -}}
+    {{- $_ := set $instance "maxGraphs" $maxGraphsPerInstance -}}
+    {{- $_ := set $instance "auxQueues" (list $thorConfig.name) -}}
+    {{- $_ := unset $instance "cluster" -}}
+    {{- $expandedThors = append $expandedThors $instance -}}
+   {{- end -}}
+  {{- else -}}
+   {{- $expandedThors = append $expandedThors . -}}
+  {{- end -}}
+ {{- end -}}
+{{- end -}}
+{{ range $expandedThors -}}
 {{- if not .disabled -}}
 {{- $env := concat ($.Values.global.env | default list) (.env | default list) -}}
 {{- $secretsCategories := list "system" "eclUser" "ecl" "storage" }}

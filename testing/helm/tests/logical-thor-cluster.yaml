@@ -1,0 +1,8 @@
+thor:
+- name: thorcluster
+  cluster:
+    instances: 3
+    instanceTemplate: "{name}-az{instance}"
+  numWorkers: 2
+  maxJobs: 6
+  maxGraphs: 3
