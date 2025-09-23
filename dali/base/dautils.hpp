@@ -582,9 +582,13 @@ interface INamedGroupStore;
 extern da_decl void remapGroupsToDafilesrv(IPropertyTree *file, bool foreign, bool secure);
 extern da_decl unsigned getPreferredDaFsServerPort();
 #ifdef NULL_DALIUSER_STACKTRACE
-extern da_decl void logNullUser(IUserDescriptor *userDesc);
+extern da_decl void logNullUserImpl(IUserDescriptor *userDesc, const char *func);
+extern da_decl void logNullUserStats(StringBuffer &stats); // Get timing statistics for all functions
+#define logNullUser(userDesc) logNullUserImpl(userDesc, __func__)
 #else
-inline void logNullUser(IUserDescriptor *userDesc) { }
+inline void logNullUserImpl(IUserDescriptor *userDesc, const char *func) { }
+inline void logNullUserStats(StringBuffer &stats) { }
+#define logNullUser(userDesc) logNullUserImpl(userDesc, __func__)
 #endif
 
 interface IFileReadPropertiesUpdater : extends IInterface

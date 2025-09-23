@@ -23,6 +23,7 @@
 #include "jstring.hpp"
 #include "jfile.hpp"
 #include "jmisc.hpp"
+#include "jutil.hpp"
 #include "jsort.hpp"
 #include "jprop.hpp"
 #include "jregexp.hpp"
@@ -3741,21 +3742,77 @@ void remapGroupsToDafilesrv(IPropertyTree *file, bool foreign, bool secure)
 #ifdef NULL_DALIUSER_STACKTRACE
 static time_t lastNullUserLogEntry = (time_t)0;
 static CriticalSection nullUserLogCS;
-void logNullUser(IUserDescriptor * userDesc)
+
+// Structure to track timing information per function
+struct FunctionTimingInfo
+{
+    unsigned totalCalls = 0;
+    unsigned totalTimeMs = 0;
+    unsigned maxTimeMs = 0;
+    const char *functionName = nullptr;
+    
+    FunctionTimingInfo(const char *funcName) : functionName(funcName) {}
+};
+
+// Map to store timing information per function
+static std::unordered_map<std::string, FunctionTimingInfo> functionTimingMap;
+static CriticalSection functionTimingCS;
+
+void logNullUserImpl(IUserDescriptor * userDesc, const char *func)
 {
     StringBuffer userName;
     if (userDesc)
         userDesc->getUserName(userName);
     if (nullptr == userDesc || userName.isEmpty())
     {
+        unsigned startTime = msTick();
+        
         CriticalBlock block(nullUserLogCS);
         time_t timeNow = time(nullptr);
         if (difftime(timeNow, lastNullUserLogEntry) >= 60)
         {
-            IERRLOG("UNEXPECTED USER (NULL)");
+            IERRLOG("UNEXPECTED USER (NULL) in function: %s", func);
             PrintStackReport();
             lastNullUserLogEntry = timeNow;
         }
+        
+        // Track timing information
+        unsigned elapsed = msTick() - startTime;
+        {
+            CriticalBlock timingBlock(functionTimingCS);
+            auto it = functionTimingMap.find(func);
+            if (it == functionTimingMap.end())
+            {
+                functionTimingMap.emplace(func, FunctionTimingInfo(func));
+                it = functionTimingMap.find(func);
+            }
+            
+            FunctionTimingInfo &info = it->second;
+            info.totalCalls++;
+            info.totalTimeMs += elapsed;
+            if (elapsed > info.maxTimeMs)
+                info.maxTimeMs = elapsed;
+        }
+    }
+}
+
+void logNullUserStats(StringBuffer &stats)
+{
+    CriticalBlock timingBlock(functionTimingCS);
+    stats.append("Null User Detection Timing Statistics:\n");
+    stats.append("Function Name                    | Total Calls | Total Time (ms) | Max Time (ms) | Avg Time (ms)\n");
+    stats.append("-------------------------------- | ----------- | --------------- | ------------- | -------------\n");
+    
+    for (const auto &pair : functionTimingMap)
+    {
+        const FunctionTimingInfo &info = pair.second;
+        unsigned avgTime = info.totalCalls > 0 ? info.totalTimeMs / info.totalCalls : 0;
+        stats.appendf("%-32s | %-11u | %-15u | %-13u | %-13u\n",
+                     pair.first.c_str(),
+                     info.totalCalls,
+                     info.totalTimeMs,
+                     info.maxTimeMs,
+                     avgTime);
     }
 }
 #endif
