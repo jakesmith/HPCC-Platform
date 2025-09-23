@@ -1274,12 +1274,9 @@ Generate instance queue names
    {{- $instances := $cluster.instances | int -}}
    {{- $instanceTemplate := $cluster.instanceTemplate | default "{name}-{instance}" -}}
    
-   {{- /* Validate that maxJobs and maxGraphs are divisible by instances */ -}}
+   {{- /* Calculate divided limits */ -}}
    {{- $maxJobsPerInstance := div $thorConfig.maxJobs $instances -}}
    {{- $maxGraphsPerInstance := div $thorConfig.maxGraphs $instances -}}
-   {{- if or (ne (mul $maxJobsPerInstance $instances | int) ($thorConfig.maxJobs | int)) (ne (mul $maxGraphsPerInstance $instances | int) ($thorConfig.maxGraphs | int)) -}}
-    {{- $_ := fail (printf "Thor cluster '%s': maxJobs (%d) and maxGraphs (%d) must be evenly divisible by instances (%d)" $thorConfig.name $thorConfig.maxJobs $thorConfig.maxGraphs $instances) -}}
-   {{- end -}}
    
    {{- /* Generate each instance */ -}}
    {{- range $i := untilStep 1 (int (add1 $instances)) 1 -}}

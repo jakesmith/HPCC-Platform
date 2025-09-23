@@ -74,16 +74,19 @@ thor:
   # Each instance gets maxJobs=4, maxGraphs=2
 ```
 
-### Custom Instance Naming
+### Custom Instance Naming with Regions
 ```yaml
 thor:
-- name: thor-batch
+- name: thor-global
   cluster:
-    instances: 2
-    instanceTemplate: "{name}-node{instance}"
-  maxJobs: 8
-  maxGraphs: 4
-  # Generates: thor-batch-node1, thor-batch-node2
+    instances: 4
+    instanceTemplate: "thor-region-{instance}-cluster"
+  maxJobs: 16
+  maxGraphs: 8
+  # Generates: thor-region-1-cluster, thor-region-2-cluster, 
+  #           thor-region-3-cluster, thor-region-4-cluster
+  # This pattern is useful when instances need specific naming for
+  # integration with external systems or monitoring tools
 ```
 
 ## Generated Queue Configuration
