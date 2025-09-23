@@ -2787,11 +2787,6 @@
           "description": "[Optional] Seconds to keep Thor instance running, waiting for more graphs to execute",
           "minimum": 1
         },
-        "multiJobLinger": {
-          "type": "boolean",
-          "description": "[Optional] If lingerPeriod set, allows Thor to process more graphs from any job",
-          "default": true
-        },
         "maxGraphStartupTime": {
           "type": "integer",
           "description": "[Optional] The time (seconds) for the job to wait for a Thor instance to start",
