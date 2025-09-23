@@ -14516,22 +14516,21 @@ void executeThorGraph(const char * graphName, IConstWorkUnit &workunit, const IP
         }
 
         // Queue the graph, the thor agent will pick it up and launch a new Thor (up to maxGraphs),
-            // or an existing idle Thor listening on the same queue will pick it up.
+        // or an existing idle Thor listening on the same queue will pick it up.
 
-            VStringBuffer queueName("%s.thor", queue);
-            DBGLOG("Queueing wuid=%s, graph=%s, on queue=%s, timelimit=%u seconds", wuid.str(), graphName, queueName.str(), timelimit);
+        VStringBuffer queueName("%s.thor", queue);
+        DBGLOG("Queueing wuid=%s, graph=%s, on queue=%s, timelimit=%u seconds", wuid.str(), graphName, queueName.str(), timelimit);
 
-            {
-                Owned<IWorkUnit> w = &workunit.lock();
-                addTimeStamp(w, wfid, graphName, StWhenQueued);
-            }
-
-            Owned<IJobQueue> queue = createJobQueue(queueName);
-            IJobQueueItem *item = createJobQueueItem(jobName);
-            item->setOwner(owner);
-            item->setPriority(priority);
-            queue->enqueue(item);
+        {
+            Owned<IWorkUnit> w = &workunit.lock();
+            addTimeStamp(w, wfid, graphName, StWhenQueued);
         }
+
+        Owned<IJobQueue> queue = createJobQueue(queueName);
+        IJobQueueItem *item = createJobQueueItem(jobName);
+        item->setOwner(owner);
+        item->setPriority(priority);
+        queue->enqueue(item);
 
         // NB: overall max runtime if guillotine set handled by abortmonitor
         unsigned runningTimeLimit = workunit.getDebugValueInt("maxRunTime", 0);
