@@ -1824,7 +1824,6 @@ inline bool isGlobalScope(const char * scope) { return scope && (streq(scope, GL
 extern WORKUNIT_API bool isValidPriorityValue(const char * priority);
 extern WORKUNIT_API bool isValidMemoryValue(const char * memoryUnit);
 
-constexpr bool defaultThorMultiJobLinger = true;
 constexpr unsigned defaultThorLingerPeriod = 60;
 
 constexpr bool defaultAnalyzeWhenComplete = isContainerized() ? false : true;

@@ -14500,7 +14500,6 @@ void executeThorGraph(const char * graphName, IConstWorkUnit &workunit, const IP
     {
         CCycleTimer elapsedTimer;
 
-        bool multiJobLinger = config.getPropBool("@multiJobLinger", defaultThorMultiJobLinger);
         bool thisThor = true;
         const char *queue = config.queryProp("@queue");
         const char *tgt = workunit.queryClusterName();
@@ -14516,18 +14515,7 @@ void executeThorGraph(const char * graphName, IConstWorkUnit &workunit, const IP
             }
         }
 
-        // NB: executeGraphOnLingeringThor looks for existing Thor instance that has been used for the same job,
-        // and communicates with it directly
-        if (!multiJobLinger && executeGraphOnLingeringThor(workunit, wfid, graphName))
-        {
-            if (!thisThor)
-                throw makeStringExceptionV(0, "multiJobLinger mode required to target other thor instances. Target: %s", tgt);
-            PROGLOG("Existing lingering Thor handled graph: %s", graphName);
-        }
-        else
-        {
-            // If no existing Thor instance, or for a multi linger configuration,
-            // queue the graph, either the thor agent will pick it up and launch a new Thor (up to maxGraphs),
+        // Queue the graph, the thor agent will pick it up and launch a new Thor (up to maxGraphs),
             // or an existing idle Thor listening on the same queue will pick it up.
 
             VStringBuffer queueName("%s.thor", queue);
@@ -14874,7 +14862,7 @@ TraceFlags wuLoadTraceFlags(const IPropertyTree * wuInfo, const std::initializer
 #ifdef _CONTAINERIZED
 bool executeGraphOnLingeringThor(IConstWorkUnit &workunit, unsigned wfid, const char *graphName)
 {
-    // NB: this routine is not used in a multiJobLinger mode Thor.
+    // NB: this routine is only used in single-instance Thor mode (now removed).
 
     // check if lingering thor instance is up.
     // Returns true if successfully submitted graph to a lingering Thor.
