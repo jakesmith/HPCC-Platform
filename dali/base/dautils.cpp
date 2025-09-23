@@ -34,6 +34,7 @@
 #include "rmtclient.hpp"
 
 #include <vector>
+#include <unordered_map>
 
 #ifdef _DEBUG
 //#define TEST_DEADLOCK_RELEASE
@@ -3683,9 +3684,10 @@ void remapGroupsToDafilesrv(IPropertyTree *file, bool foreign, bool secure)
 }
 
 #ifdef NULL_DALIUSER_STACKTRACE
-static time_t lastNullUserLogEntry = (time_t)0;
+static std::unordered_map<std::string, time_t> lastNullUserLogEntries;
 static CriticalSection nullUserLogCS;
-void logNullUser(IUserDescriptor * userDesc)
+
+void logNullUserImpl(IUserDescriptor * userDesc, const char* funcName)
 {
     StringBuffer userName;
     if (userDesc)
@@ -3694,11 +3696,16 @@ void logNullUser(IUserDescriptor * userDesc)
     {
         CriticalBlock block(nullUserLogCS);
         time_t timeNow = time(nullptr);
-        if (difftime(timeNow, lastNullUserLogEntry) >= 60)
+        std::string funcKey(funcName ? funcName : "unknown");
+        
+        auto it = lastNullUserLogEntries.find(funcKey);
+        time_t lastLogTime = (it != lastNullUserLogEntries.end()) ? it->second : (time_t)0;
+        
+        if (difftime(timeNow, lastLogTime) >= 60)
         {
-            IERRLOG("UNEXPECTED USER (NULL)");
+            IERRLOG("UNEXPECTED USER (NULL) in function: %s", funcName ? funcName : "unknown");
             PrintStackReport();
-            lastNullUserLogEntry = timeNow;
+            lastNullUserLogEntries[funcKey] = timeNow;
         }
     }
 }
