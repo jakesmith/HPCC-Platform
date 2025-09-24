@@ -1128,14 +1128,7 @@ public:
     CRemoteRequest(int _cursorHandle, OutputFormat _format, ICompressor *_compressor, IExpander *_expander, IRemoteActivity *_activity)
         : cursorHandle(_cursorHandle), format(_format), activity(_activity), compressor(_compressor), expander(_expander)
     {
-        if (outFmt_Binary != format)
-        {
-            responseWriter.setown(createIXmlWriterExt(0, 0, nullptr, outFmt_Xml == format ? WTStandard : WTJSONObject));
-            responseWriter->outputBeginNested("Response", true);
-            if (outFmt_Xml == format)
-                responseWriter->outputCString("urn:hpcc:dfs", "@xmlns:dfs");
-            responseWriter->outputUInt(cursorHandle, sizeof(cursorHandle), "handle");
-        }
+        // responseWriter will be initialized in process() method for each request
     }
 
     ~CRemoteRequest()
@@ -1187,10 +1180,19 @@ public:
         if (requestTree->hasProp("replyLimit"))
             replyLimit = requestTree->getPropInt64("replyLimit", defaultDaFSReplyLimitKB) * 1024;
 
+        // Initialize responseWriter for each request (including continue requests)
         if (outFmt_Binary == format)
+        {
             responseMb.append(cursorHandle);
+        }
         else // outFmt_Xml || outFmt_Json
+        {
+            responseWriter.setown(createIXmlWriterExt(0, 0, nullptr, outFmt_Xml == format ? WTStandard : WTJSONObject));
+            responseWriter->outputBeginNested("Response", true);
+            if (outFmt_Xml == format)
+                responseWriter->outputCString("urn:hpcc:dfs", "@xmlns:dfs");
             responseWriter->outputUInt(cursorHandle, sizeof(cursorHandle), "handle");
+        }
 
         if (requestTree->hasProp("cursorBin")) // use handle if one provided
         {
