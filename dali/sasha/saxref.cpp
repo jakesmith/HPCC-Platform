@@ -89,7 +89,7 @@ struct cMisplacedRec
         nn = (unsigned short)(xn+tn*drv);
         pn = (unsigned short)pf;
         marked = false;
-        next = NULL;
+        next = nullptr;
     }
 
     bool eq(unsigned drv,
@@ -146,8 +146,8 @@ struct cFileDesc // no virtuals
         ret->name[0] = (byte)sl;
         ret->isDirPerPart = d;
         ret->filenameLen = (byte)fnLen;
-        ret->owningfile = NULL;
-        ret->misplaced = NULL;
+        ret->owningfile = nullptr;
+        ret->misplaced = nullptr;
 
         memcpy(&ret->name[1],_name,sl);
         memset(ret->map(),0,ml);
@@ -228,7 +228,7 @@ struct cFileDesc // no virtuals
     static cFileDesc * create(const char *)
     {
         assertex(false);
-        return NULL;
+        return nullptr;
         // not used
     }
     
@@ -316,7 +316,7 @@ struct cDirDesc
     static cDirDesc * create(const char *)
     {
         assertex(false);
-        return NULL;
+        return nullptr;
         // not used
     }
     
@@ -415,12 +415,12 @@ struct cDirDesc
             while (mp) {
                 if (mp->eq(drv,pf,node,numnodes)) {
                     OERRLOG(LOGPFX "Duplicate file with mismatched tail (%d,%d) %s",pf,node,name);
-                    return NULL;
+                    return nullptr;
                 }
                 mp = mp->next;
             }
             if (!createIfMissing)
-                return NULL;
+                return nullptr;
             mp = (cMisplacedRec *)malloc(sizeof(cMisplacedRec));
             if (!mp)
                 throw std::bad_alloc();
@@ -431,7 +431,7 @@ struct cDirDesc
         }
         if (file->setpresent(drv,pf)) {
             OERRLOG(LOGPFX "Duplicate file with mismatched tail (%d) %s",pf,name);
-            file = NULL;
+            file = nullptr;
         }
         return file;
     }
@@ -916,8 +916,8 @@ public:
         iswin = false; // set later
         root.reset(new cDirDesc(""));
         verbose = true;
-        iphash = NULL;
-        ipnum = NULL;
+        iphash = nullptr;
+        ipnum = nullptr;
         foundbranch.setown(createPTree("Found"));
         lostbranch.setown(createPTree("Lost"));
         orphansbranch.setown(createPTree("Orphans"));
@@ -1016,7 +1016,7 @@ public:
         numnodes = grp->ordinality();
         // lets add HT for grp
         delete [] iphash;
-        iphash = NULL;
+        iphash = nullptr;
         delete [] ipnum;
         iphashsz = numnodes*2;
         iphash = new IpAddress[iphashsz];
@@ -1092,7 +1092,7 @@ public:
         if (stricmp(name,rootdir)==0) 
             return root.get();
         if (!*name) 
-            return NULL;
+            return nullptr;
         StringBuffer pdir;
         const char *tail = splitDirTail(name,pdir);
         size32_t dl = pdir.length();
@@ -1100,7 +1100,7 @@ public:
             pdir.setLength(--dl);
         cDirDesc *p = findDirectory(pdir.str());
         if (!p)
-            return NULL;
+            return nullptr;
         return p->lookupDir(tail, false);
     }
 
@@ -1132,7 +1132,7 @@ public:
     {
         checkHeartbeat("Directory scan");
         size32_t dsz = path.length();
-        if (pdir==NULL) 
+        if (pdir==nullptr) 
             pdir = root.get();
         RemoteFilename rfn;
         rfn.setPath(ep,path.str());
@@ -1184,7 +1184,7 @@ public:
                             // /var/lib/HPCCSystems/hpcc-data/d1/somescope/otherscope/afile.1_of_2
                             // /var/lib/HPCCSystems/hpcc-data/d2/somescope/otherscope/afile.2_of_2
                             // These files would never be matched if we didn't build up the cDirDesc structure without the stripe directory
-                            if (!scanDirectory(node,ep,path,drv,pdir,NULL,level+1))
+                            if (!scanDirectory(node,ep,path,drv,pdir,nullptr,level+1))
                                 return false;
 
                             path.setLength(dsz);
@@ -1266,7 +1266,7 @@ public:
                     localEP.setLocalHost(0);
                     addPathSepChar(path).append('d').append(i+1);
                     parent.log(false,"Scanning %s directory %s",parent.storagePlane->queryProp("@name"),path.str());
-                    if (!parent.scanDirectory(0,localEP,path,0,parent.root.get(),NULL,1))
+                    if (!parent.scanDirectory(0,localEP,path,0,parent.root.get(),nullptr,1))
                     {
                         ok = false;
                         return;
@@ -1276,7 +1276,7 @@ public:
                 {
                     SocketEndpoint ep = parent.rawgrp->queryNode(i).endpoint();
                     parent.log(false,"Scanning %s directory %s",ep.getEndpointHostText(tmp).str(),path.str());
-                    if (!parent.scanDirectory(i,ep,path,0,NULL,NULL,0)) {
+                    if (!parent.scanDirectory(i,ep,path,0,nullptr,nullptr,0)) {
                         ok = false;
                         return;
                     }
@@ -1285,7 +1285,7 @@ public:
                         setReplicateFilename(path,1);
                         ep = parent.rawgrp->queryNode(i).endpoint();
                         parent.log(false,"Scanning %s directory %s",ep.getEndpointHostText(tmp.clear()).str(),path.str());
-                        if (!parent.scanDirectory(i,ep,path,1,NULL,NULL,0)) {
+                        if (!parent.scanDirectory(i,ep,path,1,nullptr,nullptr,0)) {
                             ok = false;
                         }
                     }
@@ -1372,7 +1372,7 @@ public:
                     StringBuffer fn;
                     StringBuffer dir;
                     StringBuffer lastdir;
-                    cDirDesc *pdir = NULL;
+                    cDirDesc *pdir = nullptr;
                     bool islost = false;
                     bool incluster = true;          
                     for (unsigned p=0;p<np;p++) {
@@ -2673,7 +2673,7 @@ public:
     }
 
 
-} *sashaXRefServer = NULL;
+} *sashaXRefServer = nullptr;
 
 
 ISashaServer *createSashaXrefServer()
@@ -2868,7 +2868,7 @@ public:
     }
 
 
-} *sashaExpiryServer = NULL;
+} *sashaExpiryServer = nullptr;
 
 
 ISashaServer *createSashaFileExpiryServer()
