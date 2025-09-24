@@ -32,51 +32,96 @@ python3 tools/analyze_stacks.py --create-sample-config
 
 ## Filtering Methodology
 
-The script identifies idle patterns by looking for common function names in stack traces:
+The script uses a sophisticated two-tier filtering approach to accurately distinguish between interesting and mundane stacks:
 
-### Default Idle Patterns
+### 1. Contextual Patterns (Advanced)
 
-1. **Futex Waits**: `__futex_abstimed_wait*`, `do_futex_wait`
-   - Low-level synchronization primitive waits
+These patterns require **BOTH** low-level wait primitives AND high-level idle context to avoid false positives. This prevents marking interesting stacks as mundane just because they happen to be waiting on a mutex or condition variable.
+
+**Example**: A stack with `pthread_mutex_lock` is only considered mundane if it also contains `CPooledThreadWrapper::run` or similar thread pool context.
+
+#### Default Contextual Patterns
+
+1. **Thread Pool Futex Waits**: 
+   - Low-level: `__futex_abstimed_wait*`, `do_futex_wait`, `sem_wait*`
+   - High-level: `CPooledThreadWrapper::run`, `ThreadPool*::wait`
    
-2. **Semaphore Waits**: `sem_wait*`, `__new_sem_wait*`
-   - Semaphore synchronization waits
+2. **Thread Pool Mutex Waits**:
+   - Low-level: `__lll_lock_wait`, `pthread_mutex_lock*`
+   - High-level: `CPooledThreadWrapper::run`, `Waiter::wait`
    
-3. **Thread Pool Waits**: `CPooledThreadWrapper::run`, `ThreadPool*::wait`
-   - Thread pool workers waiting for tasks
+3. **Roxie Worker Idle**:
+   - Low-level: `pthread_cond_wait*`, `InterruptableSemaphore::wait`
+   - High-level: `RoxieQueue::wait`, `CRoxieWorker*threadmain`
    
-4. **Thread Management**: `start_thread`, `clone*`, `Thread::_threadmain`
-   - Generic thread startup and management
-   
-5. **Condition Variables**: `pthread_cond_wait*`
-   - Condition variable waits
-   
-6. **Mutex Locks**: `__lll_lock_wait`, `pthread_mutex_lock*`
-   - Mutex locking operations
-   
-7. **I/O Waits**: `epoll_wait`, `poll`, `select`, `read`, `write`
-   - I/O waiting operations
+4. **Roxie Cache Waiting**:
+   - Low-level: `pthread_cond_wait`, `InterruptableSemaphore::wait`
+   - High-level: `RoxieFileCache`
+
+### 2. Simple Patterns (Basic)
+
+These patterns indicate idle state regardless of context:
+
+1. **Thread Management**: `start_thread`, `clone*`, `Thread::_threadmain` - Always idle
+2. **I/O Waits**: `epoll_wait`, `poll`, `select` - Always waiting
+3. **Performance Tracing**: `PerfTracer` - Always diagnostic
+
+### Why This Approach Works
+
+Consider these examples:
+
+```bash
+# MUNDANE: Thread pool worker waiting on mutex
+#0  __lll_lock_wait (futex=0x...) at lowlevellock.c:52
+#1  pthread_mutex_lock (mutex=0x...) at pthread_mutex_lock.c:81  
+#2  Waiter::wait() from libjlib.so
+#3  CPooledThreadWrapper::run() from libjlib.so  ← Idle context
+
+# INTERESTING: Important processing waiting on mutex  
+#0  __lll_lock_wait (futex=0x...) at lowlevellock.c:52
+#1  pthread_mutex_lock (mutex=0x...) at pthread_mutex_lock.c:81
+#2  acquireLock() from libecl.so
+#3  processImportantData() from libecl.so  ← Active work context
+```
+
+The first stack matches the contextual pattern (mutex wait + thread pool context) and is filtered as mundane. The second has the same low-level wait but lacks the idle context, so it's preserved as interesting.
 
 ### Custom Filters
 
-You can extend the filtering with custom patterns by creating a JSON configuration file:
+You can extend the filtering with custom patterns using both simple and contextual approaches:
 
 ```json
 {
   "idle_patterns": [
     {
-      "name": "custom_wait",
-      "description": "Custom waiting pattern",
+      "name": "custom_simple_wait",
+      "description": "Simple pattern - any function match indicates idle",
+      "type": "simple",
       "patterns": [
         "MyCustomWait",
-        "CustomThreadPool::wait"
+        "CustomIOWait"
+      ]
+    },
+    {
+      "name": "custom_contextual_wait", 
+      "description": "Contextual pattern - requires both low-level wait AND idle context",
+      "type": "contextual",
+      "low_level_patterns": [
+        "pthread_mutex_lock",
+        "__lll_lock_wait"
+      ],
+      "high_level_patterns": [
+        "MyApplicationWorker::wait",
+        "MyThreadPool::run" 
       ]
     }
   ]
 }
 ```
 
-Patterns are regular expressions that match against function names in the stack trace.
+- **Simple patterns**: Match any function name anywhere in the stack
+- **Contextual patterns**: Require low-level wait primitives (top ~4 frames) AND high-level idle context (anywhere in stack)
+- All patterns are regular expressions
 
 ## Integration with Existing Tools
 

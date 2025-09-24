@@ -75,36 +75,70 @@ class StackFilter:
     def _load_default_patterns(self) -> List[Dict]:
         """Load default patterns for identifying idle/mundane stacks"""
         return [
+            # Contextual patterns - require BOTH low-level wait primitives AND high-level idle context
             {
-                "name": "futex_wait",
-                "description": "Futex waiting (synchronization primitive)",
-                "patterns": [
+                "name": "thread_pool_futex_wait",
+                "description": "Thread pool workers waiting on futex",
+                "type": "contextual",
+                "low_level_patterns": [
                     r"__futex_abstimed_wait",
                     r"__GI___futex_abstimed_wait",
                     r"do_futex_wait",
-                ]
-            },
-            {
-                "name": "semaphore_wait", 
-                "description": "Semaphore waiting",
-                "patterns": [
                     r"__new_sem_wait",
                     r"sem_wait",
-                    r"sem_timedwait",
-                ]
-            },
-            {
-                "name": "thread_pool_wait",
-                "description": "Thread pool worker waiting",
-                "patterns": [
+                ],
+                "high_level_patterns": [
                     r"CPooledThreadWrapper::run",
                     r"ThreadPool.*::wait",
                     r"WorkerThread.*::wait",
                 ]
             },
             {
+                "name": "thread_pool_mutex_wait",
+                "description": "Thread pool workers waiting on mutex/locks",
+                "type": "contextual", 
+                "low_level_patterns": [
+                    r"__lll_lock_wait",
+                    r"pthread_mutex_lock",
+                    r"__pthread_mutex_lock",
+                ],
+                "high_level_patterns": [
+                    r"CPooledThreadWrapper::run",
+                    r"Waiter::wait",
+                    r"ThreadPool.*::wait",
+                ]
+            },
+            {
+                "name": "roxie_worker_idle",
+                "description": "Roxie workers waiting for work",
+                "type": "contextual",
+                "low_level_patterns": [
+                    r"pthread_cond_wait",
+                    r"pthread_cond_timedwait", 
+                    r"InterruptableSemaphore::wait",
+                ],
+                "high_level_patterns": [
+                    r"RoxieQueue::wait",
+                    r"CRoxieWorker.*threadmain",
+                ]
+            },
+            {
+                "name": "roxie_cache_wait",
+                "description": "Roxie file cache waiting",
+                "type": "contextual",
+                "low_level_patterns": [
+                    r"pthread_cond_wait",
+                    r"InterruptableSemaphore::wait",
+                ],
+                "high_level_patterns": [
+                    r"RoxieFileCache",
+                ]
+            },
+            # Simple patterns - just presence of these functions indicates idle state
+            {
                 "name": "thread_management",
                 "description": "Generic thread startup/cleanup",
+                "type": "simple",
                 "patterns": [
                     r"start_thread",
                     r"clone[0-9]*\s*\(",
@@ -113,32 +147,24 @@ class StackFilter:
                 ]
             },
             {
-                "name": "condition_wait",
-                "description": "Condition variable waiting",
-                "patterns": [
-                    r"pthread_cond_wait",
-                    r"pthread_cond_timedwait",
-                    r"__pthread_cond_wait",
-                ]
-            },
-            {
-                "name": "mutex_lock",
-                "description": "Mutex locking/waiting",
-                "patterns": [
-                    r"__lll_lock_wait",
-                    r"pthread_mutex_lock",
-                    r"__pthread_mutex_lock",
-                ]
-            },
-            {
                 "name": "io_wait",
                 "description": "I/O waiting operations",
+                "type": "simple",
                 "patterns": [
                     r"epoll_wait",
                     r"poll\s*\(",
                     r"select\s*\(",
                     r"read\s*\(",
                     r"write\s*\(",
+                ]
+            },
+            # Performance tracing - always idle
+            {
+                "name": "perf_tracer",
+                "description": "Performance tracing code",
+                "type": "simple", 
+                "patterns": [
+                    r"PerfTracer",
                 ]
             }
         ]
@@ -160,18 +186,58 @@ class StackFilter:
         """
         matching_patterns = []
         
-        # Get all function names from the stack
+        # Get all function names from the stack for matching
         all_functions = " ".join(frame.function for frame in stack.frames)
         
         for pattern_group in self.idle_patterns:
-            for pattern in pattern_group["patterns"]:
-                if re.search(pattern, all_functions, re.IGNORECASE):
+            pattern_type = pattern_group.get("type", "simple")
+            
+            if pattern_type == "contextual":
+                # Contextual patterns require BOTH low-level waits AND high-level idle context
+                if self._matches_contextual_pattern(stack, pattern_group):
                     matching_patterns.append(pattern_group["name"])
-                    break
+                    
+            elif pattern_type == "simple":
+                # Simple patterns just require any function match
+                for pattern in pattern_group["patterns"]:
+                    if re.search(pattern, all_functions, re.IGNORECASE):
+                        matching_patterns.append(pattern_group["name"])
+                        break
         
         # Consider it mundane if it matches any idle pattern
         is_mundane = len(matching_patterns) > 0
         return is_mundane, matching_patterns
+    
+    def _matches_contextual_pattern(self, stack: StackTrace, pattern_group: Dict) -> bool:
+        """
+        Check if a stack matches a contextual pattern requiring both low-level and high-level matches
+        """
+        low_level_patterns = pattern_group.get("low_level_patterns", [])
+        high_level_patterns = pattern_group.get("high_level_patterns", [])
+        
+        if not low_level_patterns or not high_level_patterns:
+            return False
+        
+        # Check for low-level wait patterns (typically in first few frames)
+        low_level_match = False
+        top_frames = stack.frames[:4]  # Check top 4 frames for low-level waits
+        top_functions = " ".join(frame.function for frame in top_frames)
+        
+        for pattern in low_level_patterns:
+            if re.search(pattern, top_functions, re.IGNORECASE):
+                low_level_match = True
+                break
+        
+        if not low_level_match:
+            return False
+        
+        # Check for high-level idle context patterns (anywhere in stack)
+        all_functions = " ".join(frame.function for frame in stack.frames)
+        for pattern in high_level_patterns:
+            if re.search(pattern, all_functions, re.IGNORECASE):
+                return True
+        
+        return False
 
 
 class StackParser:
@@ -339,11 +405,25 @@ def create_sample_config():
     config = {
         "idle_patterns": [
             {
-                "name": "custom_wait",
-                "description": "Custom waiting pattern",
+                "name": "custom_simple_wait",
+                "description": "Custom simple waiting pattern",
+                "type": "simple",
                 "patterns": [
                     r"MyCustomWait",
                     r"CustomThreadPool::wait"
+                ]
+            },
+            {
+                "name": "custom_contextual_wait",
+                "description": "Custom contextual waiting pattern requiring both low-level wait and high-level context",
+                "type": "contextual",
+                "low_level_patterns": [
+                    r"pthread_mutex_lock",
+                    r"__lll_lock_wait"
+                ],
+                "high_level_patterns": [
+                    r"MyApplicationWorker::wait",
+                    r"MyThreadPool::run"
                 ]
             }
         ]
@@ -353,6 +433,8 @@ def create_sample_config():
         json.dump(config, f, indent=2)
     
     print("Created sample configuration file: stack_filter_config.json")
+    print("This demonstrates both 'simple' and 'contextual' pattern types.")
+    print("Contextual patterns require BOTH low-level wait primitives AND high-level idle context.")
 
 
 def main():
