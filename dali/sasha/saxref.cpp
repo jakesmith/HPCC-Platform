@@ -10,6 +10,10 @@
 #include "jregexp.hpp"
 #include "jset.hpp"
 
+#include <memory>
+#include <unordered_map>
+#include <string>
+
 #include "mpbase.hpp"
 #include "mpcomm.hpp"
 #include "daclient.hpp"
@@ -125,7 +129,7 @@ struct cFileDesc // no virtuals
     // bitset markedc[N];
     // bitset markedd[N];
 
-    static cFileDesc * create(CLargeMemoryAllocator &mem,const char *_name,unsigned n,bool d,unsigned fnLen)
+    static cFileDesc * create(const char *_name,unsigned n,bool d,unsigned fnLen)
     {
         size32_t sl = strlen(_name); 
         if (sl>255) {
@@ -134,7 +138,9 @@ struct cFileDesc // no virtuals
         }
         size32_t ml = (n*4+7)/8;
         size32_t sz = sizeof(cFileDesc)+sl+ml;
-        cFileDesc * ret = (cFileDesc *)mem.alloc(sz);
+        cFileDesc * ret = (cFileDesc *)malloc(sz);
+        if (!ret)
+            throw std::bad_alloc();
         ret->N = (unsigned short)n;
         ret->name[0] = (byte)sl;
         ret->isDirPerPart = d;
@@ -234,9 +240,18 @@ struct cFileDesc // no virtuals
     }
     
 
-    static void destroy(cFileDesc *)
+    static void destroy(cFileDesc *f)
     {
-        // not owning
+        if (f) {
+            // Clean up any misplaced records
+            cMisplacedRec *mp = f->misplaced;
+            while (mp) {
+                cMisplacedRec *next = mp->next;
+                free(mp);
+                mp = next;
+            }
+            free(f);
+        }
     }
 
 
@@ -247,8 +262,8 @@ struct cFileDesc // no virtuals
 struct cDirDesc
 {
     unsigned hash;
-    CMinHashTable<cDirDesc> dirs;
-    CMinHashTable<cFileDesc> files;
+    std::unordered_map<std::string, std::unique_ptr<cDirDesc>> dirs;
+    std::unordered_map<std::string, std::unique_ptr<cFileDesc, void(*)(cFileDesc*)>> files;
     CriticalSection dirsCrit;
     CriticalSection filesCrit;
     CriticalSection dirDescCrit;
@@ -258,22 +273,19 @@ struct cDirDesc
     unsigned short minnode[2];          //  smallest node (1..)
     unsigned short maxnode[2];          //  largest node (1..)
 
-
-
-
-    byte *name;                     // first byte length  NB this is the tail name
+    std::unique_ptr<byte[]> name;       // first byte length  NB this is the tail name
     // char namestr[*name]
 
-    cDirDesc(CLargeMemoryAllocator &mem,const char *_name)
+    cDirDesc(const char *_name)
     {
         size32_t sl = strlen(_name);
         if (sl>255) {
             OWARNLOG(LOGPFX "Directory name %s longer than 255 chars, truncating",_name);
             sl = 255;
         }
-        name = (byte *)mem.alloc(sl+1);
+        name = std::make_unique<byte[]>(sl+1);
         name[0] = (byte)sl;
-        memcpy(name+1,_name,sl);
+        memcpy(name.get()+1,_name,sl);
         hash = hashc((const byte *)_name,sl,17);
         for (unsigned drv=0;drv<2;drv++) {
             totalsize[drv] = 0;
@@ -285,13 +297,9 @@ struct cDirDesc
     }
     ~cDirDesc()
     {
-        unsigned i;
-        cDirDesc *d = dirs.first(i);
-        while (d) {
-            delete d;
-            d = dirs.next(i);
-        }
-        // don't delete the files (they are from mem)
+        // Smart pointers will automatically clean up dirs and files
+        dirs.clear();
+        files.clear();
     }
 
     bool eq(const char *key)
@@ -301,7 +309,7 @@ struct cDirDesc
             sl = 255;
         if (sl!=(byte)name[0])
             return false;
-        return memcmp(key,name+1,sl)==0;
+        return memcmp(key,name.get()+1,sl)==0;
     }
 
     static cDirDesc * create(const char *)
@@ -327,20 +335,25 @@ struct cDirDesc
 
     StringBuffer &getName(StringBuffer &buf)
     {
-        return buf.append((size32_t)name[0],(const char *)name+1);
+        return buf.append((size32_t)name[0],(const char *)name.get()+1);
     }
 
-    cDirDesc *lookupDir(const char *name,CLargeMemoryAllocator *mem)
+    cDirDesc *lookupDir(const char *name, bool create = true)
     {
         // NB: Creation only happens during scanDirectories, but lookupDir is also called
-        // in findDirectory during scanLogicalFiles. Could avoid crit path if (!mem)
+        // in findDirectory during scanLogicalFiles. Could avoid crit path if (!create)
         CriticalBlock block(dirsCrit);
-        cDirDesc *ret = dirs.find(name,false);
-        if (!ret&&mem) {
-            ret = new cDirDesc(*mem,name);
-            dirs.add(ret);
+        std::string nameStr(name);
+        auto it = dirs.find(nameStr);
+        if (it != dirs.end()) {
+            return it->second.get();
+        } else if (create) {
+            auto newDir = std::make_unique<cDirDesc>(name);
+            cDirDesc *ret = newDir.get();
+            dirs[nameStr] = std::move(newDir);
+            return ret;
         }
-        return ret;
+        return nullptr;
     }
 
     const char *decodeName(unsigned drv,const char *name,unsigned node, unsigned numnodes,
@@ -371,7 +384,7 @@ struct cDirDesc
         return numParts!=grp.ordinality() || partNum>=grp.ordinality() || !grp.queryNode(partNum).endpoint().equals(ep);
     }
 
-    cFileDesc *addFile(unsigned drv,const char *name,__int64 sz,CDateTime &dt,unsigned node, const SocketEndpoint &ep, IGroup &grp, unsigned numnodes, CLargeMemoryAllocator *mem)
+    cFileDesc *addFile(unsigned drv,const char *name,__int64 sz,CDateTime &dt,unsigned node, const SocketEndpoint &ep, IGroup &grp, unsigned numnodes, bool createIfMissing = true)
     {
 
         unsigned nf;          // num parts
@@ -382,14 +395,19 @@ struct cDirDesc
         bool misplaced = isMisplaced(pf, nf, ep, grp);
 
         CriticalBlock block(filesCrit);
-        cFileDesc *file = files.find(fn,false);
-        if (!file) {
-            if (!mem)
-                return NULL;
+        std::string fnStr(fn);
+        auto it = files.find(fnStr);
+        cFileDesc *file = nullptr;
+        if (it != files.end()) {
+            file = it->second.get();
+        } else if (createIfMissing) {
             // dirPerPart is set to false during scanDirectories, and later updated in listOrphans by mergeDirPerPartDirs
-            file = cFileDesc::create(*mem,fn,nf,false,filenameLen);
-            files.add(file);
+            file = cFileDesc::create(fn,nf,false,filenameLen);
+            files[fnStr] = std::unique_ptr<cFileDesc, void(*)(cFileDesc*)>(file, cFileDesc::destroy);
+        } else {
+            return nullptr;
         }
+        
         if (misplaced) {
             cMisplacedRec *mp = file->misplaced;
             while (mp) {
@@ -399,9 +417,11 @@ struct cDirDesc
                 }
                 mp = mp->next;
             }
-            if (!mem)
+            if (!createIfMissing)
                 return NULL;
-            mp = (cMisplacedRec *)mem->alloc(sizeof(cMisplacedRec));
+            mp = (cMisplacedRec *)malloc(sizeof(cMisplacedRec));
+            if (!mp)
+                throw std::bad_alloc();
             mp->init(drv,pf,node,numnodes);
             mp->next = file->misplaced;
             file->misplaced = mp;
@@ -426,8 +446,10 @@ struct cDirDesc
         bool misplaced = !isContainerized() && (nf!=grp.ordinality() || pf>=grp.ordinality() || !grp.queryNode(pf).endpoint().equals(ep));
 
         CriticalBlock block(filesCrit); // NB: currently, markFile is only called from scanOrphans, which is single-threaded
-        cFileDesc *file = files.find(fn,false);
-        if (file) {
+        std::string fnStr(fn);
+        auto it = files.find(fnStr);
+        if (it != files.end()) {
+            cFileDesc *file = it->second.get();
             if (misplaced) {
                 cMisplacedRec *mp = file->misplaced;
                 while (mp) {
@@ -468,16 +490,13 @@ struct cDirDesc
         // NB: Thread-safety not required because called after directory scan
         // completes, when structure is read-only and no longer being modified.
         // empty if no files, and all subdirs are empty
-        if ((files.ordinality()!=0)||(totalsize[drv]!=0))
+        if (!files.empty() || (totalsize[drv]!=0))
             return false;
-        if (dirs.ordinality()==0)
+        if (dirs.empty())
             return true;
-        unsigned i;
-        cDirDesc *sd = dirs.first(i);
-        while (sd) {
-            if (sd->empty(drv))
+        for (const auto& pair : dirs) {
+            if (!pair.second->empty(drv))
                 return false;
-            sd = dirs.next(i);
         }
         return true;
     }
@@ -518,11 +537,11 @@ static unsigned getDirPerPartNum(cDirDesc *dir)
 // A found file that has a dir-per-part directory will have multiple cFileDesc entries in each of the dir-per-part
 // cDirDescs. For found files, we do not know if it is a dir-per-part file since there is no metadata. We only merge
 // cFileDescs where only a single file was marked present, and we find matching files in the dir-per-part directories.
-static void mergeDirPerPartDirs(cDirDesc *parent, cDirDesc *dir, const char *currentPath, CLargeMemoryAllocator *mem)
+static void mergeDirPerPartDirs(cDirDesc *parent, cDirDesc *dir, const char *currentPath)
 {
     if (!isContainerized())
         return;
-    if (dir->files.ordinality() == 0 || dir->dirs.ordinality() != 0)
+    if (dir->files.empty() || !dir->dirs.empty())
         return;
 
     // Check if dir name is a number
@@ -530,13 +549,12 @@ static void mergeDirPerPartDirs(cDirDesc *parent, cDirDesc *dir, const char *cur
     if (dirPerPartNum == 0)
         return;
 
-    unsigned i = 0;
-    cFileDesc *file = dir->files.first(i);
-    while (file)
+    for (const auto& filePair : dir->files)
     {
+        cFileDesc *file = filePair.second.get();
         // If this is a dir-per-part directory, the dirPerPartNum cannot be larger than the number of file parts,
         // and there should be enough subdirectories under the parent directory for each file part
-        if (dirPerPartNum <= file->N && file->N <= parent->dirs.ordinality())
+        if (dirPerPartNum <= file->N && file->N <= parent->dirs.size())
         {
             // A dir-per-part file will have only the part matching the dir name marked present
             // If more than one file is marked present, it is not a dir-per-part file
@@ -556,32 +574,33 @@ static void mergeDirPerPartDirs(cDirDesc *parent, cDirDesc *dir, const char *cur
                 cFileDesc *movedFile = nullptr;
                 for (unsigned k=0;k<file->N;k++)
                 {
-                    cDirDesc *dirPerPartDir = parent->dirs.find(std::to_string(k+1).c_str(), false);
-                    if (dirPerPartDir)
+                    std::string dirName = std::to_string(k+1);
+                    auto dirIt = parent->dirs.find(dirName);
+                    if (dirIt != parent->dirs.end())
                     {
-                        cFileDesc *dirPerPartFile = dirPerPartDir->files.find(fname,false);
-                        if (dirPerPartFile)
+                        cDirDesc *dirPerPartDir = dirIt->second.get();
+                        auto fileIt = dirPerPartDir->files.find(fname.str());
+                        if (fileIt != dirPerPartDir->files.end())
                         {
                             if (movedFile == nullptr)
                             {
-                                parent->files.add(dirPerPartFile);
-                                movedFile = dirPerPartFile;
+                                movedFile = fileIt->second.release(); // Release from current map
+                                parent->files[fname.str()] = std::unique_ptr<cFileDesc, void(*)(cFileDesc*)>(movedFile, cFileDesc::destroy);
                                 movedFile->isDirPerPart = true;
                             }
                             else
                             {
+                                cFileDesc *dirPerPartFile = fileIt->second.get();
                                 movedFile->setpresent(0, k);
                                 if (dirPerPartFile->testmarked(0, k))
                                     movedFile->setmarked(0, k);
                             }
-                            dirPerPartDir->files.remove(dirPerPartFile);
+                            dirPerPartDir->files.erase(fileIt);
                         }
                     }
                 }
             }
         }
-
-        file = dir->files.next(i);
     }
 }
 
@@ -869,7 +888,7 @@ public:
 
 class CNewXRefManager: public CNewXRefManagerBase
 {
-    cDirDesc *root;     
+    std::unique_ptr<cDirDesc> root;     
     bool iswin;                     // set by scanDirectories
     IpAddress *iphash;
     unsigned *ipnum;
@@ -882,7 +901,6 @@ public:
     StringBuffer clusterscsl;       // comma separated list of cluster (used in xref)
     unsigned numnodes;
     StringArray lostfiles;
-    CLargeMemoryAllocator mem;
     bool verbose;
     unsigned numuniqnodes = 0;
     Owned<IUserDescriptor> udesc;
@@ -891,10 +909,9 @@ public:
     unsigned numStripedDevices = 1;
 
     CNewXRefManager(IPropertyTree *plane,unsigned maxMb=DEFAULT_MAXMEMORY)
-        : mem(0x100000*((memsize_t)maxMb),0x10000,true)
     {
         iswin = false; // set later
-        root = new cDirDesc(mem,"");
+        root = std::make_unique<cDirDesc>("");
         verbose = true;
         iphash = NULL;
         ipnum = NULL;
@@ -920,7 +937,7 @@ public:
 
     ~CNewXRefManager()
     {
-        delete root;
+        // Smart pointer will automatically clean up root
         if (iphash) 
             delete [] iphash;
         delete [] ipnum;
@@ -1064,15 +1081,13 @@ public:
 
     void clear()
     {
-        mem.reset();
-        delete root;
-        root = new cDirDesc(mem,"");
+        root = std::make_unique<cDirDesc>("");
     }
 
     cDirDesc *findDirectory(const char *name)
     { 
         if (stricmp(name,rootdir)==0) 
-            return root;
+            return root.get();
         if (!*name) 
             return NULL;
         StringBuffer pdir;
@@ -1083,7 +1098,7 @@ public:
         cDirDesc *p = findDirectory(pdir.str());
         if (!p)
             return NULL;
-        return p->lookupDir(tail,NULL);
+        return p->lookupDir(tail, false);
     }
 
     bool dirFiltered(const char *filename)
@@ -1115,7 +1130,7 @@ public:
         checkHeartbeat("Directory scan");
         size32_t dsz = path.length();
         if (pdir==NULL) 
-            pdir = root;
+            pdir = root.get();
         RemoteFilename rfn;
         rfn.setPath(ep,path.str());
         Owned<IFile> file;
@@ -1185,7 +1200,7 @@ public:
                 iter->getModifiedTime(dt);
                 if (!fileFiltered(path.str(),dt)) {
                     try {
-                        pdir->addFile(drv,fname.str(),fsz,dt,node,ep,*grp,numnodes,&mem);
+                        pdir->addFile(drv,fname.str(),fsz,dt,node,ep,*grp,numnodes,true);
                         processedFiles++;
                     }
                     catch (IException *e) {
@@ -1203,7 +1218,7 @@ public:
             addPathSepChar(path).append(dirs.item(i));
             if (file.get()&&!resetRemoteFilename(file,path.str())) // sneaky way of avoiding cache
                 file.clear();
-            if (!scanDirectory(node,ep,path,drv,pdir->lookupDir(dirs.item(i),&mem),file,level+1))
+            if (!scanDirectory(node,ep,path,drv,pdir->lookupDir(dirs.item(i), true),file,level+1))
                 return false;
             path.setLength(dsz);
         }
@@ -1725,7 +1740,7 @@ public:
         for (unsigned drv=0;drv<drvs;drv++) {
             if (abort)
                 return;
-            if ((d->files.ordinality()!=0)||(d->totalsize[drv]!=0)||d->empty(drv)) { // final empty() is to make sure only truly empty dirs get added
+            if (!d->files.empty() || (d->totalsize[drv]!=0) || d->empty(drv)) { // final empty() is to make sure only truly empty dirs get added
                                                                                   // but not empty parents
                 Owned<IPropertyTree> dt = createPTree("Directory");
                 if (drv) {
@@ -1735,7 +1750,7 @@ public:
                 }
                 else
                     dt->addProp("Name",name);
-                dt->addPropInt("Num",d->files.ordinality());
+                dt->addPropInt("Num",d->files.size());
                 dt->addPropInt64("Size",d->totalsize[drv]);
                 if (d->totalsize[drv]) {
                     StringBuffer s1;
@@ -1791,18 +1806,17 @@ public:
         d->getName(basedir);
         d->getName(scope);
         listDirectory(d,basedir.str(),abort);
-        unsigned i = 0;
-        cDirDesc *dir = d->dirs.first(i);
-        while (dir) {
-            mergeDirPerPartDirs(d,dir,basedir,&mem);
+        
+        for (const auto& dirPair : d->dirs) {
+            cDirDesc *dir = dirPair.second.get();
+            mergeDirPerPartDirs(d,dir,basedir);
             listOrphans(dir,basedir,scope,abort,recentCutoffDays);
             if (abort)
                 return;
-            dir = d->dirs.next(i);
         }
-        i = 0;
-        cFileDesc *file = d->files.first(i);
-        while (file) {
+        
+        for (const auto& filePair : d->files) {
+            cFileDesc *file = filePair.second.get();
             try {
                 listOrphans(file,basedir,scope,abort,recentCutoffDays);
             }
@@ -1815,7 +1829,6 @@ public:
             processedFiles++;
             if (abort)
                 return;
-            file = d->files.next(i);
         }
         basedir.setLength(bds);
         scope.setLength(scopeLen);
