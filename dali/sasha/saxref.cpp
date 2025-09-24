@@ -13,6 +13,7 @@
 #include <memory>
 #include <unordered_map>
 #include <string>
+#include <stdexcept>
 
 #include "mpbase.hpp"
 #include "mpcomm.hpp"
@@ -283,7 +284,7 @@ struct cDirDesc
             OWARNLOG(LOGPFX "Directory name %s longer than 255 chars, truncating",_name);
             sl = 255;
         }
-        name = std::make_unique<byte[]>(sl+1);
+        name.reset(new byte[sl+1]);
         name[0] = (byte)sl;
         memcpy(name.get()+1,_name,sl);
         hash = hashc((const byte *)_name,sl,17);
@@ -348,7 +349,7 @@ struct cDirDesc
         if (it != dirs.end()) {
             return it->second.get();
         } else if (create) {
-            auto newDir = std::make_unique<cDirDesc>(name);
+            std::unique_ptr<cDirDesc> newDir(new cDirDesc(name));
             cDirDesc *ret = newDir.get();
             dirs[nameStr] = std::move(newDir);
             return ret;
@@ -403,7 +404,8 @@ struct cDirDesc
         } else if (createIfMissing) {
             // dirPerPart is set to false during scanDirectories, and later updated in listOrphans by mergeDirPerPartDirs
             file = cFileDesc::create(fn,nf,false,filenameLen);
-            files[fnStr] = std::unique_ptr<cFileDesc, void(*)(cFileDesc*)>(file, cFileDesc::destroy);
+            std::unique_ptr<cFileDesc, void(*)(cFileDesc*)> filePtr(file, cFileDesc::destroy);
+            files[fnStr] = std::move(filePtr);
         } else {
             return nullptr;
         }
@@ -585,7 +587,8 @@ static void mergeDirPerPartDirs(cDirDesc *parent, cDirDesc *dir, const char *cur
                             if (movedFile == nullptr)
                             {
                                 movedFile = fileIt->second.release(); // Release from current map
-                                parent->files[fname.str()] = std::unique_ptr<cFileDesc, void(*)(cFileDesc*)>(movedFile, cFileDesc::destroy);
+                                std::unique_ptr<cFileDesc, void(*)(cFileDesc*)> movedPtr(movedFile, cFileDesc::destroy);
+                                parent->files[fname.str()] = std::move(movedPtr);
                                 movedFile->isDirPerPart = true;
                             }
                             else
@@ -911,7 +914,7 @@ public:
     CNewXRefManager(IPropertyTree *plane,unsigned maxMb=DEFAULT_MAXMEMORY)
     {
         iswin = false; // set later
-        root = std::make_unique<cDirDesc>("");
+        root.reset(new cDirDesc(""));
         verbose = true;
         iphash = NULL;
         ipnum = NULL;
@@ -1081,7 +1084,7 @@ public:
 
     void clear()
     {
-        root = std::make_unique<cDirDesc>("");
+        root.reset(new cDirDesc(""));
     }
 
     cDirDesc *findDirectory(const char *name)
@@ -1263,7 +1266,7 @@ public:
                     localEP.setLocalHost(0);
                     addPathSepChar(path).append('d').append(i+1);
                     parent.log(false,"Scanning %s directory %s",parent.storagePlane->queryProp("@name"),path.str());
-                    if (!parent.scanDirectory(0,localEP,path,0,parent.root,NULL,1))
+                    if (!parent.scanDirectory(0,localEP,path,0,parent.root.get(),NULL,1))
                     {
                         ok = false;
                         return;
@@ -1787,7 +1790,7 @@ public:
         if (abort)
             return;
         if (!d) {
-            d = root;
+            d = root.get();
             if (!d)
                 return;
             basedir.append(rootdir);
