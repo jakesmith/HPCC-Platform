@@ -1839,7 +1839,6 @@ extern WORKUNIT_API TraceFlags wuLoadTraceFlags(IConstWorkUnit * wu, const std::
 // useful when workunit info is serialize to a property tree (e.g. in Thor workers)
 extern WORKUNIT_API TraceFlags wuLoadTraceFlags(const IPropertyTree * wuInfo, const std::initializer_list<TraceOption> & optNames, TraceFlags dft);
 
-extern WORKUNIT_API bool executeGraphOnLingeringThor(IConstWorkUnit &workunit, unsigned wfid, const char *graphName);
 extern WORKUNIT_API bool workunitGraphCacheEnabled;
 
 
