@@ -6064,6 +6064,7 @@ int setDaliServerTrace(byte flags)
 #ifdef _USE_CPPUNIT
 #include "unittests.hpp"
 #include "rmtfile.hpp"
+#include "rmtclient.hpp"
 
 /* MP_START_PORT -> MP_END_PORT is the MP reserved dynamic port range, and is used here for convenience.
  * MP_START_PORT is used as starting point to find an available port for the temporary dafilesrv service in these unittests.
@@ -6470,65 +6471,274 @@ protected:
 
     void testJsonStreamingBasic()
     {
-        // Test basic JSON streaming functionality
-        // This ensures that the JSON format works for simple requests
-        VStringBuffer filePath("%s%s", basePath.str(), "jsontest_file");
+        // Test basic JSON streaming functionality by connecting to the server
+        VStringBuffer filePath("%s%s", basePath.str(), "jsontest_file.csv");
         
-        // Create a simple test file
+        // Create a test file with CSV data
         Owned<IFile> iFile = createIFile(filePath);
         CPPUNIT_ASSERT(iFile);
         Owned<IFileIO> iFileIO = iFile->open(IFOcreate);
         CPPUNIT_ASSERT(iFileIO);
 
-        // Write test data
-        const char* testData = "line1\nline2\nline3\nline4\nline5\n";
-        size32_t testDataLen = strlen(testData);
-        size32_t sz = iFileIO->write(0, testDataLen, testData);
-        CPPUNIT_ASSERT(sz == testDataLen);
+        // Write CSV test data with multiple rows
+        StringBuffer csvData;
+        csvData.append("name,age,city\n");
+        csvData.append("John,25,New York\n");
+        csvData.append("Jane,30,London\n");
+        csvData.append("Bob,35,Paris\n");
+        csvData.append("Alice,28,Tokyo\n");
+        
+        size32_t csvDataLen = csvData.length();
+        size32_t sz = iFileIO->write(0, csvDataLen, csvData.str());
+        CPPUNIT_ASSERT(sz == csvDataLen);
         iFileIO.clear();
 
-        // Test basic JSON request (would need proper JSON streaming client implementation)
-        // For now, just verify the file was created properly
-        CPPUNIT_ASSERT(iFile->exists());
-        CPPUNIT_ASSERT(iFile->size() == testDataLen);
+        try
+        {
+            // Connect to the server
+            SocketEndpoint ep(serverPort);
+            Owned<ISocket> sock = ISocket::connect_timeout(ep, 60 * 1000);
+            CPPUNIT_ASSERT(sock);
+
+            // Test basic JSON newstream request
+            MemoryBuffer sendBuf, replyBuf;
+            initSendBuffer(sendBuf);
+            sendBuf.append((RemoteFileCommandType)RFCStreamReadJSON);
+
+            // Create JSON request for newstream
+            StringBuffer jsonRequest;
+            jsonRequest.append("{\n");
+            jsonRequest.append("  \"command\": \"newstream\",\n");
+            jsonRequest.append("  \"format\": \"json\",\n");
+            jsonRequest.append("  \"replyLimit\": 1024,\n");
+            jsonRequest.append("  \"node\": {\n");
+            jsonRequest.appendf("    \"fileName\": \"%s\",\n", filePath.str());
+            jsonRequest.append("    \"kind\": \"diskread\"\n");
+            jsonRequest.append("  }\n");
+            jsonRequest.append("}\n");
+
+            sendBuf.append(jsonRequest.str());
+            
+            // Send request and get response
+            sock->write(sendBuf.bufferBase(), sendBuf.length());
+            
+            // Read response header
+            unsigned replyLen;
+            sock->read(&replyLen, sizeof(replyLen));
+            replyLen = _BSWAP32(replyLen);
+            
+            replyBuf.setEndian(__BIG_ENDIAN);
+            replyBuf.reserveTruncate(replyLen);
+            sock->read(replyBuf.bufferBase(), replyLen);
+            
+            // Check error code
+            unsigned errorCode;
+            replyBuf.read(errorCode);
+            CPPUNIT_ASSERT(errorCode == RFEnoerror);
+            
+            // Read JSON response
+            size32_t remaining = replyBuf.remaining();
+            const char* jsonResponse = (const char*)replyBuf.readDirect(remaining);
+            
+            PROGLOG("JSON Response: %.*s", remaining, jsonResponse);
+            
+            // Verify it's valid JSON and contains expected structure
+            StringBuffer responseStr;
+            responseStr.append(remaining, jsonResponse);
+            CPPUNIT_ASSERT(responseStr.length() > 0);
+            CPPUNIT_ASSERT(strstr(responseStr.str(), "Response") != nullptr);
+            CPPUNIT_ASSERT(strstr(responseStr.str(), "handle") != nullptr);
+            CPPUNIT_ASSERT(strstr(responseStr.str(), "Row") != nullptr);
+            
+            // Verify no duplicate handle fields
+            const char* firstHandle = strstr(responseStr.str(), "\"handle\"");
+            CPPUNIT_ASSERT(firstHandle != nullptr);
+            const char* secondHandle = strstr(firstHandle + 8, "\"handle\"");
+            CPPUNIT_ASSERT_MESSAGE("Found duplicate handle field in JSON response", secondHandle == nullptr);
+            
+            sock.clear();
+        }
+        catch (IException* e)
+        {
+            StringBuffer errMsg;
+            e->errorMessage(errMsg);
+            e->Release();
+            CPPUNIT_ASSERT_MESSAGE(errMsg.str(), false);
+        }
         
         // Cleanup
         CPPUNIT_ASSERT(iFile->remove());
-        PROGLOG("Basic JSON streaming test completed");
+        PROGLOG("Basic JSON streaming test completed - verified no duplicate handle fields");
     }
 
     void testJsonContinuation()
     {
-        // Test JSON continuation functionality 
-        // This tests the fix for duplicate handle fields and data accumulation
-        VStringBuffer filePath("%s%s", basePath.str(), "jsontest_continue");
+        // Test JSON continuation functionality - the core fix
+        VStringBuffer filePath("%s%s", basePath.str(), "jsontest_continue.csv");
         
-        // Create test file with multiple lines for pagination
+        // Create test file with more data for pagination
         Owned<IFile> iFile = createIFile(filePath);
         CPPUNIT_ASSERT(iFile);
         Owned<IFileIO> iFileIO = iFile->open(IFOcreate);
         CPPUNIT_ASSERT(iFileIO);
 
-        // Write multiple lines of test data
-        StringBuffer testData;
-        for (int i = 1; i <= 10; i++)
+        // Write multiple rows of CSV data
+        StringBuffer csvData;
+        csvData.append("id,name,value\n");
+        for (int i = 1; i <= 20; i++)
         {
-            testData.appendf("row%d_field1,row%d_field2,row%d_field3\n", i, i, i);
+            csvData.appendf("%d,row%d,value%d\n", i, i, i * 10);
         }
         
-        size32_t testDataLen = testData.length();
-        size32_t sz = iFileIO->write(0, testDataLen, testData.str());
-        CPPUNIT_ASSERT(sz == testDataLen);
+        size32_t csvDataLen = csvData.length();
+        size32_t sz = iFileIO->write(0, csvDataLen, csvData.str());
+        CPPUNIT_ASSERT(sz == csvDataLen);
         iFileIO.clear();
 
-        // Test JSON continuation (would need proper client implementation)
-        // For now, verify the setup is correct
-        CPPUNIT_ASSERT(iFile->exists());
-        CPPUNIT_ASSERT(iFile->size() == testDataLen);
+        try
+        {
+            // Connect to the server
+            SocketEndpoint ep(serverPort);
+            Owned<ISocket> sock = ISocket::connect_timeout(ep, 60 * 1000);
+            CPPUNIT_ASSERT(sock);
 
+            StringBuffer cursorBin;
+            int handle = 0;
+
+            // First request - newstream with small reply limit for pagination
+            {
+                MemoryBuffer sendBuf, replyBuf;
+                initSendBuffer(sendBuf);
+                sendBuf.append((RemoteFileCommandType)RFCStreamReadJSON);
+
+                StringBuffer jsonRequest;
+                jsonRequest.append("{\n");
+                jsonRequest.append("  \"command\": \"newstream\",\n");
+                jsonRequest.append("  \"format\": \"json\",\n");
+                jsonRequest.append("  \"replyLimit\": 200,\n");  // Small limit to force pagination
+                jsonRequest.append("  \"node\": {\n");
+                jsonRequest.appendf("    \"fileName\": \"%s\",\n", filePath.str());
+                jsonRequest.append("    \"kind\": \"diskread\"\n");
+                jsonRequest.append("  }\n");
+                jsonRequest.append("}\n");
+
+                sendBuf.append(jsonRequest.str());
+                sock->write(sendBuf.bufferBase(), sendBuf.length());
+                
+                // Read first response
+                unsigned replyLen;
+                sock->read(&replyLen, sizeof(replyLen));
+                replyLen = _BSWAP32(replyLen);
+                
+                replyBuf.setEndian(__BIG_ENDIAN);
+                replyBuf.reserveTruncate(replyLen);
+                sock->read(replyBuf.bufferBase(), replyLen);
+                
+                unsigned errorCode;
+                replyBuf.read(errorCode);
+                CPPUNIT_ASSERT(errorCode == RFEnoerror);
+                
+                size32_t remaining = replyBuf.remaining();
+                const char* jsonResponse = (const char*)replyBuf.readDirect(remaining);
+                StringBuffer firstResponse;
+                firstResponse.append(remaining, jsonResponse);
+                
+                PROGLOG("First JSON Response: %s", firstResponse.str());
+                
+                // Verify no duplicate handle fields in first response
+                const char* firstHandle = strstr(firstResponse.str(), "\"handle\"");
+                CPPUNIT_ASSERT(firstHandle != nullptr);
+                const char* secondHandle = strstr(firstHandle + 8, "\"handle\"");
+                CPPUNIT_ASSERT_MESSAGE("Found duplicate handle field in first JSON response", secondHandle == nullptr);
+                
+                // Extract handle and cursor for continue request
+                // Simple parsing - in real test this would use proper JSON parser
+                const char* handleStart = strstr(firstResponse.str(), "\"handle\":");
+                CPPUNIT_ASSERT(handleStart != nullptr);
+                handle = atoi(handleStart + 9);
+                CPPUNIT_ASSERT(handle > 0);
+                
+                const char* cursorStart = strstr(firstResponse.str(), "\"cursorBin\":\"");
+                if (cursorStart)
+                {
+                    cursorStart += 13; // Skip to cursor value
+                    const char* cursorEnd = strchr(cursorStart, '"');
+                    CPPUNIT_ASSERT(cursorEnd != nullptr);
+                    cursorBin.append(cursorEnd - cursorStart, cursorStart);
+                }
+            }
+
+            // Second request - continue
+            if (cursorBin.length() > 0)
+            {
+                MemoryBuffer sendBuf, replyBuf;
+                initSendBuffer(sendBuf);
+                sendBuf.append((RemoteFileCommandType)RFCStreamReadJSON);
+
+                StringBuffer jsonRequest;
+                jsonRequest.append("{\n");
+                jsonRequest.append("  \"command\": \"continue\",\n");
+                jsonRequest.append("  \"format\": \"json\",\n");
+                jsonRequest.appendf("  \"handle\": %d,\n", handle);
+                jsonRequest.appendf("  \"cursorBin\": \"%s\"\n", cursorBin.str());
+                jsonRequest.append("}\n");
+
+                sendBuf.append(jsonRequest.str());
+                sock->write(sendBuf.bufferBase(), sendBuf.length());
+                
+                // Read continue response
+                unsigned replyLen;
+                sock->read(&replyLen, sizeof(replyLen));
+                replyLen = _BSWAP32(replyLen);
+                
+                replyBuf.setEndian(__BIG_ENDIAN);
+                replyBuf.reserveTruncate(replyLen);
+                sock->read(replyBuf.bufferBase(), replyLen);
+                
+                unsigned errorCode;
+                replyBuf.read(errorCode);
+                CPPUNIT_ASSERT(errorCode == RFEnoerror);
+                
+                size32_t remaining = replyBuf.remaining();
+                const char* jsonResponse = (const char*)replyBuf.readDirect(remaining);
+                StringBuffer continueResponse;
+                continueResponse.append(remaining, jsonResponse);
+                
+                PROGLOG("Continue JSON Response: %s", continueResponse.str());
+                
+                // Verify continue response has proper structure (THE KEY TEST)
+                CPPUNIT_ASSERT(continueResponse.length() > 0);
+                CPPUNIT_ASSERT(strstr(continueResponse.str(), "Response") != nullptr);
+                
+                // Verify no duplicate handle fields in continue response
+                const char* firstHandle = strstr(continueResponse.str(), "\"handle\"");
+                CPPUNIT_ASSERT(firstHandle != nullptr);
+                const char* secondHandle = strstr(firstHandle + 8, "\"handle\"");
+                CPPUNIT_ASSERT_MESSAGE("Found duplicate handle field in continue JSON response", secondHandle == nullptr);
+                
+                // Verify it's a well-formed single JSON object (not malformed structure)
+                int braceCount = 0;
+                for (const char* p = continueResponse.str(); *p; p++)
+                {
+                    if (*p == '{') braceCount++;
+                    else if (*p == '}') braceCount--;
+                }
+                CPPUNIT_ASSERT_MESSAGE("Malformed JSON structure in continue response", braceCount == 0);
+            }
+
+            sock.clear();
+        }
+        catch (IException* e)
+        {
+            StringBuffer errMsg;
+            e->errorMessage(errMsg);
+            e->Release();
+            CPPUNIT_ASSERT_MESSAGE(errMsg.str(), false);
+        }
+        
         // Cleanup
         CPPUNIT_ASSERT(iFile->remove());
-        PROGLOG("JSON continuation test completed - fix prevents duplicate handle fields and data accumulation");
+        PROGLOG("JSON continuation test completed - verified fix prevents duplicate handle fields and malformed structure");
     }
 };
 
