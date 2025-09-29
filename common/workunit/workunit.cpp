@@ -14526,11 +14526,11 @@ void executeThorGraph(const char * graphName, IConstWorkUnit &workunit, const IP
             addTimeStamp(w, wfid, graphName, StWhenQueued);
         }
 
-        Owned<IJobQueue> queue = createJobQueue(queueName);
+        Owned<IJobQueue> jobQueue = createJobQueue(queueName);
         IJobQueueItem *item = createJobQueueItem(jobName);
         item->setOwner(owner);
         item->setPriority(priority);
-        queue->enqueue(item);
+        jobQueue->enqueue(item);
 
         // NB: overall max runtime if guillotine set handled by abortmonitor
         unsigned runningTimeLimit = workunit.getDebugValueInt("maxRunTime", 0);
