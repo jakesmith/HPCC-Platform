@@ -35,6 +35,8 @@
 #include "dautils.hpp"
 #include "dadfs.hpp"
 #include "jmetrics.hpp"
+#include "jlzw.hpp"
+#include "jstream.hpp"
 
 #define DEBUG_DIR "debug"
 #define DEFAULT_KEEP_LASTN_STORES 10 // should match default in dali.xsd
@@ -1937,9 +1939,10 @@ enum LockStatus { LockFailed, LockHeld, LockTimedOut, LockSucceeded };
 
 enum SaveStoreFlags
 {
-    ssf_none  = 0x0,
-    ssf_flush = 0x1,
-    ssf_stop  = 0x2
+    ssf_none     = 0x0,
+    ssf_flush    = 0x1,
+    ssf_stop     = 0x2,
+    ssf_compress = 0x4
 };
 BITMASK_ENUM(SaveStoreFlags);
 class CCovenSDSManager : public CSDSManagerBase, implements ISDSManagerServer, implements ISubscriptionManager, implements IExceptionHandler
@@ -2072,6 +2075,7 @@ public: // data
     Owned<Thread> unhandledThread;
     unsigned writeTransactions;
     bool ignoreExternals;
+    bool compressExternals;
     StringAttr dataPath;
     StringAttr daliName;
     Owned<IPropertyTree> properties;
@@ -2214,6 +2218,42 @@ void CBinaryFileExternal::write(const char *name, IPropertyTree &tree)
     MemoryBuffer out;
     ((PTree &)tree).queryValue()->serialize(out);
     size32_t len = out.length();
+    
+    // Check if compression is enabled and we have data worth compressing
+    if (manager.compressExternals && len > 0) {
+        try {
+            // Get the default compression handler (typically LZ4)
+            ICompressHandler *compressHandler = queryDefaultCompressHandler();
+            if (compressHandler) {
+                const char *options = nullptr;
+                Owned<ICompressor> compressor = compressHandler->getCompressor(options);
+                
+                if (compressor && compressor->supportsBlockCompression()) {
+                    // Try to compress the data
+                    MemoryBuffer compressedOut;
+                    size32_t maxCompressedSize = len + (len / 10) + 64; // allow for expansion
+                    void *compressedData = compressedOut.reserveTruncate(maxCompressedSize);
+                    
+                    size32_t compressedLen = compressor->compressBlock(maxCompressedSize, compressedData, len, out.toByteArray());
+                    
+                    if (compressedLen > 0 && compressedLen < len) {
+                        // Compression was successful and beneficial
+                        compressedOut.setLength(compressedLen);
+                        Owned<CTransactionItem> item = manager.deltaWriter.addExt(filename.detach(), compressedLen, compressedOut.detach());
+                        manager.extCache.add(item);
+                        return;
+                    }
+                }
+            }
+        }
+        catch (IException *e) {
+            // If compression fails, fall back to uncompressed
+            WARNLOG("Compression failed for external file %s: %s", filename.str(), e->errorMessage().str());
+            e->Release();
+        }
+    }
+    
+    // Either compression is disabled, failed, or wasn't beneficial - store uncompressed
     Owned<CTransactionItem> item = manager.deltaWriter.addExt(filename.detach(), len, out.detach());
     manager.extCache.add(item);
 }
@@ -5964,6 +6004,7 @@ CCovenSDSManager::CCovenSDSManager(ICoven &_coven, IPropertyTree &_config, const
     writeTransactions=0;
     externalEnvironment = false;
     ignoreExternals=false;
+    compressExternals=false;
     unsigned initNodeTableSize = queryCoven().getInitSDSNodes();
     allNodes.ensure(initNodeTableSize?initNodeTableSize:INIT_NODETABLE_SIZE);
     externalSizeThreshold = config.getPropInt("@externalSizeThreshold", defaultExternalSizeThreshold);
@@ -6614,6 +6655,12 @@ void CCovenSDSManager::saveStore(const char *storeName, SaveStoreFlags flags)
         CIgnore() { SDSManager->ignoreExternals=true; }
         ~CIgnore() { SDSManager->ignoreExternals=false; }
     } ignore;
+    struct CCompress
+    {
+        bool prevCompressState;
+        CCompress(bool compress) : prevCompressState(SDSManager->compressExternals) { SDSManager->compressExternals = compress; }
+        ~CCompress() { SDSManager->compressExternals = prevCompressState; }
+    } compress(hasMask(flags, ssf_compress));
     if (hasMask(flags, ssf_stop))
     {
         // Dali is stopping, we don't care about any inflight transactions any more, we're about to save and quit
