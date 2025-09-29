@@ -1937,12 +1937,17 @@ public:
 
 enum LockStatus { LockFailed, LockHeld, LockTimedOut, LockSucceeded };
 
+enum StoreFormat
+{
+    StoreFormat_XML,
+    StoreFormat_BINARY
+};
+
 enum SaveStoreFlags
 {
-    ssf_none     = 0x0,
-    ssf_flush    = 0x1,
-    ssf_stop     = 0x2,
-    ssf_compress = 0x4
+    ssf_none  = 0x0,
+    ssf_flush = 0x1,
+    ssf_stop  = 0x2
 };
 BITMASK_ENUM(SaveStoreFlags);
 class CCovenSDSManager : public CSDSManagerBase, implements ISDSManagerServer, implements ISubscriptionManager, implements IExceptionHandler
@@ -2075,7 +2080,6 @@ public: // data
     Owned<Thread> unhandledThread;
     unsigned writeTransactions;
     bool ignoreExternals;
-    bool compressExternals;
     StringAttr dataPath;
     StringAttr daliName;
     Owned<IPropertyTree> properties;
@@ -2218,42 +2222,6 @@ void CBinaryFileExternal::write(const char *name, IPropertyTree &tree)
     MemoryBuffer out;
     ((PTree &)tree).queryValue()->serialize(out);
     size32_t len = out.length();
-    
-    // Check if compression is enabled and we have data worth compressing
-    if (manager.compressExternals && len > 0) {
-        try {
-            // Get the default compression handler (typically LZ4)
-            ICompressHandler *compressHandler = queryDefaultCompressHandler();
-            if (compressHandler) {
-                const char *options = nullptr;
-                Owned<ICompressor> compressor = compressHandler->getCompressor(options);
-                
-                if (compressor && compressor->supportsBlockCompression()) {
-                    // Try to compress the data
-                    MemoryBuffer compressedOut;
-                    size32_t maxCompressedSize = len + (len / 10) + 64; // allow for expansion
-                    void *compressedData = compressedOut.reserveTruncate(maxCompressedSize);
-                    
-                    size32_t compressedLen = compressor->compressBlock(maxCompressedSize, compressedData, len, out.toByteArray());
-                    
-                    if (compressedLen > 0 && compressedLen < len) {
-                        // Compression was successful and beneficial
-                        compressedOut.setLength(compressedLen);
-                        Owned<CTransactionItem> item = manager.deltaWriter.addExt(filename.detach(), compressedLen, compressedOut.detach());
-                        manager.extCache.add(item);
-                        return;
-                    }
-                }
-            }
-        }
-        catch (IException *e) {
-            // If compression fails, fall back to uncompressed
-            WARNLOG("Compression failed for external file %s: %s", filename.str(), e->errorMessage().str());
-            e->Release();
-        }
-    }
-    
-    // Either compression is disabled, failed, or wasn't beneficial - store uncompressed
     Owned<CTransactionItem> item = manager.deltaWriter.addExt(filename.detach(), len, out.detach());
     manager.extCache.add(item);
 }
@@ -5961,6 +5929,132 @@ public:
         backupLocation.append(remoteBackupLocation);
         return backupLocation;
     }
+    virtual void saveStoreToFile(IPropertyTree *root, const char *filename, StoreFormat format, unsigned *_newEdition)
+    {
+        LOG(MCdebugProgress, "Saving store to file %s with format %d", filename, (int)format);
+        
+        if (format == StoreFormat_XML)
+        {
+            // Use existing XML save logic similar to saveStore
+            OwnedIFile iFile = createIFile(filename);
+            OwnedIFileIO iFileIO = iFile->open(IFOcreate);
+            if (!iFileIO)
+                throw MakeStringException(-1, "Failed to create store file: %s", filename);
+                
+            OwnedIFileIOStream fstream = createIOStream(iFileIO);
+            Owned<ICrcIOStream> crcPipeStream = createCrcPipeStream(fstream);
+            Owned<IIOStream> ios = createBufferedIOStream(crcPipeStream);
+
+#ifdef _DEBUG
+            toXML(root, *ios);          // formatted (default)
+#else
+            toXML(root, *ios, 0, 0);
+#endif
+            ios->flush();
+            ios.clear();
+            fstream.clear();
+            crcPipeStream->flush();
+            unsigned crc = crcPipeStream->queryCrc();
+            crcPipeStream.clear();
+            iFileIO->close();
+            
+            if (_newEdition)
+                *_newEdition = 0; // XML format doesn't use editions in the same way
+        }
+        else if (format == StoreFormat_BINARY)
+        {
+            // Check if compression is enabled via configuration
+            bool useCompression = false;
+            try
+            {
+                IPropertyTree *config = getComponentConfigSP();
+                if (config)
+                {
+                    useCompression = config->getPropBool("@compressBinaryStore", false);
+                }
+            }
+            catch (IException *e)
+            {
+                EXCLOG(e, "Failed to read compression configuration, using uncompressed");
+                e->Release();
+            }
+            
+            OwnedIFile iFile = createIFile(filename);
+            OwnedIFileIO iFileIO = iFile->open(IFOcreate);
+            if (!iFileIO)
+                throw MakeStringException(-1, "Failed to create binary store file: %s", filename);
+            
+            Owned<ISerialOutputStream> out = createSerialOutputStream(iFileIO);
+            Owned<IBufferedSerialOutputStream> bufferedOut;
+            
+            if (useCompression)
+            {
+                // Create compressed output stream following jstreamtests.cpp pattern
+                ICompressHandler *compressHandler = queryDefaultCompressHandler();
+                if (compressHandler)
+                {
+                    const char *options = nullptr;
+                    Owned<ICompressor> compressor = compressHandler->getCompressor(options);
+                    
+                    if (compressor)
+                    {
+                        Owned<IBufferedSerialOutputStream> stream = createBufferedOutputStream(out, 32*1024);
+                        Owned<ISerialOutputStream> compressed = createCompressingOutputStream(stream, compressor);
+                        bufferedOut.setown(createBufferedOutputStream(compressed, 32*1024, false));
+                    }
+                    else
+                    {
+                        WARNLOG("Failed to create compressor, using uncompressed binary format");
+                        bufferedOut.setown(createBufferedOutputStream(out, 32*1024, false));
+                    }
+                }
+                else
+                {
+                    WARNLOG("No compression handler available, using uncompressed binary format");
+                    bufferedOut.setown(createBufferedOutputStream(out, 32*1024, false));
+                }
+            }
+            else
+            {
+                bufferedOut.setown(createBufferedOutputStream(out, 32*1024, false));
+            }
+            
+            // Serialize the tree to binary format
+            root->serialize(*bufferedOut);
+            bufferedOut->flush();
+            
+            // Write compression info to storeinfo file if needed
+            if (useCompression)
+            {
+                StringBuffer storeInfoName(filename);
+                storeInfoName.append(".info");
+                try
+                {
+                    OwnedIFile infoFile = createIFile(storeInfoName.str());
+                    OwnedIFileIO infoFileIO = infoFile->open(IFOcreate);
+                    if (infoFileIO)
+                    {
+                        MemoryBuffer info;
+                        info.append("compressed=true\n");
+                        infoFileIO->write(0, info.length(), info.toByteArray());
+                        infoFileIO->close();
+                    }
+                }
+                catch (IException *e)
+                {
+                    EXCLOG(e, "Failed to write store info file");
+                    e->Release();
+                }
+            }
+            
+            if (_newEdition)
+                *_newEdition = 0; // Binary format doesn't use editions in the same way
+        }
+        else
+        {
+            throw MakeStringException(-1, "Unsupported store format: %d", (int)format);
+        }
+    }
 friend struct CheckDeltaBlock;
 };
 
@@ -6004,7 +6098,6 @@ CCovenSDSManager::CCovenSDSManager(ICoven &_coven, IPropertyTree &_config, const
     writeTransactions=0;
     externalEnvironment = false;
     ignoreExternals=false;
-    compressExternals=false;
     unsigned initNodeTableSize = queryCoven().getInitSDSNodes();
     allNodes.ensure(initNodeTableSize?initNodeTableSize:INIT_NODETABLE_SIZE);
     externalSizeThreshold = config.getPropInt("@externalSizeThreshold", defaultExternalSizeThreshold);
@@ -6655,12 +6748,6 @@ void CCovenSDSManager::saveStore(const char *storeName, SaveStoreFlags flags)
         CIgnore() { SDSManager->ignoreExternals=true; }
         ~CIgnore() { SDSManager->ignoreExternals=false; }
     } ignore;
-    struct CCompress
-    {
-        bool prevCompressState;
-        CCompress(bool compress) : prevCompressState(SDSManager->compressExternals) { SDSManager->compressExternals = compress; }
-        ~CCompress() { SDSManager->compressExternals = prevCompressState; }
-    } compress(hasMask(flags, ssf_compress));
     if (hasMask(flags, ssf_stop))
     {
         // Dali is stopping, we don't care about any inflight transactions any more, we're about to save and quit
