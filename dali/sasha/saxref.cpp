@@ -505,17 +505,41 @@ struct cDirDesc
                 // Criteria [1]: Directory name is a number in range 1 to max parts
                 // Criteria [2]: Check if file part number matches directory number
                 if ((pf + 1) == dirPerPartNum) {
-                    // This looks like a dir-per-part file, try to add to parent instead
-                    targetDir = parent;
-                    isDirPerPart = true;
+                    // This looks like a dir-per-part file, check if we should add to parent
+                    // First check if a file with the same name already exists in this directory
+                    CriticalBlock localBlock(this->filesCrit);
+                    cFileDesc *localFile = this->files.find(fn, false);
+                    
+                    if (!localFile) {
+                        // No existing file in this directory, add to parent as dir-per-part
+                        targetDir = parent;
+                        isDirPerPart = true;
+                    } else {
+                        // File already exists in this dir - check if it has multiple parts present
+                        unsigned present = 0;
+                        for (unsigned j=0; j<localFile->N; j++) {
+                            if (localFile->testpresent(0, j))
+                                present++;
+                        }
+                        if (present == 1) {
+                            // Only one part present, this could be moved to parent
+                            targetDir = parent;
+                            isDirPerPart = true;
+                        } else {
+                            // Multiple parts present, treat as regular file in this directory
+                            targetDir = this;
+                            isDirPerPart = false;
+                        }
+                    }
                 } else {
                     // Criteria [1] matches but [2] doesn't - check if this file was already moved to parent
                     CriticalBlock parentBlock(parent->filesCrit);
                     cFileDesc *parentFile = parent->files.find(fn, false);
                     if (parentFile && parentFile->isDirPerPart) {
-                        // File was flagged as moved - move it back to this directory
+                        // File was flagged as moved but this part doesn't match - move it back
                         parent->files.remove(parentFile);
                         parentFile->isDirPerPart = false;
+                        CriticalBlock localBlock(this->filesCrit);
                         this->files.add(parentFile);
                         targetDir = this;
                         isDirPerPart = false;
