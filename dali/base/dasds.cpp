@@ -1818,14 +1818,16 @@ struct CStoreInfo
     {
         unsigned xmlCrc{0};
         unsigned binaryCrc{0};
-        bool binaryCompressed{false};
-        // padding for struct alignment
-        char padding[3]{};
+        unsigned flags{0}; // bit flags for future expandability
     } crcInfo;
     StringAttr cache;
 
+    enum : unsigned
+    {
+        FLAG_BINARY_COMPRESSED = 0x0001
+    };
 
-    static void save(IFileIO *fileIO, unsigned *crcXml, unsigned *crcBinary, bool binaryCompressed = false)
+    static void save(IFileIO *fileIO, unsigned *crcXml, unsigned *crcBinary, bool binaryCompressed)
     {
         assertex(fileIO);
 
@@ -1834,7 +1836,8 @@ struct CStoreInfo
             crcInfo.xmlCrc = *crcXml;
         if (crcBinary)
             crcInfo.binaryCrc = *crcBinary;
-        crcInfo.binaryCompressed = binaryCompressed;
+        if (binaryCompressed)
+            crcInfo.flags |= FLAG_BINARY_COMPRESSED;
         fileIO->write(0, sizeof(CrcInfo), &crcInfo);
     }
 
@@ -1846,16 +1849,14 @@ struct CStoreInfo
         size32_t sz = fileIO->read(0, sizeof(CrcInfo), &crcInfo);
         switch(sz)
         {
-            case sizeof(CrcInfo): // New format with compression flag
+            case sizeof(CrcInfo): // Current format with flags
                 break;
             case sizeof(unsigned) * 2: // Old format with just CRCs
-                crcInfo.binaryCompressed = false;
-                memset(crcInfo.padding, 0, sizeof(crcInfo.padding));
+                crcInfo.flags = 0;
                 break;
             case sizeof(unsigned): // Very old format with just XML CRC
                 crcInfo.binaryCrc = 0;
-                crcInfo.binaryCompressed = false;
-                memset(crcInfo.padding, 0, sizeof(crcInfo.padding));
+                crcInfo.flags = 0;
                 break;
             default:
                 crcInfo = {};
@@ -5314,7 +5315,7 @@ class CStoreHelper : implements IStoreHelper, public CInterface
         }
     }
 
-    void writeStoreInfo(const char *base, const char *location, unsigned edition, unsigned *crcXml, unsigned *crcBinary, CStoreInfo *storeInfo, bool binaryCompressed = false)
+    void writeStoreInfo(const char *base, const char *location, unsigned edition, unsigned *crcXml, unsigned *crcBinary, CStoreInfo *storeInfo, bool binaryCompressed)
     {
         assertex(storeInfo);
 
@@ -5332,7 +5333,7 @@ class CStoreHelper : implements IStoreHelper, public CInterface
         iFileIO->close();
     }
 
-    void updateStoreInfo(const char *base, const char *location, unsigned edition, unsigned *crcXml, unsigned *crcBinary, CStoreInfo *storeInfo, bool binaryCompressed = false)
+    void updateStoreInfo(const char *base, const char *location, unsigned edition, unsigned *crcXml, unsigned *crcBinary, CStoreInfo *storeInfo, bool binaryCompressed)
     {
         assertex(storeInfo);
         clearStoreInfo(base, location, edition, storeInfo);
@@ -5408,7 +5409,7 @@ class CStoreHelper : implements IStoreHelper, public CInterface
         wcard.append(base).append(".*");
         Owned<IDirectoryIterator> dIter = createDirectoryIterator(location, wcard.str());
         if (!dIter->first())
-            updateStoreInfo(base, location, 0, nullptr, nullptr, &info);
+            updateStoreInfo(base, location, 0, nullptr, nullptr, &info, false);
         else if (dIter->next())
             throw MakeStringException(0, "Multiple store.X files - only one corresponding to latest dalisds<X>.xml should exist");
     }
@@ -5725,7 +5726,6 @@ public:
         {
             Owned<ISerialOutputStream> serialStream = createSerialOutputStream(iFileIOTmpStore);
             Owned<ICrcSerialOutputStream> crcSerialStream = createCrcOutputStream(serialStream);
-            Owned<IBufferedSerialOutputStream> bufOutStream = createBufferedOutputStream(crcSerialStream, bufferSize);
             
             // Check if binary compression is enabled
             if (configFlags & SH_CompressBinary)
@@ -5734,24 +5734,34 @@ public:
                 if (compressor)
                 {
                     LOG(MCdebugProgress, "Using LZ4 compression for binary store");
-                    Owned<ISerialOutputStream> compressedStream = createCompressingOutputStream(bufOutStream, compressor);
-                    root->serializeToStream(*compressedStream);
-                    compressedStream->flush();
-                    compressedStream.clear();
+                    Owned<IBufferedSerialOutputStream> stream = createBufferedOutputStream(crcSerialStream, bufferSize);
+                    Owned<ISerialOutputStream> compressed = createCompressingOutputStream(stream, compressor);
+                    Owned<IBufferedSerialOutputStream> bufOutStream = createBufferedOutputStream(compressed, bufferSize, false);
+                    root->serializeToStream(*bufOutStream);
+                    bufOutStream->flush();
+                    bufOutStream.clear();
+                    compressed->flush();
+                    compressed.clear();
+                    stream->flush();
+                    stream.clear();
                 }
                 else
                 {
                     WARNLOG("Failed to create compressor, saving uncompressed");
+                    Owned<IBufferedSerialOutputStream> bufOutStream = createBufferedOutputStream(crcSerialStream, bufferSize);
                     root->serializeToStream(*bufOutStream);
+                    bufOutStream->flush();
+                    bufOutStream.clear();
                 }
             }
             else
             {
+                Owned<IBufferedSerialOutputStream> bufOutStream = createBufferedOutputStream(crcSerialStream, bufferSize);
                 root->serializeToStream(*bufOutStream);
+                bufOutStream->flush();
+                bufOutStream.clear();
             }
             
-            bufOutStream->flush();
-            bufOutStream.clear();
             crcSerialStream->flush();
             crc = crcSerialStream->queryCrc();
             crcSerialStream.clear();
@@ -5936,7 +5946,6 @@ public:
                     }
 
                     clearStoreInfo(storeFileName, remoteBackupLocation, 0, NULL);
-                    bool binaryCompressed = (configFlags & SH_CompressBinary) && binaryCrcPtr;
                     writeStoreInfo(storeFileName, remoteBackupLocation, newEdition, &xmlCrc, binaryCrcPtr, &storeInfo, binaryCompressed); // binaryCrcPtr could be nullptr if the binary store save failed
                     PROGLOG("Copy store done");
                 }
@@ -6069,7 +6078,7 @@ public:
     virtual bool isBinaryCompressed() override
     {
         refreshStoreInfo();
-        return storeInfo.crcInfo.binaryCompressed;
+        return (storeInfo.crcInfo.flags & CStoreInfo::FLAG_BINARY_COMPRESSED) != 0;
     }
 friend struct CheckDeltaBlock;
 };
@@ -6398,7 +6407,7 @@ CServerRemoteTree *CCovenSDSManager::loadStoreType(StoreFormat storeFormat, size
             }
             else
             {
-                WARNLOG("Failed to create expander for compressed binary store");
+                throw MakeStringException(0, "Failed to create expander for compressed binary store");
             }
         }
         
