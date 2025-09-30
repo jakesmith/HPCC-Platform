@@ -267,6 +267,7 @@ interface IStoreHelper : extends IInterface
     virtual void backup(const char *filename) = 0;
     virtual StringBuffer &getPrimaryLocation(StringBuffer &location) = 0;
     virtual StringBuffer &getBackupLocation(StringBuffer &backupLocation) = 0;
+    virtual bool isBinaryCompressed() = 0;
 };
 
 enum
@@ -275,6 +276,7 @@ enum
     SH_RecoverFromIncErrors = 0x0002,
     SH_BackupErrorFiles     = 0x0004,
     SH_CheckNewDelta        = 0x0008,
+    SH_CompressBinary       = 0x0010,
 };
 extern da_decl IStoreHelper *createStoreHelper(const char *storeName, const char *location, const char *remoteBackupLocation, unsigned configFlags, unsigned keepStores=0, unsigned delay=5000, const bool *abort=nullptr, bool saveBinary=false);
 extern da_decl bool applyXmlDeltas(IPropertyTree &root, IIOStream &stream, bool stopOnError=false);
