@@ -482,7 +482,7 @@ struct cDirDesc
             return numParts!=grp.ordinality() || partNum>=grp.ordinality() || !grp.queryNode(partNum).endpoint().equals(ep);
     }
 
-    cFileDesc *addFile(unsigned drv,const char *name,const char *filePath,unsigned filePathOffset,unsigned node, const SocketEndpoint &ep, IGroup &grp, unsigned numnodes, CLargeMemoryAllocator *mem, unsigned stripeNum, unsigned numStripedDevices)
+    cFileDesc *addFile(unsigned drv,const char *name,const char *filePath,unsigned filePathOffset,unsigned node, const SocketEndpoint &ep, IGroup &grp, unsigned numnodes, CLargeMemoryAllocator *mem, unsigned stripeNum, unsigned numStripedDevices, cDirDesc *parent = nullptr)
     {
         unsigned nf;          // num parts
         unsigned pf;          // part num
@@ -491,14 +491,47 @@ struct cDirDesc
         const char *fn = decodeName(drv,name,node,numnodes,mask,pf,nf,filenameLen);
         bool misplaced = isMisplaced(pf,nf,ep,grp,filePath,filePathOffset,stripeNum,numStripedDevices);
 
-        CriticalBlock block(filesCrit);
-        cFileDesc *file = files.find(fn,false);
+        // Check if this looks like a dir-per-part scenario and handle accordingly
+        cDirDesc *targetDir = this;
+        bool isDirPerPart = false;
+        
+        if (isContainerized() && parent && nf > 1) {
+            // Get current directory name and check if it's a number
+            StringBuffer dirName;
+            this->getName(dirName);
+            unsigned dirPerPartNum = readDigits(dirName.str());
+            
+            if (dirPerPartNum > 0 && dirPerPartNum <= nf) {
+                // Criteria [1]: Directory name is a number in range 1 to max parts
+                // Criteria [2]: Check if file part number matches directory number
+                if ((pf + 1) == dirPerPartNum) {
+                    // This looks like a dir-per-part file, try to add to parent instead
+                    targetDir = parent;
+                    isDirPerPart = true;
+                } else {
+                    // Criteria [1] matches but [2] doesn't - check if this file was already moved to parent
+                    CriticalBlock parentBlock(parent->filesCrit);
+                    cFileDesc *parentFile = parent->files.find(fn, false);
+                    if (parentFile && parentFile->isDirPerPart) {
+                        // File was flagged as moved - move it back to this directory
+                        parent->files.remove(parentFile);
+                        parentFile->isDirPerPart = false;
+                        this->files.add(parentFile);
+                        targetDir = this;
+                        isDirPerPart = false;
+                    }
+                }
+            }
+        }
+
+        CriticalBlock block(targetDir->filesCrit);
+        cFileDesc *file = targetDir->files.find(fn,false);
         if (!file) {
             if (!mem)
                 return NULL;
-            // dirPerPart is set to false during scanDirectories, and later updated in listOrphans by mergeDirPerPartDirs
-            file = cFileDesc::create(*mem,fn,nf,false,filenameLen);
-            files.add(file);
+            // Set dirPerPart flag based on our detection logic
+            file = cFileDesc::create(*mem,fn,nf,isDirPerPart,filenameLen);
+            targetDir->files.add(file);
         }
         if (misplaced) {
             cMisplacedRec *mp = file->misplaced;
@@ -1205,7 +1238,7 @@ public:
     }
 
 
-    bool scanDirectory(unsigned node,const SocketEndpoint &ep,StringBuffer &path, unsigned drv, cDirDesc *pdir, IFile *cachefile, unsigned level, unsigned filePathOffset, unsigned stripeNum)
+    bool scanDirectory(unsigned node,const SocketEndpoint &ep,StringBuffer &path, unsigned drv, cDirDesc *pdir, IFile *cachefile, unsigned level, unsigned filePathOffset, unsigned stripeNum, cDirDesc *parentDir = nullptr)
     {
         checkHeartbeat("Directory scan");
         size32_t dsz = path.length();
@@ -1261,7 +1294,7 @@ public:
                             // /var/lib/HPCCSystems/hpcc-data/d1/somescope/otherscope/afile.1_of_2
                             // /var/lib/HPCCSystems/hpcc-data/d2/somescope/otherscope/afile.2_of_2
                             // These files would never be matched if we didn't build up the cDirDesc structure without the stripe directory
-                            if (!scanDirectory(node,ep,path,drv,pdir,NULL,level+1,filePathOffset,stripeNum))
+                            if (!scanDirectory(node,ep,path,drv,pdir,NULL,level+1,filePathOffset,stripeNum,pdir))
                                 return false;
 
                             path.setLength(dsz);
@@ -1279,7 +1312,7 @@ public:
                 iter->getModifiedTime(dt);
                 if (!fileFiltered(path.str(),dt)) {
                     try {
-                        pdir->addFile(drv,fname.str(),path.str(),filePathOffset,node,ep,*grp,numnodes,&mem,stripeNum,numStripedDevices);
+                        pdir->addFile(drv,fname.str(),path.str(),filePathOffset,node,ep,*grp,numnodes,&mem,stripeNum,numStripedDevices,parentDir);
                         processedFiles++;
                     }
                     catch (IException *e) {
@@ -1297,7 +1330,7 @@ public:
             addPathSepChar(path).append(dirs.item(i));
             if (file.get()&&!resetRemoteFilename(file,path.str())) // sneaky way of avoiding cache
                 file.clear();
-            if (!scanDirectory(node,ep,path,drv,pdir->lookupDir(dirs.item(i),&mem),file,level+1,filePathOffset,stripeNum))
+            if (!scanDirectory(node,ep,path,drv,pdir->lookupDir(dirs.item(i),&mem),file,level+1,filePathOffset,stripeNum,pdir))
                 return false;
             path.setLength(dsz);
         }
@@ -1356,7 +1389,7 @@ public:
                     addPathSepChar(path).append('d').append(i+1);
 
                     parent.log(false,"Scanning %s directory %s",parent.storagePlane->queryProp("@name"),path.str());
-                    if (!parent.scanDirectory(0,localEP,path,0,parent.root,NULL,1,path.length(),i+1))
+                    if (!parent.scanDirectory(0,localEP,path,0,parent.root,NULL,1,path.length(),i+1,nullptr))
                     {
                         ok = false;
                         return;
@@ -1367,7 +1400,7 @@ public:
                     StringBuffer hostStr;
                     SocketEndpoint ep = parent.rawgrp->queryNode(i).endpoint();
                     parent.log(false,"Scanning %s directory %s",ep.getEndpointHostText(hostStr).str(),path.str());
-                    if (!parent.scanDirectory(i,ep,path,0,NULL,NULL,0,path.length(),0)) {
+                    if (!parent.scanDirectory(i,ep,path,0,NULL,NULL,0,path.length(),0,nullptr)) {
                         ok = false;
                         return;
                     }
@@ -1377,7 +1410,7 @@ public:
                         setReplicateFilename(path,1);
                         ep = parent.rawgrp->queryNode(i).endpoint();
                         parent.log(false,"Scanning %s directory %s",ep.getEndpointHostText(hostStr.clear()).str(),path.str());
-                        if (!parent.scanDirectory(i,ep,path,1,NULL,NULL,0,path.length(),0)) {
+                        if (!parent.scanDirectory(i,ep,path,1,NULL,NULL,0,path.length(),0,nullptr)) {
                             ok = false;
                         }
                     }
@@ -1904,7 +1937,6 @@ public:
         unsigned i = 0;
         cDirDesc *dir = d->dirs.first(i);
         while (dir) {
-            mergeDirPerPartDirs(d,dir,basedir,&mem);
             listOrphans(dir,basedir,scope,abort,recentCutoffDays);
             if (abort)
                 return;
