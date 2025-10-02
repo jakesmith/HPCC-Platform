@@ -1259,9 +1259,28 @@ void WsWuInfo::getECLWUProcesses(IEspECLWorkunit &info, unsigned long flags)
             const char *podName = process.queryProp("@podName");
             if (!isEmptyString(podName))
                 p->setPodName(podName);
+            const char *containerName = process.queryProp("@containerName");
+            if (!isEmptyString(containerName))
+                p->setContainerName(containerName);
             unsigned instanceNum = process.getPropInt("@instanceNum", NotFound);
             if (NotFound != instanceNum)
                 p->setInstanceNumber(instanceNum);
+            
+            // Get graph names if present
+            IPropertyTree *graphsTree = process.queryPropTree("graphs");
+            if (graphsTree)
+            {
+                StringArray graphNames;
+                Owned<IPropertyTreeIterator> graphItr = graphsTree->getElements("*");
+                ForEach(*graphItr)
+                {
+                    IPropertyTree &graph = graphItr->query();
+                    graphNames.append(graph.queryName());
+                }
+                if (graphNames.ordinality() > 0)
+                    p->setGraphs(graphNames);
+            }
+            
             const char *pid = process.queryProp("@pid");
             if (!isEmptyString(pid))
                 p->setPID(pid);
