@@ -19,6 +19,23 @@
 ############################################################################ */
 '''
 
+"""
+getwuids.py - Query workunits from ESP WsWorkunits service
+
+This script fetches a list of workunit IDs (WUIDs) and their states from an
+ESP server's WsWorkunits service for a given date range.
+
+Usage:
+    getwuids.py <espserver:port> <start-datestamp> <end-datestamp>
+
+Example:
+    getwuids.py localhost:8010 2024-01-01 2024-01-31
+
+The script connects to the ESP server and queries the WUQuery service endpoint,
+filtering workunits by the specified start and end dates. Results are displayed
+in a tabular format showing the WUID and state for each workunit found.
+"""
+
 import sys
 import argparse
 import requests
@@ -113,11 +130,15 @@ def query_workunits(esp_server, start_date, end_date):
 def main():
     parser = argparse.ArgumentParser(
         description='Fetch workunit IDs and states from ESP WsWorkunits service',
-        usage='%(prog)s <espserver:port> <start-datestamp> <end-datestamp>'
+        usage='%(prog)s <espserver:port> <start-datestamp> <end-datestamp>',
+        epilog='Example: %(prog)s localhost:8010 2024-01-01 2024-01-31'
     )
-    parser.add_argument('espserver', help='ESP server address in format host:port (e.g., localhost:8010)')
-    parser.add_argument('start_date', help='Start date in YYYY-MM-DD format')
-    parser.add_argument('end_date', help='End date in YYYY-MM-DD format')
+    parser.add_argument('espserver', 
+                       help='ESP server address in format host:port (e.g., localhost:8010)')
+    parser.add_argument('start_date', 
+                       help='Start date in YYYY-MM-DD format (e.g., 2024-01-01)')
+    parser.add_argument('end_date', 
+                       help='End date in YYYY-MM-DD format (e.g., 2024-01-31)')
     
     args = parser.parse_args()
     
