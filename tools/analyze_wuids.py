@@ -28,12 +28,17 @@ ESP server's WsWorkunits service.
 Usage:
     analyze_wuids.py <espserver:port> <wuid1> <wuid2> ...
     analyze_wuids.py <espserver:port> -f <wuids-file>
+    analyze_wuids.py <espserver:port> -f <wuids-file> -e <error-patterns-file>
     cat <wuids-file> | analyze_wuids.py <espserver:port>
 
 Arguments:
     espserver:port  ESP server address (e.g., localhost:8010)
     wuid1 wuid2     One or more workunit IDs
     -f file         Read WUIDs from file (one per line)
+    -e file         File containing error patterns to match (one per line)
+                    When specified, only workunits with matching errors are displayed
+    -v              Show verbose information including timings
+    -s              Show summary table only
     stdin           Read WUIDs from standard input (one per line)
 
 Examples:
@@ -43,12 +48,20 @@ Examples:
     # Read WUIDs from a file
     analyze_wuids.py localhost:8010 -f wuids.txt
     
-    # Pipe WUIDs from another command
-    ./getwuids.py localhost:8010 2024-01-01 2024-01-01 | tail -n +3 | awk '{print $1}' | analyze_wuids.py localhost:8010
+    # Filter to specific error patterns
+    analyze_wuids.py localhost:8010 -f wuids.txt -e error_patterns.txt
+    
+    # Pipe WUIDs from another command and filter by errors
+    ./getwuids.py localhost:8010 2024-01-01 2024-01-01 | tail -n +3 | awk '{print $1}' | analyze_wuids.py localhost:8010 -e errors.txt
 
 The script connects to the ESP server and queries the WUInfo service endpoint
 for each workunit, displaying detailed information including state, owner,
-jobname, cluster, and timing information.
+jobname, cluster, timing information, and the first ERROR exception if present.
+
+When using the -e flag, only workunits whose first ERROR exception matches
+one of the specified patterns (case-insensitive substring match) will be
+displayed. This is useful for filtering large numbers of workunits to find
+specific error types.
 """
 
 import sys
@@ -285,7 +298,7 @@ def print_summary_table(infos, show_matched=False):
 def main():
     parser = argparse.ArgumentParser(
         description='Analyze workunit details from ESP WsWorkunits service',
-        usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>]',
+        usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>] [-e <file>] [-v] [-s]',
         epilog='''
 Examples:
   %(prog)s localhost:8010 W20240101-120000 W20240101-120001

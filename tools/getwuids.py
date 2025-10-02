@@ -111,61 +111,76 @@ def query_workunits(esp_server, start_date, end_date):
     if 'T' not in end_date:
         end_date = f"{end_date}T23:59:59"
     
-    # Build query parameters
-    params = {
-        'StartDate': start_date,
-        'EndDate': end_date,
-        'PageSize': 100  # Fetch up to 100 workunits per request
-    }
+    all_workunits = []
+    page_start_from = 0
+    page_size = 500  # Increase page size to reduce number of requests
     
-    try:
-        # Make the request
-        response = requests.get(service_url, params=params, timeout=30)
-        response.raise_for_status()
+    while True:
+        # Build query parameters
+        params = {
+            'StartDate': start_date,
+            'EndDate': end_date,
+            'PageSize': page_size,
+            'PageStartFrom': page_start_from
+        }
         
-        # Parse JSON response
-        data = response.json()
-        
-        # Check for exceptions in the response
-        if 'Exceptions' in data:
-            exceptions = data['Exceptions']
-            print("Error response from ESP server:", file=sys.stderr)
+        try:
+            # Make the request
+            response = requests.get(service_url, params=params, timeout=30)
+            response.raise_for_status()
             
-            # Handle both single exception and array of exceptions
-            exception_list = exceptions.get('Exception', [])
-            if isinstance(exception_list, dict):
-                exception_list = [exception_list]
+            # Parse JSON response
+            data = response.json()
             
-            for exc in exception_list:
-                code = exc.get('Code', 'N/A')
-                message = exc.get('Message', 'Unknown error')
-                print(f"  [Code {code}] {message}", file=sys.stderr)
+            # Check for exceptions in the response
+            if 'Exceptions' in data:
+                exceptions = data['Exceptions']
+                print("Error response from ESP server:", file=sys.stderr)
+                
+                # Handle both single exception and array of exceptions
+                exception_list = exceptions.get('Exception', [])
+                if isinstance(exception_list, dict):
+                    exception_list = [exception_list]
+                
+                for exc in exception_list:
+                    code = exc.get('Code', 'N/A')
+                    message = exc.get('Message', 'Unknown error')
+                    print(f"  [Code {code}] {message}", file=sys.stderr)
+                
+                return []
             
+            # Extract workunits from JSON response
+            wu_response = data.get('WUQueryResponse', {})
+            wu_list = wu_response.get('Workunits', {}).get('ECLWorkunit', [])
+            
+            # Handle case where single workunit is returned as dict instead of list
+            if isinstance(wu_list, dict):
+                wu_list = [wu_list]
+            
+            # Add workunits from this page
+            for wu in wu_list:
+                all_workunits.append({
+                    'wuid': wu.get('Wuid', ''),
+                    'state': wu.get('State', '')
+                })
+            
+            # Check if there are more results
+            num_wus = wu_response.get('NumWUs', 0)
+            if not wu_list or len(all_workunits) >= num_wus:
+                # No more results
+                break
+            
+            # Move to next page
+            page_start_from += len(wu_list)
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Error connecting to ESP server: {e}", file=sys.stderr)
             return []
-        
-        # Extract workunits from JSON response
-        workunits = []
-        wu_response = data.get('WUQueryResponse', {})
-        wu_list = wu_response.get('Workunits', {}).get('ECLWorkunit', [])
-        
-        # Handle case where single workunit is returned as dict instead of list
-        if isinstance(wu_list, dict):
-            wu_list = [wu_list]
-        
-        for wu in wu_list:
-            workunits.append({
-                'wuid': wu.get('Wuid', ''),
-                'state': wu.get('State', '')
-            })
-        
-        return workunits
-        
-    except requests.exceptions.RequestException as e:
-        print(f"Error connecting to ESP server: {e}", file=sys.stderr)
-        return []
-    except (KeyError, ValueError) as e:
-        print(f"Error parsing response: {e}", file=sys.stderr)
-        return []
+        except (KeyError, ValueError) as e:
+            print(f"Error parsing response: {e}", file=sys.stderr)
+            return []
+    
+    return all_workunits
 
 def main():
     parser = argparse.ArgumentParser(
@@ -208,12 +223,19 @@ Date/Time Formats:
         return 1
     
     # Print results
-    print(f"{'WUID':<20} {'State'}")
-    print("-" * 50)
-    for wu in workunits:
-        print(f"{wu['wuid']:<20} {wu['state']}")
+    try:
+        print(f"{'WUID':<20} {'State'}")
+        print("-" * 50)
+        for wu in workunits:
+            print(f"{wu['wuid']:<20} {wu['state']}")
+        
+        print(f"\nTotal workunits: {len(workunits)}")
+    except BrokenPipeError:
+        # Handle pipe being closed (e.g., when piping to head)
+        # Suppress the error and exit cleanly
+        sys.stderr.close()
+        pass
     
-    print(f"\nTotal workunits: {len(workunits)}")
     return 0
 
 if __name__ == '__main__':
