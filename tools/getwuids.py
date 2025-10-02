@@ -26,10 +26,26 @@ This script fetches a list of workunit IDs (WUIDs) and their states from an
 ESP server's WsWorkunits service for a given date range.
 
 Usage:
-    getwuids.py <espserver:port> <start-datestamp> <end-datestamp>
+    getwuids.py <espserver:port> <start-date> <end-date>
 
-Example:
+Arguments:
+    espserver:port  ESP server address (e.g., localhost:8010)
+    start-date      Start date/time in format:
+                      YYYY-MM-DD (assumes 00:00:00)
+                      YYYY-MM-DDTHH:MM:SS (explicit time)
+    end-date        End date/time in format:
+                      YYYY-MM-DD (assumes 23:59:59)
+                      YYYY-MM-DDTHH:MM:SS (explicit time)
+
+Examples:
+    # Query by date (entire days)
     getwuids.py localhost:8010 2024-01-01 2024-01-31
+    
+    # Query with specific times
+    getwuids.py localhost:8010 2024-01-01T08:00:00 2024-01-01T17:00:00
+    
+    # Mix date and datetime
+    getwuids.py localhost:8010 2024-01-01 2024-01-31T12:00:00
 
 The script connects to the ESP server and queries the WUQuery service endpoint,
 filtering workunits by the specified start and end dates. Results are displayed
@@ -88,6 +104,13 @@ def query_workunits(esp_server, start_date, end_date):
     base_url = f"http://{esp_server}"
     service_url = urljoin(base_url, "/WsWorkunits/WUQuery.json")
     
+    # Convert date strings to datetime format required by WUQuery
+    # WUQuery expects ISO 8601 datetime format (YYYY-MM-DDTHH:MM:SS)
+    if 'T' not in start_date:
+        start_date = f"{start_date}T00:00:00"
+    if 'T' not in end_date:
+        end_date = f"{end_date}T23:59:59"
+    
     # Build query parameters
     params = {
         'StartDate': start_date,
@@ -102,6 +125,23 @@ def query_workunits(esp_server, start_date, end_date):
         
         # Parse JSON response
         data = response.json()
+        
+        # Check for exceptions in the response
+        if 'Exceptions' in data:
+            exceptions = data['Exceptions']
+            print("Error response from ESP server:", file=sys.stderr)
+            
+            # Handle both single exception and array of exceptions
+            exception_list = exceptions.get('Exception', [])
+            if isinstance(exception_list, dict):
+                exception_list = [exception_list]
+            
+            for exc in exception_list:
+                code = exc.get('Code', 'N/A')
+                message = exc.get('Message', 'Unknown error')
+                print(f"  [Code {code}] {message}", file=sys.stderr)
+            
+            return []
         
         # Extract workunits from JSON response
         workunits = []
@@ -130,15 +170,33 @@ def query_workunits(esp_server, start_date, end_date):
 def main():
     parser = argparse.ArgumentParser(
         description='Fetch workunit IDs and states from ESP WsWorkunits service',
-        usage='%(prog)s <espserver:port> <start-datestamp> <end-datestamp>',
-        epilog='Example: %(prog)s localhost:8010 2024-01-01 2024-01-31'
+        usage='%(prog)s <espserver:port> <start-date> <end-date>',
+        epilog='''
+Examples:
+  %(prog)s localhost:8010 2024-01-01 2024-01-31
+      Query workunits from January 1st through January 31st, 2024
+  
+  %(prog)s localhost:8010 2024-01-01T08:00:00 2024-01-01T17:00:00
+      Query workunits from 8 AM to 5 PM on January 1st, 2024
+  
+  %(prog)s localhost:8010 2024-01-01 2024-01-31T12:00:00
+      Query from start of January 1st through noon on January 31st
+
+Date/Time Formats:
+  YYYY-MM-DD              Date only (start defaults to 00:00:00, end to 23:59:59)
+  YYYY-MM-DDTHH:MM:SS     Date with specific time
+        ''',
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument('espserver', 
+                       metavar='espserver:port',
                        help='ESP server address in format host:port (e.g., localhost:8010)')
     parser.add_argument('start_date', 
-                       help='Start date in YYYY-MM-DD format (e.g., 2024-01-01)')
+                       metavar='start-date',
+                       help='Start date/time: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS')
     parser.add_argument('end_date', 
-                       help='End date in YYYY-MM-DD format (e.g., 2024-01-31)')
+                       metavar='end-date',
+                       help='End date/time: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS')
     
     args = parser.parse_args()
     
