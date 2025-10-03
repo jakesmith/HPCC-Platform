@@ -187,12 +187,26 @@ def analyze_oom_in_dmesg(dmesg_content):
     
     return result
 
+def analyze_sigterm_in_postmortem(postmortem_content):
+    """Analyze postmortem log for SIGTERM signal.
+    
+    Returns dict with 'sigterm_detected' (bool) or None
+    """
+    if not postmortem_content:
+        return None
+    
+    # Search for SIGTERM detection
+    if 'SIGTERM detected' in postmortem_content:
+        return {'sigterm_detected': True}
+    
+    return {'sigterm_detected': False}
+
 def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
     """Parse workunit XML to find Thor worker pod/container info.
     
     Args:
         xml_content: Workunit XML string
-        graph_name: Graph name to search for (e.g., "graph1")
+        graph_name: Graph name to search for (e.g., "graph1"), or None to skip graph matching
         worker_number: Worker sequence number as string (e.g., "118")
     
     Returns:
@@ -207,41 +221,50 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
         
         # Step 1: Find Thor element, then find child process with the graph name to get instanceNum
         thor_instance_num = None
-        thor_element = root.find('.//Thor')
-        if thor_element is not None:
-            # Thor element contains child elements named after the cluster (e.g., <thor-nonphidelivery>)
-            for thor_process in thor_element:
-                # Check if this Thor process has the graph we're looking for
-                graphs = thor_process.find('graphs')
-                if graphs is not None:
-                    # Graphs are represented as empty elements with the graph name as tag
-                    for graph in graphs:
-                        if graph.tag == graph_name:
-                            thor_instance_num = thor_process.get('instanceNum')
-                            break
-                if thor_instance_num is not None:
-                    break
+        if graph_name:
+            thor_element = root.find('.//Thor')
+            if thor_element is not None:
+                # Thor element contains child elements named after the cluster (e.g., <thor-nonphidelivery>)
+                for thor_process in thor_element:
+                    # Check if this Thor process has the graph we're looking for
+                    graphs = thor_process.find('graphs')
+                    if graphs is not None:
+                        # Graphs are represented as empty elements with the graph name as tag
+                        for graph in graphs:
+                            if graph.tag == graph_name:
+                                thor_instance_num = thor_process.get('instanceNum')
+                                break
+                    if thor_instance_num is not None:
+                        break
         
-        if thor_instance_num is None:
-            return None
-        
-        # Step 2: Find ThorWorker element, then find child with matching instanceNum and sequence
+        # Step 2: Find ThorWorker element, then find child with matching sequence (and optionally instanceNum)
         thorworker_element = root.find('.//ThorWorker')
         pod_name = None
         container_name = None
         note = None
         
         if thorworker_element is not None:
-            for worker_process in thorworker_element:
-                if worker_process.get('instanceNum') == thor_instance_num:
+            # If we have an instanceNum from graph matching, use it for more precise matching
+            if thor_instance_num is not None:
+                for worker_process in thorworker_element:
+                    if worker_process.get('instanceNum') == thor_instance_num:
+                        sequence = worker_process.get('sequence')
+                        if sequence == worker_number:
+                            pod_name = worker_process.get('podName')
+                            container_name = worker_process.get('containerName')
+                            break
+            else:
+                # No graph name provided, search all ThorWorker elements by sequence only
+                for worker_process in thorworker_element:
                     sequence = worker_process.get('sequence')
                     if sequence == worker_number:
                         pod_name = worker_process.get('podName')
                         container_name = worker_process.get('containerName')
+                        note = 'Matched by worker sequence only (no graph info)'
                         break
         
-        # If exact match not found, try pod name pattern matching
-        if pod_name is None and thorworker_element is not None:
+        # If exact match not found and we have an instanceNum, try pod name pattern matching
+        if pod_name is None and thor_instance_num is not None and thorworker_element is not None:
             for worker_process in thorworker_element:
                 if worker_process.get('instanceNum') == thor_instance_num:
                     pod_name_candidate = worker_process.get('podName', '')
@@ -255,8 +278,8 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
                         note = 'Matched by pod name pattern'
                         break
         
-        # If still no match, return first worker for that instance
-        if pod_name is None and thorworker_element is not None:
+        # If still no match and we have an instanceNum, return first worker for that instance
+        if pod_name is None and thor_instance_num is not None and thorworker_element is not None:
             for worker_process in thorworker_element:
                 if worker_process.get('instanceNum') == thor_instance_num:
                     pod_name = worker_process.get('podName')
@@ -283,8 +306,11 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
     except ET.ParseError as e:
         return None
 
-def get_workunit_info(esp_url, wuid):
+def get_workunit_info(esp_url, wuid, verbose=False):
     """Fetch detailed workunit information."""
+    if verbose:
+        print(f"  [VERBOSE] Fetching workunit info for {wuid}", file=sys.stderr)
+    
     # Ensure URL has protocol prefix
     if not esp_url.startswith(('http://', 'https://')):
         esp_url = f"http://{esp_url}"
@@ -346,14 +372,28 @@ def get_workunit_info(esp_url, wuid):
             error_msg = first_error.get('message', '')
             error_details = parse_error_info(error_msg)
             
-            # If we found graph and worker info, fetch workunit XML to find process information
-            if error_details.get('graph_name') and error_details.get('worker_number'):
+            if verbose:
+                print(f"  [VERBOSE] Error details: graph={error_details.get('graph_name')}, worker={error_details.get('worker_number')}", file=sys.stderr)
+            
+            # If we found worker info (graph is optional), fetch workunit XML to find process information
+            if error_details.get('worker_number'):
+                if verbose:
+                    if error_details.get('graph_name'):
+                        print(f"  [VERBOSE] Fetching workunit XML to find pod/container info (graph-based search)", file=sys.stderr)
+                    else:
+                        print(f"  [VERBOSE] Fetching workunit XML to find pod/container info (sequence-only search)", file=sys.stderr)
                 xml_content = get_workunit_xml(esp_url, wuid)
                 worker_pod_info = find_worker_pod_info_from_xml(
                     xml_content,
                     error_details['graph_name'], 
                     error_details['worker_number']
                 )
+                
+                if verbose:
+                    if worker_pod_info:
+                        print(f"  [VERBOSE] Found pod: {worker_pod_info.get('pod_name')}, container: {worker_pod_info.get('container_name')}", file=sys.stderr)
+                    else:
+                        print(f"  [VERBOSE] No pod/container info found in XML", file=sys.stderr)
                 
                 # Extract postmortem files from helpers matching the pod/container
                 if worker_pod_info:
@@ -367,6 +407,8 @@ def get_workunit_info(esp_url, wuid):
                     
                     postmortem_files = []
                     dmesg_log_path = None
+                    postmortem_log_files = []
+                    postmortem_dir = None
                     for help_file in help_files:
                         if help_file.get('Type') == 'postmortem':
                             filename = help_file.get('Name', '')
@@ -374,18 +416,52 @@ def get_workunit_info(esp_url, wuid):
                             if pod_name in filename and container_name in filename:
                                 if f'/{pod_name}/{container_name}/' in filename:
                                     postmortem_files.append(filename)
+                                    # Extract directory path for verbose logging
+                                    if postmortem_dir is None and '/' in filename:
+                                        postmortem_dir = filename.rsplit('/', 1)[0]
                                     # Track dmesg.log for OOM analysis
                                     if filename.endswith('/dmesg.log'):
                                         dmesg_log_path = filename
+                                    # Track postmortem.*.log.* files for SIGTERM analysis
+                                    elif re.search(r'/postmortem\..*\.log\.\d+$', filename):
+                                        postmortem_log_files.append(filename)
                     
                     worker_pod_info['postmortem_files'] = postmortem_files
                     
+                    # Log the postmortem directory if verbose
+                    if verbose and postmortem_dir:
+                        print(f"  [VERBOSE] Searching postmortem directory: {postmortem_dir}", file=sys.stderr)
+                    
                     # Analyze dmesg.log for OOM killer if it exists
+                    oom_detected = False
                     if dmesg_log_path:
+                        if verbose:
+                            print(f"  [VERBOSE] Checking for OOM in: {dmesg_log_path}", file=sys.stderr)
                         dmesg_content = fetch_helper_file(esp_url, wuid, dmesg_log_path)
                         oom_info = analyze_oom_in_dmesg(dmesg_content)
                         if oom_info:
                             worker_pod_info['oom_info'] = oom_info
+                            oom_detected = oom_info.get('oom_detected', False)
+                    
+                    # If no OOM detected, check postmortem logs for SIGTERM
+                    if not oom_detected and postmortem_log_files:
+                        # Sort postmortem log files and get the last one (largest number)
+                        # Extract the numeric suffix for sorting
+                        def extract_log_number(filepath):
+                            match = re.search(r'\.log\.(\d+)$', filepath)
+                            return int(match.group(1)) if match else -1
+                        
+                        postmortem_log_files.sort(key=extract_log_number)
+                        last_postmortem_log = postmortem_log_files[-1]
+                        
+                        if verbose:
+                            print(f"  [VERBOSE] Checking for SIGTERM in: {last_postmortem_log}", file=sys.stderr)
+                        
+                        postmortem_content = fetch_helper_file(esp_url, wuid, last_postmortem_log)
+                        sigterm_info = analyze_sigterm_in_postmortem(postmortem_content)
+                        if sigterm_info:
+                            worker_pod_info['sigterm_info'] = sigterm_info
+                            worker_pod_info['sigterm_log_file'] = last_postmortem_log
         
         return {
             'wuid': wuid,
@@ -607,6 +683,14 @@ def print_workunit_info(info, verbose=False, matched=None):
                             print(f"                Inactive memory: {mem_stats['inactive_anon']}")
                     elif mem_info.get('mem_status'):
                         print(f"                {mem_info['mem_status']}")
+            
+            # Display SIGTERM information if detected
+            sigterm_info = worker_pod_info.get('sigterm_info')
+            if sigterm_info and sigterm_info.get('sigterm_detected'):
+                sigterm_log_file = worker_pod_info.get('sigterm_log_file', '')
+                log_filename = sigterm_log_file.split('/')[-1] if sigterm_log_file else 'postmortem log'
+                print(f"  SIGTERM:      DETECTED - Process received SIGTERM signal")
+                print(f"                Found in: {log_filename}")
     
     print()
 
@@ -747,7 +831,7 @@ Examples:
     # Fetch information for each workunit
     infos = []
     for wuid in wuids:
-        info = get_workunit_info(args.espserver, wuid)
+        info = get_workunit_info(args.espserver, wuid, verbose=args.verbose)
         
         # Check for OOM if --show-oom flag is set
         has_oom = False
