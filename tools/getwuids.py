@@ -135,7 +135,12 @@ def query_workunits(esp_server, start_date, end_date, auth=None):
     end_date = normalize_date(end_date)
     
     # Construct the URL for the WUQuery service
-    base_url = f"http://{esp_server}"
+    # Ensure URL has protocol prefix
+    if not esp_server.startswith(('http://', 'https://')):
+        base_url = f"http://{esp_server}"
+    else:
+        base_url = esp_server
+    
     service_url = urljoin(base_url, "/WsWorkunits/WUQuery.json")
     
     # Convert date strings to datetime format required by WUQuery
