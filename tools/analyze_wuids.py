@@ -307,7 +307,7 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
     except ET.ParseError as e:
         return None
 
-def get_workunit_info(esp_url, wuid, verbose=False, auth=None):
+def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
     """Fetch detailed workunit information."""
     if verbose:
         print(f"  [VERBOSE] Fetching workunit info for {wuid}", file=sys.stderr)
@@ -331,7 +331,7 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None):
         'IncludeXmlSchemas': 0,
         'IncludeResourceURLs': 0,
         'IncludeECL': 0,
-        'IncludeHelpers': 1,  # Include helpers to get postmortem files
+        'IncludeHelpers': 1 if not quick else 0,  # Skip helpers in quick mode
         'IncludeAllowedClusters': 0,
         'SuppressResultSchemas': 1,
     }
@@ -377,8 +377,12 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None):
                 print(f"  [VERBOSE] Error detected: {error_msg[:100]}{'...' if len(error_msg) > 100 else ''}", file=sys.stderr)
                 print(f"  [VERBOSE] Error details: graph={error_details.get('graph_name')}, worker={error_details.get('worker_number')}", file=sys.stderr)
             
+            # Skip detailed analysis in quick mode
+            if quick:
+                if verbose:
+                    print(f"  [VERBOSE] Quick mode: skipping XML/postmortem analysis", file=sys.stderr)
             # If we found worker info (graph is optional), fetch workunit XML to find process information
-            if error_details.get('worker_number'):
+            elif error_details.get('worker_number'):
                 if verbose:
                     if error_details.get('graph_name'):
                         print(f"  [VERBOSE] Fetching workunit XML to find pod/container info (graph-based search)", file=sys.stderr)
@@ -734,7 +738,7 @@ def print_summary_table(infos, show_matched=False):
 def main():
     parser = argparse.ArgumentParser(
         description='Analyze workunit details from ESP WsWorkunits service',
-        usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>] [-e <file>] [-v] [-s] [-u <user>:<pwd>]',
+        usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>] [-e <file>] [-v] [-s] [-q] [-u <user>:<pwd>]',
         epilog='''
 Examples:
   %(prog)s localhost:8010 W20240101-120000 W20240101-120001
@@ -754,6 +758,9 @@ Examples:
   
   %(prog)s localhost:8010 -f wuids.txt -re regex_patterns.txt
       Filter using regex patterns (e.g., "Graph \w+\[\d+\], WORKER #\d+.*Watchdog")
+  
+  %(prog)s localhost:8010 -f wuids.txt -re patterns.txt -q
+      Quick mode: match patterns but skip XML/postmortem analysis
   
   %(prog)s localhost:8010 -f wuids.txt --show-oom
       Show only workunits with OOM killer events
@@ -778,6 +785,9 @@ Examples:
     parser.add_argument('-s', '--summary',
                        action='store_true',
                        help='Show summary table only')
+    parser.add_argument('-q', '--quick',
+                       action='store_true',
+                       help='Quick mode: skip XML/postmortem analysis (faster for pattern matching)')
     parser.add_argument('-e', '--errors',
                        metavar='<file>',
                        help='File containing error patterns to match (one per line, substring match)')
@@ -793,6 +803,11 @@ Examples:
                        help='HTTP basic authentication credentials in format user:password')
     
     args = parser.parse_args()
+    
+    # Validate conflicting options
+    if args.quick and args.show_oom:
+        print("Error: Cannot use --quick with --show-oom (OOM detection requires full analysis)", file=sys.stderr)
+        return 1
     
     # Parse authentication credentials if provided
     auth = None
@@ -848,7 +863,7 @@ Examples:
     # Fetch information for each workunit
     infos = []
     for wuid in wuids:
-        info = get_workunit_info(args.espserver, wuid, verbose=args.verbose, auth=auth)
+        info = get_workunit_info(args.espserver, wuid, verbose=args.verbose, auth=auth, quick=args.quick)
         
         # Check for OOM if --show-oom flag is set
         has_oom = False
