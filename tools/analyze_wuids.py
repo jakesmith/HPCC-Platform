@@ -67,6 +67,7 @@ specific error types.
 import sys
 import argparse
 import requests
+from requests.auth import HTTPBasicAuth
 import json
 import re
 from urllib.parse import urljoin
@@ -95,7 +96,7 @@ def parse_error_info(error_message):
     
     return info
 
-def get_workunit_xml(esp_url, wuid):
+def get_workunit_xml(esp_url, wuid, auth=None):
     """Fetch workunit XML for parsing process information."""
     if not esp_url.startswith(('http://', 'https://')):
         esp_url = f"http://{esp_url}"
@@ -107,13 +108,13 @@ def get_workunit_xml(esp_url, wuid):
     }
     
     try:
-        response = requests.get(url, params=params, timeout=30)
+        response = requests.get(url, params=params, auth=auth, timeout=30)
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
         return None
 
-def fetch_helper_file(esp_url, wuid, filename):
+def fetch_helper_file(esp_url, wuid, filename, auth=None):
     """Fetch a helper file (like dmesg.log) from the workunit."""
     if not esp_url.startswith(('http://', 'https://')):
         esp_url = f"http://{esp_url}"
@@ -126,7 +127,7 @@ def fetch_helper_file(esp_url, wuid, filename):
     }
     
     try:
-        response = requests.get(url, params=params, timeout=30)
+        response = requests.get(url, params=params, auth=auth, timeout=30)
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
@@ -306,7 +307,7 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
     except ET.ParseError as e:
         return None
 
-def get_workunit_info(esp_url, wuid, verbose=False):
+def get_workunit_info(esp_url, wuid, verbose=False, auth=None):
     """Fetch detailed workunit information."""
     if verbose:
         print(f"  [VERBOSE] Fetching workunit info for {wuid}", file=sys.stderr)
@@ -336,7 +337,7 @@ def get_workunit_info(esp_url, wuid, verbose=False):
     }
     
     try:
-        response = requests.get(url, params=params, timeout=30)
+        response = requests.get(url, params=params, auth=auth, timeout=30)
         response.raise_for_status()
         data = response.json()
         
@@ -382,7 +383,7 @@ def get_workunit_info(esp_url, wuid, verbose=False):
                         print(f"  [VERBOSE] Fetching workunit XML to find pod/container info (graph-based search)", file=sys.stderr)
                     else:
                         print(f"  [VERBOSE] Fetching workunit XML to find pod/container info (sequence-only search)", file=sys.stderr)
-                xml_content = get_workunit_xml(esp_url, wuid)
+                xml_content = get_workunit_xml(esp_url, wuid, auth=auth)
                 worker_pod_info = find_worker_pod_info_from_xml(
                     xml_content,
                     error_details['graph_name'], 
@@ -437,7 +438,7 @@ def get_workunit_info(esp_url, wuid, verbose=False):
                     if dmesg_log_path:
                         if verbose:
                             print(f"  [VERBOSE] Checking for OOM in: {dmesg_log_path}", file=sys.stderr)
-                        dmesg_content = fetch_helper_file(esp_url, wuid, dmesg_log_path)
+                        dmesg_content = fetch_helper_file(esp_url, wuid, dmesg_log_path, auth=auth)
                         oom_info = analyze_oom_in_dmesg(dmesg_content)
                         if oom_info:
                             worker_pod_info['oom_info'] = oom_info
@@ -457,7 +458,7 @@ def get_workunit_info(esp_url, wuid, verbose=False):
                         if verbose:
                             print(f"  [VERBOSE] Checking for SIGTERM in: {last_postmortem_log}", file=sys.stderr)
                         
-                        postmortem_content = fetch_helper_file(esp_url, wuid, last_postmortem_log)
+                        postmortem_content = fetch_helper_file(esp_url, wuid, last_postmortem_log, auth=auth)
                         sigterm_info = analyze_sigterm_in_postmortem(postmortem_content)
                         if sigterm_info:
                             worker_pod_info['sigterm_info'] = sigterm_info
@@ -732,7 +733,7 @@ def print_summary_table(infos, show_matched=False):
 def main():
     parser = argparse.ArgumentParser(
         description='Analyze workunit details from ESP WsWorkunits service',
-        usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>] [-e <file>] [-v] [-s]',
+        usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>] [-e <file>] [-v] [-s] [-u <user>:<pwd>]',
         epilog='''
 Examples:
   %(prog)s localhost:8010 W20240101-120000 W20240101-120001
@@ -755,6 +756,9 @@ Examples:
   
   %(prog)s localhost:8010 -f wuids.txt --show-oom
       Show only workunits with OOM killer events
+  
+  %(prog)s localhost:8010 -f wuids.txt -u myuser:mypassword
+      Use authentication when connecting to ESP server
         ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -783,8 +787,20 @@ Examples:
     parser.add_argument('--show-oom',
                        action='store_true',
                        help='Show only workunits with OOM killer events')
+    parser.add_argument('-u', '--user',
+                       metavar='<user>:<pwd>',
+                       help='HTTP basic authentication credentials in format user:password')
     
     args = parser.parse_args()
+    
+    # Parse authentication credentials if provided
+    auth = None
+    if args.user:
+        if ':' not in args.user:
+            print("Error: Authentication credentials must be in format user:password", file=sys.stderr)
+            return 1
+        username, password = args.user.split(':', 1)
+        auth = HTTPBasicAuth(username, password)
     
     # Read error patterns if provided
     error_patterns = []
@@ -831,7 +847,7 @@ Examples:
     # Fetch information for each workunit
     infos = []
     for wuid in wuids:
-        info = get_workunit_info(args.espserver, wuid, verbose=args.verbose)
+        info = get_workunit_info(args.espserver, wuid, verbose=args.verbose, auth=auth)
         
         # Check for OOM if --show-oom flag is set
         has_oom = False
