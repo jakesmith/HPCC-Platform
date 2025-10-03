@@ -374,6 +374,7 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None):
             error_details = parse_error_info(error_msg)
             
             if verbose:
+                print(f"  [VERBOSE] Error detected: {error_msg[:100]}{'...' if len(error_msg) > 100 else ''}", file=sys.stderr)
                 print(f"  [VERBOSE] Error details: graph={error_details.get('graph_name')}, worker={error_details.get('worker_number')}", file=sys.stderr)
             
             # If we found worker info (graph is optional), fetch workunit XML to find process information
