@@ -113,6 +113,80 @@ def get_workunit_xml(esp_url, wuid):
     except requests.exceptions.RequestException as e:
         return None
 
+def fetch_helper_file(esp_url, wuid, filename):
+    """Fetch a helper file (like dmesg.log) from the workunit."""
+    if not esp_url.startswith(('http://', 'https://')):
+        esp_url = f"http://{esp_url}"
+    
+    url = f"{esp_url}/WsWorkunits/WUFile"
+    params = {
+        'Wuid': wuid,
+        'Name': filename,
+        'Type': 'postmortem'  # Required for postmortem files
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        return None
+
+def analyze_oom_in_dmesg(dmesg_content):
+    """Analyze dmesg.log for OOM killer invocations and extract memory info.
+    
+    Returns dict with 'oom_detected' (bool), 'process_killed', 'memory_info', or None
+    """
+    if not dmesg_content:
+        return None
+    
+    # Search for OOM killer invocation
+    if 'invoked oom-killer:' not in dmesg_content:
+        return {'oom_detected': False}
+    
+    result = {
+        'oom_detected': True,
+        'processes_killed': [],
+        'memory_info': {}
+    }
+    
+    lines = dmesg_content.split('\n')
+    
+    # Look for killed process information
+    for i, line in enumerate(lines):
+        # Pattern: "Memory cgroup out of memory: Killed process 12345 (process_name)"
+        # Or: "Out of memory: Killed process 12345 (process_name)"
+        if 'Killed process' in line and ('out of memory' in line.lower() or 'oom' in line.lower()):
+            match = re.search(r'Killed process\s+(\d+)\s+\(([^)]+)\)(?:.*anon-rss:(\d+)kB)?', line, re.IGNORECASE)
+            if match:
+                proc_info = {
+                    'pid': match.group(1),
+                    'name': match.group(2)
+                }
+                if match.group(3):
+                    proc_info['anon_rss_kb'] = match.group(3)
+                result['processes_killed'].append(proc_info)
+        
+        # Extract memory information from OOM killer output
+        # Look for memory statistics
+        if 'active_anon' in line or 'inactive_anon' in line:
+            # Parse memory stats line - format: "active_anon 32768"
+            match = re.search(r'(active_anon|inactive_anon)\s+(\d+)', line)
+            if match:
+                key = match.group(1)
+                value_bytes = int(match.group(2))
+                # Convert to MB for readability
+                value_mb = value_bytes / (1024 * 1024)
+                if 'memory_stats' not in result['memory_info']:
+                    result['memory_info']['memory_stats'] = {}
+                result['memory_info']['memory_stats'][key] = f"{value_mb:.1f} MB"
+        
+        # Look for MemFree or MemAvailable
+        if 'MemAvailable' in line or 'MemFree' in line:
+            result['memory_info']['mem_status'] = line.strip()
+    
+    return result
+
 def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
     """Parse workunit XML to find Thor worker pod/container info.
     
@@ -292,6 +366,7 @@ def get_workunit_info(esp_url, wuid):
                         help_files = [help_files]
                     
                     postmortem_files = []
+                    dmesg_log_path = None
                     for help_file in help_files:
                         if help_file.get('Type') == 'postmortem':
                             filename = help_file.get('Name', '')
@@ -299,8 +374,18 @@ def get_workunit_info(esp_url, wuid):
                             if pod_name in filename and container_name in filename:
                                 if f'/{pod_name}/{container_name}/' in filename:
                                     postmortem_files.append(filename)
+                                    # Track dmesg.log for OOM analysis
+                                    if filename.endswith('/dmesg.log'):
+                                        dmesg_log_path = filename
                     
                     worker_pod_info['postmortem_files'] = postmortem_files
+                    
+                    # Analyze dmesg.log for OOM killer if it exists
+                    if dmesg_log_path:
+                        dmesg_content = fetch_helper_file(esp_url, wuid, dmesg_log_path)
+                        oom_info = analyze_oom_in_dmesg(dmesg_content)
+                        if oom_info:
+                            worker_pod_info['oom_info'] = oom_info
         
         return {
             'wuid': wuid,
@@ -362,16 +447,34 @@ def read_error_patterns_from_file(filepath):
         sys.exit(1)
     return patterns
 
-def match_error_pattern(error_message, patterns):
-    """Check if error message matches any of the patterns."""
+def match_error_pattern(error_message, patterns, use_regex=False):
+    """Check if error message matches any of the patterns.
+    
+    Args:
+        error_message: The error message to check
+        patterns: List of patterns to match against
+        use_regex: If True, treat patterns as regular expressions
+    """
     if not patterns:
         return True  # No patterns means match all
     
-    error_message_lower = error_message.lower()
-    for pattern in patterns:
-        pattern_lower = pattern.lower()
-        if pattern_lower in error_message_lower:
-            return True
+    if use_regex:
+        # Use regex matching
+        for pattern in patterns:
+            try:
+                if re.search(pattern, error_message, re.IGNORECASE):
+                    return True
+            except re.error:
+                # If regex is invalid, fall back to substring match
+                if pattern.lower() in error_message.lower():
+                    return True
+    else:
+        # Use substring matching (original behavior)
+        error_message_lower = error_message.lower()
+        for pattern in patterns:
+            pattern_lower = pattern.lower()
+            if pattern_lower in error_message_lower:
+                return True
     return False
 
 def format_time(time_str):
@@ -460,6 +563,50 @@ def print_workunit_info(info, verbose=False, matched=None):
                 print(f"  Postmortem:   {len(postmortem_files)} file(s)")
                 for pm_file in postmortem_files:
                     print(f"                {pm_file}")
+            else:
+                print(f"  Postmortem:   No files found")
+            
+            # Display OOM killer information if detected
+            oom_info = worker_pod_info.get('oom_info')
+            if oom_info and oom_info.get('oom_detected'):
+                print(f"  OOM Killer:   DETECTED - Process was killed by out-of-memory killer")
+                
+                processes_killed = oom_info.get('processes_killed', [])
+                if processes_killed:
+                    # Show the main process (usually the first thorslave_lcr)
+                    main_proc = None
+                    for proc in processes_killed:
+                        if 'thorslave' in proc.get('name', '').lower():
+                            main_proc = proc
+                            break
+                    if not main_proc and processes_killed:
+                        main_proc = processes_killed[0]
+                    
+                    if main_proc:
+                        proc_name = main_proc.get('name')
+                        proc_pid = main_proc.get('pid')
+                        anon_rss = main_proc.get('anon_rss_kb')
+                        
+                        print(f"                Killed: {proc_name} (PID {proc_pid})", end='')
+                        if anon_rss:
+                            # Convert KB to GB for readability
+                            anon_rss_gb = int(anon_rss) / (1024 * 1024)
+                            print(f", RSS: {anon_rss_gb:.1f} GB", end='')
+                        print()
+                    
+                    if len(processes_killed) > 1:
+                        print(f"                Total processes killed: {len(processes_killed)}")
+                
+                mem_info = oom_info.get('memory_info', {})
+                if mem_info:
+                    mem_stats = mem_info.get('memory_stats', {})
+                    if mem_stats:
+                        if 'active_anon' in mem_stats:
+                            print(f"                Active memory: {mem_stats['active_anon']}")
+                        if 'inactive_anon' in mem_stats:
+                            print(f"                Inactive memory: {mem_stats['inactive_anon']}")
+                    elif mem_info.get('mem_status'):
+                        print(f"                {mem_info['mem_status']}")
     
     print()
 
@@ -517,7 +664,13 @@ Examples:
       Pipe WUIDs from getwuids.py
   
   %(prog)s localhost:8010 -f wuids.txt -e error_patterns.txt
-      Filter to workunits matching specific error patterns
+      Filter to workunits matching specific error patterns (substring match)
+  
+  %(prog)s localhost:8010 -f wuids.txt -re regex_patterns.txt
+      Filter using regex patterns (e.g., "Graph \w+\[\d+\], WORKER #\d+.*Watchdog")
+  
+  %(prog)s localhost:8010 -f wuids.txt --show-oom
+      Show only workunits with OOM killer events
         ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -538,16 +691,35 @@ Examples:
                        help='Show summary table only')
     parser.add_argument('-e', '--errors',
                        metavar='<file>',
-                       help='File containing error patterns to match (one per line)')
+                       help='File containing error patterns to match (one per line, substring match)')
+    parser.add_argument('-re', '--regex-errors',
+                       metavar='<file>',
+                       dest='regex_errors',
+                       help='File containing regex error patterns to match (one per line)')
+    parser.add_argument('--show-oom',
+                       action='store_true',
+                       help='Show only workunits with OOM killer events')
     
     args = parser.parse_args()
     
     # Read error patterns if provided
     error_patterns = []
+    use_regex = False
+    
+    if args.errors and args.regex_errors:
+        print("Error: Cannot specify both -e and -re at the same time. Use one or the other.", file=sys.stderr)
+        return 1
+    
     if args.errors:
         error_patterns = read_error_patterns_from_file(args.errors)
+        use_regex = False
         if not error_patterns:
             print(f"Warning: No error patterns found in {args.errors}")
+    elif args.regex_errors:
+        error_patterns = read_error_patterns_from_file(args.regex_errors)
+        use_regex = True
+        if not error_patterns:
+            print(f"Warning: No error patterns found in {args.regex_errors}")
     
     # Collect WUIDs from various sources
     wuids = []
@@ -577,22 +749,41 @@ Examples:
     for wuid in wuids:
         info = get_workunit_info(args.espserver, wuid)
         
+        # Check for OOM if --show-oom flag is set
+        has_oom = False
+        if args.show_oom:
+            worker_pod_info = info.get('worker_pod_info')
+            if worker_pod_info:
+                oom_info = worker_pod_info.get('oom_info')
+                has_oom = oom_info and oom_info.get('oom_detected')
+        
         # If error patterns specified, filter workunits and mark matched ones
         if error_patterns:
             first_error = info.get('first_error')
             if first_error:
                 error_msg = first_error.get('message', '')
-                matched = match_error_pattern(error_msg, error_patterns)
+                matched = match_error_pattern(error_msg, error_patterns, use_regex=use_regex)
                 info['matched'] = matched
                 # Only include workunits that match error patterns
                 if matched:
-                    infos.append(info)
+                    # Also apply OOM filter if requested
+                    if not args.show_oom or has_oom:
+                        infos.append(info)
             # Skip workunits without errors when filtering by patterns
+        elif args.show_oom:
+            # Only include workunits with OOM events
+            if has_oom:
+                infos.append(info)
         else:
             infos.append(info)
     
-    if error_patterns and len(infos) == 0:
-        print("No workunits matched the specified error patterns.")
+    if len(infos) == 0:
+        if error_patterns and args.show_oom:
+            print("No workunits matched the specified error patterns and had OOM events.")
+        elif error_patterns:
+            print("No workunits matched the specified error patterns.")
+        elif args.show_oom:
+            print("No workunits with OOM killer events found.")
         return 0
     
     # Display results
@@ -618,6 +809,7 @@ Examples:
     total_first_errors = 0
     wus_with_errors = 0
     matched_wus = 0
+    oom_wus = 0
     
     for info in infos:
         if info.get('error'):
@@ -634,6 +826,13 @@ Examples:
             # Count matched patterns
             if info.get('matched'):
                 matched_wus += 1
+            
+            # Count OOM events
+            worker_pod_info = info.get('worker_pod_info')
+            if worker_pod_info:
+                oom_info = worker_pod_info.get('oom_info')
+                if oom_info and oom_info.get('oom_detected'):
+                    oom_wus += 1
     
     if states:
         print("\nBy state:")
@@ -644,6 +843,8 @@ Examples:
         print(f"\nWorkunits with errors: {wus_with_errors}")
         if error_patterns:
             print(f"Workunits matching patterns: {matched_wus}")
+        if oom_wus > 0:
+            print(f"Workunits with OOM events: {oom_wus}")
     
     if errors > 0:
         print(f"\nQuery errors: {errors}")

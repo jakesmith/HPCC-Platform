@@ -97,8 +97,41 @@ def parse_wuquery_response(xml_content):
         print(f"Error parsing XML response: {e}", file=sys.stderr)
         return []
 
+def normalize_date(date_str):
+    """Normalize date string to YYYY-MM-DD format.
+    
+    Accepts:
+        YYYYMMDD -> YYYY-MM-DD
+        YYYY-MM-DD -> YYYY-MM-DD (unchanged)
+        YYYY-MM-DDTHH:MM:SS -> YYYY-MM-DDTHH:MM:SS (unchanged)
+    """
+    import re
+    
+    # If already has 'T', return as-is (datetime format)
+    if 'T' in date_str:
+        return date_str
+    
+    # If already has hyphens, return as-is
+    if '-' in date_str:
+        return date_str
+    
+    # Try to parse YYYYMMDD format
+    match = re.match(r'^(\d{4})(\d{2})(\d{2})$', date_str)
+    if match:
+        year, month, day = match.groups()
+        normalized = f"{year}-{month}-{day}"
+        print(f"Note: Converting date format {date_str} -> {normalized}", file=sys.stderr)
+        return normalized
+    
+    # Return as-is if we can't parse it (let the server error handle it)
+    return date_str
+
 def query_workunits(esp_server, start_date, end_date):
     """Query workunits from ESP server between start and end dates."""
+    
+    # Normalize date formats
+    start_date = normalize_date(start_date)
+    end_date = normalize_date(end_date)
     
     # Construct the URL for the WUQuery service
     base_url = f"http://{esp_server}"
@@ -146,6 +179,11 @@ def query_workunits(esp_server, start_date, end_date):
                     code = exc.get('Code', 'N/A')
                     message = exc.get('Message', 'Unknown error')
                     print(f"  [Code {code}] {message}", file=sys.stderr)
+                    
+                    # Provide helpful hints for common errors
+                    if 'Badly formatted date' in message or 'date/time' in message.lower():
+                        print("\nHint: Dates must be in format YYYY-MM-DD (e.g., 2024-01-15)", file=sys.stderr)
+                        print("      or YYYY-MM-DDTHH:MM:SS (e.g., 2024-01-15T14:30:00)", file=sys.stderr)
                 
                 return []
             
