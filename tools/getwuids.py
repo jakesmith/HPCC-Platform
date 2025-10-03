@@ -55,6 +55,7 @@ in a tabular format showing the WUID and state for each workunit found.
 import sys
 import argparse
 import requests
+from requests.auth import HTTPBasicAuth
 import xml.etree.ElementTree as ET
 from urllib.parse import urljoin
 
@@ -126,7 +127,7 @@ def normalize_date(date_str):
     # Return as-is if we can't parse it (let the server error handle it)
     return date_str
 
-def query_workunits(esp_server, start_date, end_date):
+def query_workunits(esp_server, start_date, end_date, auth=None):
     """Query workunits from ESP server between start and end dates."""
     
     # Normalize date formats
@@ -159,7 +160,7 @@ def query_workunits(esp_server, start_date, end_date):
         
         try:
             # Make the request
-            response = requests.get(service_url, params=params, timeout=30)
+            response = requests.get(service_url, params=params, auth=auth, timeout=30)
             response.raise_for_status()
             
             # Parse JSON response
@@ -223,7 +224,7 @@ def query_workunits(esp_server, start_date, end_date):
 def main():
     parser = argparse.ArgumentParser(
         description='Fetch workunit IDs and states from ESP WsWorkunits service',
-        usage='%(prog)s <espserver:port> <start-date> <end-date>',
+        usage='%(prog)s <espserver:port> <start-date> <end-date> [-u <user>:<pwd>]',
         epilog='''
 Examples:
   %(prog)s localhost:8010 2024-01-01 2024-01-31
@@ -234,6 +235,9 @@ Examples:
   
   %(prog)s localhost:8010 2024-01-01 2024-01-31T12:00:00
       Query from start of January 1st through noon on January 31st
+  
+  %(prog)s localhost:8010 2024-01-01 2024-01-31 -u myuser:mypassword
+      Query workunits with authentication
 
 Date/Time Formats:
   YYYY-MM-DD              Date only (start defaults to 00:00:00, end to 23:59:59)
@@ -250,11 +254,23 @@ Date/Time Formats:
     parser.add_argument('end_date', 
                        metavar='end-date',
                        help='End date/time: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS')
+    parser.add_argument('-u', '--user',
+                       metavar='<user>:<pwd>',
+                       help='HTTP basic authentication credentials in format user:password')
     
     args = parser.parse_args()
     
+    # Parse authentication credentials if provided
+    auth = None
+    if args.user:
+        if ':' not in args.user:
+            print("Error: Authentication credentials must be in format user:password", file=sys.stderr)
+            return 1
+        username, password = args.user.split(':', 1)
+        auth = HTTPBasicAuth(username, password)
+    
     # Query the workunits
-    workunits = query_workunits(args.espserver, args.start_date, args.end_date)
+    workunits = query_workunits(args.espserver, args.start_date, args.end_date, auth=auth)
     
     if not workunits:
         print("No workunits found or error occurred", file=sys.stderr)
