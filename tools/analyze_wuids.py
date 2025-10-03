@@ -122,7 +122,7 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
         worker_number: Worker sequence number as string (e.g., "118")
     
     Returns:
-        dict with pod_name, container_name, postmortem_files, or None if not found
+        dict with pod_name, container_name, or None if not found
     """
     if not xml_content:
         return None
@@ -193,27 +193,10 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
         if pod_name is None:
             return None
         
-        # Step 3: Find postmortem files for this pod/container
-        postmortem_files = []
-        query_element = root.find('.//Query')
-        if query_element is not None:
-            associated_element = query_element.find('Associated')
-            if associated_element is not None:
-                for file_element in associated_element.findall('File'):
-                    if file_element.get('type') == 'postmortem':
-                        filename = file_element.get('filename', '')
-                        # Check if filename contains both pod name and container name
-                        # Format: /path/to/<podName>/<containerName>/file
-                        if pod_name in filename and container_name in filename:
-                            # Verify the pattern is correct: podName followed by containerName
-                            if f'/{pod_name}/{container_name}/' in filename:
-                                postmortem_files.append(filename)
-        
         result = {
             'pod_name': pod_name,
             'container_name': container_name,
-            'instance_number': thor_instance_num,
-            'postmortem_files': postmortem_files
+            'instance_number': thor_instance_num
         }
         
         if note:
@@ -247,7 +230,7 @@ def get_workunit_info(esp_url, wuid):
         'IncludeXmlSchemas': 0,
         'IncludeResourceURLs': 0,
         'IncludeECL': 0,
-        'IncludeHelpers': 0,
+        'IncludeHelpers': 1,  # Include helpers to get postmortem files
         'IncludeAllowedClusters': 0,
         'SuppressResultSchemas': 1,
     }
@@ -297,6 +280,27 @@ def get_workunit_info(esp_url, wuid):
                     error_details['graph_name'], 
                     error_details['worker_number']
                 )
+                
+                # Extract postmortem files from helpers matching the pod/container
+                if worker_pod_info:
+                    pod_name = worker_pod_info.get('pod_name')
+                    container_name = worker_pod_info.get('container_name')
+                    
+                    helpers = workunit.get('Helpers', {})
+                    help_files = helpers.get('ECLHelpFile', [])
+                    if isinstance(help_files, dict):
+                        help_files = [help_files]
+                    
+                    postmortem_files = []
+                    for help_file in help_files:
+                        if help_file.get('Type') == 'postmortem':
+                            filename = help_file.get('Name', '')
+                            # Check if filename contains both pod name and container name
+                            if pod_name in filename and container_name in filename:
+                                if f'/{pod_name}/{container_name}/' in filename:
+                                    postmortem_files.append(filename)
+                    
+                    worker_pod_info['postmortem_files'] = postmortem_files
         
         return {
             'wuid': wuid,
