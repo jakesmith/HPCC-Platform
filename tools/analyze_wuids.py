@@ -122,7 +122,7 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
         worker_number: Worker sequence number as string (e.g., "118")
     
     Returns:
-        dict with pod_name, container_name, or None if not found
+        dict with pod_name, container_name, postmortem_files, or None if not found
     """
     if not xml_content:
         return None
@@ -153,47 +153,75 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
         
         # Step 2: Find ThorWorker element, then find child with matching instanceNum and sequence
         thorworker_element = root.find('.//ThorWorker')
+        pod_name = None
+        container_name = None
+        note = None
+        
         if thorworker_element is not None:
             for worker_process in thorworker_element:
                 if worker_process.get('instanceNum') == thor_instance_num:
                     sequence = worker_process.get('sequence')
                     if sequence == worker_number:
-                        return {
-                            'pod_name': worker_process.get('podName'),
-                            'container_name': worker_process.get('containerName'),
-                            'instance_number': thor_instance_num,
-                            'sequence': sequence
-                        }
+                        pod_name = worker_process.get('podName')
+                        container_name = worker_process.get('containerName')
+                        break
         
         # If exact match not found, try pod name pattern matching
-        if thorworker_element is not None:
+        if pod_name is None and thorworker_element is not None:
             for worker_process in thorworker_element:
                 if worker_process.get('instanceNum') == thor_instance_num:
-                    pod_name = worker_process.get('podName', '')
+                    pod_name_candidate = worker_process.get('podName', '')
                     
                     # Try to extract worker number from pod name pattern
                     # Common pattern: thorworker-job-...-###-...
-                    pod_worker_match = re.search(r'-(\d+)-', pod_name)
+                    pod_worker_match = re.search(r'-(\d+)-', pod_name_candidate)
                     if pod_worker_match and pod_worker_match.group(1) == worker_number:
-                        return {
-                            'pod_name': worker_process.get('podName'),
-                            'container_name': worker_process.get('containerName'),
-                            'instance_number': thor_instance_num,
-                            'note': 'Matched by pod name pattern'
-                        }
+                        pod_name = worker_process.get('podName')
+                        container_name = worker_process.get('containerName')
+                        note = 'Matched by pod name pattern'
+                        break
         
         # If still no match, return first worker for that instance
-        if thorworker_element is not None:
+        if pod_name is None and thorworker_element is not None:
             for worker_process in thorworker_element:
                 if worker_process.get('instanceNum') == thor_instance_num:
-                    return {
-                        'pod_name': worker_process.get('podName'),
-                        'container_name': worker_process.get('containerName'),
-                        'instance_number': thor_instance_num,
-                        'note': 'Approximate match - exact worker not identified'
-                    }
+                    pod_name = worker_process.get('podName')
+                    container_name = worker_process.get('containerName')
+                    note = 'Approximate match - exact worker not identified'
+                    break
         
-        return None
+        if pod_name is None:
+            return None
+        
+        # Step 3: Find postmortem files for this pod/container
+        postmortem_files = []
+        query_element = root.find('.//Query')
+        if query_element is not None:
+            associated_element = query_element.find('Associated')
+            if associated_element is not None:
+                for file_element in associated_element.findall('File'):
+                    if file_element.get('type') == 'postmortem':
+                        filename = file_element.get('filename', '')
+                        # Check if filename contains both pod name and container name
+                        # Format: /path/to/<podName>/<containerName>/file
+                        if pod_name in filename and container_name in filename:
+                            # Verify the pattern is correct: podName followed by containerName
+                            if f'/{pod_name}/{container_name}/' in filename:
+                                postmortem_files.append(filename)
+        
+        result = {
+            'pod_name': pod_name,
+            'container_name': container_name,
+            'instance_number': thor_instance_num,
+            'postmortem_files': postmortem_files
+        }
+        
+        if note:
+            result['note'] = note
+        else:
+            result['sequence'] = worker_number
+        
+        return result
         
     except ET.ParseError as e:
         return None
@@ -421,6 +449,13 @@ def print_workunit_info(info, verbose=False, matched=None):
             print(f"  Container:    {worker_pod_info.get('container_name', 'N/A')}")
             if worker_pod_info.get('note'):
                 print(f"  Note:         {worker_pod_info['note']}")
+            
+            # Display postmortem files
+            postmortem_files = worker_pod_info.get('postmortem_files', [])
+            if postmortem_files:
+                print(f"  Postmortem:   {len(postmortem_files)} file(s)")
+                for pm_file in postmortem_files:
+                    print(f"                {pm_file}")
     
     print()
 
