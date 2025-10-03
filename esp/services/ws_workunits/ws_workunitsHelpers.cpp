@@ -1265,6 +1265,9 @@ void WsWuInfo::getECLWUProcesses(IEspECLWorkunit &info, unsigned long flags)
             unsigned instanceNum = process.getPropInt("@instanceNum", NotFound);
             if (NotFound != instanceNum)
                 p->setInstanceNumber(instanceNum);
+            const char *sequence = process.queryProp("@sequence");
+            if (!isEmptyString(sequence))
+                p->setSequence(sequence);
             
             // Get graph names if present
             IPropertyTree *graphsTree = process.queryPropTree("graphs");

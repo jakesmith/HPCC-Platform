@@ -68,7 +68,137 @@ import sys
 import argparse
 import requests
 import json
+import re
 from urllib.parse import urljoin
+
+def parse_error_info(error_message):
+    """Parse graph name and worker number from error message.
+    
+    Returns dict with 'graph_name' and 'worker_number' or None if not found.
+    Examples:
+        "Graph graph30[2]" -> graph_name="graph30", subgraph="2"
+        "WORKER #118" -> worker_number="118"
+    """
+    info = {'graph_name': None, 'subgraph_id': None, 'worker_number': None}
+    
+    # Parse graph name: "Graph <graphName>[<subgraphID>]"
+    graph_match = re.search(r'Graph\s+(\w+)\[(\d+)\]', error_message, re.IGNORECASE)
+    if graph_match:
+        info['graph_name'] = graph_match.group(1)
+        info['subgraph_id'] = graph_match.group(2)
+    
+    # Parse worker number: "WORKER #<number>"
+    worker_match = re.search(r'WORKER\s+#(\d+)', error_message, re.IGNORECASE)
+    if worker_match:
+        info['worker_number'] = worker_match.group(1)
+    
+    return info
+
+def get_process_info(esp_url, wuid):
+    """Fetch process information for a workunit."""
+    if not esp_url.startswith(('http://', 'https://')):
+        esp_url = f"http://{esp_url}"
+    
+    url = f"{esp_url}/WsWorkunits/WUInfo.json"
+    params = {
+        'Wuid': wuid,
+        'IncludeProcesses': 1,
+        'IncludeExceptions': 0,
+        'IncludeGraphs': 0,
+        'IncludeSourceFiles': 0,
+        'IncludeResults': 0,
+        'IncludeVariables': 0,
+        'IncludeTimers': 0,
+        'IncludeDebugValues': 0,
+        'IncludeApplicationValues': 0,
+        'IncludeWorkflows': 0,
+        'IncludeXmlSchemas': 0,
+        'IncludeResourceURLs': 0,
+        'IncludeECL': 0,
+        'IncludeHelpers': 0,
+        'IncludeAllowedClusters': 0,
+        'SuppressResultSchemas': 1,
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        
+        workunit = data.get('WUInfoResponse', {}).get('Workunit', {})
+        process_list = workunit.get('ECLWUProcessList', {}).get('ECLWUProcess', [])
+        
+        # Handle single process returned as dict
+        if isinstance(process_list, dict):
+            process_list = [process_list]
+        
+        return process_list
+    except requests.exceptions.RequestException as e:
+        return []
+
+def find_worker_pod_info(processes, graph_name, worker_number):
+    """Find Thor worker pod/container info based on graph name and worker number.
+    
+    Returns dict with pod_name, container_name, or None if not found.
+    """
+    # Step 1: Find Thor process with the graph name to get instance number
+    thor_instance_num = None
+    for proc in processes:
+        if proc.get('Type') == 'Thor':
+            graphs = proc.get('Graphs', {})
+            graph_items = graphs.get('Item', []) if isinstance(graphs, dict) else graphs or []
+            # Handle both list and single string
+            if isinstance(graph_items, str):
+                graph_items = [graph_items]
+            
+            if graph_name in graph_items:
+                thor_instance_num = proc.get('InstanceNumber')
+                break
+    
+    if thor_instance_num is None:
+        return None
+    
+    # Step 2: Find ThorWorker with matching instance number and worker number (sequence)
+    for proc in processes:
+        if proc.get('Type') == 'ThorWorker':
+            if proc.get('InstanceNumber') == thor_instance_num:
+                # Check if sequence matches worker number
+                sequence = proc.get('Sequence', '')
+                if sequence == worker_number:
+                    return {
+                        'pod_name': proc.get('PodName'),
+                        'container_name': proc.get('ContainerName'),
+                        'instance_number': thor_instance_num,
+                        'sequence': sequence
+                    }
+    
+    # If exact match not found by sequence, try pod name pattern
+    for proc in processes:
+        if proc.get('Type') == 'ThorWorker':
+            if proc.get('InstanceNumber') == thor_instance_num:
+                pod_name = proc.get('PodName', '')
+                
+                # Try to find worker number in pod name
+                pod_worker_match = re.search(r'-(\d+)-', pod_name)
+                if pod_worker_match and pod_worker_match.group(1) == worker_number:
+                    return {
+                        'pod_name': proc.get('PodName'),
+                        'container_name': proc.get('ContainerName'),
+                        'instance_number': thor_instance_num,
+                        'note': 'Matched by pod name pattern'
+                    }
+    
+    # If exact match not found, return first worker for that instance
+    for proc in processes:
+        if proc.get('Type') == 'ThorWorker' and proc.get('InstanceNumber') == thor_instance_num:
+            return {
+                'pod_name': proc.get('PodName'),
+                'container_name': proc.get('ContainerName'),
+                'instance_number': thor_instance_num,
+                'note': 'Approximate match - exact worker not identified'
+            }
+    
+    return None
 
 def get_workunit_info(esp_url, wuid):
     """Fetch detailed workunit information."""
@@ -126,6 +256,22 @@ def get_workunit_info(esp_url, wuid):
                 first_error = exc
                 break
         
+        # Parse error message for graph/worker info and fetch process details
+        error_details = None
+        worker_pod_info = None
+        if first_error:
+            error_msg = first_error.get('message', '')
+            error_details = parse_error_info(error_msg)
+            
+            # If we found graph and worker info, fetch process information
+            if error_details.get('graph_name') and error_details.get('worker_number'):
+                processes = get_process_info(esp_url, wuid)
+                worker_pod_info = find_worker_pod_info(
+                    processes, 
+                    error_details['graph_name'], 
+                    error_details['worker_number']
+                )
+        
         return {
             'wuid': wuid,
             'state': workunit.get('State', ''),
@@ -138,7 +284,9 @@ def get_workunit_info(esp_url, wuid):
             'compile_time': workunit.get('CompileTime', ''),
             'execute_time': workunit.get('ExecuteTime', ''),
             'exceptions': exceptions,
-            'first_error': first_error
+            'first_error': first_error,
+            'error_details': error_details,
+            'worker_pod_info': worker_pod_info
         }
         
     except requests.exceptions.RequestException as e:
@@ -257,6 +405,24 @@ def print_workunit_info(info, verbose=False, matched=None):
             if column:
                 location += f", Column: {column}"
             print(location)
+        
+        # Display parsed error details and worker pod info
+        error_details = info.get('error_details')
+        if error_details:
+            if error_details.get('graph_name'):
+                print(f"  Graph:        {error_details['graph_name']}", end='')
+                if error_details.get('subgraph_id'):
+                    print(f"[{error_details['subgraph_id']}]", end='')
+                print()
+            if error_details.get('worker_number'):
+                print(f"  Worker:       #{error_details['worker_number']}")
+        
+        worker_pod_info = info.get('worker_pod_info')
+        if worker_pod_info:
+            print(f"  Pod:          {worker_pod_info.get('pod_name', 'N/A')}")
+            print(f"  Container:    {worker_pod_info.get('container_name', 'N/A')}")
+            if worker_pod_info.get('note'):
+                print(f"  Note:         {worker_pod_info['note']}")
     
     print()
 

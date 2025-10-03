@@ -347,6 +347,7 @@ ESPStruct [nil_remove] ECLWUProcess
     string PodName;           //containerized only
     string ContainerName;     //containerized only
     int    InstanceNumber(1); //containerized only
+    string Sequence;          //containerized only - worker number or other instance-specific identifier
     ESParray<string> Graphs;  //containerized only - list of graph names associated with this process instance
     string Log;               //bare metal only
     string PID;               //bare metal only
