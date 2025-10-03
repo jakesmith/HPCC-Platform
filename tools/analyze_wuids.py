@@ -70,6 +70,7 @@ import requests
 import json
 import re
 from urllib.parse import urljoin
+import xml.etree.ElementTree as ET
 
 def parse_error_info(error_message):
     """Parse graph name and worker number from error message.
@@ -94,111 +95,108 @@ def parse_error_info(error_message):
     
     return info
 
-def get_process_info(esp_url, wuid):
-    """Fetch process information for a workunit."""
+def get_workunit_xml(esp_url, wuid):
+    """Fetch workunit XML for parsing process information."""
     if not esp_url.startswith(('http://', 'https://')):
         esp_url = f"http://{esp_url}"
     
-    url = f"{esp_url}/WsWorkunits/WUInfo.json"
+    url = f"{esp_url}/WsWorkunits/WUFile"
     params = {
         'Wuid': wuid,
-        'IncludeProcesses': 1,
-        'IncludeExceptions': 0,
-        'IncludeGraphs': 0,
-        'IncludeSourceFiles': 0,
-        'IncludeResults': 0,
-        'IncludeVariables': 0,
-        'IncludeTimers': 0,
-        'IncludeDebugValues': 0,
-        'IncludeApplicationValues': 0,
-        'IncludeWorkflows': 0,
-        'IncludeXmlSchemas': 0,
-        'IncludeResourceURLs': 0,
-        'IncludeECL': 0,
-        'IncludeHelpers': 0,
-        'IncludeAllowedClusters': 0,
-        'SuppressResultSchemas': 1,
+        'Type': 'XML'
     }
     
     try:
         response = requests.get(url, params=params, timeout=30)
         response.raise_for_status()
-        data = response.json()
-        
-        workunit = data.get('WUInfoResponse', {}).get('Workunit', {})
-        process_list = workunit.get('ECLWUProcessList', {}).get('ECLWUProcess', [])
-        
-        # Handle single process returned as dict
-        if isinstance(process_list, dict):
-            process_list = [process_list]
-        
-        return process_list
+        return response.text
     except requests.exceptions.RequestException as e:
-        return []
+        return None
 
-def find_worker_pod_info(processes, graph_name, worker_number):
-    """Find Thor worker pod/container info based on graph name and worker number.
+def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
+    """Parse workunit XML to find Thor worker pod/container info.
     
-    Returns dict with pod_name, container_name, or None if not found.
+    Args:
+        xml_content: Workunit XML string
+        graph_name: Graph name to search for (e.g., "graph1")
+        worker_number: Worker sequence number as string (e.g., "118")
+    
+    Returns:
+        dict with pod_name, container_name, or None if not found
     """
-    # Step 1: Find Thor process with the graph name to get instance number
-    thor_instance_num = None
-    for proc in processes:
-        if proc.get('Type') == 'Thor':
-            graphs = proc.get('Graphs', {})
-            graph_items = graphs.get('Item', []) if isinstance(graphs, dict) else graphs or []
-            # Handle both list and single string
-            if isinstance(graph_items, str):
-                graph_items = [graph_items]
-            
-            if graph_name in graph_items:
-                thor_instance_num = proc.get('InstanceNumber')
-                break
-    
-    if thor_instance_num is None:
+    if not xml_content:
         return None
     
-    # Step 2: Find ThorWorker with matching instance number and worker number (sequence)
-    for proc in processes:
-        if proc.get('Type') == 'ThorWorker':
-            if proc.get('InstanceNumber') == thor_instance_num:
-                # Check if sequence matches worker number
-                sequence = proc.get('Sequence', '')
-                if sequence == worker_number:
+    try:
+        # Parse XML
+        root = ET.fromstring(xml_content)
+        
+        # Step 1: Find Thor element, then find child process with the graph name to get instanceNum
+        thor_instance_num = None
+        thor_element = root.find('.//Thor')
+        if thor_element is not None:
+            # Thor element contains child elements named after the cluster (e.g., <thor-nonphidelivery>)
+            for thor_process in thor_element:
+                # Check if this Thor process has the graph we're looking for
+                graphs = thor_process.find('graphs')
+                if graphs is not None:
+                    # Graphs are represented as empty elements with the graph name as tag
+                    for graph in graphs:
+                        if graph.tag == graph_name:
+                            thor_instance_num = thor_process.get('instanceNum')
+                            break
+                if thor_instance_num is not None:
+                    break
+        
+        if thor_instance_num is None:
+            return None
+        
+        # Step 2: Find ThorWorker element, then find child with matching instanceNum and sequence
+        thorworker_element = root.find('.//ThorWorker')
+        if thorworker_element is not None:
+            for worker_process in thorworker_element:
+                if worker_process.get('instanceNum') == thor_instance_num:
+                    sequence = worker_process.get('sequence')
+                    if sequence == worker_number:
+                        return {
+                            'pod_name': worker_process.get('podName'),
+                            'container_name': worker_process.get('containerName'),
+                            'instance_number': thor_instance_num,
+                            'sequence': sequence
+                        }
+        
+        # If exact match not found, try pod name pattern matching
+        if thorworker_element is not None:
+            for worker_process in thorworker_element:
+                if worker_process.get('instanceNum') == thor_instance_num:
+                    pod_name = worker_process.get('podName', '')
+                    
+                    # Try to extract worker number from pod name pattern
+                    # Common pattern: thorworker-job-...-###-...
+                    pod_worker_match = re.search(r'-(\d+)-', pod_name)
+                    if pod_worker_match and pod_worker_match.group(1) == worker_number:
+                        return {
+                            'pod_name': worker_process.get('podName'),
+                            'container_name': worker_process.get('containerName'),
+                            'instance_number': thor_instance_num,
+                            'note': 'Matched by pod name pattern'
+                        }
+        
+        # If still no match, return first worker for that instance
+        if thorworker_element is not None:
+            for worker_process in thorworker_element:
+                if worker_process.get('instanceNum') == thor_instance_num:
                     return {
-                        'pod_name': proc.get('PodName'),
-                        'container_name': proc.get('ContainerName'),
+                        'pod_name': worker_process.get('podName'),
+                        'container_name': worker_process.get('containerName'),
                         'instance_number': thor_instance_num,
-                        'sequence': sequence
+                        'note': 'Approximate match - exact worker not identified'
                     }
-    
-    # If exact match not found by sequence, try pod name pattern
-    for proc in processes:
-        if proc.get('Type') == 'ThorWorker':
-            if proc.get('InstanceNumber') == thor_instance_num:
-                pod_name = proc.get('PodName', '')
-                
-                # Try to find worker number in pod name
-                pod_worker_match = re.search(r'-(\d+)-', pod_name)
-                if pod_worker_match and pod_worker_match.group(1) == worker_number:
-                    return {
-                        'pod_name': proc.get('PodName'),
-                        'container_name': proc.get('ContainerName'),
-                        'instance_number': thor_instance_num,
-                        'note': 'Matched by pod name pattern'
-                    }
-    
-    # If exact match not found, return first worker for that instance
-    for proc in processes:
-        if proc.get('Type') == 'ThorWorker' and proc.get('InstanceNumber') == thor_instance_num:
-            return {
-                'pod_name': proc.get('PodName'),
-                'container_name': proc.get('ContainerName'),
-                'instance_number': thor_instance_num,
-                'note': 'Approximate match - exact worker not identified'
-            }
-    
-    return None
+        
+        return None
+        
+    except ET.ParseError as e:
+        return None
 
 def get_workunit_info(esp_url, wuid):
     """Fetch detailed workunit information."""
@@ -263,11 +261,11 @@ def get_workunit_info(esp_url, wuid):
             error_msg = first_error.get('message', '')
             error_details = parse_error_info(error_msg)
             
-            # If we found graph and worker info, fetch process information
+            # If we found graph and worker info, fetch workunit XML to find process information
             if error_details.get('graph_name') and error_details.get('worker_number'):
-                processes = get_process_info(esp_url, wuid)
-                worker_pod_info = find_worker_pod_info(
-                    processes, 
+                xml_content = get_workunit_xml(esp_url, wuid)
+                worker_pod_info = find_worker_pod_info_from_xml(
+                    xml_content,
                     error_details['graph_name'], 
                     error_details['worker_number']
                 )
