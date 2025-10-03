@@ -536,6 +536,9 @@ def match_error_pattern(error_message, patterns, use_regex=False):
         error_message: The error message to check
         patterns: List of patterns to match against
         use_regex: If True, treat patterns as regular expressions
+    
+    Returns:
+        The matched pattern string if a match is found, None otherwise
     """
     if not patterns:
         return True  # No patterns means match all
@@ -545,19 +548,19 @@ def match_error_pattern(error_message, patterns, use_regex=False):
         for pattern in patterns:
             try:
                 if re.search(pattern, error_message, re.IGNORECASE):
-                    return True
+                    return pattern
             except re.error:
                 # If regex is invalid, fall back to substring match
                 if pattern.lower() in error_message.lower():
-                    return True
+                    return pattern
     else:
         # Use substring matching (original behavior)
         error_message_lower = error_message.lower()
         for pattern in patterns:
             pattern_lower = pattern.lower()
             if pattern_lower in error_message_lower:
-                return True
-    return False
+                return pattern
+    return None
 
 def format_time(time_str):
     """Format time string, handling None."""
@@ -739,7 +742,7 @@ def main():
     parser = argparse.ArgumentParser(
         description='Analyze workunit details from ESP WsWorkunits service',
         usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>] [-e <file>] [-v] [-s] [-q] [-u <user>:<pwd>]',
-        epilog='''
+        epilog=r'''
 Examples:
   %(prog)s localhost:8010 W20240101-120000 W20240101-120001
       Analyze specific workunits
@@ -861,6 +864,12 @@ Examples:
     print(f"Analyzing {len(wuids)} workunit(s)...\n")
     
     # Fetch information for each workunit
+    # Initialize pattern match counters
+    pattern_counts = {}
+    if error_patterns:
+        for pattern in error_patterns:
+            pattern_counts[pattern] = 0
+    
     infos = []
     for wuid in wuids:
         info = get_workunit_info(args.espserver, wuid, verbose=args.verbose, auth=auth, quick=args.quick)
@@ -878,13 +887,17 @@ Examples:
             first_error = info.get('first_error')
             if first_error:
                 error_msg = first_error.get('message', '')
-                matched = match_error_pattern(error_msg, error_patterns, use_regex=use_regex)
-                info['matched'] = matched
-                # Only include workunits that match error patterns
-                if matched:
+                matched_pattern = match_error_pattern(error_msg, error_patterns, use_regex=use_regex)
+                if matched_pattern:
+                    info['matched'] = True
+                    info['matched_pattern'] = matched_pattern
+                    pattern_counts[matched_pattern] += 1
+                    # Only include workunits that match error patterns
                     # Also apply OOM filter if requested
                     if not args.show_oom or has_oom:
                         infos.append(info)
+                else:
+                    info['matched'] = False
             # Skip workunits without errors when filtering by patterns
         elif args.show_oom:
             # Only include workunits with OOM events
@@ -959,6 +972,14 @@ Examples:
         print(f"\nWorkunits with errors: {wus_with_errors}")
         if error_patterns:
             print(f"Workunits matching patterns: {matched_wus}")
+            
+            # Display counts for each pattern
+            print(f"\nPattern match breakdown:")
+            for pattern in error_patterns:
+                count = pattern_counts.get(pattern, 0)
+                # Truncate long patterns for display
+                display_pattern = pattern if len(pattern) <= 60 else pattern[:57] + '...'
+                print(f"  {display_pattern}: {count}")
         if oom_wus > 0:
             print(f"Workunits with OOM events: {oom_wus}")
     
