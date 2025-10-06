@@ -449,10 +449,30 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                             if verbose:
                                 print(f"  [VERBOSE] WARNING: Failed to fetch dmesg.log - OOM detection skipped", file=sys.stderr)
                         else:
+                            # Save dmesg content to file for debugging if verbose
+                            if verbose:
+                                dmesg_file = f"{wuid}.dmesg.log"
+                                try:
+                                    with open(dmesg_file, 'w') as f:
+                                        f.write(dmesg_content)
+                                    print(f"  [VERBOSE] Saved dmesg content to: {dmesg_file} ({len(dmesg_content)} bytes)", file=sys.stderr)
+                                except IOError as e:
+                                    print(f"  [VERBOSE] WARNING: Failed to save dmesg.log: {e}", file=sys.stderr)
+                            
                             oom_info = analyze_oom_in_dmesg(dmesg_content)
+                            if verbose:
+                                if oom_info is None:
+                                    print(f"  [VERBOSE] analyze_oom_in_dmesg returned None (empty content?)", file=sys.stderr)
+                                elif oom_info.get('oom_detected'):
+                                    print(f"  [VERBOSE] OOM DETECTED in dmesg - {len(oom_info.get('processes_killed', []))} processes killed", file=sys.stderr)
+                                else:
+                                    print(f"  [VERBOSE] No OOM found in dmesg (searched for 'invoked oom-killer:')", file=sys.stderr)
+                            
                             if oom_info:
                                 worker_pod_info['oom_info'] = oom_info
                                 oom_detected = oom_info.get('oom_detected', False)
+                                if verbose and oom_detected:
+                                    print(f"  [VERBOSE] OOM detected - skipping SIGTERM check", file=sys.stderr)
 
                     # If no OOM detected, check postmortem logs for SIGTERM
                     if not oom_detected and postmortem_log_files:
@@ -473,7 +493,25 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                             if verbose:
                                 print(f"  [VERBOSE] WARNING: Failed to fetch postmortem log - SIGTERM detection skipped", file=sys.stderr)
                         else:
+                            # Save postmortem content to file for debugging if verbose
+                            if verbose:
+                                postmortem_file = f"{wuid}.postmortem.log"
+                                try:
+                                    with open(postmortem_file, 'w') as f:
+                                        f.write(postmortem_content)
+                                    print(f"  [VERBOSE] Saved postmortem content to: {postmortem_file} ({len(postmortem_content)} bytes)", file=sys.stderr)
+                                except IOError as e:
+                                    print(f"  [VERBOSE] WARNING: Failed to save postmortem.log: {e}", file=sys.stderr)
+                            
                             sigterm_info = analyze_sigterm_in_postmortem(postmortem_content)
+                            if verbose:
+                                if sigterm_info is None:
+                                    print(f"  [VERBOSE] analyze_sigterm_in_postmortem returned None (empty content?)", file=sys.stderr)
+                                elif sigterm_info.get('sigterm_detected'):
+                                    print(f"  [VERBOSE] SIGTERM DETECTED in postmortem log", file=sys.stderr)
+                                else:
+                                    print(f"  [VERBOSE] No SIGTERM found in postmortem (searched for 'SIGTERM detected')", file=sys.stderr)
+                            
                             if sigterm_info:
                                 worker_pod_info['sigterm_info'] = sigterm_info
                                 worker_pod_info['sigterm_log_file'] = last_postmortem_log
