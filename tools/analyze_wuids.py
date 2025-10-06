@@ -901,24 +901,29 @@ Examples:
 
         # If error patterns specified, filter workunits and mark matched ones
         if error_patterns:
-            first_error = info.get('first_error')
-            if first_error:
-                error_msg = first_error.get('message', '')
-                matched_pattern = match_error_pattern(error_msg, error_patterns, use_regex=use_regex)
-                if matched_pattern:
-                    info['matched'] = True
-                    info['matched_pattern'] = matched_pattern
-                    pattern_counts[matched_pattern] += 1
-                    # Only include workunits that match error patterns
-                    # Also apply OOM filter if requested
-                    if not args.show_oom or has_oom:
-                        infos.append(info)
-                else:
-                    info['matched'] = False
-            # Skip workunits without errors when filtering by patterns
+            # Check if there was an error fetching this workunit
+            if info.get('error'):
+                # Always include workunits that had fetch errors so user can see the problem
+                infos.append(info)
+            else:
+                first_error = info.get('first_error')
+                if first_error:
+                    error_msg = first_error.get('message', '')
+                    matched_pattern = match_error_pattern(error_msg, error_patterns, use_regex=use_regex)
+                    if matched_pattern:
+                        info['matched'] = True
+                        info['matched_pattern'] = matched_pattern
+                        pattern_counts[matched_pattern] += 1
+                        # Only include workunits that match error patterns
+                        # Also apply OOM filter if requested
+                        if not args.show_oom or has_oom:
+                            infos.append(info)
+                    else:
+                        info['matched'] = False
+                # Skip workunits without errors when filtering by patterns
         elif args.show_oom:
-            # Only include workunits with OOM events
-            if has_oom:
+            # Always include workunits with fetch errors, or those with OOM events
+            if info.get('error') or has_oom:
                 infos.append(info)
         else:
             infos.append(info)
