@@ -131,6 +131,7 @@ def fetch_helper_file(esp_url, wuid, filename, auth=None):
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
+        # Return None on error - caller should check and handle appropriately
         return None
 
 def analyze_oom_in_dmesg(dmesg_content):
@@ -444,10 +445,14 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                         if verbose:
                             print(f"  [VERBOSE] Checking for OOM in: {dmesg_log_path}", file=sys.stderr)
                         dmesg_content = fetch_helper_file(esp_url, wuid, dmesg_log_path, auth=auth)
-                        oom_info = analyze_oom_in_dmesg(dmesg_content)
-                        if oom_info:
-                            worker_pod_info['oom_info'] = oom_info
-                            oom_detected = oom_info.get('oom_detected', False)
+                        if dmesg_content is None:
+                            if verbose:
+                                print(f"  [VERBOSE] WARNING: Failed to fetch dmesg.log - OOM detection skipped", file=sys.stderr)
+                        else:
+                            oom_info = analyze_oom_in_dmesg(dmesg_content)
+                            if oom_info:
+                                worker_pod_info['oom_info'] = oom_info
+                                oom_detected = oom_info.get('oom_detected', False)
 
                     # If no OOM detected, check postmortem logs for SIGTERM
                     if not oom_detected and postmortem_log_files:
@@ -464,10 +469,14 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                             print(f"  [VERBOSE] Checking for SIGTERM in: {last_postmortem_log}", file=sys.stderr)
 
                         postmortem_content = fetch_helper_file(esp_url, wuid, last_postmortem_log, auth=auth)
-                        sigterm_info = analyze_sigterm_in_postmortem(postmortem_content)
-                        if sigterm_info:
-                            worker_pod_info['sigterm_info'] = sigterm_info
-                            worker_pod_info['sigterm_log_file'] = last_postmortem_log
+                        if postmortem_content is None:
+                            if verbose:
+                                print(f"  [VERBOSE] WARNING: Failed to fetch postmortem log - SIGTERM detection skipped", file=sys.stderr)
+                        else:
+                            sigterm_info = analyze_sigterm_in_postmortem(postmortem_content)
+                            if sigterm_info:
+                                worker_pod_info['sigterm_info'] = sigterm_info
+                                worker_pod_info['sigterm_log_file'] = last_postmortem_log
 
         return {
             'wuid': wuid,
