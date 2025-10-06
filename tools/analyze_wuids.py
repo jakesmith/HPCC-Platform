@@ -44,13 +44,13 @@ Arguments:
 Examples:
     # Analyze specific WUIDs
     analyze_wuids.py localhost:8010 W20240101-120000 W20240101-120001
-    
+
     # Read WUIDs from a file
     analyze_wuids.py localhost:8010 -f wuids.txt
-    
+
     # Filter to specific error patterns
     analyze_wuids.py localhost:8010 -f wuids.txt -e error_patterns.txt
-    
+
     # Pipe WUIDs from another command and filter by errors
     ./getwuids.py localhost:8010 2024-01-01 2024-01-01 | tail -n +3 | awk '{print $1}' | analyze_wuids.py localhost:8010 -e errors.txt
 
@@ -75,38 +75,38 @@ import xml.etree.ElementTree as ET
 
 def parse_error_info(error_message):
     """Parse graph name and worker number from error message.
-    
+
     Returns dict with 'graph_name' and 'worker_number' or None if not found.
     Examples:
         "Graph graph30[2]" -> graph_name="graph30", subgraph="2"
         "WORKER #118" -> worker_number="118"
     """
     info = {'graph_name': None, 'subgraph_id': None, 'worker_number': None}
-    
+
     # Parse graph name: "Graph <graphName>[<subgraphID>]"
     graph_match = re.search(r'Graph\s+(\w+)\[(\d+)\]', error_message, re.IGNORECASE)
     if graph_match:
         info['graph_name'] = graph_match.group(1)
         info['subgraph_id'] = graph_match.group(2)
-    
+
     # Parse worker number: "WORKER #<number>"
     worker_match = re.search(r'WORKER\s+#(\d+)', error_message, re.IGNORECASE)
     if worker_match:
         info['worker_number'] = worker_match.group(1)
-    
+
     return info
 
 def get_workunit_xml(esp_url, wuid, auth=None):
     """Fetch workunit XML for parsing process information."""
     if not esp_url.startswith(('http://', 'https://')):
         esp_url = f"http://{esp_url}"
-    
+
     url = f"{esp_url}/WsWorkunits/WUFile"
     params = {
         'Wuid': wuid,
         'Type': 'XML'
     }
-    
+
     try:
         response = requests.get(url, params=params, auth=auth, timeout=30)
         response.raise_for_status()
@@ -118,14 +118,14 @@ def fetch_helper_file(esp_url, wuid, filename, auth=None):
     """Fetch a helper file (like dmesg.log) from the workunit."""
     if not esp_url.startswith(('http://', 'https://')):
         esp_url = f"http://{esp_url}"
-    
+
     url = f"{esp_url}/WsWorkunits/WUFile"
     params = {
         'Wuid': wuid,
         'Name': filename,
         'Type': 'postmortem'  # Required for postmortem files
     }
-    
+
     try:
         response = requests.get(url, params=params, auth=auth, timeout=30)
         response.raise_for_status()
@@ -135,24 +135,24 @@ def fetch_helper_file(esp_url, wuid, filename, auth=None):
 
 def analyze_oom_in_dmesg(dmesg_content):
     """Analyze dmesg.log for OOM killer invocations and extract memory info.
-    
+
     Returns dict with 'oom_detected' (bool), 'process_killed', 'memory_info', or None
     """
     if not dmesg_content:
         return None
-    
+
     # Search for OOM killer invocation
     if 'invoked oom-killer:' not in dmesg_content:
         return {'oom_detected': False}
-    
+
     result = {
         'oom_detected': True,
         'processes_killed': [],
         'memory_info': {}
     }
-    
+
     lines = dmesg_content.split('\n')
-    
+
     # Look for killed process information
     for i, line in enumerate(lines):
         # Pattern: "Memory cgroup out of memory: Killed process 12345 (process_name)"
@@ -167,7 +167,7 @@ def analyze_oom_in_dmesg(dmesg_content):
                 if match.group(3):
                     proc_info['anon_rss_kb'] = match.group(3)
                 result['processes_killed'].append(proc_info)
-        
+
         # Extract memory information from OOM killer output
         # Look for memory statistics
         if 'active_anon' in line or 'inactive_anon' in line:
@@ -181,45 +181,45 @@ def analyze_oom_in_dmesg(dmesg_content):
                 if 'memory_stats' not in result['memory_info']:
                     result['memory_info']['memory_stats'] = {}
                 result['memory_info']['memory_stats'][key] = f"{value_mb:.1f} MB"
-        
+
         # Look for MemFree or MemAvailable
         if 'MemAvailable' in line or 'MemFree' in line:
             result['memory_info']['mem_status'] = line.strip()
-    
+
     return result
 
 def analyze_sigterm_in_postmortem(postmortem_content):
     """Analyze postmortem log for SIGTERM signal.
-    
+
     Returns dict with 'sigterm_detected' (bool) or None
     """
     if not postmortem_content:
         return None
-    
+
     # Search for SIGTERM detection
     if 'SIGTERM detected' in postmortem_content:
         return {'sigterm_detected': True}
-    
+
     return {'sigterm_detected': False}
 
 def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
     """Parse workunit XML to find Thor worker pod/container info.
-    
+
     Args:
         xml_content: Workunit XML string
         graph_name: Graph name to search for (e.g., "graph1"), or None to skip graph matching
         worker_number: Worker sequence number as string (e.g., "118")
-    
+
     Returns:
         dict with pod_name, container_name, or None if not found
     """
     if not xml_content:
         return None
-    
+
     try:
         # Parse XML
         root = ET.fromstring(xml_content)
-        
+
         # Step 1: Find Thor element, then find child process with the graph name to get instanceNum
         thor_instance_num = None
         if graph_name:
@@ -237,13 +237,13 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
                                 break
                     if thor_instance_num is not None:
                         break
-        
+
         # Step 2: Find ThorWorker element, then find child with matching sequence (and optionally instanceNum)
         thorworker_element = root.find('.//ThorWorker')
         pod_name = None
         container_name = None
         note = None
-        
+
         if thorworker_element is not None:
             # If we have an instanceNum from graph matching, use it for more precise matching
             if thor_instance_num is not None:
@@ -263,13 +263,13 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
                         container_name = worker_process.get('containerName')
                         note = 'Matched by worker sequence only (no graph info)'
                         break
-        
+
         # If exact match not found and we have an instanceNum, try pod name pattern matching
         if pod_name is None and thor_instance_num is not None and thorworker_element is not None:
             for worker_process in thorworker_element:
                 if worker_process.get('instanceNum') == thor_instance_num:
                     pod_name_candidate = worker_process.get('podName', '')
-                    
+
                     # Try to extract worker number from pod name pattern
                     # Common pattern: thorworker-job-...-###-...
                     pod_worker_match = re.search(r'-(\d+)-', pod_name_candidate)
@@ -278,7 +278,7 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
                         container_name = worker_process.get('containerName')
                         note = 'Matched by pod name pattern'
                         break
-        
+
         # If still no match and we have an instanceNum, return first worker for that instance
         if pod_name is None and thor_instance_num is not None and thorworker_element is not None:
             for worker_process in thorworker_element:
@@ -287,23 +287,23 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
                     container_name = worker_process.get('containerName')
                     note = 'Approximate match - exact worker not identified'
                     break
-        
+
         if pod_name is None:
             return None
-        
+
         result = {
             'pod_name': pod_name,
             'container_name': container_name,
             'instance_number': thor_instance_num
         }
-        
+
         if note:
             result['note'] = note
         else:
             result['sequence'] = worker_number
-        
+
         return result
-        
+
     except ET.ParseError as e:
         return None
 
@@ -311,11 +311,11 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
     """Fetch detailed workunit information."""
     if verbose:
         print(f"  [VERBOSE] Fetching workunit info for {wuid}", file=sys.stderr)
-    
+
     # Ensure URL has protocol prefix
     if not esp_url.startswith(('http://', 'https://')):
         esp_url = f"http://{esp_url}"
-    
+
     url = f"{esp_url}/WsWorkunits/WUInfo.json"
     params = {
         'Wuid': wuid,
@@ -335,19 +335,19 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
         'IncludeAllowedClusters': 0,
         'SuppressResultSchemas': 1,
     }
-    
+
     try:
         response = requests.get(url, params=params, auth=auth, timeout=30)
         response.raise_for_status()
         data = response.json()
-        
+
         workunit = data.get('WUInfoResponse', {}).get('Workunit', {})
-        
+
         exceptions = []
         exception_list = workunit.get('Exceptions', {}).get('ECLException', [])
         if isinstance(exception_list, dict):
             exception_list = [exception_list]
-        
+
         for exc in exception_list:
             exceptions.append({
                 'severity': exc.get('Severity', ''),
@@ -358,25 +358,25 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                 'lineno': exc.get('LineNo', ''),
                 'column': exc.get('Column', '')
             })
-        
+
         # Extract first ERROR exception
         first_error = None
         for exc in exceptions:
             if exc.get('severity', '').lower() == 'error':
                 first_error = exc
                 break
-        
+
         # Parse error message for graph/worker info and fetch process details
         error_details = None
         worker_pod_info = None
         if first_error:
             error_msg = first_error.get('message', '')
             error_details = parse_error_info(error_msg)
-            
+
             if verbose:
                 print(f"  [VERBOSE] Error detected: {error_msg[:100]}{'...' if len(error_msg) > 100 else ''}", file=sys.stderr)
                 print(f"  [VERBOSE] Error details: graph={error_details.get('graph_name')}, worker={error_details.get('worker_number')}", file=sys.stderr)
-            
+
             # Skip detailed analysis in quick mode
             if quick:
                 if verbose:
@@ -391,26 +391,26 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                 xml_content = get_workunit_xml(esp_url, wuid, auth=auth)
                 worker_pod_info = find_worker_pod_info_from_xml(
                     xml_content,
-                    error_details['graph_name'], 
+                    error_details['graph_name'],
                     error_details['worker_number']
                 )
-                
+
                 if verbose:
                     if worker_pod_info:
                         print(f"  [VERBOSE] Found pod: {worker_pod_info.get('pod_name')}, container: {worker_pod_info.get('container_name')}", file=sys.stderr)
                     else:
                         print(f"  [VERBOSE] No pod/container info found in XML", file=sys.stderr)
-                
+
                 # Extract postmortem files from helpers matching the pod/container
                 if worker_pod_info:
                     pod_name = worker_pod_info.get('pod_name')
                     container_name = worker_pod_info.get('container_name')
-                    
+
                     helpers = workunit.get('Helpers', {})
                     help_files = helpers.get('ECLHelpFile', [])
                     if isinstance(help_files, dict):
                         help_files = [help_files]
-                    
+
                     postmortem_files = []
                     dmesg_log_path = None
                     postmortem_log_files = []
@@ -431,13 +431,13 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                                     # Track postmortem.*.log.* files for SIGTERM analysis
                                     elif re.search(r'/postmortem\..*\.log\.\d+$', filename):
                                         postmortem_log_files.append(filename)
-                    
+
                     worker_pod_info['postmortem_files'] = postmortem_files
-                    
+
                     # Log the postmortem directory if verbose
                     if verbose and postmortem_dir:
                         print(f"  [VERBOSE] Searching postmortem directory: {postmortem_dir}", file=sys.stderr)
-                    
+
                     # Analyze dmesg.log for OOM killer if it exists
                     oom_detected = False
                     if dmesg_log_path:
@@ -448,7 +448,7 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                         if oom_info:
                             worker_pod_info['oom_info'] = oom_info
                             oom_detected = oom_info.get('oom_detected', False)
-                    
+
                     # If no OOM detected, check postmortem logs for SIGTERM
                     if not oom_detected and postmortem_log_files:
                         # Sort postmortem log files and get the last one (largest number)
@@ -456,19 +456,19 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                         def extract_log_number(filepath):
                             match = re.search(r'\.log\.(\d+)$', filepath)
                             return int(match.group(1)) if match else -1
-                        
+
                         postmortem_log_files.sort(key=extract_log_number)
                         last_postmortem_log = postmortem_log_files[-1]
-                        
+
                         if verbose:
                             print(f"  [VERBOSE] Checking for SIGTERM in: {last_postmortem_log}", file=sys.stderr)
-                        
+
                         postmortem_content = fetch_helper_file(esp_url, wuid, last_postmortem_log, auth=auth)
                         sigterm_info = analyze_sigterm_in_postmortem(postmortem_content)
                         if sigterm_info:
                             worker_pod_info['sigterm_info'] = sigterm_info
                             worker_pod_info['sigterm_log_file'] = last_postmortem_log
-        
+
         return {
             'wuid': wuid,
             'state': workunit.get('State', ''),
@@ -485,7 +485,7 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
             'error_details': error_details,
             'worker_pod_info': worker_pod_info
         }
-        
+
     except requests.exceptions.RequestException as e:
         return {
             'wuid': wuid,
@@ -531,18 +531,18 @@ def read_error_patterns_from_file(filepath):
 
 def match_error_pattern(error_message, patterns, use_regex=False):
     """Check if error message matches any of the patterns.
-    
+
     Args:
         error_message: The error message to check
         patterns: List of patterns to match against
         use_regex: If True, treat patterns as regular expressions
-    
+
     Returns:
         The matched pattern string if a match is found, None otherwise
     """
     if not patterns:
         return True  # No patterns means match all
-    
+
     if use_regex:
         # Use regex matching
         for pattern in patterns:
@@ -575,12 +575,12 @@ def print_workunit_info(info, verbose=False, matched=None):
         print(f"  ERROR: {info['error']}")
         print()
         return
-    
+
     # Add matched indicator if pattern matching was used
     wuid_display = info['wuid']
     if matched is not None:
         wuid_display += f" {'[MATCHED]' if matched else '[NO MATCH]'}"
-    
+
     print(f"WUID: {wuid_display}")
     print(f"  State:        {info['state']}")
     print(f"  Owner:        {info['owner']}")
@@ -592,7 +592,7 @@ def print_workunit_info(info, verbose=False, matched=None):
         print(f"  Total Time:   {format_time(info['total_time'])}")
         print(f"  Compile Time: {format_time(info['compile_time'])}")
         print(f"  Execute Time: {format_time(info['execute_time'])}")
-    
+
     # Display first ERROR exception only
     first_error = info.get('first_error')
     if first_error:
@@ -603,19 +603,19 @@ def print_workunit_info(info, verbose=False, matched=None):
         filename = first_error.get('filename', '')
         line = first_error.get('line', '')
         column = first_error.get('column', '')
-        
+
         print(f"  Error:        {severity.upper()}", end='')
         if code:
             print(f" (Code {code})", end='')
         if source:
             print(f" - {source}", end='')
         print()
-        
+
         if message:
             # Indent and wrap long messages
             for msg_line in message.split('\n'):
                 print(f"                {msg_line}")
-        
+
         if filename:
             location = f"                File: {filename}"
             if line:
@@ -623,7 +623,7 @@ def print_workunit_info(info, verbose=False, matched=None):
             if column:
                 location += f", Column: {column}"
             print(location)
-        
+
         # Display parsed error details and worker pod info
         error_details = info.get('error_details')
         if error_details:
@@ -634,14 +634,14 @@ def print_workunit_info(info, verbose=False, matched=None):
                 print()
             if error_details.get('worker_number'):
                 print(f"  Worker:       #{error_details['worker_number']}")
-        
+
         worker_pod_info = info.get('worker_pod_info')
         if worker_pod_info:
             print(f"  Pod:          {worker_pod_info.get('pod_name', 'N/A')}")
             print(f"  Container:    {worker_pod_info.get('container_name', 'N/A')}")
             if worker_pod_info.get('note'):
                 print(f"  Note:         {worker_pod_info['note']}")
-            
+
             # Display postmortem files
             postmortem_files = worker_pod_info.get('postmortem_files', [])
             if postmortem_files:
@@ -650,12 +650,12 @@ def print_workunit_info(info, verbose=False, matched=None):
                     print(f"                {pm_file}")
             else:
                 print(f"  Postmortem:   No files found")
-            
+
             # Display OOM killer information if detected
             oom_info = worker_pod_info.get('oom_info')
             if oom_info and oom_info.get('oom_detected'):
                 print(f"  OOM Killer:   DETECTED - Process was killed by out-of-memory killer")
-                
+
                 processes_killed = oom_info.get('processes_killed', [])
                 if processes_killed:
                     # Show the main process (usually the first thorslave_lcr)
@@ -666,22 +666,22 @@ def print_workunit_info(info, verbose=False, matched=None):
                             break
                     if not main_proc and processes_killed:
                         main_proc = processes_killed[0]
-                    
+
                     if main_proc:
                         proc_name = main_proc.get('name')
                         proc_pid = main_proc.get('pid')
                         anon_rss = main_proc.get('anon_rss_kb')
-                        
+
                         print(f"                Killed: {proc_name} (PID {proc_pid})", end='')
                         if anon_rss:
                             # Convert KB to GB for readability
                             anon_rss_gb = int(anon_rss) / (1024 * 1024)
                             print(f", RSS: {anon_rss_gb:.1f} GB", end='')
                         print()
-                    
+
                     if len(processes_killed) > 1:
                         print(f"                Total processes killed: {len(processes_killed)}")
-                
+
                 mem_info = oom_info.get('memory_info', {})
                 if mem_info:
                     mem_stats = mem_info.get('memory_stats', {})
@@ -692,7 +692,7 @@ def print_workunit_info(info, verbose=False, matched=None):
                             print(f"                Inactive memory: {mem_stats['inactive_anon']}")
                     elif mem_info.get('mem_status'):
                         print(f"                {mem_info['mem_status']}")
-            
+
             # Display SIGTERM information if detected
             sigterm_info = worker_pod_info.get('sigterm_info')
             if sigterm_info and sigterm_info.get('sigterm_detected'):
@@ -700,7 +700,7 @@ def print_workunit_info(info, verbose=False, matched=None):
                 log_filename = sigterm_log_file.split('/')[-1] if sigterm_log_file else 'postmortem log'
                 print(f"  SIGTERM:      DETECTED - Process received SIGTERM signal")
                 print(f"                Found in: {log_filename}")
-    
+
     print()
 
 def print_summary_table(infos, show_matched=False):
@@ -711,7 +711,7 @@ def print_summary_table(infos, show_matched=False):
     headers += f" {'Error'}"
     print(headers)
     print("-" * (110 if show_matched else 100))
-    
+
     for info in infos:
         if info.get('error'):
             line = f"{info['wuid']:<20} {'ERROR':<12} {'':<15} {'':<15}"
@@ -724,12 +724,12 @@ def print_summary_table(infos, show_matched=False):
             state = info['state'][:12]
             owner = info['owner'][:15]
             cluster = info['cluster'][:15]
-            
+
             first_error = info.get('first_error')
             error_text = ""
             if first_error:
                 error_text = first_error.get('message', '')[:60]
-            
+
             line = f"{wuid:<20} {state:<12} {owner:<15} {cluster:<15}"
             if show_matched:
                 matched = info.get('matched', False)
@@ -746,34 +746,34 @@ def main():
 Examples:
   %(prog)s localhost:8010 W20240101-120000 W20240101-120001
       Analyze specific workunits
-  
+
   %(prog)s localhost:8010 -f wuids.txt
       Read WUIDs from file (one per line)
-  
+
   cat wuids.txt | %(prog)s localhost:8010
       Read WUIDs from stdin
 
   ./getwuids.py localhost:8010 2024-01-01 2024-01-01 | tail -n +3 | awk '{print $1}' | %(prog)s localhost:8010
       Pipe WUIDs from getwuids.py
-  
+
   %(prog)s localhost:8010 -f wuids.txt -e error_patterns.txt
       Filter to workunits matching specific error patterns (substring match)
-  
+
   %(prog)s localhost:8010 -f wuids.txt -re regex_patterns.txt
       Filter using regex patterns (e.g., "Graph \w+\[\d+\], WORKER #\d+.*Watchdog")
-  
+
   %(prog)s localhost:8010 -f wuids.txt -re patterns.txt -q
       Quick mode: match patterns but skip XML/postmortem analysis
-  
+
   %(prog)s localhost:8010 -f wuids.txt --show-oom
       Show only workunits with OOM killer events
-  
+
   %(prog)s localhost:8010 -f wuids.txt -u myuser:mypassword
       Use authentication when connecting to ESP server
         ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('espserver', 
+    parser.add_argument('espserver',
                        metavar='espserver:port',
                        help='ESP server address in format host:port (e.g., localhost:8010)')
     parser.add_argument('wuids',
@@ -804,14 +804,14 @@ Examples:
     parser.add_argument('-u', '--user',
                        metavar='<user>:<pwd>',
                        help='HTTP basic authentication credentials in format user:password')
-    
+
     args = parser.parse_args()
-    
+
     # Validate conflicting options
     if args.quick and args.show_oom:
         print("Error: Cannot use --quick with --show-oom (OOM detection requires full analysis)", file=sys.stderr)
         return 1
-    
+
     # Parse authentication credentials if provided
     auth = None
     if args.user:
@@ -820,15 +820,15 @@ Examples:
             return 1
         username, password = args.user.split(':', 1)
         auth = HTTPBasicAuth(username, password)
-    
+
     # Read error patterns if provided
     error_patterns = []
     use_regex = False
-    
+
     if args.errors and args.regex_errors:
         print("Error: Cannot specify both -e and -re at the same time. Use one or the other.", file=sys.stderr)
         return 1
-    
+
     if args.errors:
         error_patterns = read_error_patterns_from_file(args.errors)
         use_regex = False
@@ -839,10 +839,10 @@ Examples:
         use_regex = True
         if not error_patterns:
             print(f"Warning: No error patterns found in {args.regex_errors}")
-    
+
     # Collect WUIDs from various sources
     wuids = []
-    
+
     if args.file:
         # Read from file
         wuids = read_wuids_from_file(args.file)
@@ -856,24 +856,24 @@ Examples:
         print("Error: No WUIDs provided. Use command line arguments, -f option, or pipe from stdin.", file=sys.stderr)
         parser.print_help(sys.stderr)
         return 1
-    
+
     if not wuids:
         print("Error: No valid WUIDs found.", file=sys.stderr)
         return 1
-    
+
     print(f"Analyzing {len(wuids)} workunit(s)...\n")
-    
+
     # Fetch information for each workunit
     # Initialize pattern match counters
     pattern_counts = {}
     if error_patterns:
         for pattern in error_patterns:
             pattern_counts[pattern] = 0
-    
+
     infos = []
     for wuid in wuids:
         info = get_workunit_info(args.espserver, wuid, verbose=args.verbose, auth=auth, quick=args.quick)
-        
+
         # Check for OOM if --show-oom flag is set
         has_oom = False
         if args.show_oom:
@@ -881,7 +881,7 @@ Examples:
             if worker_pod_info:
                 oom_info = worker_pod_info.get('oom_info')
                 has_oom = oom_info and oom_info.get('oom_detected')
-        
+
         # If error patterns specified, filter workunits and mark matched ones
         if error_patterns:
             first_error = info.get('first_error')
@@ -905,7 +905,7 @@ Examples:
                 infos.append(info)
         else:
             infos.append(info)
-    
+
     if len(infos) == 0:
         if error_patterns and args.show_oom:
             print("No workunits matched the specified error patterns and had OOM events.")
@@ -914,7 +914,7 @@ Examples:
         elif args.show_oom:
             print("No workunits with OOM killer events found.")
         return 0
-    
+
     # Display results
     if args.summary:
         print_summary_table(infos, show_matched=bool(error_patterns))
@@ -922,16 +922,16 @@ Examples:
         for info in infos:
             matched = info.get('matched', False) if error_patterns else None
             print_workunit_info(info, verbose=args.verbose, matched=matched)
-        
+
         if len(infos) > 1 and not args.verbose:
             print("\n" + "=" * 100)
             print("SUMMARY")
             print("=" * 100 + "\n")
             print_summary_table(infos, show_matched=bool(error_patterns))
-    
+
     # Print statistics
     print(f"\nTotal workunits analyzed: {len(infos)}")
-    
+
     # Count by state and exceptions
     states = {}
     errors = 0
@@ -942,53 +942,53 @@ Examples:
     sigterm_wus = 0
     earliest_wuid = None
     latest_wuid = None
-    
+
     for info in infos:
         if info.get('error'):
             errors += 1
         else:
             wuid = info.get('wuid', '')
-            
+
             # Track earliest and latest WUID for date range calculation
             if wuid:
                 if earliest_wuid is None or wuid < earliest_wuid:
                     earliest_wuid = wuid
                 if latest_wuid is None or wuid > latest_wuid:
                     latest_wuid = wuid
-            
+
             state = info.get('state', 'unknown')
             states[state] = states.get(state, 0) + 1
-            
+
             # Count first ERROR exception
             if info.get('first_error'):
                 wus_with_errors += 1
                 total_first_errors += 1
-                
+
             # Count matched patterns
             if info.get('matched'):
                 matched_wus += 1
-            
+
             # Count OOM and SIGTERM events (only available when not in quick mode)
             worker_pod_info = info.get('worker_pod_info')
             if worker_pod_info:
                 oom_info = worker_pod_info.get('oom_info')
                 if oom_info and oom_info.get('oom_detected'):
                     oom_wus += 1
-                
+
                 sigterm_info = worker_pod_info.get('sigterm_info')
                 if sigterm_info and sigterm_info.get('sigterm_detected'):
                     sigterm_wus += 1
-    
+
     if states:
         print("\nBy state:")
         for state, count in sorted(states.items()):
             print(f"  {state}: {count}")
-    
+
     if wus_with_errors > 0:
         print(f"\nWorkunits with errors: {wus_with_errors}")
         if error_patterns:
             print(f"Workunits matching patterns: {matched_wus}")
-            
+
             # Display counts for each pattern
             print(f"\nPattern match breakdown:")
             for pattern in error_patterns:
@@ -996,7 +996,7 @@ Examples:
                 # Truncate long patterns for display
                 display_pattern = pattern if len(pattern) <= 60 else pattern[:57] + '...'
                 print(f"  {display_pattern}: {count}")
-        
+
         # Display OOM and SIGTERM counts (only meaningful when not in quick mode)
         if not args.quick:
             if oom_wus > 0 or sigterm_wus > 0:
@@ -1008,17 +1008,17 @@ Examples:
                         from datetime import datetime
                         earliest_date_str = earliest_wuid[1:9]  # YYYYMMDD
                         latest_date_str = latest_wuid[1:9]      # YYYYMMDD
-                        
+
                         earliest_date = datetime.strptime(earliest_date_str, '%Y%m%d')
                         latest_date = datetime.strptime(latest_date_str, '%Y%m%d')
-                        
+
                         # Calculate days in range (add 1 to include both start and end days)
                         days_in_range = (latest_date - earliest_date).days + 1
-                        
+
                         if oom_wus > 0:
                             oom_per_day = oom_wus / days_in_range
                             print(f"Workunits with OOM events: {oom_wus} (avg {oom_per_day:.2f}/day over {days_in_range} days)")
-                        
+
                         if sigterm_wus > 0:
                             sigterm_per_day = sigterm_wus / days_in_range
                             print(f"Workunits with SIGTERM events: {sigterm_wus} (avg {sigterm_per_day:.2f}/day over {days_in_range} days)")
@@ -1034,10 +1034,10 @@ Examples:
                         print(f"Workunits with OOM events: {oom_wus}")
                     if sigterm_wus > 0:
                         print(f"Workunits with SIGTERM events: {sigterm_wus}")
-    
+
     if errors > 0:
         print(f"\nQuery errors: {errors}")
-    
+
     return 0
 
 if __name__ == '__main__':

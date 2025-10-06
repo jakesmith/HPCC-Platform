@@ -40,10 +40,10 @@ Arguments:
 Examples:
     # Query by date (entire days)
     getwuids.py localhost:8010 2024-01-01 2024-01-31
-    
+
     # Query with specific times
     getwuids.py localhost:8010 2024-01-01T08:00:00 2024-01-01T17:00:00
-    
+
     # Mix date and datetime
     getwuids.py localhost:8010 2024-01-01 2024-01-31T12:00:00
 
@@ -63,15 +63,15 @@ def parse_wuquery_response(xml_content):
     """Parse WUQuery XML response and extract workunits with their states."""
     try:
         root = ET.fromstring(xml_content)
-        
+
         # Find all workunit elements in the response
         # The namespace might be present, so we need to handle both cases
         workunits = []
-        
+
         # Try with namespace-aware search
         ns = {'soap': 'http://schemas.xmlsoap.org/soap/envelope/',
               'ws': 'urn:hpccsystems:ws:wsworkunits'}
-        
+
         # Look for workunits in the response
         for wu_elem in root.findall('.//ws:ECLWorkunit', ns):
             wuid = wu_elem.find('ws:Wuid', ns)
@@ -81,7 +81,7 @@ def parse_wuquery_response(xml_content):
                     'wuid': wuid.text if wuid.text else '',
                     'state': state.text if state is not None and state.text else ''
                 })
-        
+
         # If no workunits found with namespace, try without
         if not workunits:
             for wu_elem in root.findall('.//ECLWorkunit'):
@@ -92,7 +92,7 @@ def parse_wuquery_response(xml_content):
                         'wuid': wuid.text if wuid.text else '',
                         'state': state.text if state is not None and state.text else ''
                     })
-        
+
         return workunits
     except ET.ParseError as e:
         print(f"Error parsing XML response: {e}", file=sys.stderr)
@@ -100,22 +100,22 @@ def parse_wuquery_response(xml_content):
 
 def normalize_date(date_str):
     """Normalize date string to YYYY-MM-DD format.
-    
+
     Accepts:
         YYYYMMDD -> YYYY-MM-DD
         YYYY-MM-DD -> YYYY-MM-DD (unchanged)
         YYYY-MM-DDTHH:MM:SS -> YYYY-MM-DDTHH:MM:SS (unchanged)
     """
     import re
-    
+
     # If already has 'T', return as-is (datetime format)
     if 'T' in date_str:
         return date_str
-    
+
     # If already has hyphens, return as-is
     if '-' in date_str:
         return date_str
-    
+
     # Try to parse YYYYMMDD format
     match = re.match(r'^(\d{4})(\d{2})(\d{2})$', date_str)
     if match:
@@ -123,37 +123,37 @@ def normalize_date(date_str):
         normalized = f"{year}-{month}-{day}"
         print(f"Note: Converting date format {date_str} -> {normalized}", file=sys.stderr)
         return normalized
-    
+
     # Return as-is if we can't parse it (let the server error handle it)
     return date_str
 
 def query_workunits(esp_server, start_date, end_date, auth=None):
     """Query workunits from ESP server between start and end dates."""
-    
+
     # Normalize date formats
     start_date = normalize_date(start_date)
     end_date = normalize_date(end_date)
-    
+
     # Construct the URL for the WUQuery service
     # Ensure URL has protocol prefix
     if not esp_server.startswith(('http://', 'https://')):
         base_url = f"http://{esp_server}"
     else:
         base_url = esp_server
-    
+
     service_url = urljoin(base_url, "/WsWorkunits/WUQuery.json")
-    
+
     # Convert date strings to datetime format required by WUQuery
     # WUQuery expects ISO 8601 datetime format (YYYY-MM-DDTHH:MM:SS)
     if 'T' not in start_date:
         start_date = f"{start_date}T00:00:00"
     if 'T' not in end_date:
         end_date = f"{end_date}T23:59:59"
-    
+
     all_workunits = []
     page_start_from = 0
     page_size = 500  # Increase page size to reduce number of requests
-    
+
     while True:
         # Build query parameters
         params = {
@@ -162,68 +162,68 @@ def query_workunits(esp_server, start_date, end_date, auth=None):
             'PageSize': page_size,
             'PageStartFrom': page_start_from
         }
-        
+
         try:
             # Make the request
             response = requests.get(service_url, params=params, auth=auth, timeout=30)
             response.raise_for_status()
-            
+
             # Parse JSON response
             data = response.json()
-            
+
             # Check for exceptions in the response
             if 'Exceptions' in data:
                 exceptions = data['Exceptions']
                 print("Error response from ESP server:", file=sys.stderr)
-                
+
                 # Handle both single exception and array of exceptions
                 exception_list = exceptions.get('Exception', [])
                 if isinstance(exception_list, dict):
                     exception_list = [exception_list]
-                
+
                 for exc in exception_list:
                     code = exc.get('Code', 'N/A')
                     message = exc.get('Message', 'Unknown error')
                     print(f"  [Code {code}] {message}", file=sys.stderr)
-                    
+
                     # Provide helpful hints for common errors
                     if 'Badly formatted date' in message or 'date/time' in message.lower():
                         print("\nHint: Dates must be in format YYYY-MM-DD (e.g., 2024-01-15)", file=sys.stderr)
                         print("      or YYYY-MM-DDTHH:MM:SS (e.g., 2024-01-15T14:30:00)", file=sys.stderr)
-                
+
                 return []
-            
+
             # Extract workunits from JSON response
             wu_response = data.get('WUQueryResponse', {})
             wu_list = wu_response.get('Workunits', {}).get('ECLWorkunit', [])
-            
+
             # Handle case where single workunit is returned as dict instead of list
             if isinstance(wu_list, dict):
                 wu_list = [wu_list]
-            
+
             # Add workunits from this page
             for wu in wu_list:
                 all_workunits.append({
                     'wuid': wu.get('Wuid', ''),
                     'state': wu.get('State', '')
                 })
-            
+
             # Check if there are more results
             num_wus = wu_response.get('NumWUs', 0)
             if not wu_list or len(all_workunits) >= num_wus:
                 # No more results
                 break
-            
+
             # Move to next page
             page_start_from += len(wu_list)
-            
+
         except requests.exceptions.RequestException as e:
             print(f"Error connecting to ESP server: {e}", file=sys.stderr)
             return []
         except (KeyError, ValueError) as e:
             print(f"Error parsing response: {e}", file=sys.stderr)
             return []
-    
+
     return all_workunits
 
 def main():
@@ -234,13 +234,13 @@ def main():
 Examples:
   %(prog)s localhost:8010 2024-01-01 2024-01-31
       Query workunits from January 1st through January 31st, 2024
-  
+
   %(prog)s localhost:8010 2024-01-01T08:00:00 2024-01-01T17:00:00
       Query workunits from 8 AM to 5 PM on January 1st, 2024
-  
+
   %(prog)s localhost:8010 2024-01-01 2024-01-31T12:00:00
       Query from start of January 1st through noon on January 31st
-  
+
   %(prog)s localhost:8010 2024-01-01 2024-01-31 -u myuser:mypassword
       Query workunits with authentication
 
@@ -250,21 +250,21 @@ Date/Time Formats:
         ''',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('espserver', 
+    parser.add_argument('espserver',
                        metavar='espserver:port',
                        help='ESP server address in format host:port (e.g., localhost:8010)')
-    parser.add_argument('start_date', 
+    parser.add_argument('start_date',
                        metavar='start-date',
                        help='Start date/time: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS')
-    parser.add_argument('end_date', 
+    parser.add_argument('end_date',
                        metavar='end-date',
                        help='End date/time: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS')
     parser.add_argument('-u', '--user',
                        metavar='<user>:<pwd>',
                        help='HTTP basic authentication credentials in format user:password')
-    
+
     args = parser.parse_args()
-    
+
     # Parse authentication credentials if provided
     auth = None
     if args.user:
@@ -273,28 +273,28 @@ Date/Time Formats:
             return 1
         username, password = args.user.split(':', 1)
         auth = HTTPBasicAuth(username, password)
-    
+
     # Query the workunits
     workunits = query_workunits(args.espserver, args.start_date, args.end_date, auth=auth)
-    
+
     if not workunits:
         print("No workunits found or error occurred", file=sys.stderr)
         return 1
-    
+
     # Print results
     try:
         print(f"{'WUID':<20} {'State'}")
         print("-" * 50)
         for wu in workunits:
             print(f"{wu['wuid']:<20} {wu['state']}")
-        
+
         print(f"\nTotal workunits: {len(workunits)}")
     except BrokenPipeError:
         # Handle pipe being closed (e.g., when piping to head)
         # Suppress the error and exit cleanly
         sys.stderr.close()
         pass
-    
+
     return 0
 
 if __name__ == '__main__':
