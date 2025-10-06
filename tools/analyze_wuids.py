@@ -96,7 +96,7 @@ def parse_error_info(error_message):
 
     return info
 
-def get_workunit_xml(esp_url, wuid, auth=None):
+def get_workunit_xml(esp_url, wuid, auth=None, verbose=False):
     """Fetch workunit XML for parsing process information."""
     if not esp_url.startswith(('http://', 'https://')):
         esp_url = f"http://{esp_url}"
@@ -112,6 +112,8 @@ def get_workunit_xml(esp_url, wuid, auth=None):
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
+        if verbose:
+            print(f"  [VERBOSE] ERROR fetching workunit XML: {e}", file=sys.stderr)
         return None
 
 def fetch_helper_file(esp_url, wuid, filename, auth=None, verbose=False):
@@ -310,10 +312,13 @@ def find_worker_pod_info_from_xml(xml_content, graph_name, worker_number):
     except ET.ParseError as e:
         return None
 
-def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
+def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False, stop_on_error=False):
     """Fetch detailed workunit information."""
     if verbose:
         print(f"  [VERBOSE] Fetching workunit info for {wuid}", file=sys.stderr)
+
+    # Track processing errors for this workunit
+    processing_errors = []
 
     # Ensure URL has protocol prefix
     if not esp_url.startswith(('http://', 'https://')):
@@ -391,18 +396,30 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                         print(f"  [VERBOSE] Fetching workunit XML to find pod/container info (graph-based search)", file=sys.stderr)
                     else:
                         print(f"  [VERBOSE] Fetching workunit XML to find pod/container info (sequence-only search)", file=sys.stderr)
-                xml_content = get_workunit_xml(esp_url, wuid, auth=auth)
-                worker_pod_info = find_worker_pod_info_from_xml(
-                    xml_content,
-                    error_details['graph_name'],
-                    error_details['worker_number']
-                )
+                
+                xml_content = get_workunit_xml(esp_url, wuid, auth=auth, verbose=verbose)
+                if xml_content is None:
+                    error_msg = "Failed to fetch workunit XML"
+                    processing_errors.append(error_msg)
+                    if verbose:
+                        print(f"  [VERBOSE] ERROR: {error_msg}", file=sys.stderr)
+                    if stop_on_error:
+                        print(f"ERROR: {wuid}: {error_msg}", file=sys.stderr)
+                        sys.exit(1)
+                else:
+                    worker_pod_info = find_worker_pod_info_from_xml(
+                        xml_content,
+                        error_details['graph_name'],
+                        error_details['worker_number']
+                    )
 
-                if verbose:
-                    if worker_pod_info:
-                        print(f"  [VERBOSE] Found pod: {worker_pod_info.get('pod_name')}, container: {worker_pod_info.get('container_name')}", file=sys.stderr)
-                    else:
-                        print(f"  [VERBOSE] No pod/container info found in XML", file=sys.stderr)
+                    if verbose:
+                        if worker_pod_info:
+                            print(f"  [VERBOSE] Found pod: {worker_pod_info.get('pod_name')}, container: {worker_pod_info.get('container_name')}", file=sys.stderr)
+                        else:
+                            error_msg = "No pod/container info found in XML"
+                            print(f"  [VERBOSE] WARNING: {error_msg}", file=sys.stderr)
+                            processing_errors.append(error_msg)
 
                 # Extract postmortem files from helpers matching the pod/container
                 if worker_pod_info:
@@ -437,6 +454,13 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
 
                     worker_pod_info['postmortem_files'] = postmortem_files
 
+                    # Check if we found any postmortem files
+                    if not postmortem_files:
+                        error_msg = f"No postmortem files found for pod {pod_name}, container {container_name}"
+                        processing_errors.append(error_msg)
+                        if verbose:
+                            print(f"  [VERBOSE] WARNING: {error_msg}", file=sys.stderr)
+
                     # Log the postmortem directory if verbose
                     if verbose and postmortem_dir:
                         print(f"  [VERBOSE] Searching postmortem directory: {postmortem_dir}", file=sys.stderr)
@@ -448,8 +472,13 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                             print(f"  [VERBOSE] Checking for OOM in: {dmesg_log_path}", file=sys.stderr)
                         dmesg_content = fetch_helper_file(esp_url, wuid, dmesg_log_path, auth=auth, verbose=verbose)
                         if dmesg_content is None:
+                            error_msg = "Failed to fetch dmesg.log"
+                            processing_errors.append(error_msg)
                             if verbose:
-                                print(f"  [VERBOSE] WARNING: Failed to fetch dmesg.log - OOM detection skipped", file=sys.stderr)
+                                print(f"  [VERBOSE] WARNING: {error_msg} - OOM detection skipped", file=sys.stderr)
+                            if stop_on_error:
+                                print(f"ERROR: {wuid}: {error_msg}", file=sys.stderr)
+                                sys.exit(1)
                         else:
                             # Save dmesg content to file for debugging if verbose
                             if verbose:
@@ -492,8 +521,13 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
 
                         postmortem_content = fetch_helper_file(esp_url, wuid, last_postmortem_log, auth=auth, verbose=verbose)
                         if postmortem_content is None:
+                            error_msg = "Failed to fetch postmortem log"
+                            processing_errors.append(error_msg)
                             if verbose:
-                                print(f"  [VERBOSE] WARNING: Failed to fetch postmortem log - SIGTERM detection skipped", file=sys.stderr)
+                                print(f"  [VERBOSE] WARNING: {error_msg} - SIGTERM detection skipped", file=sys.stderr)
+                            if stop_on_error:
+                                print(f"ERROR: {wuid}: {error_msg}", file=sys.stderr)
+                                sys.exit(1)
                         else:
                             # Save postmortem content to file for debugging if verbose
                             if verbose:
@@ -532,21 +566,43 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
             'exceptions': exceptions,
             'first_error': first_error,
             'error_details': error_details,
-            'worker_pod_info': worker_pod_info
+            'worker_pod_info': worker_pod_info,
+            'processing_errors': processing_errors if processing_errors else None
         }
 
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
             print(f"ERROR: Authentication failed for {wuid}. Please check your credentials (-u user:password).", file=sys.stderr)
             sys.exit(1)
+        error_msg = f"HTTP error {e.response.status_code}: {e}"
+        if stop_on_error:
+            print(f"ERROR: {wuid}: {error_msg}", file=sys.stderr)
+            sys.exit(1)
         return {
             'wuid': wuid,
-            'error': f"HTTP error {e.response.status_code}: {e}"
+            'error': error_msg
         }
     except requests.exceptions.RequestException as e:
+        error_msg = f"Failed to fetch workunit info: {e}"
+        if stop_on_error:
+            print(f"ERROR: {wuid}: {error_msg}", file=sys.stderr)
+            sys.exit(1)
         return {
             'wuid': wuid,
-            'error': f"Failed to fetch workunit info: {e}"
+            'error': error_msg
+        }
+    except Exception as e:
+        error_msg = f"Script failed: {e}"
+        processing_errors.append(error_msg)
+        if verbose:
+            print(f"  [VERBOSE] ERROR: {error_msg}", file=sys.stderr)
+        if stop_on_error:
+            print(f"ERROR: {wuid}: {error_msg}", file=sys.stderr)
+            sys.exit(1)
+        return {
+            'wuid': wuid,
+            'error': error_msg,
+            'processing_errors': processing_errors if processing_errors else None
         }
 
 def read_wuids_from_file(filepath):
@@ -649,6 +705,11 @@ def print_workunit_info(info, verbose=False, matched=None):
         print(f"  Total Time:   {format_time(info['total_time'])}")
         print(f"  Compile Time: {format_time(info['compile_time'])}")
         print(f"  Execute Time: {format_time(info['execute_time'])}")
+
+    # Display processing errors if any
+    processing_errors = info.get('processing_errors')
+    if processing_errors:
+        print(f"  WUID: {info['wuid']}: {', '.join(processing_errors)}")
 
     # Display first ERROR exception only
     first_error = info.get('first_error')
@@ -798,7 +859,7 @@ def print_summary_table(infos, show_matched=False):
 def main():
     parser = argparse.ArgumentParser(
         description='Analyze workunit details from ESP WsWorkunits service',
-        usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>] [-e <file>] [-re <file>] [-v] [-s] [-q] [-u <user>:<pwd>]',
+        usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>] [-e <file>] [-re <file>] [-v] [-s] [-q] [--stop-on-error] [-u <user>:<pwd>]',
         epilog=r'''
 Examples:
   %(prog)s localhost:8010 W20240101-120000 W20240101-120001
@@ -845,6 +906,9 @@ Examples:
     parser.add_argument('-s', '--summary',
                        action='store_true',
                        help='Show summary table only')
+    parser.add_argument('--stop-on-error',
+                       action='store_true',
+                       help='Stop processing on any error')
     parser.add_argument('-q', '--quick',
                        action='store_true',
                        help='Quick mode: skip XML/postmortem analysis (faster for pattern matching)')
@@ -929,7 +993,7 @@ Examples:
 
     infos = []
     for wuid in wuids:
-        info = get_workunit_info(args.espserver, wuid, verbose=args.verbose, auth=auth, quick=args.quick)
+        info = get_workunit_info(args.espserver, wuid, verbose=args.verbose, auth=auth, quick=args.quick, stop_on_error=args.stop_on_error)
 
         # Check for OOM if --show-oom flag is set
         has_oom = False
@@ -1002,6 +1066,7 @@ Examples:
     matched_wus = 0
     oom_wus = 0
     sigterm_wus = 0
+    processing_errors_count = 0
     earliest_wuid = None
     latest_wuid = None
 
@@ -1029,6 +1094,10 @@ Examples:
             # Count matched patterns
             if info.get('matched'):
                 matched_wus += 1
+
+            # Count processing errors
+            if info.get('processing_errors'):
+                processing_errors_count += 1
 
             # Count OOM and SIGTERM events (only available when not in quick mode)
             worker_pod_info = info.get('worker_pod_info')
@@ -1099,6 +1168,9 @@ Examples:
 
     if errors > 0:
         print(f"\nQuery errors: {errors}")
+
+    if processing_errors_count > 0:
+        print(f"Workunits with processing errors: {processing_errors_count}")
 
     return 0
 
