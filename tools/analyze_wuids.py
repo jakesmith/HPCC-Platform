@@ -464,7 +464,7 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                             print(f"  [VERBOSE] Checking for SIGTERM in: {last_postmortem_log}", file=sys.stderr)
                         
                         postmortem_content = fetch_helper_file(esp_url, wuid, last_postmortem_log, auth=auth)
-                        sigterm_info = analyze_sigterm_in_postmortem(postmortem_content)
+                        sigterm_info = analyze_sigtermz_in_postmortem(postmortem_content)
                         if sigterm_info:
                             worker_pod_info['sigterm_info'] = sigterm_info
                             worker_pod_info['sigterm_log_file'] = last_postmortem_log
