@@ -217,6 +217,12 @@ def query_workunits(esp_server, start_date, end_date, auth=None):
             # Move to next page
             page_start_from += len(wu_list)
 
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401:
+                print(f"ERROR: Authentication failed. Please check your credentials (-u user:password).", file=sys.stderr)
+                sys.exit(1)
+            print(f"HTTP error {e.response.status_code}: {e}", file=sys.stderr)
+            return []
         except requests.exceptions.RequestException as e:
             print(f"Error connecting to ESP server: {e}", file=sys.stderr)
             return []

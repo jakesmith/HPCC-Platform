@@ -486,6 +486,14 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
             'worker_pod_info': worker_pod_info
         }
 
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 401:
+            print(f"ERROR: Authentication failed for {wuid}. Please check your credentials (-u user:password).", file=sys.stderr)
+            sys.exit(1)
+        return {
+            'wuid': wuid,
+            'error': f"HTTP error {e.response.status_code}: {e}"
+        }
     except requests.exceptions.RequestException as e:
         return {
             'wuid': wuid,
@@ -741,7 +749,7 @@ def print_summary_table(infos, show_matched=False):
 def main():
     parser = argparse.ArgumentParser(
         description='Analyze workunit details from ESP WsWorkunits service',
-        usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>] [-e <file>] [-v] [-s] [-q] [-u <user>:<pwd>]',
+        usage='%(prog)s <espserver:port> [<wuid1> <wuid2> ...] [-f <file>] [-e <file>] [-re <file>] [-v] [-s] [-q] [-u <user>:<pwd>]',
         epilog=r'''
 Examples:
   %(prog)s localhost:8010 W20240101-120000 W20240101-120001
