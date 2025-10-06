@@ -114,7 +114,7 @@ def get_workunit_xml(esp_url, wuid, auth=None):
     except requests.exceptions.RequestException as e:
         return None
 
-def fetch_helper_file(esp_url, wuid, filename, auth=None):
+def fetch_helper_file(esp_url, wuid, filename, auth=None, verbose=False):
     """Fetch a helper file (like dmesg.log) from the workunit."""
     if not esp_url.startswith(('http://', 'https://')):
         esp_url = f"http://{esp_url}"
@@ -131,7 +131,9 @@ def fetch_helper_file(esp_url, wuid, filename, auth=None):
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
-        # Return None on error - caller should check and handle appropriately
+        # Log the error if verbose mode is enabled
+        if verbose:
+            print(f"  [VERBOSE] ERROR fetching {filename}: {e}", file=sys.stderr)
         return None
 
 def analyze_oom_in_dmesg(dmesg_content):
@@ -444,7 +446,7 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                     if dmesg_log_path:
                         if verbose:
                             print(f"  [VERBOSE] Checking for OOM in: {dmesg_log_path}", file=sys.stderr)
-                        dmesg_content = fetch_helper_file(esp_url, wuid, dmesg_log_path, auth=auth)
+                        dmesg_content = fetch_helper_file(esp_url, wuid, dmesg_log_path, auth=auth, verbose=verbose)
                         if dmesg_content is None:
                             if verbose:
                                 print(f"  [VERBOSE] WARNING: Failed to fetch dmesg.log - OOM detection skipped", file=sys.stderr)
@@ -488,7 +490,7 @@ def get_workunit_info(esp_url, wuid, verbose=False, auth=None, quick=False):
                         if verbose:
                             print(f"  [VERBOSE] Checking for SIGTERM in: {last_postmortem_log}", file=sys.stderr)
 
-                        postmortem_content = fetch_helper_file(esp_url, wuid, last_postmortem_log, auth=auth)
+                        postmortem_content = fetch_helper_file(esp_url, wuid, last_postmortem_log, auth=auth, verbose=verbose)
                         if postmortem_content is None:
                             if verbose:
                                 print(f"  [VERBOSE] WARNING: Failed to fetch postmortem log - SIGTERM detection skipped", file=sys.stderr)
