@@ -940,11 +940,22 @@ Examples:
     matched_wus = 0
     oom_wus = 0
     sigterm_wus = 0
+    earliest_wuid = None
+    latest_wuid = None
     
     for info in infos:
         if info.get('error'):
             errors += 1
         else:
+            wuid = info.get('wuid', '')
+            
+            # Track earliest and latest WUID for date range calculation
+            if wuid:
+                if earliest_wuid is None or wuid < earliest_wuid:
+                    earliest_wuid = wuid
+                if latest_wuid is None or wuid > latest_wuid:
+                    latest_wuid = wuid
+            
             state = info.get('state', 'unknown')
             states[state] = states.get(state, 0) + 1
             
@@ -988,10 +999,41 @@ Examples:
         
         # Display OOM and SIGTERM counts (only meaningful when not in quick mode)
         if not args.quick:
-            if oom_wus > 0:
-                print(f"Workunits with OOM events: {oom_wus}")
-            if sigterm_wus > 0:
-                print(f"Workunits with SIGTERM events: {sigterm_wus}")
+            if oom_wus > 0 or sigterm_wus > 0:
+                # Calculate date range from WUIDs for rate calculation
+                if earliest_wuid and latest_wuid:
+                    # WUID format: W{YYYYMMDD}-{HHMMSS}
+                    # Extract date portion (characters 1-9, e.g., "20240101" from "W20240101-120000")
+                    try:
+                        from datetime import datetime
+                        earliest_date_str = earliest_wuid[1:9]  # YYYYMMDD
+                        latest_date_str = latest_wuid[1:9]      # YYYYMMDD
+                        
+                        earliest_date = datetime.strptime(earliest_date_str, '%Y%m%d')
+                        latest_date = datetime.strptime(latest_date_str, '%Y%m%d')
+                        
+                        # Calculate days in range (add 1 to include both start and end days)
+                        days_in_range = (latest_date - earliest_date).days + 1
+                        
+                        if oom_wus > 0:
+                            oom_per_day = oom_wus / days_in_range
+                            print(f"Workunits with OOM events: {oom_wus} (avg {oom_per_day:.2f}/day over {days_in_range} days)")
+                        
+                        if sigterm_wus > 0:
+                            sigterm_per_day = sigterm_wus / days_in_range
+                            print(f"Workunits with SIGTERM events: {sigterm_wus} (avg {sigterm_per_day:.2f}/day over {days_in_range} days)")
+                    except (ValueError, IndexError) as e:
+                        # Fallback if WUID format is unexpected
+                        if oom_wus > 0:
+                            print(f"Workunits with OOM events: {oom_wus}")
+                        if sigterm_wus > 0:
+                            print(f"Workunits with SIGTERM events: {sigterm_wus}")
+                else:
+                    # No valid WUIDs for date range calculation
+                    if oom_wus > 0:
+                        print(f"Workunits with OOM events: {oom_wus}")
+                    if sigterm_wus > 0:
+                        print(f"Workunits with SIGTERM events: {sigterm_wus}")
     
     if errors > 0:
         print(f"\nQuery errors: {errors}")
