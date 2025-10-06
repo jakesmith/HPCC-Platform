@@ -188,7 +188,7 @@ def analyze_oom_in_dmesg(dmesg_content):
     
     return result
 
-def analyze_sigterm_in_postmortem(postmortem_content):
+def analyze_sigtermz_in_postmortem(postmortem_content):
     """Analyze postmortem log for SIGTERM signal.
     
     Returns dict with 'sigterm_detected' (bool) or None
@@ -939,6 +939,7 @@ Examples:
     wus_with_errors = 0
     matched_wus = 0
     oom_wus = 0
+    sigterm_wus = 0
     
     for info in infos:
         if info.get('error'):
@@ -956,12 +957,16 @@ Examples:
             if info.get('matched'):
                 matched_wus += 1
             
-            # Count OOM events
+            # Count OOM and SIGTERM events (only available when not in quick mode)
             worker_pod_info = info.get('worker_pod_info')
             if worker_pod_info:
                 oom_info = worker_pod_info.get('oom_info')
                 if oom_info and oom_info.get('oom_detected'):
                     oom_wus += 1
+                
+                sigterm_info = worker_pod_info.get('sigterm_info')
+                if sigterm_info and sigterm_info.get('sigterm_detected'):
+                    sigterm_wus += 1
     
     if states:
         print("\nBy state:")
@@ -980,8 +985,13 @@ Examples:
                 # Truncate long patterns for display
                 display_pattern = pattern if len(pattern) <= 60 else pattern[:57] + '...'
                 print(f"  {display_pattern}: {count}")
-        if oom_wus > 0:
-            print(f"Workunits with OOM events: {oom_wus}")
+        
+        # Display OOM and SIGTERM counts (only meaningful when not in quick mode)
+        if not args.quick:
+            if oom_wus > 0:
+                print(f"Workunits with OOM events: {oom_wus}")
+            if sigterm_wus > 0:
+                print(f"Workunits with SIGTERM events: {sigterm_wus}")
     
     if errors > 0:
         print(f"\nQuery errors: {errors}")
