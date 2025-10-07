@@ -3070,12 +3070,16 @@ Add ServiceAccount-specific labels to pods
 Pass in dict with .root and .serviceAccount (e.g., "default", "agent", "thoragent", "esp-service", "dali")
 */}}
 {{- define "hpcc.addServiceAccountLabels" -}}
+{{- if and .root .root.Values -}}
+{{- if hasKey .root.Values "global" -}}
 {{- if hasKey .root.Values.global "serviceAccounts" -}}
 {{- if hasKey .root.Values.global.serviceAccounts .serviceAccount -}}
 {{- $saConfig := index .root.Values.global.serviceAccounts .serviceAccount -}}
 {{- if hasKey $saConfig "podLabels" -}}
 {{- range $key, $value := $saConfig.podLabels }}
 {{ $key }}: {{ $value | quote }}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
