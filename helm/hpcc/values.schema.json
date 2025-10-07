@@ -5,7 +5,7 @@
     "global": {
       "$ref": "#/definitions/global"
     },
-    "security": {
+    "security" : {
       "$ref": "#/definitions/security"
     },
     "placements": {
@@ -15,10 +15,8 @@
         "properties": {
           "pods": {
             "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
+            "items": { "type": "string" }
+           },
           "placement": {
             "$ref": "#/definitions/placement"
           }
@@ -156,48 +154,36 @@
     "bundles": {
       "description": "bundles",
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/bundle"
-      }
+      "items": { "$ref": "#/definitions/bundle" }
     },
     "dali": {
       "description": "dali process",
       "type": "array",
       "minItems": 0,
       "maxItems": 1,
-      "items": {
-        "$ref": "#/definitions/dali"
-      }
+      "items": { "$ref": "#/definitions/dali" }
     },
     "eclccserver": {
       "description": "eclccserver process",
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/eclccserver"
-      }
+      "items": { "$ref": "#/definitions/eclccserver" }
     },
     "eclscheduler": {
       "description": "eclscheduler process",
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/eclscheduler"
-      }
+      "items": { "$ref": "#/definitions/eclscheduler" }
     },
     "esp": {
       "description": "esp process",
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/esp"
-      }
+      "items": { "$ref": "#/definitions/esp" }
     },
     "eclagent": {
       "description": "eclagent process",
       "type": "array",
       "items": {
         "allOf": [
-          {
-            "$ref": "#/definitions/eclagent"
-          },
+          { "$ref": "#/definitions/eclagent" },
           {
             "name": {
               "type": "string",
@@ -207,9 +193,7 @@
               "type": "string",
               "description": "The (optional) file prefix to add to relative filenames"
             },
-            "required": [
-              "name"
-            ]
+            "required": [ "name" ]
           }
         ]
       }
@@ -247,21 +231,17 @@
           },
           "annotations": {
             "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
+            "additionalProperties": { "type": "string" }
           },
           "resources": {
             "$ref": "#/definitions/resources"
           },
           "labels": {
             "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
+            "additionalProperties": { "type": "string" }
           },
           "egress": {
-            "$ref": "#/definitions/egress"
+              "$ref" : "#/definitions/egress"
           },
           "expert": {
             "$ref": "#/definitions/expert"
@@ -270,31 +250,19 @@
             "$ref": "#/definitions/hpa"
           }
         },
-        "additionalProperties": {
-          "type": [
-            "integer",
-            "string",
-            "boolean"
-          ]
-        },
-        "required": [
-          "name"
-        ]
+        "additionalProperties": { "type": ["integer", "string", "boolean"] },
+        "required": [ "name" ]
       }
     },
     "roxie": {
       "description": "roxie process",
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/roxie"
-      }
+      "items": { "$ref": "#/definitions/roxie" }
     },
     "thor": {
       "description": "thor process",
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/thor"
-      }
+      "items": { "$ref": "#/definitions/thor" }
     },
     "sasha": {
       "description": "sasha services",
@@ -304,9 +272,7 @@
     "dafilesrv": {
       "description": "dafilesrv process",
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/dafilesrv"
-      }
+      "items": { "$ref": "#/definitions/dafilesrv" }
     }
   },
   "title": "Values",
@@ -379,12 +345,12 @@
           "type": "object",
           "properties": {
             "currencyCode": {
-              "description": "The ISO 4217 currency code (e.g., USD, EUR, GBP) that defines the currency in which all cost values are displayed and reported.",
-              "type": "string",
-              "maxLength": 3
+                "description": "The ISO 4217 currency code (e.g., USD, EUR, GBP) that defines the currency in which all cost values are displayed and reported.",
+                "type": "string",
+                "maxLength": 3
             },
             "perCpu": {
-              "description": "The cost associated with a single CPU",
+                "description": "The cost associated with a single CPU",
               "type": "number",
               "minimum": 0
             },
@@ -418,18 +384,18 @@
           "type": "object",
           "properties": {
             "disabled": {
-              "type": "boolean",
-              "default": false
+                "type": "boolean",
+                "default": false
             },
-            "analyzeInEclAgent": {
-              "description": "Analyse workunit in ECL Agent (if false, workunit will be analysed by Thor manager)",
-              "type": "boolean",
-              "default": false
+            "analyzeInEclAgent" : {
+                "description": "Analyse workunit in ECL Agent (if false, workunit will be analysed by Thor manager)",
+                "type": "boolean",
+                "default": false
             },
-            "analyzeWhenComplete": {
-              "description": "Analyse workunit after completion (if false, the analysis willl be executed incrementally after each graph completes)",
-              "type": "boolean",
-              "default": false
+            "analyzeWhenComplete" : {
+                "description": "Analyse workunit after completion (if false, the analysis willl be executed incrementally after each graph completes)",
+                "type": "boolean",
+                "default": false
             },
             "minInterestingCost": {
               "description": "Only report issues that may be costing more than this value (decimal $ value)",
@@ -474,51 +440,41 @@
           ]
         },
         "metrics": {
-          "type": "object",
-          "description": "Global metrics configuration",
-          "properties": {
-            "sinks": {
-              "$ref": "#/definitions/sinks"
+          "type" : "object",
+          "description" : "Global metrics configuration",
+          "properties" : {
+            "sinks" : {
+              "$ref" : "#/definitions/sinks"
             }
           }
         },
         "visibilities": {
           "type": "object",
-          "description": "Global visibilities configuration",
+          "description" : "Global visibilities configuration",
           "additionalProperties": {
             "type": "object",
-            "required": [
-              "type"
-            ],
-            "properties": {
+            "required": [ "type" ],
+            "properties":
+            {
               "annotations": {
                 "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                }
+                "additionalProperties": { "type": "string" }
               },
               "labels": {
                 "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                }
+                "additionalProperties": { "type": "string" }
               },
               "ingress": {
-                "$ref": "#/definitions/ingress"
+                "$ref" : "#/definitions/ingress"
               },
               "externalTrafficPolicy": {
                 "type": "string",
-                "enum": [
-                  "Cluster",
-                  "Local"
-                ],
+                "enum": ["Cluster", "Local"],
                 "description": "Route clients to all (Cluster), or local VM only (Local). Preserves client source IPs."
               },
               "loadBalancerSourceRanges": {
                 "type": "array",
-                "items": {
-                  "type": "string"
-                },
+                "items": { "type": "string" },
                 "description": "A list of CIDR ranges that you would like to allow for access to the Service"
               },
               "type": {
@@ -530,9 +486,7 @@
         },
         "componentAnnotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
+          "additionalProperties": { "type": "string" },
           "description": "Global component annotations, generated into all components"
         },
         "plugins": {
@@ -540,35 +494,17 @@
         },
         "infrastructure": {
           "type": "object",
-          "additionalProperties": {
-            "type": [
-              "integer",
-              "string",
-              "boolean",
-              "object",
-              "array"
-            ]
-          },
+          "additionalProperties": { "type": ["integer", "string", "boolean", "object", "array"] },
           "description": "External infrastructure information"
         },
         "serviceAccounts": {
           "type": "object",
           "properties": {
-            "default": {
-              "$ref": "#/definitions/serviceAccount"
-            },
-            "agent": {
-              "$ref": "#/definitions/serviceAccount"
-            },
-            "thoragent": {
-              "$ref": "#/definitions/serviceAccount"
-            },
-            "esp-service": {
-              "$ref": "#/definitions/serviceAccount"
-            },
-            "dali": {
-              "$ref": "#/definitions/serviceAccount"
-            }
+            "default": { "$ref": "#/definitions/serviceAccount" },
+            "agent": { "$ref": "#/definitions/serviceAccount" },
+            "thoragent": { "$ref": "#/definitions/serviceAccount" },
+            "esp-service": { "$ref": "#/definitions/serviceAccount" },
+            "dali": { "$ref": "#/definitions/serviceAccount" }
           },
           "description": "ServiceAccount-specific configurations including annotations and pod labels for identity management integrations like Azure Workload Identity"
         }
@@ -607,11 +543,7 @@
     },
     "eclSecurityValues": {
       "type": "string",
-      "enum": [
-        "deny",
-        "allow",
-        "allowSigned"
-      ]
+      "enum": ["deny", "allow", "allowSigned"]
     },
     "image": {
       "type": "object",
@@ -629,11 +561,7 @@
         },
         "pullPolicy": {
           "type": "string",
-          "enum": [
-            "IfNotPresent",
-            "Always",
-            "Never"
-          ]
+          "enum": ["IfNotPresent", "Always", "Never"]
         },
         "imagePullSecrets": {
           "type": "string"
@@ -685,17 +613,13 @@
     "storagePlanes": {
       "description": "Storage plane definitions",
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/storagePlane"
-      }
+      "items": { "$ref": "#/definitions/storagePlane" }
     },
     "storagePlane": {
       "description": "Information about an individual storage plane",
       "type": "object",
       "allOf": [
-        {
-          "$ref": "#/definitions/storagePlaneCommon"
-        },
+        { "$ref": "#/definitions/storagePlaneCommon" },
         {
           "properties": {
             "name": {
@@ -717,41 +641,26 @@
             "replication": {
               "description": "Which planes (if any) the data is replicated onto (primarily bare metal)",
               "type": "array",
-              "items": {
-                "type": "string"
-              }
+              "items": { "type": "string" }
             },
             "category": {
               "description": "The category this plane is used for, e.g. lz, data",
               "type": "string",
-              "enum": [
-                "data",
-                "lz",
-                "dali",
-                "sasha",
-                "dll",
-                "spill",
-                "temp",
-                "git",
-                "remote",
-                "debug"
-              ]
+              "enum": ["data", "lz", "dali", "sasha", "dll", "spill", "temp", "git", "remote", "debug" ]
             },
-            "defaultSprayParts": {
+            "defaultSprayParts" : {
               "description": "Number of parts sprayed by default",
-              "type": "integer"
+              "type" : "integer"
             },
-            "subDirPerFilePart": {
+            "subDirPerFilePart" : {
               "description": "Place each logical file part in its own subdirectory",
               "type": "boolean",
               "default": true
             },
-            "aliases": {
+            "aliases" : {
               "description": "A list of additional ways of accessing the data, along with the reasons why",
               "type": "array",
-              "items": {
-                "$ref": "#/definitions/storagePlaneAlias"
-              }
+              "items": { "$ref": "#/definitions/storagePlaneAlias" }
             },
             "storageSize": {
               "type": "string"
@@ -775,9 +684,7 @@
                 "validatePlaneScript": {
                   "description": "a list of bash commands to run to validate the plane is healthy",
                   "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
+                  "items": { "type": "string" }
                 }
               }
             },
@@ -791,7 +698,7 @@
               "type": "integer",
               "default": 0
             },
-            "compressLogicalFiles": {
+            "compressLogicalFiles" : {
               "description": "Compress all logical file outputs on this plane.",
               "type": "boolean",
               "default": true
@@ -820,11 +727,7 @@
           "additionalProperties": false
         }
       ],
-      "required": [
-        "name",
-        "prefix",
-        "category"
-      ]
+      "required": [ "name", "prefix", "category" ]
     },
     "storagePlaneCommon": {
       "$comment": "The following properties make sense either on a storage plane or an an alias.  For that reason they do not include properties that are used to create implement pvcs e.g. storageClass.  All new entries must be added as null entries in storagePlane and storagePlaneAlias",
@@ -856,23 +759,21 @@
         "hosts": {
           "description": "List of host names for direct host-based storage access",
           "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "items": { "type": "string" }
         },
-        "umask": {
+        "umask" : {
           "description": "File creation mask applied during despray operations",
-          "type": "string"
+          "type" : "string"
         },
         "numMounts": {
           "description": "Number of mount points for this PVC (defaults to numDevices if not specified)",
           "type": "integer"
         },
-        "cost": {
+        "cost" : {
           "description": "Cost configuration for storage operations and data retention on this plane",
-          "type": "object",
+          "type" : "object",
           "properties": {
-            "storageAtRest": {
+            "storageAtRest" : {
               "description": "Storage cost per GiB per month for data stored on this plane",
               "type": "number",
               "minimum": 0
@@ -896,10 +797,7 @@
             "type": {
               "description": "Type of cloud storage API to use",
               "type": "string",
-              "enum": [
-                "azurefile",
-                "azureblob"
-              ]
+              "enum": ["azurefile", "azureblob"]
             },
             "account": {
               "description": "Cloud storage account name",
@@ -922,15 +820,15 @@
                 "properties": {
                   "name": {
                     "description": "Name of the storage container or file share",
-                    "type": "string"
+                    "type" : "string"
                   },
-                  "account": {
-                    "description": "Storage account name (optional - inherits from parent if not specified)",
-                    "type": "string"
+                  "account" : {
+                    "description" : "Storage account name (optional - inherits from parent if not specified)",
+                    "type" : "string"
                   },
-                  "secret": {
-                    "description": "Secret name for credentials (optional - inherits from parent if not specified)",
-                    "type": "string"
+                  "secret" : {
+                    "description" : "Secret name for credentials (optional - inherits from parent if not specified)",
+                    "type" : "string"
                   }
                 },
                 "additionalProperties": false
@@ -938,26 +836,19 @@
             }
           },
           "additionalProperties": false,
-          "required": [
-            "type",
-            "containers"
-          ]
+          "required": [ "type", "containers" ]
         },
         "components": {
           "description": "Restrict storage plane mounting to only the specified components",
           "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "items": { "type": "string" }
         }
       }
     },
     "storagePlaneAlias": {
       "$comment": "The following properties are required for providing an alternative path to a data plane",
       "allOf": [
-        {
-          "$ref": "#/definitions/storagePlaneCommon"
-        },
+        { "$ref": "#/definitions/storagePlaneCommon" },
         {
           "properties": {
             "name": {
@@ -969,12 +860,7 @@
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": [
-                  "write",
-                  "sequential",
-                  "random",
-                  "api"
-                ]
+                "enum": [ "write", "sequential", "random", "api"]
               }
             },
             "prefix": {},
@@ -990,20 +876,14 @@
             "cost": {}
           },
           "additionalProperties": false,
-          "required": [
-            "name",
-            "mode",
-            "prefix"
-          ]
+          "required": [ "name", "mode", "prefix" ]
         }
       ]
     },
     "remoteStorage": {
       "description": "Remote storage definitions",
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/remoteStorageEntry"
-      }
+      "items": { "$ref": "#/definitions/remoteStorageEntry" }
     },
     "remoteStorageEntry": {
       "description": "Information about an individual remote storage definition",
@@ -1038,11 +918,9 @@
             }
           }
         },
-        "useDafilesrv": {
-          "const": true
-        }
+        "useDafilesrv": { "const": true }
       },
-      "oneOf": [
+      "oneOf":[
         {
           "required": [
             "name",
@@ -1096,9 +974,7 @@
       "oneOf": [
         {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         {
           "type": "null"
@@ -1109,10 +985,8 @@
       "description": "Set of vaults under a given category",
       "oneOf": [
         {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/vault"
-          }
+            "type": "array",
+            "items": { "$ref": "#/definitions/vault" }
         },
         {
           "type": "null"
@@ -1133,10 +1007,7 @@
         },
         "kind": {
           "type": "string",
-          "enum": [
-            "kv-v2",
-            "kv-v1"
-          ]
+          "enum": ["kv-v2", "kv-v1"]
         },
         "client-secret": {
           "description": "optional name of kubernetes secret that will provide the vault client token",
@@ -1183,19 +1054,14 @@
           "type": "number"
         }
       },
-      "required": [
-        "name",
-        "url"
-      ],
+      "required": [ "name", "url" ],
       "additionalProperties": false
     },
     "hostGroups": {
       "oneOf": [
         {
           "type": "array",
-          "items": {
-            "$ref": "#/definitions/hostGroup"
-          }
+          "items": { "$ref": "#/definitions/hostGroup" }
         },
         {
           "type": "null"
@@ -1206,16 +1072,10 @@
       "type": "object",
       "oneOf": [
         {
-          "required": [
-            "name",
-            "hosts"
-          ]
+          "required": [ "name", "hosts" ]
         },
         {
-          "required": [
-            "name",
-            "hostGroup"
-          ]
+          "required": [ "name", "hostGroup" ]
         }
       ],
       "additionalProperties": false,
@@ -1227,9 +1087,7 @@
         "hosts": {
           "description": "A list of host names",
           "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "items": { "type": "string" }
         },
         "hostGroup": {
           "description": "Name of the hostgroup to create a subset of",
@@ -1255,33 +1113,16 @@
     },
     "authNZ": {
       "type": "object",
-      "additionalProperties": {
-        "type": [
-          "object"
-        ]
-      }
+      "additionalProperties": { "type": ["object"] }
     },
     "authDomain": {
       "type": "object",
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string"
-        ]
-      }
+      "additionalProperties": { "type": ["integer", "string"] }
     },
     "ldap": {
       "type": "object",
-      "required": [
-        "ldapAddress"
-      ],
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
+      "required": [ "ldapAddress" ],
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
       "properties": {
         "ldapAddress": {
           "type": "string",
@@ -1413,24 +1254,14 @@
         "format": {
           "type": "string",
           "description": "The data format used to report logging: xml|json|table(space delimited values)",
-          "enum": [
-            "xml",
-            "json",
-            "table"
-          ]
+          "enum": [ "xml", "json", "table"]
         },
         "enableGlobalSysLog": {
-          "type": "boolean",
-          "description": "Enable centralized reporting of important user/operator logging messages"
+            "type": "boolean",
+                "description" : "Enable centralized reporting of important user/operator logging messages"
         }
       },
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      }
+      "additionalProperties": { "type": ["integer", "string", "boolean"] }
     },
     "tracing": {
       "type": "object",
@@ -1460,18 +1291,14 @@
           "properties": {
             "type": {
               "type": "string",
-              "enum": [
-                "AlwaysOff",
-                "AlwaysOn",
-                "Ratio"
-              ],
+              "enum": ["AlwaysOff", "AlwaysOn", "Ratio"],
               "description": "Name of the Head Sampling type AlwaysOff|AlwaysOn|Ratio"
             },
-            "ratio": {
+            "ratio" : {
               "type": "number",
               "description": "Required if sampling type set to Ratio - Represents the sampling ratio value."
             },
-            "parentBased": {
+            "parentBased" : {
               "type": "boolean",
               "description": "Optional - Determines if the sampling policy honors the remote root span sampled flag."
             },
@@ -1497,34 +1324,17 @@
               "description": "Identifier used to help distinguish instances of same service"
             }
           },
-          "additionalProperties": {
-            "type": [
-              "integer",
-              "string",
-              "boolean"
-            ]
-          }
+          "additionalProperties": { "type": ["integer", "string", "boolean"] }
         }
       },
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      }
+      "additionalProperties": { "type": ["integer", "string", "boolean"] }
     },
     "traceExporter": {
       "type": "object",
       "properties": {
         "type": {
           "type": "string",
-          "enum": [
-            "OTLP-HTTP",
-            "OTLP-GRPC",
-            "OS",
-            "JLOG"
-          ],
+          "enum": ["OTLP-HTTP", "OTLP-GRPC", "OS", "JLOG"],
           "description": "The type of exporter in charge of forwarding span data to target back-end"
         },
         "batch": {
@@ -1547,25 +1357,13 @@
               "description": " The maximum batch size of every export. It must be smaller or equal to max_queue_size."
             }
           },
-          "additionalProperties": {
-            "type": [
-              "integer",
-              "string",
-              "boolean"
-            ]
-          }
+          "additionalProperties": { "type": ["integer", "string", "boolean"] }
         },
         "metered": {
           "type": "boolean",
           "description": "Track and report export action latency"
         },
-        "additionalProperties": {
-          "type": [
-            "integer",
-            "string",
-            "boolean"
-          ]
-        }
+        "additionalProperties": { "type": ["integer", "string", "boolean"] }
       }
     },
     "compileOption": {
@@ -1576,11 +1374,7 @@
           "description": "Compiler option name"
         },
         "value": {
-          "type": [
-            "number",
-            "string",
-            "boolean"
-          ],
+          "type": ["number", "string", "boolean"],
           "description": "Compiler option  value"
         },
         "cluster": {
@@ -1588,10 +1382,7 @@
           "description": "Cluster to apply option to"
         }
       },
-      "required": [
-        "name",
-        "value"
-      ],
+      "required": [ "name", "value" ],
       "additionalProperties": false
     },
     "env": {
@@ -1604,11 +1395,7 @@
             "description": "Environment variable name"
           },
           "value": {
-            "type": [
-              "number",
-              "string",
-              "boolean"
-            ],
+            "type": ["number", "string", "boolean"],
             "description": "Environment variable value"
           }
         }
@@ -1619,9 +1406,7 @@
       "items": {
         "additionalProperties": {
           "type": "array",
-          "items": {
-            "type": "object"
-          }
+          "items": { "type": "object" }
         }
       }
     },
@@ -1636,9 +1421,7 @@
           "items": {
             "additionalProperties": {
               "type": "array",
-              "items": {
-                "type": "object"
-              }
+              "items": { "type": "object" }
             }
           }
         }
@@ -1666,9 +1449,10 @@
       },
       "additionalProperties": {
         "type": "array",
-        "properties": {
+        "properties":
+        {
           "egress": {
-            "$ref": "#/definitions/egress"
+            "$ref" : "#/definitions/egress"
           },
           "additionalProperties": false
         }
@@ -1677,10 +1461,7 @@
     "service": {
       "description": "Service properties",
       "type": "object",
-      "required": [
-        "servicePort",
-        "visibility"
-      ],
+      "required": [ "servicePort", "visibility" ],
       "properties": {
         "application": {
           "type": "string",
@@ -1701,49 +1482,31 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "ingress": {
-          "$ref": "#/definitions/ingress"
+          "$ref" : "#/definitions/ingress"
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "externalTrafficPolicy": {
           "type": "string",
-          "enum": [
-            "Cluster",
-            "Local"
-          ],
+          "enum": ["Cluster", "Local"],
           "description": "Route clients to all (Cluster), or local VM only (Local). Preserves client source IPs."
         },
         "loadBalancerSourceRanges": {
           "type": "array",
-          "items": {
-            "type": "string"
-          },
+          "items": { "type": "string" },
           "description": "A list of CIDR ranges that you would like to allow for access to the Service"
         }
       }
     },
     "dali": {
       "type": "object",
-      "required": [
-        "name",
-        "auth"
-      ],
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
+      "required": [ "name", "auth" ],
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
       "properties": {
         "name": {
           "type": "string",
@@ -1769,15 +1532,11 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "resources": {
           "$ref": "#/definitions/resources"
@@ -1797,7 +1556,7 @@
           "$ref": "#/definitions/service"
         },
         "egress": {
-          "$ref": "#/definitions/egress"
+          "$ref" : "#/definitions/egress"
         },
         "terminationGracePeriodSeconds": {
           "$ref": "#/definitions/terminationGracePeriodSeconds",
@@ -1823,17 +1582,8 @@
     },
     "eclccserver": {
       "type": "object",
-      "required": [
-        "name",
-        "maxActive"
-      ],
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
+      "required": [ "name", "maxActive" ],
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
       "properties": {
         "name": {
           "type": "string",
@@ -1850,9 +1600,7 @@
         },
         "listen": {
           "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "items": { "type": "string" }
         },
         "useChildProcesses": {
           "type": "boolean",
@@ -1881,21 +1629,15 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "options": {
           "type": "array",
-          "items": {
-            "$ref": "#/definitions/compileOption"
-          }
+          "items": { "$ref": "#/definitions/compileOption" }
         },
         "gitUsername": {
           "type": "string",
@@ -1926,10 +1668,10 @@
           "$ref": "#/definitions/resources"
         },
         "cost": {
-          "$ref": "#/definitions/componentCost"
+          "$ref" : "#/definitions/componentCost"
         },
         "egress": {
-          "$ref": "#/definitions/egress"
+          "$ref" : "#/definitions/egress"
         },
         "hpa": {
           "$ref": "#/definitions/hpa"
@@ -1941,16 +1683,8 @@
     },
     "eclscheduler": {
       "type": "object",
-      "required": [
-        "name"
-      ],
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
+      "required": [ "name" ],
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
       "properties": {
         "name": {
           "type": "string",
@@ -1970,15 +1704,11 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "resources": {
           "$ref": "#/definitions/resources"
@@ -1993,18 +1723,8 @@
     },
     "esp": {
       "type": "object",
-      "required": [
-        "name",
-        "service",
-        "auth"
-      ],
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
+      "required": [ "name", "service", "auth" ],
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
       "properties": {
         "name": {
           "type": "string",
@@ -2030,15 +1750,11 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "auth": {
           "$ref": "#/definitions/auth"
@@ -2073,7 +1789,7 @@
           "$ref": "#/definitions/corsAllowed"
         },
         "egress": {
-          "$ref": "#/definitions/egress"
+          "$ref" : "#/definitions/egress"
         },
         "hpa": {
           "$ref": "#/definitions/hpa"
@@ -2086,27 +1802,14 @@
         },
         "traceFlags": {
           "type": "object",
-          "additionalProperties": {
-            "type": [
-              "integer",
-              "boolean"
-            ]
-          }
+          "additionalProperties": { "type": ["integer", "boolean"] }
         }
       }
     },
     "eclagent": {
       "type": "object",
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
-      "required": [
-        "maxActive"
-      ],
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
+      "required": [ "maxActive" ],
       "properties": {
         "replicas": {
           "type": "integer"
@@ -2123,10 +1826,7 @@
         },
         "type": {
           "type": "string",
-          "enum": [
-            "hthor",
-            "roxie"
-          ],
+          "enum": ["hthor", "roxie"],
           "description": "Use the hthor or roxie execution engine for eclagent queries"
         },
         "image": {
@@ -2158,15 +1858,11 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "resources": {
           "$ref": "#/definitions/resources"
@@ -2178,16 +1874,16 @@
           "$ref": "#/definitions/memory"
         },
         "cost": {
-          "$ref": "#/definitions/componentCost"
+          "$ref" : "#/definitions/componentCost"
         },
         "egress": {
-          "$ref": "#/definitions/egress"
+          "$ref" : "#/definitions/egress"
         },
         "preferredDataReadPlanes": {
-          "$ref": "#/definitions/preferredDataReadPlanes"
+          "$ref" : "#/definitions/preferredDataReadPlanes"
         },
         "allowedPipePrograms": {
-          "$ref": "#/definitions/allowedPipePrograms"
+          "$ref" : "#/definitions/allowedPipePrograms"
         },
         "hpa": {
           "$ref": "#/definitions/hpa"
@@ -2223,16 +1919,8 @@
     },
     "roxie": {
       "type": "object",
-      "required": [
-        "name"
-      ],
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
+      "required": [ "name" ],
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
       "properties": {
         "name": {
           "type": "string",
@@ -2266,23 +1954,17 @@
         "preload": {
           "description": "Preloaded plugins",
           "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "items": { "type": "string" }
         },
         "services": {
           "description": "Roxie query services",
           "type": "array",
-          "items": {
-            "$ref": "#/definitions/roxieservice"
-          }
+          "items": { "$ref": "#/definitions/roxieservice" }
         },
         "directAccessPlanes": {
           "description": "A list of storage planes suitable for roxie to read from directly and not have roxie copy the data to roxie's default plane",
           "type": "array",
-          "items": {
-            "type": "string"
-          }
+          "items": { "type": "string" }
         },
         "dataPlane": {
           "$ref": "#/definitions/dataPlane"
@@ -2313,15 +1995,11 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "certificate": {
           "type": "string",
@@ -2335,11 +2013,7 @@
         "backgroundCopyClass": {
           "type": "string",
           "default": "none",
-          "enum": [
-            "none",
-            "best-effort",
-            "idle"
-          ],
+          "enum": [ "none", "best-effort", "idle"],
           "description": "Specify an IONICE class for the background copy thread."
         },
         "backgroundCopyPrio": {
@@ -2438,12 +2112,7 @@
         },
         "fieldTranslationEnabled": {
           "default": "payloadRemoveOnly",
-          "enum": [
-            "false",
-            "true",
-            "payload",
-            "payloadRemoveOnly"
-          ],
+          "enum": ["false", "true", "payload", "payloadRemoveOnly"],
           "description": "Enables translation (where possible) of mismatched file layouts on-the-fly. Specify 'payload' to attempt to translate payload fields only"
         },
         "highTimeout": {
@@ -2915,7 +2584,7 @@
         },
         "preabortKeyedJoinsThreshold": {
           "type": "integer",
-          "minimum": 0,
+          "minimum" : 0,
           "default": 100,
           "description": "Use seek to precheck limits on keyed joins if limit greater than this value"
         },
@@ -2953,13 +2622,13 @@
           "$ref": "#/definitions/expert"
         },
         "egress": {
-          "$ref": "#/definitions/egress"
+          "$ref" : "#/definitions/egress"
         },
         "preferredDataReadPlanes": {
-          "$ref": "#/definitions/preferredDataReadPlanes"
+          "$ref" : "#/definitions/preferredDataReadPlanes"
         },
         "allowedPipePrograms": {
-          "$ref": "#/definitions/allowedPipePrograms"
+          "$ref" : "#/definitions/allowedPipePrograms"
         },
         "hpa": {
           "$ref": "#/definitions/hpa"
@@ -2977,13 +2646,7 @@
     },
     "toposerver": {
       "type": "object",
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
       "properties": {
         "port": {
           "type": "integer"
@@ -3005,15 +2668,11 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "hpa": {
           "$ref": "#/definitions/hpa"
@@ -3045,18 +2704,14 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "ingress": {
-          "$ref": "#/definitions/ingress"
+          "$ref" : "#/definitions/ingress"
         },
         "visibility": {
           "type": "string",
@@ -3073,24 +2728,13 @@
           "$ref": "#/definitions/trustClients"
         }
       },
-      "required": [
-        "name",
-        "servicePort"
-      ],
+      "required": [ "name", "servicePort" ],
       "additionalProperties": false
     },
     "bundle": {
       "type": "object",
-      "required": [
-        "name"
-      ],
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
+      "required": [ "name" ],
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
       "properties": {
         "name": {
           "type": "string",
@@ -3100,18 +2744,8 @@
     },
     "thor": {
       "type": "object",
-      "required": [
-        "name",
-        "maxJobs",
-        "maxGraphs"
-      ],
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
+      "required": [ "name", "maxJobs", "maxGraphs" ],
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
       "properties": {
         "name": {
           "type": "string",
@@ -3157,18 +2791,11 @@
           "minimum": 1
         },
         "eclAgentType": {
-          "enum": [
-            "hthor",
-            "roxie"
-          ],
+          "enum": [ "hthor", "roxie" ],
           "description": "eclagent engine type"
         },
         "keepJobs": {
-          "enum": [
-            "none",
-            "podfailures",
-            "all"
-          ],
+          "enum": [ "none", "podfailures", "all" ],
           "description": "For debugging purposes. Choose whether to keep jobs after execution"
         },
         "lingerPeriod": {
@@ -3188,9 +2815,7 @@
         },
         "auxQueues": {
           "type": "array",
-          "items": {
-            "type": "string"
-          },
+          "items": { "type": "string" },
           "description": "[Optional] Auxiliary queue names to listen to. Multiple Thor's can listen to the same queue using this mechanism"
         },
         "image": {
@@ -3222,15 +2847,11 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "eclAgentMemory": {
           "$ref": "#/definitions/memory"
@@ -3254,19 +2875,19 @@
           "$ref": "#/definitions/resources"
         },
         "cost": {
-          "$ref": "#/definitions/componentCost"
+          "$ref" : "#/definitions/componentCost"
         },
         "expert": {
           "$ref": "#/definitions/expert"
         },
         "egress": {
-          "$ref": "#/definitions/egress"
+          "$ref" : "#/definitions/egress"
         },
         "preferredDataReadPlanes": {
-          "$ref": "#/definitions/preferredDataReadPlanes"
+          "$ref" : "#/definitions/preferredDataReadPlanes"
         },
         "allowedPipePrograms": {
-          "$ref": "#/definitions/allowedPipePrograms"
+          "$ref" : "#/definitions/allowedPipePrograms"
         },
         "mapHttpCallUrlsToSecrets": {
           "type": "boolean",
@@ -3309,22 +2930,16 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "service": {
           "description": "Service properties",
           "type": "object",
-          "required": [
-            "servicePort"
-          ],
+          "required": [ "servicePort" ],
           "properties": {
             "port": {
               "type": "integer",
@@ -3337,19 +2952,15 @@
             },
             "annotations": {
               "type": "object",
-              "additionalProperties": {
-                "type": "string"
-              }
+              "additionalProperties": { "type": "string" }
             },
             "labels": {
               "type": "object",
-              "additionalProperties": {
-                "type": "string"
-              }
+              "additionalProperties": { "type": "string" }
             }
           }
         },
-        "at": {
+        "at" : {
           "type": "string",
           "default": "* * * * *"
         },
@@ -3368,7 +2979,7 @@
           "$ref": "#/definitions/resources"
         },
         "egress": {
-          "$ref": "#/definitions/egress"
+          "$ref" : "#/definitions/egress"
         },
         "expert": {
           "$ref": "#/definitions/expert"
@@ -3400,9 +3011,7 @@
     "sasha-coalescer": {
       "type": "object",
       "allOf": [
-        {
-          "$ref": "#/definitions/sashacommon"
-        },
+        { "$ref": "#/definitions/sashacommon" },
         {
           "properties": {
             "minDeltaSize": {
@@ -3412,7 +3021,7 @@
             "disabled": {},
             "interval": {},
             "service": {},
-            "at": {},
+            "at" : {},
             "throttle": {},
             "image": {},
             "plane": {},
@@ -3430,18 +3039,13 @@
     },
     "sasha-wu-archiver": {
       "type": "object",
-      "required": [
-        "plane"
-      ],
+      "required": [ "plane" ],
       "allOf": [
+        { "$ref": "#/definitions/sashacommon" },
+        { "$ref": "#/definitions/sasha-limitcutoff" },
         {
-          "$ref": "#/definitions/sashacommon"
-        },
-        {
-          "$ref": "#/definitions/sasha-limitcutoff"
-        },
-        {
-          "properties": {
+          "properties":
+          {
             "backup": {
               "type": "integer",
               "description": "minimum workunit age to backup (days, 0 disables)",
@@ -3465,7 +3069,7 @@
             "disabled": {},
             "interval": {},
             "service": {},
-            "at": {},
+            "at" : {},
             "throttle": {},
             "image": {},
             "plane": {},
@@ -3485,22 +3089,17 @@
     },
     "sasha-dfuwu-archiver": {
       "type": "object",
-      "required": [
-        "plane"
-      ],
+      "required": [ "plane" ],
       "allOf": [
+        { "$ref": "#/definitions/sashacommon" },
+        { "$ref": "#/definitions/sasha-limitcutoff" },
         {
-          "$ref": "#/definitions/sashacommon"
-        },
-        {
-          "$ref": "#/definitions/sasha-limitcutoff"
-        },
-        {
-          "properties": {
+          "properties":
+          {
             "disabled": {},
             "interval": {},
             "service": {},
-            "at": {},
+            "at" : {},
             "throttle": {},
             "image": {},
             "plane": {},
@@ -3521,18 +3120,14 @@
     "sasha-dfurecovery-archiver": {
       "type": "object",
       "allOf": [
-        {
-          "$ref": "#/definitions/sashacommon"
-        },
-        {
-          "$ref": "#/definitions/sasha-limitcutoff"
-        },
+        { "$ref": "#/definitions/sashacommon" },
+        { "$ref": "#/definitions/sasha-limitcutoff" },
         {
           "properties": {
             "disabled": {},
             "interval": {},
             "service": {},
-            "at": {},
+            "at" : {},
             "throttle": {},
             "image": {},
             "plane": {},
@@ -3552,11 +3147,7 @@
     },
     "sasha-file-expiry": {
       "type": "object",
-      "allOf": [
-        {
-          "$ref": "#/definitions/sashacommon"
-        }
-      ],
+      "allOf": [{ "$ref": "#/definitions/sashacommon" }],
       "properties": {
         "persistExpiryDefault": {
           "type": "integer",
@@ -3572,7 +3163,7 @@
         "interval": {},
         "user": {},
         "service": {},
-        "at": {},
+        "at" : {},
         "throttle": {},
         "image": {},
         "plane": {},
@@ -3585,20 +3176,14 @@
       },
       "additionalProperties": false
     },
-    "sasha-thor-qmon": {
+    "sasha-thor-qmon" : {
       "type": "object",
-      "allOf": [
-        {
-          "$ref": "#/definitions/sashacommon"
-        }
-      ],
+      "allOf": [{ "$ref": "#/definitions/sashacommon" }],
       "properties": {
         "queues": {
           "description": "A list of queues to monitor",
           "type": "array",
-          "items": {
-            "type": "string"
-          },
+          "items": { "type": "string" },
           "default": "*"
         },
         "switchMinTime": {
@@ -3621,11 +3206,7 @@
     },
     "sasha-debugplane-housekeeping": {
       "type": "object",
-      "allOf": [
-        {
-          "$ref": "#/definitions/sashacommon"
-        }
-      ],
+      "allOf": [{ "$ref": "#/definitions/sashacommon" }],
       "properties": {
         "expiryDays": {
           "type": "integer",
@@ -3634,7 +3215,7 @@
         },
         "disabled": {},
         "interval": {},
-        "at": {},
+        "at" : {},
         "image": {},
         "resources": {},
         "annotations": {},
@@ -3645,41 +3226,37 @@
       "additionalProperties": false
     },
     "sasha-xref": {
-      "type": "object",
-      "allOf": [
-        {
-          "$ref": "#/definitions/sashacommon"
-        }
-      ],
-      "properties": {
-        "disabled": {},
-        "interval": {},
-        "user": {},
-        "env": {},
-        "annotations": {},
-        "labels": {},
-        "at": {},
-        "image": {},
-        "resources": {},
-        "expert": {},
-        "terminationGracePeriodSeconds": {},
-        "cutoff": {
-          "type": "integer",
-          "description": "cutoff (in days) to ignore recent files.",
-          "default": "1"
+        "type": "object",
+        "allOf": [{ "$ref": "#/definitions/sashacommon" }],
+        "properties": {
+          "disabled": {},
+          "interval": {},
+          "user": {},
+          "env": {},
+          "annotations": {},
+          "labels": {},
+          "at" : {},
+          "image": {},
+          "resources": {},
+          "expert": {},
+          "terminationGracePeriodSeconds": {},
+          "cutoff": {
+            "type": "integer",
+            "description": "cutoff (in days) to ignore recent files.",
+            "default": "1"
+          },
+          "planes": {
+            "type": "string",
+            "description": "comma separated list of storage planes to xref (* for all planes).",
+            "default": "*"
+          },
+          "numThreads": {
+            "type": "integer",
+            "description": "maximum thread count for scanning directories",
+            "default": "500"
+          }
         },
-        "planes": {
-          "type": "string",
-          "description": "comma separated list of storage planes to xref (* for all planes).",
-          "default": "*"
-        },
-        "numThreads": {
-          "type": "integer",
-          "description": "maximum thread count for scanning directories",
-          "default": "500"
-        }
-      },
-      "additionalProperties": false
+        "additionalProperties": false
     },
     "sashaservice": {
       "oneOf": [
@@ -3724,18 +3301,8 @@
     },
     "dafilesrv": {
       "type": "object",
-      "required": [
-        "name",
-        "application",
-        "service"
-      ],
-      "additionalProperties": {
-        "type": [
-          "integer",
-          "string",
-          "boolean"
-        ]
-      },
+      "required": [ "name", "application", "service" ],
+      "additionalProperties": { "type": ["integer", "string", "boolean"] },
       "properties": {
         "name": {
           "type": "string",
@@ -3743,11 +3310,7 @@
         },
         "application": {
           "type": "string",
-          "enum": [
-            "stream",
-            "directio",
-            "spray"
-          ],
+          "enum": ["stream", "directio", "spray"],
           "description": "Application type"
         },
         "service": {
@@ -3765,15 +3328,11 @@
         },
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "labels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
+          "additionalProperties": { "type": "string" }
         },
         "logging": {
           "$ref": "#/definitions/logging"
@@ -3785,7 +3344,7 @@
           "$ref": "#/definitions/resources"
         },
         "egress": {
-          "$ref": "#/definitions/egress"
+          "$ref" : "#/definitions/egress"
         },
         "hpa": {
           "$ref": "#/definitions/hpa"
@@ -3815,9 +3374,7 @@
         },
         "topologySpreadConstraints": {
           "type": "array",
-          "items": {
-            "$ref": "#/definitions/topologySpreadConstraint"
-          }
+          "items": { "$ref": "#/definitions/topologySpreadConstraint" }
         }
       }
     },
@@ -3829,9 +3386,7 @@
     },
     "tolerations": {
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/toleration"
-      }
+      "items": { "$ref": "#/definitions/toleration" }
     },
     "toleration": {
       "type": "object",
@@ -3866,10 +3421,7 @@
         },
         "whenUnsatisfiable": {
           "type": "string",
-          "enum": [
-            "DoNotSchedule",
-            "ScheduleAnyway"
-          ],
+          "enum": ["DoNotSchedule", "ScheduleAnyway"],
           "description": "indicates how to deal with a Pod if it doesn't satisfy the spread constraint"
         },
         "labelSelector": {
@@ -3880,9 +3432,7 @@
     },
     "issuer": {
       "type": "object",
-      "required": [
-        "name"
-      ],
+      "required": [ "name" ],
       "properties": {
         "name": {
           "type": "string",
@@ -3891,8 +3441,8 @@
         "kind": {
           "type": "string",
           "enum": [
-            "Issuer",
-            "ClusterIssuer"
+              "Issuer",
+              "ClusterIssuer"
           ]
         },
         "spec": {
@@ -3910,9 +3460,9 @@
       "type": "integer"
     },
     "logAccess": {
-      "type": "object",
-      "description": "Remote log access information",
-      "properties": {
+      "type" : "object",
+      "description" : "Remote log access information",
+      "properties" : {
         "name": {
           "type": "string"
         },
@@ -3920,21 +3470,21 @@
           "type": "string",
           "description": "Name of HPCC LogAccess plugin type such as 'elasticstack'"
         },
-        "connection": {
-          "$ref": "#/definitions/logAccessConnection"
+        "connection" : {
+          "$ref" : "#/definitions/logAccessConnection"
         },
         "logMaps": {
           "description": "A list of log maps",
           "type": "array",
           "items": {
-            "$ref": "#/definitions/logMap"
-          }
+            "$ref" : "#/definitions/logMap"
+           }
         }
       }
     },
     "logAccessConnection": {
       "type": "object",
-      "description": "Connection information for target remote log access",
+      "description" : "Connection information for target remote log access",
       "properties": {
         "protocol": {
           "type": "string"
@@ -3949,87 +3499,70 @@
     },
     "logMap": {
       "type": "object",
-      "description": "Provides log-store mapping to searchable HPCC log columns",
+      "description" : "Provides log-store mapping to searchable HPCC log columns",
       "properties": {
         "type": {
           "type": "string",
-          "description": "The searchable HPCC log column to be mapped - 'global' applies to all known fields",
-          "enum": [
-            "global",
-            "workunits",
-            "components",
-            "audience",
-            "class",
-            "instance",
-            "host",
-            "node",
-            "message",
-            "logid",
-            "processid",
-            "threadid",
-            "timestamp",
-            "pod",
-            "traceid",
-            "spanid"
-          ]
+          "description" : "The searchable HPCC log column to be mapped - 'global' applies to all known fields",
+          "enum": [ "global", "workunits", "components", "audience", "class", "instance", "host", "node", "message", "logid", "processid", "threadid", "timestamp", "pod", "traceid", "spanid"]
         },
         "timeStampColumn": {
-          "description": "Name of timestamp column related to mapped field (only requried for 'global' mapping)",
+          "description" : "Name of timestamp column related to mapped field (only requried for 'global' mapping)",
           "type": "string"
         },
         "searchColumn": {
-          "description": "Name of column mapped to HPCC log entry column",
+          "description" : "Name of column mapped to HPCC log entry column",
           "type": "string"
         },
         "storeName": {
-          "description": "Name of container housing mapped HPCC log column",
+          "description" : "Name of container housing mapped HPCC log column",
           "type": "string"
         },
         "keyColumn": {
-          "description": "Name of join key column",
+          "description" : "Name of join key column",
           "type": "string"
         },
         "columnType": {
-          "description": "Data type of the given column",
+          "description" : "Data type of the given column",
           "type": "string"
         },
         "disableJoins": {
-          "description": "Disables expensive table join operations",
+          "description" : "Disables expensive table join operations",
           "type": "boolean"
         }
       }
     },
     "sinks": {
       "type": "array",
-      "items": {
-        "$ref": "#/definitions/sink"
+      "items" : {
+        "$ref" : "#/definitions/sink"
       }
     },
     "sink": {
-      "type": "object",
-      "description": "Definition of a metric sink",
-      "properties": {
+      "type" : "object",
+      "description" : "Definition of a metric sink",
+      "properties" : {
         "type": {
-          "type": "string",
-          "description": "The defined metric sink type"
+          "type" : "string",
+          "description" : "The defined metric sink type"
         },
-        "name": {
-          "type": "string",
-          "description": "Name for the sink, must be unique for the component"
+        "name" : {
+          "type" : "string",
+          "description" : "Name for the sink, must be unique for the component"
         },
         "settings": {
-          "type": "object",
-          "description": "Settings specific to the sink"
+          "type" : "object",
+          "description" : "Settings specific to the sink"
         }
       },
-      "required": [
+      "required" : [
         "type",
         "name"
       ]
     },
     "stubInstanceResources": {
       "type": "object",
-      "description": "resource definitions per instance for stub components",
+      "description" : "resource definitions per instance for stub components",
       "properties": {
         "memory": {
           "description": "default per stub instance memory requirements",
@@ -4063,15 +3596,11 @@
             "properties": {
               "annotations": {
                 "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                }
+                "additionalProperties": { "type": "string" }
               },
               "labels": {
                 "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                }
+                "additionalProperties": { "type": "string" }
               }
             }
           }
@@ -4102,16 +3631,12 @@
           "headers": {
             "description": "a list of CORS allowed headers",
             "type": "array",
-            "items": {
-              "type": "string"
-            }
+            "items": { "type": "string" }
           },
           "methods": {
             "description": "a list of CORS allowed HTTP methods (default is GET, POST, OPTIONS)",
             "type": "array",
-            "items": {
-              "type": "string"
-            }
+            "items": { "type": "string" }
           }
         }
       }
@@ -4119,18 +3644,14 @@
     "preferredDataReadPlanes": {
       "description": "A list of planes that will take precedence to read from if logical files reside on mutiple planes",
       "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "items": { "type": "string" }
     },
     "allowedPipePrograms": {
       "description": "Permitted list of programs that can be used by the ECL PIPE directive",
       "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "items": { "type": "string" }
     },
-    "hpa": {
+    "hpa" : {
       "type": "object",
       "description": "Horizontal Pod Autoscaler parameters",
       "properties": {
@@ -4159,20 +3680,15 @@
         "metrics": {
           "type": "array",
           "description": "Specifies variables used to calculate the desired replica count. The desired replica count is calculated multiplying the ratio between the target value and the current value by the current number of pods.",
-          "items": {
-            "$ref": "#/definitions/hpaMetric"
-          }
+          "items": { "$ref": "#/definitions/hpaMetric" }
         }
       },
-      "required": [
-        "maxReplicas",
-        "metrics"
-      ]
+      "required": [ "maxReplicas", "metrics" ]
     },
     "hpaScalingRules": {
       "type": "object",
       "properties": {
-        "policies": {
+        "policies" : {
           "type": "array",
           "items": {
             "type": "object",
@@ -4190,11 +3706,7 @@
                 "description": "Specifies the window of time for which the policy should hold true. PeriodSeconds must be greater than zero and less than or equal to 1800 (30 min)."
               }
             },
-            "required": [
-              "type",
-              "value",
-              "periodSeconds"
-            ]
+            "required": ["type", "value", "periodSeconds"]
           }
         },
         "selectPolicy": {
@@ -4207,19 +3719,14 @@
         }
       }
     },
-    "hpaMetric": {
+    "hpaMetric" : {
       "type": "object",
       "description": "Target metric for Horizontal Pod Autoscaler",
       "properties": {
         "type": {
           "type": "string",
-          "description": "The metric type to determine workload scaling",
-          "enum": [
-            "Resource",
-            "Pods",
-            "External",
-            "Object"
-          ]
+          "description" : "The metric type to determine workload scaling",
+          "enum": [ "Resource","Pods", "External", "Object"]
         },
         "name": {
           "description": "The metric name",
@@ -4231,7 +3738,7 @@
           "properties": {
             "matchLabels": {
               "type": "object"
-            }
+             }
           }
         },
         "describedObject": {
@@ -4241,20 +3748,17 @@
             "kind": {
               "type": "string",
               "description": "Specifies the referent kind; More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds"
-            },
-            "name": {
+             },
+             "name": {
               "type": "string",
               "description": "Specifies the referent name; More info: http://kubernetes.io/docs/user-guide/identifiers#names"
-            },
-            "apiVersion": {
+             },
+             "apiVersion": {
               "type": "string",
               "description": "Specifies the referent api version; eg: networking.k8s.io/v1"
-            }
+             }
           },
-          "required": [
-            "kind",
-            "name"
-          ]
+          "required": [ "kind", "name" ]
         },
         "target": {
           "description": "Describes th HPA target threshold",
@@ -4262,28 +3766,17 @@
           "properties": {
             "type": {
               "type": "string",
-              "enum": [
-                "Utilization",
-                "AverageValue",
-                "Value"
-              ]
-            },
-            "value": {
+              "enum": [ "Utilization", "AverageValue", "Value" ]
+             },
+             "value": {
               "description": "Represents the target averageUtilization or averageValue, or the value",
               "type": "string"
-            }
+             }
           },
-          "required": [
-            "type",
-            "value"
-          ]
+          "required": [ "type", "value" ]
         }
       },
-      "required": [
-        "name",
-        "type",
-        "target"
-      ]
+      "required": [ "name", "type", "target" ]
     },
     "schedulingTimeoutSecs": {
       "type": "integer",
@@ -4330,20 +3823,16 @@
       "properties": {
         "annotations": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
+          "additionalProperties": { "type": "string" },
           "description": "Annotations to add to the ServiceAccount"
         },
         "podLabels": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
+          "additionalProperties": { "type": "string" },
           "description": "Labels to add to pods using this ServiceAccount (e.g., for Azure Workload Identity)"
         }
       },
       "description": "Configuration for a specific ServiceAccount"
     }
-  }
+}
 }
