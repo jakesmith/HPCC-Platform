@@ -162,11 +162,6 @@ global:
   #       azure.workload.identity/client-id: "33333333-3333-3333-3333-333333333333"
   #     podLabels:
   #       azure.workload.identity/use: "true"
-  #   dali:
-  #     annotations:
-  #       azure.workload.identity/client-id: "44444444-4444-4444-4444-444444444444"
-  #     podLabels:
-  #       azure.workload.identity/use: "true"
 
 # For pod placement instruction and examples please reference docs/placements.md
 # The following is for tolerations of Spot Node Pool on Azure. Other cloud providers
