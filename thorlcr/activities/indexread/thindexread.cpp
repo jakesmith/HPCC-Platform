@@ -373,6 +373,7 @@ class CIndexCountActivityMaster : public CIndexReadBase
     typedef CIndexReadBase PARENT;
 
     IHThorIndexCountArg *helper;
+    mptag_t stopTag = TAG_NULL;
 
     void processKeyedLimit()
     {
@@ -385,10 +386,55 @@ class CIndexCountActivityMaster : public CIndexReadBase
             }
         }
     }
+    rowcount_t aggregateToLimitIndexExists()
+    {
+        // Special version for IndexExists (choosenLimit == 1)
+        // When any slave returns count > 0, signal all slaves to stop
+        rowcount_t total = 0;
+        unsigned slaves = container.queryJob().querySlaves();
+        bool sentStop = false;
+        ICommunicator &comm = queryJobChannel().queryJobComm();
+        
+        for (unsigned s=0; s<slaves; s++)
+        {
+            CMessageBuffer msg;
+            rank_t sender;
+            if (!receiveMsg(msg, RANK_ALL, mpTag, &sender))
+                return 0;
+            if (abortSoon)
+                return 0;
+            rowcount_t count;
+            msg.read(count);
+            total += count;
+            
+            // If we found a match and haven't sent stop signal yet
+            if (!sentStop && total > 0)
+            {
+                sentStop = true;
+                // Broadcast stop signal to all slaves
+                CMessageBuffer stopMsg;
+                stopMsg.append(true); // stop flag
+                for (unsigned i=0; i<slaves; i++)
+                {
+                    comm.send(stopMsg, i+1, stopTag);
+                }
+            }
+        }
+        return total;
+    }
 public:
     CIndexCountActivityMaster(CMasterGraphElement *info) : CIndexReadBase(info)
     {
         helper = (IHThorIndexCountArg *)queryHelper();
+        // Allocate stop tag for IndexExists early termination
+        if (!container.queryLocalOrGrouped())
+            stopTag = container.queryJob().allocateMPTag();
+    }
+    virtual void serializeSlaveData(MemoryBuffer &dst, unsigned slave) override
+    {
+        CIndexReadBase::serializeSlaveData(dst, slave);
+        if (!container.queryLocalOrGrouped())
+            dst.append(stopTag);
     }
     virtual void process() override
     {
@@ -399,11 +445,29 @@ public:
         keyedLimit = (rowcount_t)helper->getKeyedLimit();
         if (keyedLimit != RCMAX)
             processKeyedLimit();
-        rowcount_t total = aggregateToLimit();
+        
+        rowcount_t total;
+        rowcount_t choosenLimit = helper->getChooseNLimit();
+        if (choosenLimit == 1)
+        {
+            // IndexExists case - use optimized aggregation
+            total = aggregateToLimitIndexExists();
+        }
+        else
+        {
+            total = aggregateToLimit();
+        }
+        
         CMessageBuffer msg;
         msg.append(total);
         ICommunicator &comm = queryJobChannel().queryJobComm();
         verifyex(comm.send(msg, 1, mpTag)); // send to 1st slave only
+    }
+    virtual void abort() override
+    {
+        CIndexReadBase::abort();
+        if (stopTag != TAG_NULL)
+            cancelReceiveMsg(RANK_ALL, stopTag);
     }
 };
 

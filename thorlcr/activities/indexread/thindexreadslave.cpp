@@ -19,6 +19,7 @@
 #include "jfile.hpp"
 #include "jtime.hpp"
 #include "jsort.hpp"
+#include <atomic>
 
 #include "rtlkey.hpp"
 #include "jhtree.hpp"
@@ -1273,6 +1274,8 @@ class CIndexCountSlaveActivity : public CIndexReadSlaveBase
     rowcount_t preknownTotalCount = 0;
     bool totalCountKnown = false;
     bool done = false;
+    mptag_t stopTag = TAG_NULL;
+    std::atomic<bool> stopped{false};
 
     bool checkKeyedLimit()
     {
@@ -1285,11 +1288,40 @@ class CIndexCountSlaveActivity : public CIndexReadSlaveBase
         }
         return true;
     }
+    bool checkStopSignal()
+    {
+        // For IndexExists (choosenLimit == 1), check if master signaled us to stop
+        if (stopped.load(std::memory_order_relaxed))
+            return true;
+        
+        if (choosenLimit == 1 && stopTag != TAG_NULL)
+        {
+            // Non-blocking check for stop signal
+            CMessageBuffer msg;
+            if (container.queryJobChannel().queryJobComm().recv(msg, 0, stopTag, nullptr, 0))
+            {
+                bool stopFlag;
+                msg.read(stopFlag);
+                if (stopFlag)
+                {
+                    stopped.store(true, std::memory_order_relaxed);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 public:
     CIndexCountSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container)
     {
         helper = static_cast <IHThorIndexCountArg *> (container.queryHelper());
         appendOutputLinked(this);
+    }
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
+    {
+        PARENT::init(data, slaveData);
+        if (!container.queryLocalOrGrouped())
+            data.read(stopTag);
     }
     virtual void prepareManager(IKeyManager *manager) override
     {
@@ -1323,6 +1355,7 @@ public:
             preknownTotalCount = 0;
         }
         done = false;
+        stopped.store(false, std::memory_order_relaxed);
     }
 
 // IRowStream
@@ -1371,10 +1404,16 @@ public:
                                 callback.finishedRow();
                             if ((totalCount > choosenLimit))
                                 break;
+                            // For IndexExists, check if master signaled us to stop
+                            if (checkStopSignal())
+                                break;
                         }
                         if (keyManager)
                             resetManager(keyManager);
                         if ((totalCount > choosenLimit))
+                            break;
+                        // For IndexExists, check if master signaled us to stop
+                        if (checkStopSignal())
                             break;
                     }
                     if (_currentManager)
@@ -1435,6 +1474,8 @@ public:
     {
         CIndexReadSlaveBase::abort();
         cancelReceiveMsg(0, mpTag);
+        if (stopTag != TAG_NULL)
+            cancelReceiveMsg(0, stopTag);
     }
 };
 
