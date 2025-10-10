@@ -374,6 +374,7 @@ class CIndexCountActivityMaster : public CIndexReadBase
 
     IHThorIndexCountArg *helper;
     mptag_t stopTag = TAG_NULL;
+    rowcount_t choosenLimit = RCMAX;
 
     void processKeyedLimit()
     {
@@ -386,16 +387,15 @@ class CIndexCountActivityMaster : public CIndexReadBase
             }
         }
     }
-    rowcount_t aggregateToLimitIndexExists()
+    rowcount_t aggregateToLimit()
     {
-        // Special version for IndexExists (choosenLimit == 1)
-        // When any slave returns count > 0, signal all slaves to stop
         rowcount_t total = 0;
         unsigned slaves = container.queryJob().querySlaves();
+        unsigned s;
         bool sentStop = false;
         ICommunicator &comm = queryJobChannel().queryJobComm();
         
-        for (unsigned s=0; s<slaves; s++)
+        for (s=0; s<slaves; s++)
         {
             CMessageBuffer msg;
             rank_t sender;
@@ -407,11 +407,11 @@ class CIndexCountActivityMaster : public CIndexReadBase
             msg.read(count);
             total += count;
             
-            // If we found a match and haven't sent stop signal yet
-            if (!sentStop && total > 0)
+            // If limit exceeded and haven't sent stop signal yet, signal all slaves to stop
+            // This optimization applies whenever there's a choosenLimit set (including IndexExists case where choosenLimit==1)
+            if (!sentStop && choosenLimit != RCMAX && total > choosenLimit && stopTag != TAG_NULL)
             {
                 sentStop = true;
-                // Broadcast stop signal to all slaves
                 CMessageBuffer stopMsg;
                 stopMsg.append(true); // stop flag
                 for (unsigned i=0; i<slaves; i++)
@@ -426,15 +426,14 @@ public:
     CIndexCountActivityMaster(CMasterGraphElement *info) : CIndexReadBase(info)
     {
         helper = (IHThorIndexCountArg *)queryHelper();
-        // Allocate stop tag for IndexExists early termination
         if (!container.queryLocalOrGrouped())
             stopTag = container.queryJob().allocateMPTag();
     }
     virtual void serializeSlaveData(MemoryBuffer &dst, unsigned slave) override
     {
         CIndexReadBase::serializeSlaveData(dst, slave);
-        // Always send stopTag (will be TAG_NULL for non-IndexExists or local/grouped cases)
-        dst.append(stopTag);
+        if (!container.queryLocalOrGrouped())
+            dst.append(stopTag);
     }
     virtual void process() override
     {
@@ -446,17 +445,8 @@ public:
         if (keyedLimit != RCMAX)
             processKeyedLimit();
         
-        rowcount_t total;
-        rowcount_t choosenLimit = helper->getChooseNLimit();
-        if (choosenLimit == 1)
-        {
-            // IndexExists case - use optimized aggregation
-            total = aggregateToLimitIndexExists();
-        }
-        else
-        {
-            total = aggregateToLimit();
-        }
+        choosenLimit = helper->getChooseNLimit();
+        rowcount_t total = aggregateToLimit();
         
         CMessageBuffer msg;
         msg.append(total);
