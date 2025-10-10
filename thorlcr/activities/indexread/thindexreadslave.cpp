@@ -1320,8 +1320,8 @@ public:
     virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
     {
         PARENT::init(data, slaveData);
-        if (!container.queryLocalOrGrouped())
-            data.read(stopTag);
+        // Always read stopTag (will be TAG_NULL for non-IndexExists or local/grouped cases)
+        data.read(stopTag);
     }
     virtual void prepareManager(IKeyManager *manager) override
     {

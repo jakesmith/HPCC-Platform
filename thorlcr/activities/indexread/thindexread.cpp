@@ -433,8 +433,8 @@ public:
     virtual void serializeSlaveData(MemoryBuffer &dst, unsigned slave) override
     {
         CIndexReadBase::serializeSlaveData(dst, slave);
-        if (!container.queryLocalOrGrouped())
-            dst.append(stopTag);
+        // Always send stopTag (will be TAG_NULL for non-IndexExists or local/grouped cases)
+        dst.append(stopTag);
     }
     virtual void process() override
     {
