@@ -719,16 +719,15 @@ int main( int argc, const char *argv[]  )
 #ifdef _CONTAINERIZED
     // Install config update hook to re-merge manager additional settings when config is refreshed
     static CConfigUpdateHook managerConfigHook;
-    managerConfigHook.installOnce([](const IPropertyTree *oldComponentConfiguration, const IPropertyTree *oldGlobalConfiguration)
+    managerConfigHook.installModifierOnce([](IPropertyTree *newComponentConfiguration, IPropertyTree *newGlobalConfiguration)
     {
-        // Re-merge additional manager settings into refreshed config
+        // Re-merge additional manager settings into refreshed config (before it becomes active)
         CriticalBlock b(managerAdditionalSettingsCrit);
         if (managerAdditionalSettings)
         {
-            Owned<IPropertyTree> currentConfig = getComponentConfigSP();
-            mergeConfiguration(*currentConfig, *managerAdditionalSettings);
+            mergeConfiguration(*newComponentConfiguration, *managerAdditionalSettings);
         }
-    }, false); // false = don't call when installed, only on updates
+    }, true); // true = thread safe (we're in main thread during init)
 #endif
     
     updateTraceFlags(loadTraceFlags(globals, thorTraceOptions, queryTraceFlags()), true);

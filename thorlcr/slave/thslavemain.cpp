@@ -172,16 +172,15 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
         
         // Install config update hook to re-merge manager settings when config is refreshed
         static CConfigUpdateHook workerConfigHook;
-        workerConfigHook.installOnce([](const IPropertyTree *oldComponentConfiguration, const IPropertyTree *oldGlobalConfiguration)
+        workerConfigHook.installModifierOnce([](IPropertyTree *newComponentConfiguration, IPropertyTree *newGlobalConfiguration)
         {
-            // Re-merge additional manager settings into refreshed config
+            // Re-merge additional manager settings into refreshed config (before it becomes active)
             CriticalBlock b(workerManagerSettingsCrit);
             if (workerStoredManagerSettings)
             {
-                Owned<IPropertyTree> currentConfig = getComponentConfigSP();
-                mergeConfiguration(*currentConfig, *workerStoredManagerSettings);
+                mergeConfiguration(*newComponentConfiguration, *workerStoredManagerSettings);
             }
-        }, false); // false = don't call when installed, only on updates
+        }, true); // true = thread safe (we're in RegisterSelf, single-threaded at this point)
         
         // Handle logging detail level override if present
         // Note: In containerized mode, both manager and worker load the same base config,
