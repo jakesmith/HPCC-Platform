@@ -131,6 +131,12 @@ public:
 static CThorEndHandler *thorEndHandler = nullptr;
 static StringBuffer cloudJobName;
 
+// Additional settings that the manager adds to the configuration before sending to workers.
+// These need to be re-merged when the configuration is refreshed (containerized mode only).
+static Owned<IPropertyTree> managerAdditionalSettings;
+static CriticalSection managerAdditionalSettingsCrit;
+static CConfigUpdateHook managerConfigHook;
+
 MODULE_INIT(INIT_PRIORITY_STANDARD)
 {
     /* NB: CThorEndHandler starts the thread now, although strictly it is not needed until later.
@@ -397,11 +403,48 @@ public:
         //Check that nothing has caused the global configuration to be refreshed - otherwise inconsistent values may be used by the slave
         assertex(globals == getComponentConfigSP());
 
+        if (isContainerized())
+        {
+            // Create additional settings tree to send to workers
+            // These settings will be re-merged when config is refreshed
+            // Only include settings that are actually SET by the manager (not those from config)
+            CriticalBlock b(managerAdditionalSettingsCrit);
+            managerAdditionalSettings.setown(createPTree("ThorManagerAdditionalSettings"));
+            
+            // Properties that the manager dynamically sets and workers need
+            managerAdditionalSettings->setProp("@masterBuildTag", globals->queryProp("@masterBuildTag"));
+            managerAdditionalSettings->setPropInt("@masterTotalMem", globals->getPropInt("@masterTotalMem"));
+            managerAdditionalSettings->setProp("@thorPath", globals->queryProp("@thorPath"));
+            
+            if (globals->hasProp("@query_so_dir"))
+                managerAdditionalSettings->setProp("@query_so_dir", globals->queryProp("@query_so_dir"));
+            if (globals->hasProp("@dllsToSlaves"))
+                managerAdditionalSettings->setPropBool("@dllsToSlaves", globals->getPropBool("@dllsToSlaves"));
+            if (globals->hasProp("@thorTempDirectory"))
+                managerAdditionalSettings->setProp("@thorTempDirectory", globals->queryProp("@thorTempDirectory"));
+            
+            // Copy worker memory settings that manager computed
+            IPropertyTree *workerMemory = globals->queryPropTree("workerMemory");
+            if (workerMemory)
+                managerAdditionalSettings->setPropTree("workerMemory", createPTreeFromIPT(workerMemory));
+        }
+
         PROGLOG("Workers connected, initializing..");
         msg.clear();
         msg.append(THOR_VERSION_MAJOR).append(THOR_VERSION_MINOR);
         processGroup->serialize(msg);
-        globals->serialize(msg);
+        if (isContainerized())
+        {
+            // In containerized mode, workers already have the base config loaded.
+            // Only send the additional manager settings that need to be merged.
+            CriticalBlock b(managerAdditionalSettingsCrit);
+            managerAdditionalSettings->serialize(msg);
+        }
+        else
+        {
+            // In bare-metal mode, send the full merged globals as before
+            globals->serialize(msg);
+        }
         getGlobalConfigSP()->serialize(msg);
         msg.append(managerWorkerMpTag);
         msg.append(kjServiceMpTag);
@@ -645,10 +688,24 @@ int main( int argc, const char *argv[]  )
     InitModuleObjects();
     NoQuickEditSection xxx;
     {
-        bool monitorConfig = false; // Do not allow updates to the config file, otherwise the slave may not be in sync.
-        //MORE: What about updates to storage planes - they will not be passed through to the slaves
+        bool monitorConfig = isContainerized(); // Enable monitoring in containerized mode only
         globals.setown(loadConfiguration(thorDefaultConfigYaml, argv, "thor", "THOR", "thor.xml", nullptr, nullptr, monitorConfig));
     }
+    
+    if (isContainerized())
+    {
+        // Install config update hook to re-merge manager additional settings when config is refreshed
+        managerConfigHook.installModifierOnce([](IPropertyTree *newComponentConfiguration, IPropertyTree *newGlobalConfiguration)
+        {
+            // Re-merge additional manager settings into refreshed config (before it becomes active)
+            CriticalBlock b(managerAdditionalSettingsCrit);
+            if (managerAdditionalSettings)
+            {
+                mergeConfiguration(*newComponentConfiguration, *managerAdditionalSettings);
+            }
+        }, true); // true = thread safe (we're in main thread during init)
+    }
+    
     updateTraceFlags(loadTraceFlags(globals, thorTraceOptions, queryTraceFlags()), true);
 #ifdef _DEBUG
     unsigned holdWorker = globals->getPropInt("@holdSlave", NotFound);

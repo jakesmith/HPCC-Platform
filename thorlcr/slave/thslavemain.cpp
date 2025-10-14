@@ -79,6 +79,11 @@ static const unsigned defaultForceNumStrands = 0;
 static const char **cmdArgs;
 static ILogMsgHandler *logHandler = nullptr;
 
+// Additional settings from manager that need to be re-merged on config refresh (containerized mode only)
+static Owned<IPropertyTree> workerStoredManagerSettings;
+static CriticalSection workerManagerSettingsCrit;
+static CConfigUpdateHook workerConfigHook;
+
 static void replyError(unsigned errorCode, const char *errorMsg)
 {
     SocketEndpoint myEp = queryMyNode()->endpoint();
@@ -139,7 +144,17 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
         msg.read(vmajor);
         msg.read(vminor);
         Owned<IGroup> processGroup = deserializeIGroup(msg);
-        Owned<IPropertyTree> masterComponentConfig = createPTree(msg);
+        Owned<IPropertyTree> masterComponentConfig;
+        if (isContainerized())
+        {
+            // In containerized mode, receive only the additional manager settings
+            masterComponentConfig.setown(createPTree(msg));
+        }
+        else
+        {
+            // In bare-metal mode, receive the full merged component config from manager
+            masterComponentConfig.setown(createPTree(msg));
+        }
         Owned<IPropertyTree> masterGlobalConfig = createPTree(msg);
         mySlaveNum = (unsigned)processGroup->rank(queryMyNode());
         assertex(NotFound != mySlaveNum);
@@ -152,10 +167,38 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
             assertex(mySlaveNum == configSlaveNum);
 
         Owned<IPropertyTree> mergedComponentConfig = createPTreeFromIPT(globals);
-        mergeConfiguration(*mergedComponentConfig, *masterComponentConfig);
-        if (masterComponentConfig->hasProp("logging/@thorworkerdetail"))
+        if (isContainerized())
         {
-            unsigned workerDetailLevel = masterComponentConfig->getPropInt("logging/@thorworkerdetail");
+            // In containerized mode, merge the additional manager settings into our existing config
+            mergeConfiguration(*mergedComponentConfig, *masterComponentConfig);
+            
+            // Store additional settings for re-merging on config refresh
+            {
+                CriticalBlock b(workerManagerSettingsCrit);
+                workerStoredManagerSettings.setown(createPTreeFromIPT(masterComponentConfig));
+            }
+            
+            // Install config update hook to re-merge manager settings when config is refreshed
+            workerConfigHook.installModifierOnce([](IPropertyTree *newComponentConfiguration, IPropertyTree *newGlobalConfiguration)
+            {
+                // Re-merge additional manager settings into refreshed config (before it becomes active)
+                CriticalBlock b(workerManagerSettingsCrit);
+                if (workerStoredManagerSettings)
+                {
+                    mergeConfiguration(*newComponentConfiguration, *workerStoredManagerSettings);
+                }
+            }, true); // true = thread safe (we're in RegisterSelf, single-threaded at this point)
+        }
+        else
+        {
+            // In bare-metal mode, merge the full master config as before
+            mergeConfiguration(*mergedComponentConfig, *masterComponentConfig);
+        }
+        
+        // Handle logging detail level override if present
+        if (mergedComponentConfig->hasProp("logging/@thorworkerdetail"))
+        {
+            unsigned workerDetailLevel = mergedComponentConfig->getPropInt("logging/@thorworkerdetail");
             mergedComponentConfig->setPropInt("logging/@detail", workerDetailLevel);
             ILogMsgFilter *existingLogFilter = queryLogMsgManager()->queryMonitorFilter(logHandler);
             dbgassertex(existingLogFilter);
@@ -414,18 +457,23 @@ int main( int argc, const char *argv[]  )
             return 1;
         }
         cmdArgs = argv+1;
-#ifdef _CONTAINERIZED
-        globals.setown(loadConfiguration(thorDefaultConfigYaml, argv, "thor", "THOR", nullptr, nullptr, nullptr, false));
-        // pickup the default logging level from the thor default config yaml
-        if (globals->hasProp("logging/@thorworkerdetail"))
+        if (isContainerized())
         {
-            unsigned workerDetailLevel = globals->getPropInt("logging/@thorworkerdetail");
-            globals->setPropInt("logging/@detail", workerDetailLevel);
-            // NB: may be overridden by Thor config settings during RegisterSelf
+            // In containerized mode, enable config monitoring for workers
+            globals.setown(loadConfiguration(thorDefaultConfigYaml, argv, "thor", "THOR", nullptr, nullptr, nullptr, true));
+            // pickup the default logging level from the thor default config yaml
+            if (globals->hasProp("logging/@thorworkerdetail"))
+            {
+                unsigned workerDetailLevel = globals->getPropInt("logging/@thorworkerdetail");
+                globals->setPropInt("logging/@detail", workerDetailLevel);
+                // NB: may be overridden by Thor config settings during RegisterSelf
+            }
         }
-#else
-        globals.setown(loadConfiguration(globals, nullptr, argv, "thor", "THOR", nullptr, nullptr, nullptr, false));
-#endif
+        else
+        {
+            // In bare-metal mode, no monitoring
+            globals.setown(loadConfiguration(globals, nullptr, argv, "thor", "THOR", nullptr, nullptr, nullptr, false));
+        }
 
         // NB: the thor configuration is serialized from the manager and only available after RegisterSelf
         // Until that point, only properties on the command line are available.
