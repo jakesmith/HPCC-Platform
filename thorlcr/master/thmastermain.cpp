@@ -431,6 +431,10 @@ public:
             if (globals->hasProp("@thorTempDirectory"))
                 managerAdditionalSettings->setProp("@thorTempDirectory", globals->queryProp("@thorTempDirectory"));
             
+            // Copy logging settings if present (for worker detail level override)
+            if (globals->hasProp("logging/@thorworkerdetail"))
+                managerAdditionalSettings->setPropInt("logging/@thorworkerdetail", globals->getPropInt("logging/@thorworkerdetail"));
+            
             // Copy memory settings subtrees
             IPropertyTree *workerMemory = globals->queryPropTree("workerMemory");
             if (workerMemory)

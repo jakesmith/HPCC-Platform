@@ -183,10 +183,12 @@ static bool RegisterSelf(SocketEndpoint &masterEp)
             }
         }, false); // false = don't call when installed, only on updates
         
-        // Handle logging detail level from manager settings
-        if (managerAdditionalSettings->hasProp("logging/@thorworkerdetail"))
+        // Handle logging detail level override if present
+        // Note: In containerized mode, both manager and worker load the same base config,
+        // but the manager may have added or modified logging/@thorworkerdetail
+        if (mergedComponentConfig->hasProp("logging/@thorworkerdetail"))
         {
-            unsigned workerDetailLevel = managerAdditionalSettings->getPropInt("logging/@thorworkerdetail");
+            unsigned workerDetailLevel = mergedComponentConfig->getPropInt("logging/@thorworkerdetail");
             mergedComponentConfig->setPropInt("logging/@detail", workerDetailLevel);
             ILogMsgFilter *existingLogFilter = queryLogMsgManager()->queryMonitorFilter(logHandler);
             dbgassertex(existingLogFilter);
