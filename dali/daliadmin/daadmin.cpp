@@ -3610,6 +3610,7 @@ void fileread(const char *srcPath, const char *dstPath, offset_t numBytes)
 
     try
     {
+        installDefaultFileHooks(getComponentConfigSP());
         PROGLOG("fileread: Reading from %s", srcPath);
         PROGLOG("  Writing to: %s", dstPath);
         if (numBytes > 0)
