@@ -92,6 +92,7 @@ void usage(const char *exe)
   printf("\n");
   printf("Other dali server and misc commands:\n");
   printf("  auditlog <fromdate> <todate> <match>\n");
+  printf("  azureblobread <azureblobpath>   -- read and display Azure blob file contents (format: azureblob:<plane>/<device>/<container>/<path>)\n");
   printf("  cleanglobalwuid [dryrun] [noreconstruct]\n");
   printf("  cleanjobqueues [dryrun]\n");
   printf("  cleangenerateddlls [dryrun] [nobackup]\n");
@@ -644,6 +645,11 @@ int main(int argc, const char* argv[])
                             }
                         }
                         cleanStaleGroups(groupPattern, dryrun);
+                    }
+                    else if (strieq(cmd, "azureblobread"))
+                    {
+                        CHECKPARAMS(1, 1);
+                        azureBlobRead(params.item(1));
                     }
                     else if (strieq(cmd, "remotetest"))
                         remoteTest(params.item(1), true);

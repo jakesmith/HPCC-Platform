@@ -36,6 +36,7 @@ include_directories (
          ${HPCC_SOURCE_DIR}/dali/ft
          ${HPCC_SOURCE_DIR}/common/workunit
          ${HPCC_SOURCE_DIR}/common/dllserver
+         ${HPCC_SOURCE_DIR}/common/remote/hooks/azure
          ${HPCC_SOURCE_DIR}/system/mp
          ${HPCC_SOURCE_DIR}/system/include
          ${HPCC_SOURCE_DIR}/system/jlib
@@ -57,4 +58,5 @@ target_link_libraries ( daliadminlib
          dllserver
          wsdfuaccess
          ws_dfsclient
+         azureapi
     )

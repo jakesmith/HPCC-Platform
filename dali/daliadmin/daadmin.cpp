@@ -3602,4 +3602,110 @@ void cleanStaleGroups(const char *groupPattern, bool dryRun)
     }
 }
 
+void azureBlobRead(const char *azureBlobPath)
+{
+    // Test Azure Blob access using Azure AD Workload Identity
+    // Takes an Azure blob path as input parameter
+    // Format: azureblob:<plane>/<device>/<container>/<path>
+
+    try
+    {
+        PROGLOG("azureBlobRead: Testing Azure blob access with Workload Identity");
+        PROGLOG("  File path: %s", azureBlobPath);
+
+        // Create the Azure blob file object
+        Owned<IFile> azureFile = createIFile(azureBlobPath);
+        if (!azureFile)
+        {
+            PROGLOG("ERROR: Failed to create Azure blob file object");
+            return;
+        }
+
+        // Check if file exists
+        bool fileExists = azureFile->exists();
+        PROGLOG("  File exists: %s", fileExists ? "YES" : "NO");
+
+        if (!fileExists)
+        {
+            PROGLOG("  File does not exist, cannot test reading");
+            return;
+        }
+
+        // Get file size
+        offset_t fileSize = azureFile->size();
+        PROGLOG("  File size: %" I64F "d bytes", fileSize);
+
+        // Open file for reading
+        Owned<IFileIO> fileIO = azureFile->open(IFOread);
+        if (!fileIO)
+        {
+            PROGLOG("ERROR: Failed to open file for reading");
+            return;
+        }
+
+        // Read first few bytes (e.g., 256 bytes or file size, whichever is smaller)
+        size32_t bytesToRead = (size32_t)(fileSize < 256 ? fileSize : 256);
+        byte *buffer = (byte *)malloc(bytesToRead);
+        if (!buffer)
+        {
+            PROGLOG("ERROR: Failed to allocate read buffer");
+            return;
+        }
+
+        size32_t bytesRead = fileIO->read(0, bytesToRead, buffer);
+        PROGLOG("  Bytes read: %u", bytesRead);
+
+        if (bytesRead > 0)
+        {
+            // Display first 64 bytes in hex
+            StringBuffer hexBuf;
+            size32_t displayBytes = bytesRead < 64 ? bytesRead : 64;
+            for (size32_t i = 0; i < displayBytes; i++)
+            {
+                if (i > 0 && i % 16 == 0)
+                    hexBuf.append("\n    ");
+                hexBuf.appendf("%02x ", (unsigned)buffer[i]);
+            }
+            PROGLOG("  First %u bytes (hex):\n    %s", displayBytes, hexBuf.str());
+
+            // Display printable ASCII characters
+            StringBuffer asciiBuf;
+            for (size32_t i = 0; i < displayBytes; i++)
+            {
+                if (buffer[i] >= 32 && buffer[i] <= 126)
+                    asciiBuf.append((char)buffer[i]);
+                else
+                    asciiBuf.append('.');
+            }
+            PROGLOG("  First %u bytes (ASCII): %s", displayBytes, asciiBuf.str());
+        }
+
+        free(buffer);
+
+        // Get file timestamps
+        CDateTime createTime, modifiedTime, accessedTime;
+        if (azureFile->getTime(&createTime, &modifiedTime, &accessedTime))
+        {
+            StringBuffer createStr, modifiedStr;
+            createTime.getString(createStr);
+            modifiedTime.getString(modifiedStr);
+            PROGLOG("  Created: %s", createStr.str());
+            PROGLOG("  Modified: %s", modifiedStr.str());
+        }
+
+        PROGLOG("azureBlobRead: SUCCESS - File read completed");
+    }
+    catch (IException *e)
+    {
+        StringBuffer msg;
+        e->errorMessage(msg);
+        PROGLOG("azureBlobRead: EXCEPTION - %s", msg.str());
+        e->Release();
+    }
+    catch (...)
+    {
+        PROGLOG("azureBlobRead: UNKNOWN EXCEPTION");
+    }
+}
+
 } // namespace daadmin

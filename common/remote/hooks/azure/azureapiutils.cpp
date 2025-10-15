@@ -32,119 +32,109 @@ using namespace std::chrono;
 //---------------------------------------------------------------------------------------------------------------------
 
 //Singleton class to manage Azure AD Workload Identity token acquisition and renewal
-class AzureWorkloadIdentityTokenManager
+//Class definition is in azureapiutils.hpp
+
+AzureWorkloadIdentityTokenManager::AzureWorkloadIdentityTokenManager()
 {
-private:
-    mutable CriticalSection cs;
-    StringBuffer accessToken;
-    time_t tokenExpiresAt = 0;
-    bool hasWorkloadIdentity = false;
-    bool hasManagedIdentity = false;
+    //Check for Azure AD Workload Identity environment variables
+    hasWorkloadIdentity = std::getenv("AZURE_CLIENT_ID") &&
+                         std::getenv("AZURE_TENANT_ID") &&
+                         std::getenv("AZURE_FEDERATED_TOKEN_FILE");
 
-    AzureWorkloadIdentityTokenManager()
+    //Check for legacy managed identity endpoints
+    hasManagedIdentity = std::getenv("MSI_ENDPOINT") || std::getenv("IDENTITY_ENDPOINT");
+
+    if (hasWorkloadIdentity)
+        DBGLOG("Azure AD Workload Identity detected");
+    else if (hasManagedIdentity)
+        DBGLOG("Legacy Azure Managed Identity detected");
+}
+
+bool AzureWorkloadIdentityTokenManager::fetchWorkloadIdentityToken()
+{
+    const char * clientId = std::getenv("AZURE_CLIENT_ID");
+    const char * tenantId = std::getenv("AZURE_TENANT_ID");
+    const char * tokenFile = std::getenv("AZURE_FEDERATED_TOKEN_FILE");
+
+    if (!clientId || !tenantId || !tokenFile)
+        return false;
+
+    //Use Azure SDK's DefaultAzureCredential which supports Workload Identity
+    try
     {
-        //Check for Azure AD Workload Identity environment variables
-        hasWorkloadIdentity = std::getenv("AZURE_CLIENT_ID") &&
-                             std::getenv("AZURE_TENANT_ID") &&
-                             std::getenv("AZURE_FEDERATED_TOKEN_FILE");
+        Azure::Identity::DefaultAzureCredential credential;
+        Azure::Core::Credentials::TokenRequestContext context;
+        context.Scopes.push_back("https://storage.azure.com/.default");
 
-        //Check for legacy managed identity endpoints
-        hasManagedIdentity = std::getenv("MSI_ENDPOINT") || std::getenv("IDENTITY_ENDPOINT");
+        auto tokenResult = credential.GetToken(context, Azure::Core::Context());
 
-        if (hasWorkloadIdentity)
-            DBGLOG("Azure AD Workload Identity detected");
-        else if (hasManagedIdentity)
-            DBGLOG("Legacy Azure Managed Identity detected");
+        accessToken.set(tokenResult.Token.c_str());
+
+        //Calculate expiration time (refresh 5 minutes before actual expiry)
+        auto expiresOn = std::chrono::system_clock::to_time_t(std::chrono::system_clock::time_point(tokenResult.ExpiresOn));
+        tokenExpiresAt = expiresOn - 300; // 5 minutes buffer
+
+        DBGLOG("Azure AD Workload Identity token acquired, expires at %s", ctime(&expiresOn));
+        return true;
     }
-
-    bool fetchWorkloadIdentityToken()
+    catch (const Azure::Core::Credentials::AuthenticationException& e)
     {
-        const char * clientId = std::getenv("AZURE_CLIENT_ID");
-        const char * tenantId = std::getenv("AZURE_TENANT_ID");
-        const char * tokenFile = std::getenv("AZURE_FEDERATED_TOKEN_FILE");
-        const char * authorityHost = std::getenv("AZURE_AUTHORITY_HOST");
-
-        if (!clientId || !tenantId || !tokenFile)
-            return false;
-
-        //Use Azure SDK's DefaultAzureCredential which supports Workload Identity
-        try
-        {
-            Azure::Identity::DefaultAzureCredential credential;
-            Azure::Core::Credentials::TokenRequestContext context;
-            context.Scopes.push_back("https://storage.azure.com/.default");
-
-            auto tokenResult = credential.GetToken(context, Azure::Core::Context());
-
-            accessToken.set(tokenResult.Token.c_str());
-
-            //Calculate expiration time (refresh 5 minutes before actual expiry)
-            auto expiresOn = std::chrono::system_clock::to_time_t(std::chrono::system_clock::time_point(tokenResult.ExpiresOn));
-            tokenExpiresAt = expiresOn - 300; // 5 minutes buffer
-
-            DBGLOG("Azure AD Workload Identity token acquired, expires at %s", ctime(&expiresOn));
-            return true;
-        }
-        catch (const Azure::Core::Credentials::AuthenticationException& e)
-        {
-            IERRLOG("Azure AD Workload Identity authentication failed: %s", e.what());
-            return false;
-        }
-        catch (const std::exception& e)
-        {
-            IERRLOG("Failed to acquire Azure AD Workload Identity token: %s", e.what());
-            return false;
-        }
+        IERRLOG("Azure AD Workload Identity authentication failed: %s", e.what());
+        return false;
     }
-
-    bool isTokenValid() const
+    catch (const std::exception& e)
     {
-        return (accessToken.length() > 0) && (time(nullptr) < tokenExpiresAt);
+        IERRLOG("Failed to acquire Azure AD Workload Identity token: %s", e.what());
+        return false;
     }
+}
 
-public:
-    static AzureWorkloadIdentityTokenManager & instance()
-    {
-        static AzureWorkloadIdentityTokenManager theInstance;
-        return theInstance;
-    }
+bool AzureWorkloadIdentityTokenManager::isTokenValid() const
+{
+    return (accessToken.length() > 0) && (time(nullptr) < tokenExpiresAt);
+}
 
-    bool isEnabled() const
-    {
-        return hasWorkloadIdentity || hasManagedIdentity;
-    }
+AzureWorkloadIdentityTokenManager & AzureWorkloadIdentityTokenManager::instance()
+{
+    static AzureWorkloadIdentityTokenManager theInstance;
+    return theInstance;
+}
 
-    bool requiresExplicitToken() const
-    {
-        //Workload Identity requires explicit token management
-        //Legacy managed identity is handled automatically by Azure SDK
-        return hasWorkloadIdentity;
-    }
+bool AzureWorkloadIdentityTokenManager::isEnabled() const
+{
+    return hasWorkloadIdentity || hasManagedIdentity;
+}
 
-    const char * getAccessToken()
-    {
-        CriticalBlock block(cs);
+bool AzureWorkloadIdentityTokenManager::requiresExplicitToken() const
+{
+    //Workload Identity requires explicit token management
+    //Legacy managed identity is handled automatically by Azure SDK
+    return hasWorkloadIdentity;
+}
 
-        if (!hasWorkloadIdentity)
-            return nullptr; // Let SDK handle legacy managed identity
+const char * AzureWorkloadIdentityTokenManager::getAccessToken()
+{
+    CriticalBlock block(cs);
 
-        if (isTokenValid())
-            return accessToken.str();
+    if (!hasWorkloadIdentity)
+        return nullptr; // Let SDK handle legacy managed identity
 
-        //Token expired or not yet fetched, get a fresh one
-        if (fetchWorkloadIdentityToken())
-            return accessToken.str();
+    if (isTokenValid())
+        return accessToken.str();
 
-        IERRLOG("Failed to acquire Azure access token");
-        return nullptr;
-    }
+    //Token expired or not yet fetched, get a fresh one
+    if (fetchWorkloadIdentityToken())
+        return accessToken.str();
 
-    void invalidateToken()
-    {
-        CriticalBlock block(cs);
-        tokenExpiresAt = 0;
-    }
-};
+    IERRLOG("Failed to acquire Azure access token");
+    return nullptr;
+}
+
+void AzureWorkloadIdentityTokenManager::invalidateToken()
+{
+    CriticalBlock block(cs);
+    tokenExpiresAt = 0;
+}
 
 AzureWorkloadIdentityTokenManager & getAzureTokenManager()
 {

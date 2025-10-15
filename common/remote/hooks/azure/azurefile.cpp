@@ -43,10 +43,6 @@ using namespace std::chrono;
  * Azure Files provides SMB-compatible file shares in the cloud.
  */
 
-// Forward declaration - defined in azureapiutils.cpp
-class AzureWorkloadIdentityTokenManager;
-extern AzureWorkloadIdentityTokenManager & getAzureTokenManager();
-
 //---------------------------------------------------------------------------------------------------------------------
 
 using SharedFileClient = std::shared_ptr<Azure::Storage::Files::Shares::ShareFileClient>;

@@ -20,6 +20,8 @@
 
 #include "jlib.hpp"
 #include "jlog.hpp"
+#include "jmutex.hpp"
+#include "jstring.hpp"
 
 #include <azure/core.hpp>
 #include <azure/core/http/http.hpp>
@@ -28,6 +30,7 @@
 #include <azure/identity.hpp>
 
 #include <exception>
+#include <ctime>
 
 /*
  * Common utility functions and constants shared by Azure Blob and File implementations
@@ -36,8 +39,27 @@
 constexpr const char * azureBlobPrefix = "azureblob:";
 constexpr const char * azureFilePrefix = "azurefile:";
 
-// Forward declaration
-class AzureWorkloadIdentityTokenManager;
+// Azure Workload Identity Token Manager
+class AzureWorkloadIdentityTokenManager
+{
+private:
+    mutable CriticalSection cs;
+    StringBuffer accessToken;
+    time_t tokenExpiresAt = 0;
+    bool hasWorkloadIdentity = false;
+    bool hasManagedIdentity = false;
+
+    AzureWorkloadIdentityTokenManager();
+    bool fetchWorkloadIdentityToken();
+    bool isTokenValid() const;
+
+public:
+    static AzureWorkloadIdentityTokenManager & instance();
+    bool isEnabled() const;
+    bool requiresExplicitToken() const;
+    const char * getAccessToken();
+    void invalidateToken();
+};
 
 // Access to token manager
 AzureWorkloadIdentityTokenManager & getAzureTokenManager();

@@ -44,11 +44,6 @@ using namespace std::chrono;
 
 static constexpr unsigned maxAzureBlockCount = 50000;
 
-// Forward declaration - defined in azureapiutils.cpp
-class AzureWorkloadIdentityTokenManager;
-extern AzureWorkloadIdentityTokenManager & getAzureTokenManager();
-
-
 //---------------------------------------------------------------------------------------------------------------------
 
 using SharedBlobClient = std::shared_ptr<Azure::Storage::Blobs::BlockBlobClient>;

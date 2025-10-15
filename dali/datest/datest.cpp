@@ -39,7 +39,6 @@
 
 #include "jptree.hpp"
 #include "wsdfuaccess.hpp"
-#include "azureblob.hpp"
 
 using namespace wsdfuaccess;
 using namespace dafsstream;
@@ -3319,131 +3318,11 @@ void testlockprop(const char *lfn)
     printf("done\n");
 }
 
-void TestAzureBlobWorkloadIdentity()
-{
-    // Test Azure Blob access using Azure AD Workload Identity
-    // Based on plane definition:
-    // - name: remote-plane-1-remote-hpcc-data
-    // - numDevices: 2
-    // - storageapi.managed: true (uses Workload Identity)
-    // - containers[0]: account=hpccikydbdata1, name=hpcc-data
-    // - containers[1]: account=hpccikydbdata2, name=hpcc-data
-    //
-    // Test file path: thor/terasort/out._1_of_5
-    // Using device 2 (hpccikydbdata2 account)
-
-    try
-    {
-        // Construct the Azure blob filename using the plane definition
-        // Format: azureblob:<plane>/<device>/<container>/<path>
-        // Device 2 corresponds to containers[1] (hpccikydbdata2)
-        const char *azureBlobPath = "azureblob:remote-plane-1-remote-hpcc-data/d2/hpcc-data/thor/terasort/out._1_of_5";
-
-        PROGLOG("TestAzureBlobWorkloadIdentity: Testing Azure blob access with Workload Identity");
-        PROGLOG("  File path: %s", azureBlobPath);
-        PROGLOG("  Expected account: hpccikydbdata2");
-        PROGLOG("  Expected container: hpcc-data");
-
-        // Create the Azure blob file object
-        Owned<IFile> azureFile = createAzureBlob(azureBlobPath);
-        if (!azureFile)
-        {
-            PROGLOG("ERROR: Failed to create Azure blob file object");
-            return;
-        }
-
-        // Check if file exists
-        bool fileExists = azureFile->exists();
-        PROGLOG("  File exists: %s", fileExists ? "YES" : "NO");
-
-        if (!fileExists)
-        {
-            PROGLOG("  File does not exist, cannot test reading");
-            return;
-        }
-
-        // Get file size
-        offset_t fileSize = azureFile->size();
-        PROGLOG("  File size: %" I64F "d bytes", fileSize);
-
-        // Open file for reading
-        Owned<IFileIO> fileIO = azureFile->open(IFOread);
-        if (!fileIO)
-        {
-            PROGLOG("ERROR: Failed to open file for reading");
-            return;
-        }
-
-        // Read first few bytes (e.g., 256 bytes or file size, whichever is smaller)
-        size32_t bytesToRead = (size32_t)(fileSize < 256 ? fileSize : 256);
-        byte *buffer = (byte *)malloc(bytesToRead);
-        if (!buffer)
-        {
-            PROGLOG("ERROR: Failed to allocate read buffer");
-            return;
-        }
-
-        size32_t bytesRead = fileIO->read(0, bytesToRead, buffer);
-        PROGLOG("  Bytes read: %u", bytesRead);
-
-        if (bytesRead > 0)
-        {
-            // Display first 64 bytes in hex
-            StringBuffer hexBuf;
-            size32_t displayBytes = bytesRead < 64 ? bytesRead : 64;
-            for (size32_t i = 0; i < displayBytes; i++)
-            {
-                if (i > 0 && i % 16 == 0)
-                    hexBuf.append("\n    ");
-                hexBuf.appendf("%02x ", (unsigned)buffer[i]);
-            }
-            PROGLOG("  First %u bytes (hex):\n    %s", displayBytes, hexBuf.str());
-
-            // Display printable ASCII characters
-            StringBuffer asciiBuf;
-            for (size32_t i = 0; i < displayBytes; i++)
-            {
-                if (buffer[i] >= 32 && buffer[i] <= 126)
-                    asciiBuf.append((char)buffer[i]);
-                else
-                    asciiBuf.append('.');
-            }
-            PROGLOG("  First %u bytes (ASCII): %s", displayBytes, asciiBuf.str());
-        }
-
-        free(buffer);
-
-        // Get file timestamps
-        CDateTime createTime, modifiedTime, accessedTime;
-        if (azureFile->getTime(&createTime, &modifiedTime, &accessedTime))
-        {
-            StringBuffer createStr, modifiedStr;
-            createTime.getString(createStr);
-            modifiedTime.getString(modifiedStr);
-            PROGLOG("  Created: %s", createStr.str());
-            PROGLOG("  Modified: %s", modifiedStr.str());
-        }
-
-        PROGLOG("TestAzureBlobWorkloadIdentity: SUCCESS - File read completed");
-    }
-    catch (IException *e)
-    {
-        StringBuffer msg;
-        e->errorMessage(msg);
-        PROGLOG("TestAzureBlobWorkloadIdentity: EXCEPTION - %s", msg.str());
-        e->Release();
-    }
-    catch (...)
-    {
-        PROGLOG("TestAzureBlobWorkloadIdentity: UNKNOWN EXCEPTION");
-    }
-}
-
 void usage(const char *error=NULL)
 {
     if (error) printf("%s\n", error);
     printf("usage: DATEST <server_ip:port>* [/test <name> [<test params...>] [/NITER <iterations>]\n");
-    printf("where name = RANDTEST | DFS | QTEST | QTEST2 | SESSION | LOCKS | SDS1 | SDS2 | XPATHS| STRESS | STRESS2 | SHUTDOWN | EXTERNAL | SUBLOCKS | SUBSCRIPTION | CONNECTIONSUBS | MULTIFILE | NODESUBS | DFUSTREAMREAD | DFUSTREAMWRITE | DFUSTREAMCOPY | AZUREBLOBWI\n");
+    printf("where name = RANDTEST | DFS | QTEST | QTEST2 | SESSION | LOCKS | SDS1 | SDS2 | XPATHS| STRESS | STRESS2 | SHUTDOWN | EXTERNAL | SUBLOCKS | SUBSCRIPTION | CONNECTIONSUBS | MULTIFILE | NODESUBS | DFUSTREAMREAD | DFUSTREAMWRITE | DFUSTREAMCOPY\n");
     printf("eg:  datest . /test QTEST put          -- one coven server running locally, running qtest with param \"put\"\n");
     printf("     datest eq0001016 eq0001017        -- two coven servers, use default test %s\n", DEFAULT_TEST);
 }
@@ -3651,8 +3530,6 @@ int main(int argc, char* argv[])
                 testDfuStreamWrite(testParams.ordinality() ? testParams.item(0) : nullptr);
             else if (TEST("DFUSTREAMCOPY"))
                 testDfuStreamCopy(testParams.ordinality() ? testParams.item(0) : nullptr);
-            else if (TEST("AZUREBLOBWI"))
-                TestAzureBlobWorkloadIdentity();
 //          else if (TEST("DALILOG"))
 //              testDaliLog(testParams.ordinality()&&0!=atoi(testParams.item(0)));
             else
