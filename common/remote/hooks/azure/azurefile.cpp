@@ -30,6 +30,7 @@
 
 #include <azure/core.hpp>
 #include <azure/core/base64.hpp>
+#include <azure/identity.hpp>
 
 using namespace Azure::Storage;
 using namespace Azure::Storage::Files::Shares;
@@ -41,6 +42,10 @@ using namespace std::chrono;
  * This implementation mirrors the Azure Blob API but uses Azure File Shares instead.
  * Azure Files provides SMB-compatible file shares in the cloud.
  */
+
+// Forward declaration - defined in azureapiutils.cpp
+class AzureWorkloadIdentityTokenManager;
+extern AzureWorkloadIdentityTokenManager & getAzureTokenManager();
 
 //---------------------------------------------------------------------------------------------------------------------
 
@@ -376,10 +381,28 @@ SharedFileClient AzureFile::getFileClient() const
 {
     if (useManagedIdentity)
     {
-        // For managed identity, create client without credentials
-        // The Azure SDK will automatically use managed identity when no explicit credentials are provided
-        // and the application is running in an Azure environment (VM, App Service, etc.)
-        return std::make_shared<ShareFileClient>(getFileUrl());
+        AzureWorkloadIdentityTokenManager & tokenMgr = getAzureTokenManager();
+
+        if (tokenMgr.requiresExplicitToken())
+        {
+            // Azure AD Workload Identity - use DefaultAzureCredential
+            try
+            {
+                return std::make_shared<ShareFileClient>(getFileUrl(),
+                    std::make_shared<Azure::Identity::DefaultAzureCredential>());
+            }
+            catch (const Azure::Core::RequestFailedException& e)
+            {
+                throw makeStringExceptionV(-1, "Azure Workload Identity authentication failed: %s (%d)",
+                    e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
+            }
+        }
+        else
+        {
+            // Legacy managed identity - Azure SDK handles automatically
+            // The SDK will use MSI_ENDPOINT or IDENTITY_ENDPOINT environment variables
+            return std::make_shared<ShareFileClient>(getFileUrl());
+        }
     }
     else
     {
@@ -424,10 +447,28 @@ std::shared_ptr<ShareClient> AzureFile::getShareClient() const
 {
     if (useManagedIdentity)
     {
-        // For managed identity, create client without credentials
-        // The Azure SDK will automatically use managed identity when no explicit credentials are provided
-        // and the application is running in an Azure environment (VM, App Service, etc.)
-        return std::make_shared<ShareClient>(getShareUrl(accountName, shareName));
+        AzureWorkloadIdentityTokenManager & tokenMgr = getAzureTokenManager();
+
+        if (tokenMgr.requiresExplicitToken())
+        {
+            // Azure AD Workload Identity - use DefaultAzureCredential
+            try
+            {
+                return std::make_shared<ShareClient>(getShareUrl(accountName, shareName),
+                    std::make_shared<Azure::Identity::DefaultAzureCredential>());
+            }
+            catch (const Azure::Core::RequestFailedException& e)
+            {
+                throw makeStringExceptionV(-1, "Azure Workload Identity authentication failed: %s (%d)",
+                    e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
+            }
+        }
+        else
+        {
+            // Legacy managed identity - Azure SDK handles automatically
+            // The SDK will use MSI_ENDPOINT or IDENTITY_ENDPOINT environment variables
+            return std::make_shared<ShareClient>(getShareUrl(accountName, shareName));
+        }
     }
     else
     {

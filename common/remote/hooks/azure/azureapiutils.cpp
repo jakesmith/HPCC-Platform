@@ -21,16 +21,140 @@
 #include "jexcept.hpp"
 #include "jstring.hpp"
 #include "jlog.hpp"
+#include "jfile.hpp"
+#include "jmutex.hpp"
 #include <cstdlib>
+#include <azure/identity.hpp>
+
+using namespace std::chrono;
 
 // Common utility functions shared by both blob and file implementations
 //---------------------------------------------------------------------------------------------------------------------
 
+//Singleton class to manage Azure AD Workload Identity token acquisition and renewal
+class AzureWorkloadIdentityTokenManager
+{
+private:
+    mutable CriticalSection cs;
+    StringBuffer accessToken;
+    time_t tokenExpiresAt = 0;
+    bool hasWorkloadIdentity = false;
+    bool hasManagedIdentity = false;
+
+    AzureWorkloadIdentityTokenManager()
+    {
+        //Check for Azure AD Workload Identity environment variables
+        hasWorkloadIdentity = std::getenv("AZURE_CLIENT_ID") &&
+                             std::getenv("AZURE_TENANT_ID") &&
+                             std::getenv("AZURE_FEDERATED_TOKEN_FILE");
+
+        //Check for legacy managed identity endpoints
+        hasManagedIdentity = std::getenv("MSI_ENDPOINT") || std::getenv("IDENTITY_ENDPOINT");
+
+        if (hasWorkloadIdentity)
+            DBGLOG("Azure AD Workload Identity detected");
+        else if (hasManagedIdentity)
+            DBGLOG("Legacy Azure Managed Identity detected");
+    }
+
+    bool fetchWorkloadIdentityToken()
+    {
+        const char * clientId = std::getenv("AZURE_CLIENT_ID");
+        const char * tenantId = std::getenv("AZURE_TENANT_ID");
+        const char * tokenFile = std::getenv("AZURE_FEDERATED_TOKEN_FILE");
+        const char * authorityHost = std::getenv("AZURE_AUTHORITY_HOST");
+
+        if (!clientId || !tenantId || !tokenFile)
+            return false;
+
+        //Use Azure SDK's DefaultAzureCredential which supports Workload Identity
+        try
+        {
+            Azure::Identity::DefaultAzureCredential credential;
+            Azure::Core::Credentials::TokenRequestContext context;
+            context.Scopes.push_back("https://storage.azure.com/.default");
+
+            auto tokenResult = credential.GetToken(context, Azure::Core::Context());
+
+            accessToken.set(tokenResult.Token.c_str());
+
+            //Calculate expiration time (refresh 5 minutes before actual expiry)
+            auto expiresOn = std::chrono::system_clock::to_time_t(std::chrono::system_clock::time_point(tokenResult.ExpiresOn));
+            tokenExpiresAt = expiresOn - 300; // 5 minutes buffer
+
+            DBGLOG("Azure AD Workload Identity token acquired, expires at %s", ctime(&expiresOn));
+            return true;
+        }
+        catch (const Azure::Core::Credentials::AuthenticationException& e)
+        {
+            IERRLOG("Azure AD Workload Identity authentication failed: %s", e.what());
+            return false;
+        }
+        catch (const std::exception& e)
+        {
+            IERRLOG("Failed to acquire Azure AD Workload Identity token: %s", e.what());
+            return false;
+        }
+    }
+
+    bool isTokenValid() const
+    {
+        return (accessToken.length() > 0) && (time(nullptr) < tokenExpiresAt);
+    }
+
+public:
+    static AzureWorkloadIdentityTokenManager & instance()
+    {
+        static AzureWorkloadIdentityTokenManager theInstance;
+        return theInstance;
+    }
+
+    bool isEnabled() const
+    {
+        return hasWorkloadIdentity || hasManagedIdentity;
+    }
+
+    bool requiresExplicitToken() const
+    {
+        //Workload Identity requires explicit token management
+        //Legacy managed identity is handled automatically by Azure SDK
+        return hasWorkloadIdentity;
+    }
+
+    const char * getAccessToken()
+    {
+        CriticalBlock block(cs);
+
+        if (!hasWorkloadIdentity)
+            return nullptr; // Let SDK handle legacy managed identity
+
+        if (isTokenValid())
+            return accessToken.str();
+
+        //Token expired or not yet fetched, get a fresh one
+        if (fetchWorkloadIdentityToken())
+            return accessToken.str();
+
+        IERRLOG("Failed to acquire Azure access token");
+        return nullptr;
+    }
+
+    void invalidateToken()
+    {
+        CriticalBlock block(cs);
+        tokenExpiresAt = 0;
+    }
+};
+
+AzureWorkloadIdentityTokenManager & getAzureTokenManager()
+{
+    return AzureWorkloadIdentityTokenManager::instance();
+}
+
 bool areManagedIdentitiesEnabled()
 {
-    //Use a local static to avoid re-evaluation.  Performance is not critical - so once overhead is acceptable.
-    static bool enabled = std::getenv("MSI_ENDPOINT") || std::getenv("IDENTITY_ENDPOINT");
-    return enabled;
+    //Use a local static to avoid re-evaluation. Performance is not critical - so once overhead is acceptable.
+    return AzureWorkloadIdentityTokenManager::instance().isEnabled();
 }
 
 bool isBase64Char(char c)
@@ -52,6 +176,14 @@ void handleRequestBackoff(const char * message, unsigned attempt, unsigned maxRe
 
 void handleRequestException(const Azure::Core::RequestFailedException& e, const char * op, unsigned attempt, unsigned maxRetries, const char * filename, offset_t pos, offset_t len)
 {
+    // Check for authentication failures and invalidate token if needed
+    if (e.StatusCode == Azure::Core::Http::HttpStatusCode::Unauthorized ||
+        e.StatusCode == Azure::Core::Http::HttpStatusCode::Forbidden)
+    {
+        DBGLOG("Authentication failure detected, invalidating Azure token");
+        AzureWorkloadIdentityTokenManager::instance().invalidateToken();
+    }
+
     VStringBuffer msg("%s failed (attempt %u/%u) for file %s at offset %llu, len %llu: %s (%d)",
                       op, attempt, maxRetries, filename, pos, len, e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
 
@@ -68,6 +200,14 @@ void handleRequestException(const std::exception& e, const char * op, unsigned a
 
 void handleRequestException(const Azure::Core::RequestFailedException& e, const char * op, unsigned attempt, unsigned maxRetries, const char * filename)
 {
+    // Check for authentication failures and invalidate token if needed
+    if (e.StatusCode == Azure::Core::Http::HttpStatusCode::Unauthorized ||
+        e.StatusCode == Azure::Core::Http::HttpStatusCode::Forbidden)
+    {
+        DBGLOG("Authentication failure detected, invalidating Azure token");
+        AzureWorkloadIdentityTokenManager::instance().invalidateToken();
+    }
+
     VStringBuffer msg("%s failed (attempt %u/%u) for file %s: %s (%d)",
                       op, attempt, maxRetries, filename, e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
 

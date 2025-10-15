@@ -25,6 +25,7 @@
 #include <azure/core/http/http.hpp>
 #include <azure/storage/blobs.hpp>
 #include <azure/storage/files/shares.hpp>
+#include <azure/identity.hpp>
 
 #include <exception>
 
@@ -34,6 +35,12 @@
 
 constexpr const char * azureBlobPrefix = "azureblob:";
 constexpr const char * azureFilePrefix = "azurefile:";
+
+// Forward declaration
+class AzureWorkloadIdentityTokenManager;
+
+// Access to token manager
+AzureWorkloadIdentityTokenManager & getAzureTokenManager();
 
 bool areManagedIdentitiesEnabled();
 bool isBase64Char(char c);

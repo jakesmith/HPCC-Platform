@@ -29,6 +29,7 @@ endif()
 find_package(azure-storage-blobs-cpp CONFIG REQUIRED)
 find_package(azure-storage-files-shares-cpp CONFIG REQUIRED)
 find_package(azure-storage-common-cpp CONFIG REQUIRED)
+find_package(azure-identity-cpp CONFIG REQUIRED)
 
 project( azureapi )
 SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${STRICT_CXX_FLAGS}")
@@ -60,4 +61,5 @@ target_link_libraries ( azurefile
         Azure::azure-storage-common
         Azure::azure-storage-blobs
         Azure::azure-storage-files-shares
+        Azure::azure-identity
     )
