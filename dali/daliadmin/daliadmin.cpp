@@ -250,6 +250,14 @@ int main(int argc, const char* argv[])
                     }
                     loadXMLTest(params.item(1), parseOnly, useLowMemPTree, saveFormatedTree, freePTree);
                 }
+                else if (strieq(cmd, "fileread"))
+                {
+                    CHECKPARAMS(2, 3);
+                    offset_t numBytes = 0;
+                    if (np > 2)
+                        numBytes = atoi64_l(params.item(3), strlen(params.item(3)));
+                    fileread(params.item(1), params.item(2), numBytes);
+                }
                 else
                 {
                     UERRLOG("Unknown command %s",cmd);
@@ -645,14 +653,6 @@ int main(int argc, const char* argv[])
                             }
                         }
                         cleanStaleGroups(groupPattern, dryrun);
-                    }
-                    else if (strieq(cmd, "fileread"))
-                    {
-                        CHECKPARAMS(2, 3);
-                        offset_t numBytes = 0;
-                        if (np > 2)
-                            numBytes = atoi64_l(params.item(3), strlen(params.item(3)));
-                        fileread(params.item(1), params.item(2), numBytes);
                     }
                     else if (strieq(cmd, "remotetest"))
                         remoteTest(params.item(1), true);
