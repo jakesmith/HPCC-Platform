@@ -3602,109 +3602,139 @@ void cleanStaleGroups(const char *groupPattern, bool dryRun)
     }
 }
 
-void azureBlobRead(const char *azureBlobPath)
+void fileread(const char *srcPath, const char *dstPath, offset_t numBytes)
 {
-    // Test Azure Blob access using Azure AD Workload Identity
-    // Takes an Azure blob path as input parameter
-    // Format: azureblob:<plane>/<device>/<container>/<path>
+    // Read N bytes from source file and write to destination file
+    // Supports any file type (local, Azure blob, S3, etc.)
+    // Displays progress and file metadata
 
     try
     {
-        PROGLOG("azureBlobRead: Testing Azure blob access with Workload Identity");
-        PROGLOG("  File path: %s", azureBlobPath);
+        PROGLOG("fileread: Reading from %s", srcPath);
+        PROGLOG("  Writing to: %s", dstPath);
+        if (numBytes > 0)
+            PROGLOG("  Bytes to read: %" I64F "d", numBytes);
 
-        // Create the Azure blob file object
-        Owned<IFile> azureFile = createIFile(azureBlobPath);
-        if (!azureFile)
+        // Create the source file object
+        Owned<IFile> srcFile = createIFile(srcPath);
+        if (!srcFile)
         {
-            PROGLOG("ERROR: Failed to create Azure blob file object");
+            UERRLOG("ERROR: Failed to create source file object");
             return;
         }
 
-        // Check if file exists
-        bool fileExists = azureFile->exists();
-        PROGLOG("  File exists: %s", fileExists ? "YES" : "NO");
-
-        if (!fileExists)
+        // Check if source file exists
+        if (!srcFile->exists())
         {
-            PROGLOG("  File does not exist, cannot test reading");
+            UERRLOG("ERROR: Source file does not exist: %s", srcPath);
             return;
         }
 
-        // Get file size
-        offset_t fileSize = azureFile->size();
-        PROGLOG("  File size: %" I64F "d bytes", fileSize);
+        // Get source file size
+        offset_t srcFileSize = srcFile->size();
+        PROGLOG("  Source file size: %" I64F "d bytes", srcFileSize);
 
-        // Open file for reading
-        Owned<IFileIO> fileIO = azureFile->open(IFOread);
-        if (!fileIO)
-        {
-            PROGLOG("ERROR: Failed to open file for reading");
-            return;
-        }
+        // Determine how many bytes to read
+        offset_t bytesToRead = numBytes;
+        if (bytesToRead == 0 || bytesToRead > srcFileSize)
+            bytesToRead = srcFileSize;
 
-        // Read first few bytes (e.g., 256 bytes or file size, whichever is smaller)
-        size32_t bytesToRead = (size32_t)(fileSize < 256 ? fileSize : 256);
-        byte *buffer = (byte *)malloc(bytesToRead);
-        if (!buffer)
-        {
-            PROGLOG("ERROR: Failed to allocate read buffer");
-            return;
-        }
-
-        size32_t bytesRead = fileIO->read(0, bytesToRead, buffer);
-        PROGLOG("  Bytes read: %u", bytesRead);
-
-        if (bytesRead > 0)
-        {
-            // Display first 64 bytes in hex
-            StringBuffer hexBuf;
-            size32_t displayBytes = bytesRead < 64 ? bytesRead : 64;
-            for (size32_t i = 0; i < displayBytes; i++)
-            {
-                if (i > 0 && i % 16 == 0)
-                    hexBuf.append("\n    ");
-                hexBuf.appendf("%02x ", (unsigned)buffer[i]);
-            }
-            PROGLOG("  First %u bytes (hex):\n    %s", displayBytes, hexBuf.str());
-
-            // Display printable ASCII characters
-            StringBuffer asciiBuf;
-            for (size32_t i = 0; i < displayBytes; i++)
-            {
-                if (buffer[i] >= 32 && buffer[i] <= 126)
-                    asciiBuf.append((char)buffer[i]);
-                else
-                    asciiBuf.append('.');
-            }
-            PROGLOG("  First %u bytes (ASCII): %s", displayBytes, asciiBuf.str());
-        }
-
-        free(buffer);
+        PROGLOG("  Will read: %" I64F "d bytes", bytesToRead);
 
         // Get file timestamps
         CDateTime createTime, modifiedTime, accessedTime;
-        if (azureFile->getTime(&createTime, &modifiedTime, &accessedTime))
+        if (srcFile->getTime(&createTime, &modifiedTime, &accessedTime))
         {
-            StringBuffer createStr, modifiedStr;
+            StringBuffer createStr, modifiedStr, accessStr;
             createTime.getString(createStr);
             modifiedTime.getString(modifiedStr);
+            accessedTime.getString(accessStr);
             PROGLOG("  Created: %s", createStr.str());
             PROGLOG("  Modified: %s", modifiedStr.str());
+            PROGLOG("  Accessed: %s", accessStr.str());
         }
 
-        PROGLOG("azureBlobRead: SUCCESS - File read completed");
+        // Open source file for reading
+        Owned<IFileIO> srcFileIO = srcFile->open(IFOread);
+        if (!srcFileIO)
+        {
+            UERRLOG("ERROR: Failed to open source file for reading");
+            return;
+        }
+
+        // Create destination file
+        Owned<IFile> dstFile = createIFile(dstPath);
+        Owned<IFileIO> dstFileIO = dstFile->open(IFOcreate);
+        if (!dstFileIO)
+        {
+            UERRLOG("ERROR: Failed to create destination file: %s", dstPath);
+            return;
+        }
+
+        // Read and write in chunks
+        const size32_t chunkSize = 0x100000; // 1MB chunks
+        MemoryBuffer memoryBuffer;
+        byte *buffer = (byte *)memoryBuffer.reserveTruncate(chunkSize);
+
+        CCycleTimer timer;
+        offset_t totalBytesRead = 0;
+        offset_t pos = 0;
+        unsigned reportInterval = 10; // Report every 10MB
+        offset_t nextReport = reportInterval * 0x100000;
+
+        while (totalBytesRead < bytesToRead)
+        {
+            size32_t toRead = (size32_t)std::min((offset_t)chunkSize, bytesToRead - totalBytesRead);
+            size32_t bytesRead = srcFileIO->read(pos, toRead, buffer);
+            
+            if (bytesRead == 0)
+            {
+                WARNLOG("Unexpected end of file at offset %" I64F "d", pos);
+                break;
+            }
+
+            dstFileIO->write(pos, bytesRead, buffer);
+            
+            totalBytesRead += bytesRead;
+            pos += bytesRead;
+
+            // Progress reporting
+            if (totalBytesRead >= nextReport || totalBytesRead == bytesToRead)
+            {
+                double mbRead = (double)totalBytesRead / 0x100000;
+                double mbTotal = (double)bytesToRead / 0x100000;
+                double pct = (double)totalBytesRead * 100.0 / bytesToRead;
+                unsigned elapsedMs = timer.elapsedMs();
+                double mbps = elapsedMs > 0 ? (mbRead * 1000.0 / elapsedMs) : 0.0;
+                
+                PROGLOG("  Progress: %.2f MB / %.2f MB (%.1f%%) - %.2f MB/s", 
+                        mbRead, mbTotal, pct, mbps);
+                
+                nextReport = ((totalBytesRead / (reportInterval * 0x100000)) + 1) * (reportInterval * 0x100000);
+            }
+        }
+
+        unsigned elapsedMs = timer.elapsedMs();
+        double seconds = elapsedMs / 1000.0;
+        double mbRead = (double)totalBytesRead / 0x100000;
+        double mbps = seconds > 0 ? (mbRead / seconds) : 0.0;
+
+        PROGLOG("fileread: SUCCESS");
+        PROGLOG("  Total bytes read: %" I64F "d", totalBytesRead);
+        PROGLOG("  Time elapsed: %.2f seconds", seconds);
+        PROGLOG("  Average speed: %.2f MB/s", mbps);
+        PROGLOG("  Output written to: %s", dstPath);
     }
     catch (IException *e)
     {
         StringBuffer msg;
         e->errorMessage(msg);
-        PROGLOG("azureBlobRead: EXCEPTION - %s", msg.str());
+        UERRLOG("fileread: EXCEPTION - %s", msg.str());
         e->Release();
     }
     catch (...)
     {
-        PROGLOG("azureBlobRead: UNKNOWN EXCEPTION");
+        UERRLOG("fileread: UNKNOWN EXCEPTION");
     }
 }
 

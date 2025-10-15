@@ -164,7 +164,7 @@ void handleRequestBackoff(const char * message, unsigned attempt, unsigned maxRe
     Sleep(backoffMs);
 }
 
-void handleRequestException(const Azure::Core::RequestFailedException& e, const char * op, unsigned attempt, unsigned maxRetries, const char * filename, offset_t pos, offset_t len)
+static void checkAndInvalidateToken(const Azure::Core::RequestFailedException& e)
 {
     // Check for authentication failures and invalidate token if needed
     if (e.StatusCode == Azure::Core::Http::HttpStatusCode::Unauthorized ||
@@ -173,6 +173,11 @@ void handleRequestException(const Azure::Core::RequestFailedException& e, const 
         DBGLOG("Authentication failure detected, invalidating Azure token");
         AzureWorkloadIdentityTokenManager::instance().invalidateToken();
     }
+}
+
+void handleRequestException(const Azure::Core::RequestFailedException& e, const char * op, unsigned attempt, unsigned maxRetries, const char * filename, offset_t pos, offset_t len)
+{
+    checkAndInvalidateToken(e);
 
     VStringBuffer msg("%s failed (attempt %u/%u) for file %s at offset %llu, len %llu: %s (%d)",
                       op, attempt, maxRetries, filename, pos, len, e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
@@ -190,13 +195,7 @@ void handleRequestException(const std::exception& e, const char * op, unsigned a
 
 void handleRequestException(const Azure::Core::RequestFailedException& e, const char * op, unsigned attempt, unsigned maxRetries, const char * filename)
 {
-    // Check for authentication failures and invalidate token if needed
-    if (e.StatusCode == Azure::Core::Http::HttpStatusCode::Unauthorized ||
-        e.StatusCode == Azure::Core::Http::HttpStatusCode::Forbidden)
-    {
-        DBGLOG("Authentication failure detected, invalidating Azure token");
-        AzureWorkloadIdentityTokenManager::instance().invalidateToken();
-    }
+    checkAndInvalidateToken(e);
 
     VStringBuffer msg("%s failed (attempt %u/%u) for file %s: %s (%d)",
                       op, attempt, maxRetries, filename, e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));

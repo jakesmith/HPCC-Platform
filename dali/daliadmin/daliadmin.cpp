@@ -92,7 +92,6 @@ void usage(const char *exe)
   printf("\n");
   printf("Other dali server and misc commands:\n");
   printf("  auditlog <fromdate> <todate> <match>\n");
-  printf("  azureblobread <azureblobpath>   -- read and display Azure blob file contents (format: azureblob:<plane>/<device>/<container>/<path>)\n");
   printf("  cleanglobalwuid [dryrun] [noreconstruct]\n");
   printf("  cleanjobqueues [dryrun]\n");
   printf("  cleangenerateddlls [dryrun] [nobackup]\n");
@@ -101,6 +100,7 @@ void usage(const char *exe)
   printf("  coalesce                        -- force transaction coalesce\n");
   printf("  dalilocks [ <ip-pattern> ] [ files ] -- get all locked files/xpaths\n");
   printf("  daliping [ <num> ]              -- time dali server connect\n");
+  printf("  fileread <srcfile> <dstfile> [<bytes>] -- read N bytes from source file (any type: local, azureblob:, s3:, etc.) and write to destination with progress\n");
   printf("  getxref <destxmlfile>           -- get all XREF information\n");
   printf("  loadxml <srcxmlfile> [--lowmem[=<true|false]]    -- use lowmem AtomPTree's\n"
          "                       [--parseonly[=<true|false]] -- parse the xml file, don't load it into dali\n"
@@ -646,10 +646,13 @@ int main(int argc, const char* argv[])
                         }
                         cleanStaleGroups(groupPattern, dryrun);
                     }
-                    else if (strieq(cmd, "azureblobread"))
+                    else if (strieq(cmd, "fileread"))
                     {
-                        CHECKPARAMS(1, 1);
-                        azureBlobRead(params.item(1));
+                        CHECKPARAMS(2, 3);
+                        offset_t numBytes = 0;
+                        if (np > 2)
+                            numBytes = atoi64_l(params.item(3), strlen(params.item(3)));
+                        fileread(params.item(1), params.item(2), numBytes);
                     }
                     else if (strieq(cmd, "remotetest"))
                         remoteTest(params.item(1), true);

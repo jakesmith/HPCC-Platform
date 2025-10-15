@@ -44,6 +44,7 @@ using namespace std::chrono;
 
 static constexpr unsigned maxAzureBlockCount = 50000;
 
+
 //---------------------------------------------------------------------------------------------------------------------
 
 using SharedBlobClient = std::shared_ptr<Azure::Storage::Blobs::BlockBlobClient>;

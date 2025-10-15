@@ -30,7 +30,6 @@
 #include <azure/identity.hpp>
 
 #include <exception>
-#include <ctime>
 
 /*
  * Common utility functions and constants shared by Azure Blob and File implementations
