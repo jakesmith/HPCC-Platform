@@ -1,0 +1,221 @@
+{
+    "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+    "name": "hpcc-platform",
+    "version": "10.0.0",
+    "dependencies": [
+        {
+            "name": "antlr3",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "apr",
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        {
+            "name": "apr-util",
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        {
+            "name": "arrow",
+            "default-features": false,
+            "features": [
+                "acero",
+                "compute",
+                "dataset",
+                "filesystem",
+                "parquet"
+            ],
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        {
+            "name": "aws-sdk-cpp",
+            "default-features": false,
+            "features": [
+                "s3",
+                "sqs"
+            ],
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "azure-storage-blobs-cpp",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "azure-storage-files-shares-cpp",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        "boost-property-tree",
+        {
+            "name": "cpp-driver",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "cppunit",
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        {
+            "name": "cpr",
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        "curl",
+        {
+            "name": "elasticlient",
+            "platform": "(windows | osx | linux | emscripten) & !windows"
+        },
+        {
+            "name": "h3",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "hiredis",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "icu",
+            "platform": "(windows | osx | linux | emscripten)",
+            "features": [
+                "tools"
+            ]
+        },
+        {
+            "name": "jsoncpp",
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        "jwt-cpp",
+        {
+            "name": "libarchive",
+            "default-features": false,
+            "features": [
+                "bzip2"
+            ]
+        },
+        {
+            "name": "libcouchbase-cxx",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "libgit2",
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        {
+            "name": "libiconv",
+            "platform": "osx"
+        },
+        {
+            "name": "libmemcached",
+            "platform": "(!windows & !osx & !linux & !emscripten) & !windows & !osx"
+        },
+        {
+            "name": "libmysql",
+            "platform": "(!windows & !osx & !linux & !emscripten) & !(windows & x86)",
+            "default-features": false,
+            "features": []
+        },
+        {
+            "name": "libphonenumber",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "librdkafka",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "liburing",
+            "platform": "linux"
+        },
+        {
+            "name": "libuv",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "libxml2",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "libxslt",
+            "default-features": false,
+            "features": [
+                "tools"
+            ],
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        "libyaml",
+        "lz4",
+        {
+            "name": "minizip",
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        {
+            "name": "mongo-cxx-driver",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        "nlohmann-json",
+        {
+            "name": "nlp-engine",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "numactl",
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        {
+            "name": "openblas",
+            "features": [
+                "dynamic-arch",
+                "threads"
+            ],
+            "platform": "(!windows & !osx & !linux & !emscripten) & !windows"
+        },
+        {
+            "name": "openblas",
+            "features": [
+                "threads"
+            ],
+            "platform": "(!windows & !osx & !linux & !emscripten) & windows"
+        },
+        {
+            "name": "openldap",
+            "platform": "(windows | osx | linux | emscripten) & !windows"
+        },
+        {
+            "name": "openssl",
+            "platform": "(windows | osx | linux | emscripten)"
+        },
+        {
+            "name": "opentelemetry-cpp",
+            "default-features": false,
+            "features": [
+                "otlp-grpc",
+                "otlp-http"
+            ]
+        },
+        "pcre2",
+        "picojson",
+        {
+            "name": "python3",
+            "platform": "(windows | osx | linux | emscripten) & windows"
+        },
+        "rapidjson",
+        {
+            "name": "sqlite3",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "tbb",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "wasmtime-cpp-api",
+            "platform": "(!windows & !osx & !linux & !emscripten)"
+        },
+        {
+            "name": "winflexbison",
+            "platform": "windows"
+        },
+        {
+            "name": "zlib",
+            "platform": "(windows | osx | linux | emscripten)"
+        }, 
+        "zstd"
+    ]
+}
