@@ -46,6 +46,7 @@ bool areManagedIdentitiesEnabled()
 
 std::shared_ptr<Azure::Storage::StorageSharedKeyCredential> getAzureSharedKeyCredential(const char * accountName, const char * secretName)
 {
+    WARNLOG("getAzureSharedKeyCredential() called for account=%s, secret=%s", accountName, secretName);
     // MORE: Should we create a cache of credentials?  We would need to be careful about the lifetime of the shared key credential
 
     StringBuffer key;
@@ -64,10 +65,14 @@ std::shared_ptr<Azure::Storage::StorageSharedKeyCredential> getAzureSharedKeyCre
 
     try
     {
-        return std::make_shared<Azure::Storage::StorageSharedKeyCredential>(accountName, key.str());
+        WARNLOG("getAzureSharedKeyCredential() creating credential for account=%s", accountName);
+        auto credential = std::make_shared<Azure::Storage::StorageSharedKeyCredential>(accountName, key.str());
+        WARNLOG("getAzureSharedKeyCredential() credential created successfully for account=%s", accountName);
+        return credential;
     }
     catch (const Azure::Core::RequestFailedException& e)
     {
+        WARNLOG("getAzureSharedKeyCredential() failed for account=%s: %s (%d)", accountName, e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
         IException * error = makeStringExceptionV(-1, "Azure access: %s (%d)", e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
         throw error;
     }
@@ -75,6 +80,7 @@ std::shared_ptr<Azure::Storage::StorageSharedKeyCredential> getAzureSharedKeyCre
 
 std::shared_ptr<Azure::Core::Credentials::TokenCredential> getAzureManagedIdentityCredential()
 {
+    WARNLOG("getAzureManagedIdentityCredential() called");
     // MORE: Should we create a cache of credentials?  We would need to be careful about the lifetime of the managed identity credential
 
     // Azure SDK credential objects handle token refresh automatically
@@ -140,6 +146,7 @@ std::shared_ptr<Azure::Core::Http::HttpTransport> getHttpTransport()
     CriticalBlock block(globalTransportCS);
     if (!globalAzureTransport)
     {
+        WARNLOG("getHttpTransport() creating new global Azure transport with 10s timeout");
         // Create shared transport with optimized settings for all Azure operations
         Azure::Core::Http::CurlTransportOptions transportOptions;
         transportOptions.ConnectionTimeout = std::chrono::milliseconds(10000);  // 10 second connection timeout
@@ -147,6 +154,11 @@ std::shared_ptr<Azure::Core::Http::HttpTransport> getHttpTransport()
         // Note: libcurl automatically handles connection pooling and keep-alive
         // Sharing the transport instance ensures maximum connection reuse
         globalAzureTransport = std::make_shared<Azure::Core::Http::CurlTransport>(transportOptions);
+        WARNLOG("getHttpTransport() global Azure transport created successfully");
+    }
+    else
+    {
+        WARNLOG("getHttpTransport() returning existing global Azure transport");
     }
     return globalAzureTransport;
 }
