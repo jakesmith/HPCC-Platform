@@ -348,9 +348,9 @@ size32_t AzureBlobReadIO::read(offset_t pos, size32_t len, void * data)
     {
         try
         {
-            WARNLOG("AzureBlobReadIO::read() calling Azure DownloadTo: pos=%llu, len=%u, concurrency=%u, chunkSize=%llu", 
+            WARNLOG("AzureBlobReadIO::read() calling Azure DownloadTo: pos=%llu, len=%u, concurrency=%u, chunkSize=%lld", 
                     pos, len, options.TransferOptions.Concurrency, 
-                    options.TransferOptions.ChunkSize.HasValue() ? options.TransferOptions.ChunkSize.Value() : 0);
+                    options.TransferOptions.ChunkSize);
             Azure::Response<Models::DownloadBlobToResult> result = blockBlobClient->DownloadTo(buffer, len, options);
             // result.Value.BlobSize is the size of the blob, not the size of the data returned, use ContentRange instead
             Azure::Core::Http::HttpRange range = result.Value.ContentRange;
@@ -680,7 +680,7 @@ SharedBlobClient AzureBlob::getBlobClient() const
     CriticalBlock block(cs);
     if (cachedBlobClient)
     {
-        WARNLOG("AzureBlob::getBlobClient() returning cached client for %s", queryFilename());
+        WARNLOG("AzureBlob::getBlobClient() returning cached client for %s", fullName.get());
         return cachedBlobClient;
     }
 
@@ -698,13 +698,13 @@ SharedBlobClient AzureBlob::getBlobClient() const
     clientOptions.Transport.Transport = getHttpTransport();
 
     // Create and cache account-specific blob client
-    WARNLOG("AzureBlob::getBlobClient() creating new blob client for %s (managedIdentity=%s)", queryFilename(), useManagedIdentity ? "true" : "false");
+    WARNLOG("AzureBlob::getBlobClient() creating new blob client for %s (managedIdentity=%s)", fullName.get(), useManagedIdentity ? "true" : "false");
     if (useManagedIdentity)
         cachedBlobClient = std::make_shared<Azure::Storage::Blobs::BlockBlobClient>(getBlobUrl(), getAzureManagedIdentityCredential(), clientOptions);
     else
         cachedBlobClient = std::make_shared<Azure::Storage::Blobs::BlockBlobClient>(getBlobUrl(), getSharedKeyCredentials(), clientOptions);
 
-    WARNLOG("AzureBlob::getBlobClient() blob client created successfully for %s", queryFilename());
+    WARNLOG("AzureBlob::getBlobClient() blob client created successfully for %s", fullName.get());
     return cachedBlobClient;
 }
 
@@ -793,7 +793,7 @@ void AzureBlob::gatherMetaData()
             WARNLOG("AzureBlob::gatherMetaData() calling GetProperties for %s", queryFilename());
             Azure::Response<Models::BlobProperties> properties = blobClient->GetProperties();
             Models::BlobProperties & props = properties.Value;
-            WARNLOG("AzureBlob::gatherMetaData() GetProperties completed for %s, size=%lld", queryFilename(), props.BlobSize);
+            WARNLOG("AzureBlob::gatherMetaData() GetProperties completed for %s, size=%ld", queryFilename(), (long)props.BlobSize);
             setProperties(props.BlobSize, props.LastModified, props.CreatedOn);
             break;
         }
