@@ -680,7 +680,7 @@ SharedBlobClient AzureBlob::getBlobClient() const
     CriticalBlock block(cs);
     if (cachedBlobClient)
     {
-        WARNLOG("AzureBlob::getBlobClient() returning cached client for %s", fullName.get());
+        WARNLOG("AzureBlob::getBlobClient() returning cached client for %s", fullName.str());
         return cachedBlobClient;
     }
 
