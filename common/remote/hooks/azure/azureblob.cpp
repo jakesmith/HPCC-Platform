@@ -686,11 +686,13 @@ SharedBlobClient AzureBlob::getBlobClient() const
     // Use shared transport instance for connection pooling across all blob operations
     clientOptions.Transport.Transport = getHttpTransport();
 
-    // Create account-specific credentials with caching
+    // Create and cache account-specific blob client
     if (useManagedIdentity)
-        return std::make_shared<Azure::Storage::Blobs::BlockBlobClient>(getBlobUrl(), getAzureManagedIdentityCredential(), clientOptions);
+        cachedBlobClient = std::make_shared<Azure::Storage::Blobs::BlockBlobClient>(getBlobUrl(), getAzureManagedIdentityCredential(), clientOptions);
     else
-        return std::make_shared<Azure::Storage::Blobs::BlockBlobClient>(getBlobUrl(), getSharedKeyCredentials(), clientOptions);
+        cachedBlobClient = std::make_shared<Azure::Storage::Blobs::BlockBlobClient>(getBlobUrl(), getSharedKeyCredentials(), clientOptions);
+
+    return cachedBlobClient;
 }
 
 bool AzureBlob::createDirectory()
