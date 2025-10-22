@@ -1,0 +1,35 @@
+--- a/sdk/core/azure-core/src/http/curl/curl.cpp
++++ b/sdk/core/azure-core/src/http/curl/curl.cpp
+@@ -2619,6 +2619,32 @@ std::unique_ptr<RawResponse> CurlSession::Perform(
+     }
+   }
+ 
++  // HPCC OPTIMIZATION: Set 4MB buffer for optimal Azure blob reads
++  // Reduces recv() calls from ~250 (16KB default) to ~1 per 4MB read
++  if (!SetLibcurlOption(m_handle, CURLOPT_BUFFERSIZE, 4L * 1024 * 1024, &result))
++  {
++    std::string errorMsg = "[HPCC Azure] FAILED to set CURLOPT_BUFFERSIZE to 4MB: ";
++    errorMsg += curl_easy_strerror(result);
++    fprintf(stderr, "%s\n", errorMsg.c_str());
++  }
++  else
++  {
++    fprintf(stderr, "[HPCC Azure] SUCCESS: Set CURLOPT_BUFFERSIZE to 4MB for optimal blob reads\n");
++  }
++
++  // HPCC OPTIMIZATION: Enable SSL session caching for performance
++  // Reuses SSL sessions to avoid expensive handshake on each request
++  if (!SetLibcurlOption(m_handle, CURLOPT_SSL_SESSIONID_CACHE, 1L, &result))
++  {
++    std::string errorMsg = "[HPCC Azure] FAILED to enable SSL session caching: ";
++    errorMsg += curl_easy_strerror(result);
++    fprintf(stderr, "%s\n", errorMsg.c_str());
++  }
++  else
++  {
++    fprintf(stderr, "[HPCC Azure] SUCCESS: Enabled SSL session caching\n");
++  }
++
+   // curl-transport adapter supports only HTTP/1.1
+   // https://github.com/Azure/azure-sdk-for-cpp/issues/2848
+   // The libcurl uses HTTP/2 by default, if it can be negotiated with a server on handshake.
