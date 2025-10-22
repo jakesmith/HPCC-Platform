@@ -205,6 +205,10 @@ std::unique_ptr<Azure::Core::Http::RawResponse> OptimizedAzureBlobTransport::Sen
         // SSL/TLS options - verify peer by default
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+        
+        // Enable SSL session caching for performance
+        // Reuses SSL sessions to avoid expensive handshake on each request
+        curl_easy_setopt(curl, CURLOPT_SSL_SESSIONID_CACHE, 1L);
 
         // Set up response body collection
         std::vector<uint8_t> responseBody;
@@ -238,9 +242,10 @@ std::unique_ptr<Azure::Core::Http::RawResponse> OptimizedAzureBlobTransport::Sen
         for (const auto& header : responseHeaders)
             response->SetHeader(header.first, header.second);
 
-        // CRITICAL: Always set body, even if empty
-        // Azure SDK expects a body to be present and will crash with null pointer if missing
+        // CRITICAL: SetBody stores the vector, then ExtractBodyStream creates a stream from it
+        // The Azure SDK expects GetBodyStream() to return a valid stream
         response->SetBody(std::move(responseBody));
+        response->SetBodyStream(response->ExtractBodyStream());
 
         return response;
     }
