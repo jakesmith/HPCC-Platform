@@ -25,11 +25,141 @@
 #include "jmutex.hpp"
 #include "jplane.hpp"
 #include "jsecrets.hpp"
+#include <curl/curl.h>
+#include <azure/core/http/raw_response.hpp>
 #include <cstdlib>
 
 using namespace std::chrono;
 
 // Common utility functions shared by both blob and file implementations
+//---------------------------------------------------------------------------------------------------------------------
+
+namespace HPCC {
+
+OptimizedAzureBlobTransport::OptimizedAzureBlobTransport(
+    const Azure::Core::Http::CurlTransportOptions& options)
+{
+}
+
+// Callback for writing response data
+static size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
+{
+    auto* bodyStream = reinterpret_cast<std::vector<uint8_t>*>(userdata);
+    size_t totalSize = size * nmemb;
+    bodyStream->insert(bodyStream->end(), ptr, ptr + totalSize);
+    return totalSize;
+}
+
+// Callback for writing response headers
+static size_t HeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata)
+{
+    auto* headers = reinterpret_cast<Azure::Core::CaseInsensitiveMap*>(userdata);
+    size_t totalSize = size * nitems;
+    std::string headerLine(buffer, totalSize);
+    
+    auto colonPos = headerLine.find(':');
+    if (colonPos != std::string::npos)
+    {
+        std::string key = headerLine.substr(0, colonPos);
+        std::string value = headerLine.substr(colonPos + 1);
+        
+        size_t start = value.find_first_not_of(" \t\r\n");
+        size_t end = value.find_last_not_of(" \t\r\n");
+        if (start != std::string::npos && end != std::string::npos)
+        {
+            value = value.substr(start, end - start + 1);
+            (*headers)[key] = value;
+        }
+    }
+    
+    return totalSize;
+}
+
+std::unique_ptr<Azure::Core::Http::RawResponse> OptimizedAzureBlobTransport::Send(
+    Azure::Core::Http::Request& request,
+    Azure::Core::Context const& context)
+{
+    CURL* curl = curl_easy_init();
+    if (!curl)
+        throw std::runtime_error("Failed to initialize CURL handle");
+
+    try
+    {
+        std::string url = request.GetUrl().GetAbsoluteUrl();
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+
+        // Set 4MB buffer size for optimal Azure blob reads
+        curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 4L * 1024 * 1024);
+
+        auto method = request.GetMethod();
+        if (method == Azure::Core::Http::HttpMethod::Get)
+            curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+        else if (method == Azure::Core::Http::HttpMethod::Head)
+            curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+        else if (method == Azure::Core::Http::HttpMethod::Put)
+            curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+        else if (method == Azure::Core::Http::HttpMethod::Post)
+            curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        else if (method == Azure::Core::Http::HttpMethod::Delete)
+            curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+
+        struct curl_slist* headers = nullptr;
+        for (const auto& header : request.GetHeaders())
+        {
+            std::string headerLine = header.first + ": " + header.second;
+            headers = curl_slist_append(headers, headerLine.c_str());
+        }
+        if (headers)
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
+        curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+
+        std::vector<uint8_t> responseBody;
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
+
+        Azure::Core::CaseInsensitiveMap responseHeaders;
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &responseHeaders);
+
+        CURLcode res = curl_easy_perform(curl);
+        
+        if (headers)
+            curl_slist_free_all(headers);
+
+        if (res != CURLE_OK)
+        {
+            std::string error = curl_easy_strerror(res);
+            curl_easy_cleanup(curl);
+            throw std::runtime_error("CURL request failed: " + error);
+        }
+
+        long httpCode = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+        curl_easy_cleanup(curl);
+
+        auto response = std::make_unique<Azure::Core::Http::RawResponse>(
+            1, 1, static_cast<Azure::Core::Http::HttpStatusCode>(httpCode), "OK");
+
+        for (const auto& header : responseHeaders)
+            response->SetHeader(header.first, header.second);
+
+        if (!responseBody.empty())
+            response->SetBody(std::move(responseBody));
+
+        return response;
+    }
+    catch (...)
+    {
+        curl_easy_cleanup(curl);
+        throw;
+    }
+}
+
+} // namespace HPCC
+
 //---------------------------------------------------------------------------------------------------------------------
 
 bool areManagedIdentitiesEnabled()
@@ -147,13 +277,10 @@ std::shared_ptr<Azure::Core::Http::HttpTransport> getHttpTransport()
     if (!globalAzureTransport)
     {
         DBGLOG("getHttpTransport() creating new global Azure transport with 10s timeout");
-        // Create shared transport with optimized settings for all Azure operations
         Azure::Core::Http::CurlTransportOptions transportOptions;
-        transportOptions.ConnectionTimeout = std::chrono::milliseconds(10000);  // 10 second connection timeout
-        transportOptions.NoSignal = true;  // Avoid signal interference
-        // Note: libcurl automatically handles connection pooling and keep-alive
-        // Sharing the transport instance ensures maximum connection reuse
-        globalAzureTransport = std::make_shared<Azure::Core::Http::CurlTransport>(transportOptions);
+        transportOptions.ConnectionTimeout = std::chrono::milliseconds(10000);
+        transportOptions.NoSignal = true;
+        globalAzureTransport = std::make_shared<HPCC::OptimizedAzureBlobTransport>(transportOptions);
         DBGLOG("getHttpTransport() global Azure transport created successfully");
     }
     else

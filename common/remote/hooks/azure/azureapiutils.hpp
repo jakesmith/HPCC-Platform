@@ -39,6 +39,32 @@
 constexpr const char * azureBlobPrefix = "azureblob:";
 constexpr const char * azureFilePrefix = "azurefile:";
 
+//---------------------------------------------------------------------------------------------------------------------
+
+namespace HPCC {
+
+/**
+ * @brief Custom HTTP transport that sets CURLOPT_BUFFERSIZE to 4MB for Azure blob reads
+ * 
+ * The standard CurlTransport uses libcurl's default 16KB buffer, resulting in ~250 recv() calls
+ * per 4MB read. This custom transport sets CURLOPT_BUFFERSIZE to 4MB, reducing system call
+ * overhead and aligning with Azure's billing boundary.
+ */
+class OptimizedAzureBlobTransport : public Azure::Core::Http::HttpTransport
+{
+public:
+    explicit OptimizedAzureBlobTransport(
+        const Azure::Core::Http::CurlTransportOptions& options = Azure::Core::Http::CurlTransportOptions());
+
+    std::unique_ptr<Azure::Core::Http::RawResponse> Send(
+        Azure::Core::Http::Request& request,
+        Azure::Core::Context const& context) override;
+};
+
+} // namespace HPCC
+
+//---------------------------------------------------------------------------------------------------------------------
+
 // Helper functions for creating Azure credentials
 std::shared_ptr<Azure::Storage::StorageSharedKeyCredential> getAzureSharedKeyCredential(const char * accountName, const char * secretName);
 std::shared_ptr<Azure::Core::Credentials::TokenCredential> getAzureManagedIdentityCredential();
