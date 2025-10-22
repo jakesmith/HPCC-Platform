@@ -37,6 +37,9 @@ using namespace Azure::Storage;
 using namespace Azure::Storage::Blobs;
 using namespace std::chrono;
 
+// Macro for conditional Azure API tracing
+#define AZURE_TRACE if (traceAzureAPI) DBGLOG
+
 /*
  * Azure related comments
  *
@@ -71,6 +74,7 @@ protected:
     Linked<AzureBlob> file;
     FileIOStats stats;
     SharedBlobClient blockBlobClient;
+    bool traceAzureAPI;
 };
 
 
@@ -242,6 +246,7 @@ public:
 public:
     SharedBlobClient getBlobClient() const;
     void invalidateMeta() { haveMeta = false; }
+    bool queryTraceAzureAPI() const { return traceAzureAPI; }
 
 protected:
     std::shared_ptr<StorageSharedKeyCredential> getSharedKeyCredentials() const;
@@ -265,6 +270,7 @@ protected:
     bool isDir = false;
     bool fileExists = false;
     bool useManagedIdentity = false;
+    bool traceAzureAPI = false;
     time_t lastModified = 0;
     time_t createdOn = 0;
     std::string blobUrl;
@@ -276,14 +282,14 @@ protected:
 //---------------------------------------------------------------------------------------------------------------------
 
 AzureBlobIO::AzureBlobIO(AzureBlob * _file, const FileIOStats & _firstStats)
-: file(_file), stats(_firstStats), blockBlobClient(file->getBlobClient())
+: file(_file), stats(_firstStats), blockBlobClient(file->getBlobClient()), traceAzureAPI(file->queryTraceAzureAPI())
 {
-    DBGLOG("AzureBlobIO::AzureBlobIO() constructor called for %s", file->queryFilename());
+    AZURE_TRACE("AzureBlobIO::AzureBlobIO() constructor called for %s", file->queryFilename());
 }
 
-AzureBlobIO::AzureBlobIO(AzureBlob * _file) : file(_file), blockBlobClient(file->getBlobClient())
+AzureBlobIO::AzureBlobIO(AzureBlob * _file) : file(_file), blockBlobClient(file->getBlobClient()), traceAzureAPI(file->queryTraceAzureAPI())
 {
-    DBGLOG("AzureBlobIO::AzureBlobIO() constructor (no stats) called for %s", file->queryFilename());
+    AZURE_TRACE("AzureBlobIO::AzureBlobIO() constructor (no stats) called for %s", file->queryFilename());
 }
 
 
@@ -305,7 +311,7 @@ AzureBlobReadIO::AzureBlobReadIO(AzureBlob * _file, const FileIOStats & _firstSt
 
 size32_t AzureBlobReadIO::read(offset_t pos, size32_t len, void * data)
 {
-    DBGLOG("AzureBlobReadIO::read() called: pos=%llu, len=%u, file=%s", pos, len, file->queryFilename());
+    AZURE_TRACE("AzureBlobReadIO::read() called: pos=%llu, len=%u, file=%s", pos, len, file->queryFilename());
     CCycleTimer timer;
     offset_t fileSize = file->size();
     if (pos > fileSize)
@@ -348,7 +354,7 @@ size32_t AzureBlobReadIO::read(offset_t pos, size32_t len, void * data)
     {
         try
         {
-            DBGLOG("AzureBlobReadIO::read() calling Azure DownloadTo: pos=%llu, len=%u, concurrency=%u, chunkSize=%u", 
+            AZURE_TRACE("AzureBlobReadIO::read() calling Azure DownloadTo: pos=%llu, len=%u, concurrency=%u, chunkSize=%u", 
                     pos, len, options.TransferOptions.Concurrency, 
                     (unsigned)options.TransferOptions.ChunkSize);
             Azure::Response<Models::DownloadBlobToResult> result = blockBlobClient->DownloadTo(buffer, len, options);
@@ -358,7 +364,7 @@ size32_t AzureBlobReadIO::read(offset_t pos, size32_t len, void * data)
                 sizeRead = range.Length.Value();
             else
                 sizeRead = 0;
-            DBGLOG("AzureBlobReadIO::read() Azure DownloadTo completed: sizeRead=%ld, elapsed=%llu cycles", sizeRead, timer.elapsedCycles());
+            AZURE_TRACE("AzureBlobReadIO::read() Azure DownloadTo completed: sizeRead=%ld, elapsed=%llu cycles", sizeRead, timer.elapsedCycles());
             break;
         }
         catch (const Azure::Core::RequestFailedException& e)
@@ -378,7 +384,7 @@ size32_t AzureBlobReadIO::read(offset_t pos, size32_t len, void * data)
     stats.ioReads.fastAdd(1);
     stats.ioReadCycles.fastAdd(timer.elapsedCycles());
     stats.ioReadBytes.fastAdd(sizeRead);
-    DBGLOG("AzureBlobReadIO::read() completed: pos=%llu, len=%u, sizeRead=%ld, elapsed=%llu cycles, file=%s", 
+    AZURE_TRACE("AzureBlobReadIO::read() completed: pos=%llu, len=%u, sizeRead=%ld, elapsed=%llu cycles, file=%s", 
             pos, len, sizeRead, timer.elapsedCycles(), file->queryFilename());
     return sizeRead;
 }
@@ -635,6 +641,9 @@ AzureBlob::AzureBlob(const char *_azureFileName) : fullName(_azureFileName)
         throw makeStringExceptionV(99, "Unexpected prefix on azure filename %s", fullName.str());
 
     blobUrl = ::getBlobUrl(accountName, containerName, blobName);
+    
+    // Read tracing flag from expert settings once at construction time for efficiency
+    traceAzureAPI = getExpertOptBool("traceAzureAPI", false);
 }
 
 std::shared_ptr<StorageSharedKeyCredential> AzureBlob::getSharedKeyCredentials() const
@@ -682,7 +691,7 @@ SharedBlobClient AzureBlob::getBlobClient() const
     CriticalBlock block(cs);
     if (cachedBlobClient)
     {
-        DBGLOG("AzureBlob::getBlobClient() returning cached client for %s", fullName.str());
+        AZURE_TRACE("AzureBlob::getBlobClient() returning cached client for %s", fullName.str());
         return cachedBlobClient;
     }
 
@@ -702,13 +711,13 @@ SharedBlobClient AzureBlob::getBlobClient() const
     clientOptions.Transport.Transport = getHttpTransport();
 
     // Create and cache account-specific blob client
-    DBGLOG("AzureBlob::getBlobClient() creating new blob client for %s (managedIdentity=%s)", fullName.str(), useManagedIdentity ? "true" : "false");
+    AZURE_TRACE("AzureBlob::getBlobClient() creating new blob client for %s (managedIdentity=%s)", fullName.str(), useManagedIdentity ? "true" : "false");
     if (useManagedIdentity)
         cachedBlobClient = std::make_shared<Azure::Storage::Blobs::BlockBlobClient>(getBlobUrl(), getAzureManagedIdentityCredential(), clientOptions);
     else
         cachedBlobClient = std::make_shared<Azure::Storage::Blobs::BlockBlobClient>(getBlobUrl(), getSharedKeyCredentials(), clientOptions);
 
-    DBGLOG("AzureBlob::getBlobClient() blob client created successfully for %s", fullName.str());
+    AZURE_TRACE("AzureBlob::getBlobClient() blob client created successfully for %s", fullName.str());
     return cachedBlobClient;
 }
 
@@ -719,9 +728,13 @@ bool AzureBlob::createDirectory()
     {
         Azure::Response<Models::CreateBlobContainerResult> result = blobContainerClient->CreateIfNotExists();
         if (result.Value.Created==false)
-            DBGLOG("AzureBlob::createDirectory: container not created because it already exists %s", containerName.str());
+        {
+            AZURE_TRACE("AzureBlob::createDirectory: container not created because it already exists %s", containerName.str());
+        }
         else
-            DBGLOG("AzureBlob::createDirectory: container created %s", containerName.str());
+        {
+            AZURE_TRACE("AzureBlob::createDirectory: container created %s", containerName.str());
+        }
         return true;
     }
     catch (const Azure::Core::RequestFailedException& e)
@@ -753,7 +766,7 @@ bool AzureBlob::getTime(CDateTime * createTime, CDateTime * modifiedTime, CDateT
 
 IFileIO * AzureBlob::createFileReadIO()
 {
-    DBGLOG("AzureBlob::createFileReadIO() called for %s", queryFilename());
+    AZURE_TRACE("AzureBlob::createFileReadIO() called for %s", queryFilename());
     //Read the first chunk of the file.  If it is the full file then fill in the meta information, otherwise
     //ensure the meta information is calculated before creating the file IO object
     FileIOStats readStats;
@@ -761,11 +774,11 @@ IFileIO * AzureBlob::createFileReadIO()
     CriticalBlock block(cs);
     if (!exists())
     {
-        DBGLOG("AzureBlob::createFileReadIO() file does not exist: %s", queryFilename());
+        AZURE_TRACE("AzureBlob::createFileReadIO() file does not exist: %s", queryFilename());
         return nullptr;
     }
 
-    DBGLOG("AzureBlob::createFileReadIO() creating AzureBlobReadIO for %s", queryFilename());
+    AZURE_TRACE("AzureBlob::createFileReadIO() creating AzureBlobReadIO for %s", queryFilename());
     return new AzureBlobReadIO(this, readStats);
 }
 
@@ -786,7 +799,7 @@ void AzureBlob::ensureMetaData()
 
 void AzureBlob::gatherMetaData()
 {
-    DBGLOG("AzureBlob::gatherMetaData() called for %s", queryFilename());
+    AZURE_TRACE("AzureBlob::gatherMetaData() called for %s", queryFilename());
     auto blobClient = getBlobClient();
     constexpr unsigned maxRetries = 4;
     unsigned attempt = 0;
@@ -794,10 +807,10 @@ void AzureBlob::gatherMetaData()
     {
         try
         {
-            DBGLOG("AzureBlob::gatherMetaData() calling GetProperties for %s", queryFilename());
+            AZURE_TRACE("AzureBlob::gatherMetaData() calling GetProperties for %s", queryFilename());
             Azure::Response<Models::BlobProperties> properties = blobClient->GetProperties();
             Models::BlobProperties & props = properties.Value;
-            DBGLOG("AzureBlob::gatherMetaData() GetProperties completed for %s, size=%ld", queryFilename(), (long)props.BlobSize);
+            AZURE_TRACE("AzureBlob::gatherMetaData() GetProperties completed for %s, size=%ld", queryFilename(), (long)props.BlobSize);
             setProperties(props.BlobSize, props.LastModified, props.CreatedOn);
             break;
         }

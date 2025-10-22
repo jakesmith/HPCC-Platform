@@ -25,9 +25,15 @@
 #include "jmutex.hpp"
 #include "jplane.hpp"
 #include "jsecrets.hpp"
+#include "jptree.hpp"
 #include <cstdlib>
 
 using namespace std::chrono;
+
+// Macro for conditional Azure API tracing
+// Note: This uses a lazy evaluation of the expert setting since these are utility functions
+// called from multiple contexts. For per-file operations, the setting is cached in AzureBlob.
+#define AZURE_TRACE if (getExpertOptBool("traceAzureAPI", false)) DBGLOG
 
 // Common utility functions shared by both blob and file implementations
 //---------------------------------------------------------------------------------------------------------------------
@@ -46,7 +52,7 @@ bool areManagedIdentitiesEnabled()
 
 std::shared_ptr<Azure::Storage::StorageSharedKeyCredential> getAzureSharedKeyCredential(const char * accountName, const char * secretName)
 {
-    DBGLOG("getAzureSharedKeyCredential() called for account=%s, secret=%s", accountName, secretName);
+    AZURE_TRACE("getAzureSharedKeyCredential() called for account=%s, secret=%s", accountName, secretName);
     // MORE: Should we create a cache of credentials?  We would need to be careful about the lifetime of the shared key credential
 
     StringBuffer key;
@@ -65,14 +71,14 @@ std::shared_ptr<Azure::Storage::StorageSharedKeyCredential> getAzureSharedKeyCre
 
     try
     {
-        DBGLOG("getAzureSharedKeyCredential() creating credential for account=%s", accountName);
+        AZURE_TRACE("getAzureSharedKeyCredential() creating credential for account=%s", accountName);
         auto credential = std::make_shared<Azure::Storage::StorageSharedKeyCredential>(accountName, key.str());
-        DBGLOG("getAzureSharedKeyCredential() credential created successfully for account=%s", accountName);
+        AZURE_TRACE("getAzureSharedKeyCredential() credential created successfully for account=%s", accountName);
         return credential;
     }
     catch (const Azure::Core::RequestFailedException& e)
     {
-        DBGLOG("getAzureSharedKeyCredential() failed for account=%s: %s (%d)", accountName, e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
+        AZURE_TRACE("getAzureSharedKeyCredential() failed for account=%s: %s (%d)", accountName, e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
         IException * error = makeStringExceptionV(-1, "Azure access: %s (%d)", e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
         throw error;
     }
@@ -80,7 +86,7 @@ std::shared_ptr<Azure::Storage::StorageSharedKeyCredential> getAzureSharedKeyCre
 
 std::shared_ptr<Azure::Core::Credentials::TokenCredential> getAzureManagedIdentityCredential()
 {
-    DBGLOG("getAzureManagedIdentityCredential() called");
+    AZURE_TRACE("getAzureManagedIdentityCredential() called");
     // MORE: Should we create a cache of credentials?  We would need to be careful about the lifetime of the managed identity credential
 
     // Azure SDK credential objects handle token refresh automatically
@@ -93,12 +99,12 @@ std::shared_ptr<Azure::Core::Credentials::TokenCredential> getAzureManagedIdenti
         try
         {
 #ifdef AZURE_HAS_WORKLOAD_IDENTITY_CREDENTIAL
-            DBGLOG("Using Azure Workload Identity authentication (clientId=%s, tenantId=%s, tokenFile=%s)",
+            AZURE_TRACE("Using Azure Workload Identity authentication (clientId=%s, tenantId=%s, tokenFile=%s)",
                 clientId ? clientId : "<none>", tenantId ? tenantId : "<none>", federatedTokenFile);
             return std::make_shared<Azure::Identity::WorkloadIdentityCredential>();
 #else
             // SDK doesn't have WorkloadIdentityCredential - check if workload identity environment is configured
-            DBGLOG("Using DefaultAzureCredential for Workload Identity (SDK < 1.6.0) (clientId=%s, tenantId=%s, tokenFile=%s)",
+            AZURE_TRACE("Using DefaultAzureCredential for Workload Identity (SDK < 1.6.0) (clientId=%s, tenantId=%s, tokenFile=%s)",
                 clientId ? clientId : "<none>", tenantId ? tenantId : "<none>", federatedTokenFile);
             return std::make_shared<Azure::Identity::DefaultAzureCredential>();
 #endif
@@ -116,7 +122,7 @@ std::shared_ptr<Azure::Core::Credentials::TokenCredential> getAzureManagedIdenti
     const char * msiEndpoint = std::getenv("MSI_ENDPOINT");
     const char * identityEndpoint = std::getenv("IDENTITY_ENDPOINT");
     const char * clientId = (msiEndpoint || identityEndpoint) ? std::getenv("AZURE_CLIENT_ID") : nullptr;
-    DBGLOG("Using Azure Managed Identity authentication (clientId=%s, MSI_ENDPOINT=%s, IDENTITY_ENDPOINT=%s)",
+    AZURE_TRACE("Using Azure Managed Identity authentication (clientId=%s, MSI_ENDPOINT=%s, IDENTITY_ENDPOINT=%s)",
            clientId ? clientId : "<none>",
            msiEndpoint ? msiEndpoint : "<none>",
            identityEndpoint ? identityEndpoint : "<none>");
@@ -146,7 +152,7 @@ std::shared_ptr<Azure::Core::Http::HttpTransport> getHttpTransport()
     CriticalBlock block(globalTransportCS);
     if (!globalAzureTransport)
     {
-        DBGLOG("getHttpTransport() creating new global Azure transport with 10s timeout");
+        AZURE_TRACE("getHttpTransport() creating new global Azure transport with 10s timeout");
         // Create shared transport with optimized settings for all Azure operations
         Azure::Core::Http::CurlTransportOptions transportOptions;
         transportOptions.ConnectionTimeout = std::chrono::milliseconds(10000);  // 10 second connection timeout
@@ -154,11 +160,11 @@ std::shared_ptr<Azure::Core::Http::HttpTransport> getHttpTransport()
         // Note: libcurl automatically handles connection pooling and keep-alive
         // Sharing the transport instance ensures maximum connection reuse
         globalAzureTransport = std::make_shared<Azure::Core::Http::CurlTransport>(transportOptions);
-        DBGLOG("getHttpTransport() global Azure transport created successfully");
+        AZURE_TRACE("getHttpTransport() global Azure transport created successfully");
     }
     else
     {
-        DBGLOG("getHttpTransport() returning existing global Azure transport");
+        AZURE_TRACE("getHttpTransport() returning existing global Azure transport");
     }
     return globalAzureTransport;
 }
