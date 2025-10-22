@@ -9,8 +9,11 @@ vcpkg_from_github(
     HEAD_REF main
     PATCHES
         dt_android.patch
-        hpcc-curl-optimizations.patch
 )
+
+# Replace curl.cpp with HPCC-optimized version
+file(COPY "${CMAKE_CURRENT_LIST_DIR}/curl.cpp" 
+     DESTINATION "${SOURCE_PATH}/sdk/core/azure-core/src/http/curl/")
 
 vcpkg_check_features(
     OUT_FEATURE_OPTIONS FEATURE_OPTIONS
