@@ -662,6 +662,8 @@ std::shared_ptr<BlobContainerClient> AzureBlob::getBlobContainerClient() const
     clientOptions.Retry = retryOptions;
 
     // Use shared transport instance for connection pooling across all blob operations
+    fprintf(stderr, "TEST OF stderr");
+    fflush(stderr);
     clientOptions.Transport.Transport = getHttpTransport();
 
     if (useManagedIdentity)
@@ -695,6 +697,8 @@ SharedBlobClient AzureBlob::getBlobClient() const
     clientOptions.Retry = retryOptions;
 
     // Use shared transport instance for connection pooling across all blob operations
+    fprintf(stderr, "2:TEST OF stderr");
+    fflush(stderr);
     clientOptions.Transport.Transport = getHttpTransport();
 
     // Create and cache account-specific blob client
