@@ -27,6 +27,7 @@
 #include "jsecrets.hpp"
 #include <curl/curl.h>
 #include <azure/core/http/raw_response.hpp>
+#include <azure/core/io/body_stream.hpp>
 #include <cstdlib>
 
 using namespace std::chrono;
@@ -237,9 +238,9 @@ std::unique_ptr<Azure::Core::Http::RawResponse> OptimizedAzureBlobTransport::Sen
         for (const auto& header : responseHeaders)
             response->SetHeader(header.first, header.second);
 
-        // Set body
-        if (!responseBody.empty())
-            response->SetBody(std::move(responseBody));
+        // CRITICAL: Always set body, even if empty
+        // Azure SDK expects a body to be present and will crash with null pointer if missing
+        response->SetBody(std::move(responseBody));
 
         return response;
     }
