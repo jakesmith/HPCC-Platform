@@ -2663,15 +2663,22 @@ CurlConnection::CurlConnection(
       fclose(logFile);
     }
   }
-  // curl-transport adapter supports only HTTP/1.1
-  // https://github.com/Azure/azure-sdk-for-cpp/issues/2848
-  // The libcurl uses HTTP/2 by default, if it can be negotiated with a server on handshake.
+  // HPCC OPTIMIZATION: Allow HTTP/2 for better performance
+  // The original Azure SDK forced HTTP/1.1 due to a 2021 bug (https://github.com/Azure/azure-sdk-for-cpp/issues/2848)
+  // That issue is long resolved. HTTP/2 provides:
+  // - Multiplexing (multiple requests over one connection)
+  // - Header compression (reduces overhead)
+  // - Better pipelining and parallel requests
+  // libcurl negotiates HTTP/2 automatically if the server supports it, falling back to HTTP/1.1 if not.
+  /*
+  // Original code that forced HTTP/1.1:
   if (!SetLibcurlOption(m_handle, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1, &result))
   {
     throw Azure::Core::Http::TransportException(
         _detail::DefaultFailedToGetNewConnectionTemplate + hostDisplayName
         + ". Failed to set libcurl HTTP/1.1" + ". " + std::string(curl_easy_strerror(result)));
   }
+  */
 
   //   Make libcurl to support only TLS v1.2 or later
   if (!SetLibcurlOption(m_handle, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2, &result))
@@ -2699,6 +2706,32 @@ CurlConnection::CurlConnection(
       throw Http::TransportException(
           _detail::DefaultFailedToGetNewConnectionTemplate + hostDisplayName + ". "
           + std::string(curl_easy_strerror(performResult)));
+    }
+  }
+
+  // HPCC OPTIMIZATION: Log the negotiated HTTP version
+  {
+    long httpVersion = 0;
+    if (curl_easy_getinfo(m_handle.get(), CURLINFO_HTTP_VERSION, &httpVersion) == CURLE_OK)
+    {
+      const char* versionStr = "Unknown";
+      switch (httpVersion)
+      {
+        case CURL_HTTP_VERSION_1_0: versionStr = "HTTP/1.0"; break;
+        case CURL_HTTP_VERSION_1_1: versionStr = "HTTP/1.1"; break;
+        case CURL_HTTP_VERSION_2_0: versionStr = "HTTP/2"; break;
+#if LIBCURL_VERSION_NUM >= 0x073D00 // 7.61.0
+        case CURL_HTTP_VERSION_3: versionStr = "HTTP/3"; break;
+#endif
+        default: break;
+      }
+      FILE* logFile = fopen("/tmp/hpcc-azure-curl.log", "a");
+      if (logFile)
+      {
+        fprintf(logFile, "[HPCC Azure] Connection to %s established using %s\n",
+                hostDisplayName.c_str(), versionStr);
+        fclose(logFile);
+      }
     }
   }
 
