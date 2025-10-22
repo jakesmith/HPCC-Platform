@@ -39,41 +39,108 @@ namespace HPCC {
 OptimizedAzureBlobTransport::OptimizedAzureBlobTransport(
     const Azure::Core::Http::CurlTransportOptions& options)
 {
+    // Constructor - options could be stored if needed for future enhancements
 }
 
-// Callback for writing response data
-static size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
+// Callback for writing response data - must not throw exceptions
+static size_t WriteCallback(char* ptr, size_t size, size_t nmemb, void* userdata) noexcept
 {
-    auto* bodyStream = reinterpret_cast<std::vector<uint8_t>*>(userdata);
-    size_t totalSize = size * nmemb;
-    bodyStream->insert(bodyStream->end(), ptr, ptr + totalSize);
-    return totalSize;
-}
-
-// Callback for writing response headers
-static size_t HeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata)
-{
-    auto* headers = reinterpret_cast<Azure::Core::CaseInsensitiveMap*>(userdata);
-    size_t totalSize = size * nitems;
-    std::string headerLine(buffer, totalSize);
-    
-    auto colonPos = headerLine.find(':');
-    if (colonPos != std::string::npos)
+    try
     {
-        std::string key = headerLine.substr(0, colonPos);
-        std::string value = headerLine.substr(colonPos + 1);
+        auto* bodyStream = reinterpret_cast<std::vector<uint8_t>*>(userdata);
         
-        size_t start = value.find_first_not_of(" \t\r\n");
-        size_t end = value.find_last_not_of(" \t\r\n");
-        if (start != std::string::npos && end != std::string::npos)
+        // Check for overflow
+        if (size > 0 && nmemb > SIZE_MAX / size)
         {
-            value = value.substr(start, end - start + 1);
-            (*headers)[key] = value;
+            DBGLOG("WriteCallback: Integer overflow detected (size=%zu, nmemb=%zu)", size, nmemb);
+            return 0;  // Signal error to curl
         }
+        
+        size_t totalSize = size * nmemb;
+        if (totalSize > 0)
+        {
+            bodyStream->reserve(bodyStream->size() + totalSize);
+            bodyStream->insert(bodyStream->end(), ptr, ptr + totalSize);
+        }
+        return totalSize;
     }
-    
-    return totalSize;
+    catch (const std::exception& e)
+    {
+        DBGLOG("WriteCallback: Exception caught: %s", e.what());
+        return 0;  // Signal error to curl
+    }
+    catch (...)
+    {
+        DBGLOG("WriteCallback: Unknown exception caught");
+        return 0;  // Signal error to curl
+    }
 }
+
+// Callback for writing response headers - must not throw exceptions
+static size_t HeaderCallback(char* buffer, size_t size, size_t nitems, void* userdata) noexcept
+{
+    try
+    {
+        auto* headers = reinterpret_cast<Azure::Core::CaseInsensitiveMap*>(userdata);
+        
+        // Check for overflow
+        if (size > 0 && nitems > SIZE_MAX / size)
+        {
+            DBGLOG("HeaderCallback: Integer overflow detected (size=%zu, nitems=%zu)", size, nitems);
+            return 0;
+        }
+        
+        size_t totalSize = size * nitems;
+        if (totalSize == 0)
+            return 0;
+            
+        std::string headerLine(buffer, totalSize);
+        
+        auto colonPos = headerLine.find(':');
+        if (colonPos != std::string::npos)
+        {
+            std::string key = headerLine.substr(0, colonPos);
+            std::string value = headerLine.substr(colonPos + 1);
+            
+            size_t start = value.find_first_not_of(" \t\r\n");
+            size_t end = value.find_last_not_of(" \t\r\n");
+            if (start != std::string::npos && end != std::string::npos)
+            {
+                value = value.substr(start, end - start + 1);
+                (*headers)[key] = value;
+            }
+        }
+        
+        return totalSize;
+    }
+    catch (const std::exception& e)
+    {
+        DBGLOG("HeaderCallback: Exception caught: %s", e.what());
+        return 0;  // Signal error to curl
+    }
+    catch (...)
+    {
+        DBGLOG("HeaderCallback: Unknown exception caught");
+        return 0;  // Signal error to curl
+    }
+}
+
+// RAII wrapper for curl_slist
+class CurlSlistGuard
+{
+public:
+    CurlSlistGuard() : list(nullptr) {}
+    ~CurlSlistGuard() { if (list) curl_slist_free_all(list); }
+    
+    void append(const char* str) { list = curl_slist_append(list, str); }
+    struct curl_slist* get() const { return list; }
+    
+    CurlSlistGuard(const CurlSlistGuard&) = delete;
+    CurlSlistGuard& operator=(const CurlSlistGuard&) = delete;
+    
+private:
+    struct curl_slist* list;
+};
 
 std::unique_ptr<Azure::Core::Http::RawResponse> OptimizedAzureBlobTransport::Send(
     Azure::Core::Http::Request& request,
@@ -83,14 +150,26 @@ std::unique_ptr<Azure::Core::Http::RawResponse> OptimizedAzureBlobTransport::Sen
     if (!curl)
         throw std::runtime_error("Failed to initialize CURL handle");
 
+    // RAII cleanup for curl handle
+    struct CurlCleanup
+    {
+        CURL* handle;
+        ~CurlCleanup() { if (handle) curl_easy_cleanup(handle); }
+    } cleanup{curl};
+
     try
     {
         std::string url = request.GetUrl().GetAbsoluteUrl();
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
 
-        // Set 4MB buffer size for optimal Azure blob reads
+        // CRITICAL: Set 4MB buffer size for optimal Azure blob reads
+        // This reduces recv() calls from ~250 (16KB default) to ~1 per 4MB read
         curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 4L * 1024 * 1024);
 
+        // Enable HTTP/2 with fallback to HTTP/1.1
+        curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+
+        // Set HTTP method
         auto method = request.GetMethod();
         if (method == Azure::Core::Http::HttpMethod::Get)
             curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
@@ -103,49 +182,62 @@ std::unique_ptr<Azure::Core::Http::RawResponse> OptimizedAzureBlobTransport::Sen
         else if (method == Azure::Core::Http::HttpMethod::Delete)
             curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
 
-        struct curl_slist* headers = nullptr;
+        // Set request headers
+        CurlSlistGuard headersList;
         for (const auto& header : request.GetHeaders())
         {
             std::string headerLine = header.first + ": " + header.second;
-            headers = curl_slist_append(headers, headerLine.c_str());
+            headersList.append(headerLine.c_str());
         }
-        if (headers)
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        if (headersList.get())
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headersList.get());
 
+        // Connection and timeout options
         curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 10000L);
         curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+        
+        // Enable connection reuse
+        curl_easy_setopt(curl, CURLOPT_FORBID_REUSE, 0L);
+        curl_easy_setopt(curl, CURLOPT_MAXCONNECTS, 10L);  // Connection pool size
 
+        // SSL/TLS options - verify peer by default
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+
+        // Set up response body collection
         std::vector<uint8_t> responseBody;
+        responseBody.reserve(64 * 1024);  // Pre-allocate 64KB
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseBody);
 
+        // Set up response headers collection
         Azure::Core::CaseInsensitiveMap responseHeaders;
         curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, HeaderCallback);
         curl_easy_setopt(curl, CURLOPT_HEADERDATA, &responseHeaders);
 
+        // Perform the request
         CURLcode res = curl_easy_perform(curl);
         
-        if (headers)
-            curl_slist_free_all(headers);
-
         if (res != CURLE_OK)
         {
             std::string error = curl_easy_strerror(res);
-            curl_easy_cleanup(curl);
             throw std::runtime_error("CURL request failed: " + error);
         }
 
+        // Get HTTP status code
         long httpCode = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-        curl_easy_cleanup(curl);
 
+        // Create RawResponse
         auto response = std::make_unique<Azure::Core::Http::RawResponse>(
             1, 1, static_cast<Azure::Core::Http::HttpStatusCode>(httpCode), "OK");
 
+        // Set headers
         for (const auto& header : responseHeaders)
             response->SetHeader(header.first, header.second);
 
+        // Set body
         if (!responseBody.empty())
             response->SetBody(std::move(responseBody));
 
@@ -153,7 +245,7 @@ std::unique_ptr<Azure::Core::Http::RawResponse> OptimizedAzureBlobTransport::Sen
     }
     catch (...)
     {
-        curl_easy_cleanup(curl);
+        // CurlCleanup RAII will handle cleanup
         throw;
     }
 }
