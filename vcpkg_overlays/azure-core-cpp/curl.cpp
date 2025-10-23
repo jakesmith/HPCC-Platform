@@ -560,6 +560,18 @@ std::unique_ptr<CurlNetworkConnection> CurlSession::ExtractConnection()
   }
 }
 
+// HPCC: Helper function to log messages to /tmp/hpcc-azure-curl.log
+static void LogToHpccFile(const char* message)
+{
+  FILE* logFile = fopen("/tmp/hpcc-azure-curl.log", "a");
+  if (logFile)
+  {
+    fprintf(logFile, "%s\n", message);
+    fclose(logFile);
+  }
+}
+
+
 // Creates an HTTP Response with specific bodyType
 static std::unique_ptr<RawResponse> CreateHTTPResponse(
     uint8_t const* const begin,
@@ -581,6 +593,15 @@ static std::unique_ptr<RawResponse> CreateHTTPResponse(
   start = end + 1; // start of reason phrase
   end = std::find(start, last, '\r');
   auto reasonPhrase = std::string(start, end); // remove \r
+
+  // HPCC OPTIMIZATION: Log the HTTP version from the response status line
+  {
+    std::string msg = "[HPCC Azure] Response received using HTTP/";
+    msg += std::to_string(majorVersion);
+    msg += ".";
+    msg += std::to_string(minorVersion);
+    LogToHpccFile(msg.c_str());
+  }
 
   // allocate the instance of response to heap with shared ptr
   // So this memory gets delegated outside CurlTransport as a shared_ptr so memory will be
@@ -2359,17 +2380,6 @@ void CurlConnectionPool::MoveConnectionBackToPool(
   }
 }
 
-// HPCC: Helper function to log messages to /tmp/hpcc-azure-curl.log
-static void LogToHpccFile(const char* message)
-{
-  FILE* logFile = fopen("/tmp/hpcc-azure-curl.log", "a");
-  if (logFile)
-  {
-    fprintf(logFile, "%s\n", message);
-    fclose(logFile);
-  }
-}
-
 CurlConnection::CurlConnection(
     Request& request,
     CurlTransportOptions const& options,
@@ -2703,52 +2713,6 @@ CurlConnection::CurlConnection(
           + std::string(curl_easy_strerror(performResult)));
     }
   }
-
-  // HPCC OPTIMIZATION: Log the negotiated HTTP version
-#if LIBCURL_VERSION_NUM >= 0x073200 // 7.50.0 - when CURLINFO_HTTP_VERSION was added
-  {
-    long httpVersion = -1;
-    if (curl_easy_getinfo(m_handle.get(), CURLINFO_HTTP_VERSION, &httpVersion) == CURLE_OK)
-    {
-      std::string msg = "[HPCC Azure] Connection to ";
-      msg += hostDisplayName;
-      msg += " established using ";
-      const char* versionStr = nullptr;
-      switch (httpVersion)
-      {
-        case 0: // CURL_HTTP_VERSION_NONE - version not determined
-          versionStr = "HTTP version not determined (possibly reused connection)";
-          break;
-        case CURL_HTTP_VERSION_1_0: versionStr = "HTTP/1.0"; break;
-        case CURL_HTTP_VERSION_1_1: versionStr = "HTTP/1.1"; break;
-        case CURL_HTTP_VERSION_2_0: versionStr = "HTTP/2"; break;
-#if LIBCURL_VERSION_NUM >= 0x073D00 // 7.61.0
-        case CURL_HTTP_VERSION_3: versionStr = "HTTP/3"; break;
-#endif
-        default:
-          break;
-      }
-      if (versionStr)
-      {
-        msg += versionStr;
-      }
-      else
-      {
-        msg += "Unknown (code: ";
-        msg += std::to_string(httpVersion);
-        msg += ")";
-      }
-      LogToHpccFile(msg.c_str());
-    }
-  }
-#else
-  {
-    std::string msg = "[HPCC Azure] Connection to ";
-    msg += hostDisplayName;
-    msg += " established (libcurl < 7.50.0, HTTP version detection not available)";
-    LogToHpccFile(msg.c_str());
-  }
-#endif
 
   //   Get the socket that libcurl is using from handle. Will use this to wait while
   // reading/writing

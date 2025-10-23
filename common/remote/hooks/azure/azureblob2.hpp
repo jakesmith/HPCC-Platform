@@ -15,26 +15,15 @@
     limitations under the License.
 ############################################################################## */
 
-#ifndef AZURE_BLOB_HPP
-#define AZURE_BLOB_HPP
+#ifndef AZUREBLOB2_HPP
+#define AZUREBLOB2_HPP
 
+#include "jlib.hpp"
 #include "jfile.hpp"
 
-/*
- * Direct access to files in Azure blobs
- * Provides Azure Blob Storage implementation for filenames of the form azureblob:<storagePlane>/<containerName>/<path>
- * File hooks are installed by azureapi.hpp which handles both blob and file storage
- */
+// Fast parallel Azure blob implementation using native libcurl with HTTP/2
+// This bypasses the Azure SDK's CURLOPT_CONNECT_ONLY limitation
 
-// Original Azure SDK-based implementation (slower but stable)
-IFile * createAzureBlob(const char * filename);
-
-// Fast parallel implementation using native libcurl (10x faster)
-IFile * createFastAzureBlob(const char * filename);
-
-// Factory function that chooses implementation based on expert option
-// Set expert option "useAzureFastBlob" to true to use fast implementation
-// Default: false (uses original Azure SDK implementation)
-IFile * createAzureBlobAuto(const char * filename);
+IFile *createFastAzureBlob(const char *azureFileName);
 
 #endif

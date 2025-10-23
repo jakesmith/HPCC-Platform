@@ -25,6 +25,7 @@
 #include "jsecrets.hpp"
 #include "jplane.hpp"
 #include "azureblob.hpp"
+#include "azureblob2.hpp"
 #include "azureapiutils.hpp"
 
 #include <azure/core/base64.hpp>
@@ -867,4 +868,21 @@ void AzureBlob::setProperties(int64_t _blobSize, Azure::DateTime _lastModified, 
 IFile *createAzureBlob(const char *azureFileName)
 {
     return new AzureBlob(azureFileName);
+}
+
+IFile *createAzureBlobAuto(const char *azureFileName)
+{
+    // Check expert option to determine which implementation to use
+    // Default to original Azure SDK implementation for stability
+    bool useFastBlob = getExpertOptBool("useAzureFastBlob", false);
+    
+    if (useFastBlob)
+    {
+        DBGLOG("Using fast parallel Azure blob implementation for %s", azureFileName);
+        return createFastAzureBlob(azureFileName);
+    }
+    else
+    {
+        return createAzureBlob(azureFileName);
+    }
 }

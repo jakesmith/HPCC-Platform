@@ -278,7 +278,7 @@ public:
     virtual IFile * createIFile(const char *fileName) override
     {
         if (isAzureBlobName(fileName))
-            return createAzureBlob(fileName);
+            return createAzureBlobAuto(fileName);
         else if (isAzureFileName(fileName))
             return createAzureFile(fileName);
         else

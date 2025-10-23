@@ -44,6 +44,8 @@ SET (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${STRICT_CXX_FLAGS}")
 set (   SRCS
         azureblob.cpp
         azureblob.hpp
+        azureblob2.cpp
+        azureblob2.hpp
         azurefile.cpp
         azurefile.hpp
         azureapi.cpp
