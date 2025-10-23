@@ -2709,7 +2709,7 @@ CurlConnection::CurlConnection(
     long httpVersion = 0;
     if (curl_easy_getinfo(m_handle.get(), CURLINFO_HTTP_VERSION, &httpVersion) == CURLE_OK)
     {
-      std::string msg = "[HPCC Azure] Connection to ";
+      std::string msg = "[HPCC Azure XX] Connection to ";
       msg += hostDisplayName;
       msg += " established using ";
       const char* versionStr = nullptr;
