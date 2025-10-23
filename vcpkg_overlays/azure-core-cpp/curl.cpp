@@ -2707,9 +2707,8 @@ CurlConnection::CurlConnection(
   // HPCC OPTIMIZATION: Log the negotiated HTTP version
 #if LIBCURL_VERSION_NUM >= 0x073200 // 7.50.0 - when CURLINFO_HTTP_VERSION was added
   {
-    long httpVersion = 0;
-    if (curl_easy_getinfo(m_handle.get(), CURLINFO_HTTP_VERSION, &httpVersion) == CURLE_OK
-        && httpVersion != 0)
+    long httpVersion = -1;
+    if (curl_easy_getinfo(m_handle.get(), CURLINFO_HTTP_VERSION, &httpVersion) == CURLE_OK)
     {
       std::string msg = "[HPCC Azure] Connection to ";
       msg += hostDisplayName;
@@ -2717,6 +2716,9 @@ CurlConnection::CurlConnection(
       const char* versionStr = nullptr;
       switch (httpVersion)
       {
+        case 0: // CURL_HTTP_VERSION_NONE - version not determined
+          versionStr = "HTTP version not determined (possibly reused connection)";
+          break;
         case CURL_HTTP_VERSION_1_0: versionStr = "HTTP/1.0"; break;
         case CURL_HTTP_VERSION_1_1: versionStr = "HTTP/1.1"; break;
         case CURL_HTTP_VERSION_2_0: versionStr = "HTTP/2"; break;
