@@ -2359,6 +2359,17 @@ void CurlConnectionPool::MoveConnectionBackToPool(
   }
 }
 
+// HPCC: Helper function to log messages to /tmp/hpcc-azure-curl.log
+static void LogToHpccFile(const char* message)
+{
+  FILE* logFile = fopen("/tmp/hpcc-azure-curl.log", "a");
+  if (logFile)
+  {
+    fprintf(logFile, "%s\n", message);
+    fclose(logFile);
+  }
+}
+
 CurlConnection::CurlConnection(
     Request& request,
     CurlTransportOptions const& options,
@@ -2628,19 +2639,11 @@ CurlConnection::CurlConnection(
   {
     std::string errorMsg = "[HPCC Azure] FAILED to set CURLOPT_BUFFERSIZE to 4MB: ";
     errorMsg += curl_easy_strerror(result);
-    FILE* logFile = fopen("/tmp/hpcc-azure-curl.log", "a");
-    if (logFile) {
-      fprintf(logFile, "%s\n", errorMsg.c_str());
-      fclose(logFile);
-    }
+    LogToHpccFile(errorMsg.c_str());
   }
   else
   {
-    FILE* logFile = fopen("/tmp/hpcc-azure-curl.log", "a");
-    if (logFile) {
-      fprintf(logFile, "[HPCC Azure] SUCCESS: Set CURLOPT_BUFFERSIZE to 4MB for optimal blob reads\n");
-      fclose(logFile);
-    }
+    LogToHpccFile("[HPCC Azure] SUCCESS: Set CURLOPT_BUFFERSIZE to 4MB for optimal blob reads");
   }
 
   // HPCC OPTIMIZATION: Enable SSL session caching for performance
@@ -2649,19 +2652,11 @@ CurlConnection::CurlConnection(
   {
     std::string errorMsg = "[HPCC Azure] FAILED to enable SSL session caching: ";
     errorMsg += curl_easy_strerror(result);
-    FILE* logFile = fopen("/tmp/hpcc-azure-curl.log", "a");
-    if (logFile) {
-      fprintf(logFile, "%s\n", errorMsg.c_str());
-      fclose(logFile);
-    }
+    LogToHpccFile(errorMsg.c_str());
   }
   else
   {
-    FILE* logFile = fopen("/tmp/hpcc-azure-curl.log", "a");
-    if (logFile) {
-      fprintf(logFile, "[HPCC Azure] SUCCESS: Enabled SSL session caching\n");
-      fclose(logFile);
-    }
+    LogToHpccFile("[HPCC Azure] SUCCESS: Enabled SSL session caching");
   }
   // HPCC OPTIMIZATION: Allow HTTP/2 for better performance
   // The original Azure SDK forced HTTP/1.1 due to a 2021 bug (https://github.com/Azure/azure-sdk-for-cpp/issues/2848)
@@ -2714,7 +2709,10 @@ CurlConnection::CurlConnection(
     long httpVersion = 0;
     if (curl_easy_getinfo(m_handle.get(), CURLINFO_HTTP_VERSION, &httpVersion) == CURLE_OK)
     {
-      const char* versionStr = "Unknown";
+      std::string msg = "[HPCC Azure] Connection to ";
+      msg += hostDisplayName;
+      msg += " established using ";
+      const char* versionStr = nullptr;
       switch (httpVersion)
       {
         case CURL_HTTP_VERSION_1_0: versionStr = "HTTP/1.0"; break;
@@ -2723,15 +2721,22 @@ CurlConnection::CurlConnection(
 #if LIBCURL_VERSION_NUM >= 0x073D00 // 7.61.0
         case CURL_HTTP_VERSION_3: versionStr = "HTTP/3"; break;
 #endif
-        default: break;
+        default:
+          break;
       }
-      FILE* logFile = fopen("/tmp/hpcc-azure-curl.log", "a");
-      if (logFile)
+      if (versionStr)
       {
-        fprintf(logFile, "[HPCC Azure] Connection to %s established using %s\n",
-                hostDisplayName.c_str(), versionStr);
-        fclose(logFile);
+        msg += versionStr;
       }
+      else
+      {
+        msg += std::to_string(httpVersion);
+      }
+      LogToHpccFile(msg.c_str());
+    }
+    else
+    {
+      LogToHpccFile("Failed to get curl_easy_getinfo");
     }
   }
 
