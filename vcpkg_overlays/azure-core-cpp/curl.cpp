@@ -2705,11 +2705,13 @@ CurlConnection::CurlConnection(
   }
 
   // HPCC OPTIMIZATION: Log the negotiated HTTP version
+#if LIBCURL_VERSION_NUM >= 0x073200 // 7.50.0 - when CURLINFO_HTTP_VERSION was added
   {
     long httpVersion = 0;
-    if (curl_easy_getinfo(m_handle.get(), CURLINFO_HTTP_VERSION, &httpVersion) == CURLE_OK)
+    if (curl_easy_getinfo(m_handle.get(), CURLINFO_HTTP_VERSION, &httpVersion) == CURLE_OK
+        && httpVersion != 0)
     {
-      std::string msg = "[HPCC Azure XX] Connection to ";
+      std::string msg = "[HPCC Azure] Connection to ";
       msg += hostDisplayName;
       msg += " established using ";
       const char* versionStr = nullptr;
@@ -2730,15 +2732,21 @@ CurlConnection::CurlConnection(
       }
       else
       {
+        msg += "Unknown (code: ";
         msg += std::to_string(httpVersion);
+        msg += ")";
       }
       LogToHpccFile(msg.c_str());
     }
-    else
-    {
-      LogToHpccFile("Failed to get curl_easy_getinfo");
-    }
   }
+#else
+  {
+    std::string msg = "[HPCC Azure] Connection to ";
+    msg += hostDisplayName;
+    msg += " established (libcurl < 7.50.0, HTTP version detection not available)";
+    LogToHpccFile(msg.c_str());
+  }
+#endif
 
   //   Get the socket that libcurl is using from handle. Will use this to wait while
   // reading/writing
