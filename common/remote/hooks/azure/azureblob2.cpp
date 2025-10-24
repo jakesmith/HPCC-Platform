@@ -35,11 +35,38 @@
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 #include <azure/core/base64.hpp>
+#include <azure/core/credentials/credentials.hpp>
+#include <azure/core/context.hpp>
 
 // Macro for conditional tracing
 #define AZURE2_TRACE if (traceAzureAPI) DBGLOG
 
 static bool traceAzureAPI = false;
+
+//---------------------------------------------------------------------------------------------------------------------
+// Helper functions for Azure authentication (Shared Key and Managed Identity)
+//---------------------------------------------------------------------------------------------------------------------
+
+static std::string getOAuthTokenForManagedIdentity()
+{
+    // Get OAuth token from Azure Managed Identity credential
+    // Scope for Azure Storage is always https://storage.azure.com/.default
+    auto credential = getAzureManagedIdentityCredential();
+    
+    Azure::Core::Credentials::TokenRequestContext tokenContext;
+    tokenContext.Scopes = {"https://storage.azure.com/.default"};
+    
+    try
+    {
+        auto tokenResponse = credential->GetToken(tokenContext, Azure::Core::Context());
+        return tokenResponse.Token;
+    }
+    catch (const Azure::Core::RequestFailedException& e)
+    {
+        throw makeStringExceptionV(1234, "Failed to get OAuth token for managed identity: %s (%d)",
+                                   e.ReasonPhrase.c_str(), static_cast<int>(e.StatusCode));
+    }
+}
 
 //---------------------------------------------------------------------------------------------------------------------
 // Helper functions for Azure Shared Key authentication
@@ -108,24 +135,39 @@ static std::string createAzureSharedKeySignature(
 static struct curl_slist* addAzureAuthHeaders(
     struct curl_slist* headers,
     const char* accountName,
-    const char* accountKey,
+    const char* accountKey,  // nullptr for managed identity
     const char* method,
     const char* urlPath,
     const char* rangeValue = nullptr)
 {
-    std::string httpDate = getCurrentHttpDate();
-    std::string signature = createAzureSharedKeySignature(accountName, accountKey, method, urlPath, httpDate.c_str(), rangeValue);
-    
-    // Add Azure authentication headers
-    std::string authHeader = "Authorization: SharedKey ";
-    authHeader.append(accountName).append(":").append(signature);
-    headers = curl_slist_append(headers, authHeader.c_str());
-    
-    std::string dateHeader = "x-ms-date: ";
-    dateHeader.append(httpDate);
-    headers = curl_slist_append(headers, dateHeader.c_str());
-    
-    headers = curl_slist_append(headers, "x-ms-version: 2020-04-08");
+    if (accountKey)
+    {
+        // Shared Key authentication
+        std::string httpDate = getCurrentHttpDate();
+        std::string signature = createAzureSharedKeySignature(accountName, accountKey, method, urlPath, httpDate.c_str(), rangeValue);
+        
+        // Add Azure authentication headers
+        std::string authHeader = "Authorization: SharedKey ";
+        authHeader.append(accountName).append(":").append(signature);
+        headers = curl_slist_append(headers, authHeader.c_str());
+        
+        std::string dateHeader = "x-ms-date: ";
+        dateHeader.append(httpDate);
+        headers = curl_slist_append(headers, dateHeader.c_str());
+        
+        headers = curl_slist_append(headers, "x-ms-version: 2020-04-08");
+    }
+    else
+    {
+        // Managed Identity OAuth authentication
+        std::string oauthToken = getOAuthTokenForManagedIdentity();
+        
+        std::string authHeader = "Authorization: Bearer ";
+        authHeader.append(oauthToken);
+        headers = curl_slist_append(headers, authHeader.c_str());
+        
+        headers = curl_slist_append(headers, "x-ms-version: 2020-04-08");
+    }
     
     return headers;
 }
@@ -543,7 +585,9 @@ size32_t FastAzureBlobReadIO::read(offset_t pos, size32_t len, void* data)
             
             // Create authentication headers with range
             struct curl_slist* headers = nullptr;
-            headers = addAzureAuthHeaders(headers, file->getAccountName(), accountKey.c_str(), "GET", urlPath.c_str(), rangeValue);
+            headers = addAzureAuthHeaders(headers, file->getAccountName(), 
+                                          accountKey.empty() ? nullptr : accountKey.c_str(), 
+                                          "GET", urlPath.c_str(), rangeValue);
             
             // Add Range header
             char rangeHeader[128];
@@ -703,7 +747,7 @@ std::string FastAzureBlob::getAccountKey() const
 {
     if (useManagedIdentity)
     {
-        throwUnexpectedX("Managed identity not yet implemented in FastAzureBlob - use shared key");
+        return std::string();  // Return empty string for managed identity (OAuth will be used)
     }
     
     // Get the account key from secrets (same as AzureBlob uses)
@@ -751,7 +795,9 @@ void FastAzureBlob::gatherMetaData()
         
         // Create authentication headers for HEAD request
         struct curl_slist* headers = nullptr;
-        headers = addAzureAuthHeaders(headers, accountName.get(), accountKey.c_str(), "HEAD", urlPath.c_str());
+        headers = addAzureAuthHeaders(headers, accountName.get(), 
+                                      accountKey.empty() ? nullptr : accountKey.c_str(), 
+                                      "HEAD", urlPath.c_str());
         
         // Use HEAD request to get metadata
         curl_easy_setopt(curl, CURLOPT_URL, blobUrl.c_str());
