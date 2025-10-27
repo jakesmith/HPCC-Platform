@@ -3763,6 +3763,7 @@ void azurePerfTest(const char *srcPath, const char *dstPath, offset_t numBytes)
     // Test matrix of Azure blob performance configurations
     // Concurrency: 4, 8, 16, 32, 64
     // Chunk sizes: 256K, 512K, 1MB, 2MB, 4MB, 8MB, 16MB
+    // Block sizes: 1MB, 4MB, 8MB, 16MB, 32MB, 64MB
     
     const unsigned concurrencyLevels[] = {4, 8, 16, 32, 64};
     const unsigned __int64 chunkSizes[] = {
@@ -3774,9 +3775,11 @@ void azurePerfTest(const char *srcPath, const char *dstPath, offset_t numBytes)
         8 * 1024 * 1024, // 8MB
         16 * 1024 * 1024 // 16MB
     };
+    const unsigned blockSizesK[] = {1000, 4000, 8000, 16000, 32000, 64000}; // 1MB, 4MB, 8MB, 16MB, 32MB, 64MB
     
     unsigned numConcurrencyLevels = sizeof(concurrencyLevels) / sizeof(concurrencyLevels[0]);
     unsigned numChunkSizes = sizeof(chunkSizes) / sizeof(chunkSizes[0]);
+    unsigned numBlockSizes = sizeof(blockSizesK) / sizeof(blockSizesK[0]);
     
     PROGLOG("=================================================================");
     PROGLOG("Azure Blob Performance Test");
@@ -3787,16 +3790,17 @@ void azurePerfTest(const char *srcPath, const char *dstPath, offset_t numBytes)
         PROGLOG("Bytes to test: %" I64F "d", numBytes);
     else
         PROGLOG("Bytes to test: entire file");
-    PROGLOG("Testing %u concurrency levels x %u chunk sizes = %u combinations",
-            numConcurrencyLevels, numChunkSizes, numConcurrencyLevels * numChunkSizes);
+    PROGLOG("Testing %u concurrency levels x %u chunk sizes x %u block sizes = %u combinations",
+            numConcurrencyLevels, numChunkSizes, numBlockSizes, 
+            numConcurrencyLevels * numChunkSizes * numBlockSizes);
     PROGLOG("=================================================================");
     PROGLOG(" ");
     
     // CSV header
-    PROGLOG("Concurrency,ChunkSizeKB,Bytes,TimeSeconds,MBps,Status");
+    PROGLOG("Concurrency,ChunkSizeKB,BlockSizeKB,Bytes,TimeSeconds,MBps,Status");
     
     unsigned testNum = 0;
-    unsigned totalTests = numConcurrencyLevels * numChunkSizes;
+    unsigned totalTests = numConcurrencyLevels * numChunkSizes * numBlockSizes;
     
     for (unsigned c = 0; c < numConcurrencyLevels; c++)
     {
@@ -3805,53 +3809,58 @@ void azurePerfTest(const char *srcPath, const char *dstPath, offset_t numBytes)
         for (unsigned s = 0; s < numChunkSizes; s++)
         {
             unsigned __int64 chunkSize = chunkSizes[s];
-            testNum++;
             
-            PROGLOG(" ");
-            PROGLOG("-----------------------------------------------------------------");
-            PROGLOG("Test %u/%u: Concurrency=%u, ChunkSize=%llu KB",
-                    testNum, totalTests, concurrency, chunkSize / 1024);
-            PROGLOG("-----------------------------------------------------------------");
-            
-            try
+            for (unsigned b = 0; b < numBlockSizes; b++)
             {
-                CCycleTimer timer;
+                unsigned blockSizeK = blockSizesK[b];
+                testNum++;
                 
-                // Call fileread with these specific settings
-                fileread(srcPath, dstPath, numBytes, 0, concurrency, chunkSize);
+                PROGLOG(" ");
+                PROGLOG("-----------------------------------------------------------------");
+                PROGLOG("Test %u/%u: Concurrency=%u, ChunkSize=%llu KB, BlockSize=%u KB",
+                        testNum, totalTests, concurrency, chunkSize / 1024, blockSizeK);
+                PROGLOG("-----------------------------------------------------------------");
                 
-                double elapsedSeconds = (double)timer.elapsedMs() / 1000.0;
-                
-                // Get actual bytes read by checking destination file size
-                Owned<IFile> dstFile = createIFile(dstPath);
-                offset_t bytesRead = dstFile->size();
-                double mbRead = (double)bytesRead / (1024.0 * 1024.0);
-                double mbps = elapsedSeconds > 0 ? (mbRead / elapsedSeconds) : 0.0;
-                
-                PROGLOG("RESULT: Concurrency=%u, ChunkSize=%llu KB, Bytes=%" I64F "d, Time=%.2f sec, Speed=%.2f MB/s",
-                        concurrency, chunkSize / 1024, bytesRead, elapsedSeconds, mbps);
-                
-                // CSV output
-                PROGLOG("%u,%llu,%" I64F "d,%.2f,%.2f,SUCCESS",
-                        concurrency, chunkSize / 1024, bytesRead, elapsedSeconds, mbps);
-                
-                // Clean up destination file for next test
-                dstFile->remove();
-            }
-            catch (IException *e)
-            {
-                StringBuffer msg;
-                e->errorMessage(msg);
-                UERRLOG("Test %u/%u FAILED: %s", testNum, totalTests, msg.str());
-                PROGLOG("%u,%llu,0,0.0,0.0,FAILED:%s",
-                        concurrency, chunkSize / 1024, msg.str());
-                e->Release();
-            }
-            catch (...)
-            {
-                UERRLOG("Test %u/%u FAILED: Unknown exception", testNum, totalTests);
-                PROGLOG("%u,%llu,0,0.0,0.0,FAILED:Unknown",
-                        concurrency, chunkSize / 1024);
+                try
+                {
+                    CCycleTimer timer;
+                    
+                    // Call fileread with these specific settings
+                    fileread(srcPath, dstPath, numBytes, blockSizeK, concurrency, chunkSize);
+                    
+                    double elapsedSeconds = (double)timer.elapsedMs() / 1000.0;
+                    
+                    // Get actual bytes read by checking destination file size
+                    Owned<IFile> dstFile = createIFile(dstPath);
+                    offset_t bytesRead = dstFile->size();
+                    double mbRead = (double)bytesRead / (1024.0 * 1024.0);
+                    double mbps = elapsedSeconds > 0 ? (mbRead / elapsedSeconds) : 0.0;
+                    
+                    PROGLOG("RESULT: Concurrency=%u, ChunkSize=%llu KB, BlockSize=%u KB, Bytes=%" I64F "d, Time=%.2f sec, Speed=%.2f MB/s",
+                            concurrency, chunkSize / 1024, blockSizeK, bytesRead, elapsedSeconds, mbps);
+                    
+                    // CSV output
+                    PROGLOG("%u,%llu,%u,%" I64F "d,%.2f,%.2f,SUCCESS",
+                            concurrency, chunkSize / 1024, blockSizeK, bytesRead, elapsedSeconds, mbps);
+                    
+                    // Clean up destination file for next test
+                    dstFile->remove();
+                }
+                catch (IException *e)
+                {
+                    StringBuffer msg;
+                    e->errorMessage(msg);
+                    UERRLOG("Test %u/%u FAILED: %s", testNum, totalTests, msg.str());
+                    PROGLOG("%u,%llu,%u,0,0.0,0.0,FAILED:%s",
+                            concurrency, chunkSize / 1024, blockSizeK, msg.str());
+                    e->Release();
+                }
+                catch (...)
+                {
+                    UERRLOG("Test %u/%u FAILED: Unknown exception", testNum, totalTests);
+                    PROGLOG("%u,%llu,%u,0,0.0,0.0,FAILED:Unknown",
+                            concurrency, chunkSize / 1024, blockSizeK);
+                }
             }
         }
     }
