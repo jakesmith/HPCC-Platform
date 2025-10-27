@@ -103,6 +103,9 @@ void usage(const char *exe)
   printf("  fileread <srcfile> <dstfile> [<bytes>] [<blocksize-KB>] [name=value ...]\n");
   printf("           Named options: bytes=N, blocksize=N, concurrency=N, chunksize=N\n");
   printf("           -- read N bytes from source file (any type: local, azureblob:, s3:, etc.) and write to destination with progress\n");
+  printf("  azureperftest <srcfile> <dstfile> [<bytes>]\n");
+  printf("           -- test Azure blob performance with different concurrency (4-64) and chunk sizes (256K-16MB)\n");
+  printf("           -- outputs CSV results for analysis\n");
   printf("  getxref <destxmlfile>           -- get all XREF information\n");
   printf("  loadxml <srcxmlfile> [--lowmem[=<true|false]]    -- use lowmem AtomPTree's\n"
          "                       [--parseonly[=<true|false]] -- parse the xml file, don't load it into dali\n"
@@ -309,6 +312,14 @@ int main(int argc, const char* argv[])
                     }
                     
                     fileread(params.item(1), params.item(2), numBytes, blockSizeK, azureConcurrency, azureChunkSize);
+                }
+                else if (strieq(cmd, "azureperftest"))
+                {
+                    CHECKPARAMS(2, 3);
+                    offset_t numBytes = 0;
+                    if (np > 2)
+                        numBytes = atoi64_l(params.item(3), strlen(params.item(3)));
+                    azurePerfTest(params.item(1), params.item(2), numBytes);
                 }
                 else
                 {

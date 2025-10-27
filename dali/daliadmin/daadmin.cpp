@@ -3757,4 +3757,113 @@ void fileread(const char *srcPath, const char *dstPath, offset_t numBytes, unsig
     }
 }
 
+void azurePerfTest(const char *srcPath, const char *dstPath, offset_t numBytes)
+{
+#ifdef _USE_AZURE
+    // Test matrix of Azure blob performance configurations
+    // Concurrency: 4, 8, 16, 32, 64
+    // Chunk sizes: 256K, 512K, 1MB, 2MB, 4MB, 8MB, 16MB
+    
+    const unsigned concurrencyLevels[] = {4, 8, 16, 32, 64};
+    const unsigned __int64 chunkSizes[] = {
+        256 * 1024,      // 256KB
+        512 * 1024,      // 512KB
+        1024 * 1024,     // 1MB
+        2 * 1024 * 1024, // 2MB
+        4 * 1024 * 1024, // 4MB
+        8 * 1024 * 1024, // 8MB
+        16 * 1024 * 1024 // 16MB
+    };
+    
+    unsigned numConcurrencyLevels = sizeof(concurrencyLevels) / sizeof(concurrencyLevels[0]);
+    unsigned numChunkSizes = sizeof(chunkSizes) / sizeof(chunkSizes[0]);
+    
+    PROGLOG("=================================================================");
+    PROGLOG("Azure Blob Performance Test");
+    PROGLOG("=================================================================");
+    PROGLOG("Source: %s", srcPath);
+    PROGLOG("Destination: %s", dstPath);
+    if (numBytes > 0)
+        PROGLOG("Bytes to test: %" I64F "d", numBytes);
+    else
+        PROGLOG("Bytes to test: entire file");
+    PROGLOG("Testing %u concurrency levels x %u chunk sizes = %u combinations",
+            numConcurrencyLevels, numChunkSizes, numConcurrencyLevels * numChunkSizes);
+    PROGLOG("=================================================================");
+    PROGLOG(" ");
+    
+    // CSV header
+    PROGLOG("Concurrency,ChunkSizeKB,Bytes,TimeSeconds,MBps,Status");
+    
+    unsigned testNum = 0;
+    unsigned totalTests = numConcurrencyLevels * numChunkSizes;
+    
+    for (unsigned c = 0; c < numConcurrencyLevels; c++)
+    {
+        unsigned concurrency = concurrencyLevels[c];
+        
+        for (unsigned s = 0; s < numChunkSizes; s++)
+        {
+            unsigned __int64 chunkSize = chunkSizes[s];
+            testNum++;
+            
+            PROGLOG(" ");
+            PROGLOG("-----------------------------------------------------------------");
+            PROGLOG("Test %u/%u: Concurrency=%u, ChunkSize=%llu KB",
+                    testNum, totalTests, concurrency, chunkSize / 1024);
+            PROGLOG("-----------------------------------------------------------------");
+            
+            try
+            {
+                CCycleTimer timer;
+                
+                // Call fileread with these specific settings
+                fileread(srcPath, dstPath, numBytes, 0, concurrency, chunkSize);
+                
+                double elapsedSeconds = (double)timer.elapsedMs() / 1000.0;
+                
+                // Get actual bytes read by checking destination file size
+                Owned<IFile> dstFile = createIFile(dstPath);
+                offset_t bytesRead = dstFile->size();
+                double mbRead = (double)bytesRead / (1024.0 * 1024.0);
+                double mbps = elapsedSeconds > 0 ? (mbRead / elapsedSeconds) : 0.0;
+                
+                PROGLOG("RESULT: Concurrency=%u, ChunkSize=%llu KB, Bytes=%" I64F "d, Time=%.2f sec, Speed=%.2f MB/s",
+                        concurrency, chunkSize / 1024, bytesRead, elapsedSeconds, mbps);
+                
+                // CSV output
+                PROGLOG("%u,%llu,%" I64F "d,%.2f,%.2f,SUCCESS",
+                        concurrency, chunkSize / 1024, bytesRead, elapsedSeconds, mbps);
+                
+                // Clean up destination file for next test
+                dstFile->remove();
+            }
+            catch (IException *e)
+            {
+                StringBuffer msg;
+                e->errorMessage(msg);
+                UERRLOG("Test %u/%u FAILED: %s", testNum, totalTests, msg.str());
+                PROGLOG("%u,%llu,0,0.0,0.0,FAILED:%s",
+                        concurrency, chunkSize / 1024, msg.str());
+                e->Release();
+            }
+            catch (...)
+            {
+                UERRLOG("Test %u/%u FAILED: Unknown exception", testNum, totalTests);
+                PROGLOG("%u,%llu,0,0.0,0.0,FAILED:Unknown",
+                        concurrency, chunkSize / 1024);
+            }
+        }
+    }
+    
+    PROGLOG(" ");
+    PROGLOG("=================================================================");
+    PROGLOG("Azure Blob Performance Test Complete");
+    PROGLOG("Completed %u tests", totalTests);
+    PROGLOG("=================================================================");
+#else
+    UERRLOG("azurePerfTest: Azure support not compiled in");
+#endif
+}
+
 } // namespace daadmin
