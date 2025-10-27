@@ -248,6 +248,11 @@ public:
     void invalidateMeta() { haveMeta = false; }
     bool queryTraceAzureAPI() const { return traceAzureAPI; }
 
+    unsigned __int64 parallelThreshold = 16 * 1024 * 1024;
+    unsigned parallelConcurrency = 16;
+    unsigned __int64 parallelChunkSize = 4 * 1024 * 1024;
+    unsigned __int64 parallelInitialChunkSize = 256 * 1024 * 1024;
+
 protected:
     std::shared_ptr<StorageSharedKeyCredential> getSharedKeyCredentials() const;
     std::string getBlobUrl() const;
@@ -330,12 +335,12 @@ size32_t AzureBlobReadIO::read(offset_t pos, size32_t len, void * data)
 
     // Configure parallel transfer options for better performance
     // length should never be > 4MB, but just in case...
-    if (len > 16 * 1024 * 1024)  // 16MB threshold for parallel transfers
+    if (len > file->parallelThreshold)
     {
         // Only use parallel transfers for larger requests to avoid overhead
-        options.TransferOptions.Concurrency = 16;  // Increase from default 5 to 16 parallel connections
-        options.TransferOptions.ChunkSize = 8 * 1024 * 1024;  // Increase chunk size from 4MB to 8MB
-        options.TransferOptions.InitialChunkSize = 64 * 1024 * 1024;  // Reduce initial chunk from 256MB to 64MB for better parallelism
+        options.TransferOptions.Concurrency = file->parallelConcurrency;
+        options.TransferOptions.ChunkSize = file->parallelChunkSize;
+        options.TransferOptions.InitialChunkSize = file->parallelInitialChunkSize;
     }
     else
     {
@@ -643,7 +648,21 @@ AzureBlob::AzureBlob(const char *_azureFileName) : fullName(_azureFileName)
     blobUrl = ::getBlobUrl(accountName, containerName, blobName);
     
     // Read tracing flag from expert settings once at construction time for efficiency
-    traceAzureAPI = getExpertOptBool("traceAzureAPI", false);
+
+    Owned<IPropertyTree> expert;
+    if (isContainerized())
+        expert.setown(getComponentConfigSP()->getPropTree("expert"));
+    else
+        expert.setown(getComponentConfigSP()->getPropTree("Debug"));
+
+    traceAzureAPI = expert->getPropBool("@trace", false);
+    parallelThreshold = expert->getPropInt64("@parallelThreshold", parallelThreshold);
+    parallelConcurrency = expert->getPropInt64("@parallelConcurrency", parallelConcurrency);
+    parallelChunkSize = expert->getPropInt64("@parallelChunkSize", parallelChunkSize);
+    parallelInitialChunkSize = expert->getPropInt64("@parallelInitialChunkSize", parallelInitialChunkSize);
+
+    WARNLOG("trace=%s, parallelThreshold=%llu, parallelConcurrency=%u, parallelChunkSize=%llu, parallelInitialChunkSize=%llu",
+        boolToStr(traceAzureAPI), parallelThreshold, parallelConcurrency, parallelChunkSize, parallelInitialChunkSize);
 }
 
 std::shared_ptr<StorageSharedKeyCredential> AzureBlob::getSharedKeyCredentials() const
