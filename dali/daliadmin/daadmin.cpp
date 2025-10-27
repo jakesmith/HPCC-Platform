@@ -3602,7 +3602,7 @@ void cleanStaleGroups(const char *groupPattern, bool dryRun)
     }
 }
 
-void fileread(const char *srcPath, const char *dstPath, offset_t numBytes)
+void fileread(const char *srcPath, const char *dstPath, offset_t numBytes, unsigned blockSizeK)
 {
     // Read N bytes from source file and write to destination file
     // Supports any file type (local, Azure blob, S3, etc.)
@@ -3674,7 +3674,8 @@ void fileread(const char *srcPath, const char *dstPath, offset_t numBytes)
 
         // Read and write in chunks
         constexpr size32_t oneMB = 0x100000;
-        const size32_t chunkSize = oneMB;
+        const size32_t chunkSize = (blockSizeK > 0) ? (blockSizeK * 1024) : oneMB;
+        PROGLOG("  Block size: %u KB (%u bytes)", chunkSize / 1024, chunkSize);
         MemoryBuffer memoryBuffer;
         byte *buffer = (byte *)memoryBuffer.reserveTruncate(chunkSize);
 
