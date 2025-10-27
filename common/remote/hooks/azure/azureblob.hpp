@@ -20,6 +20,12 @@
 
 #include "jfile.hpp"
 
+#ifdef AZURE_API_EXPORTS
+#define AZUREAPI_API DECL_EXPORT
+#else
+#define AZUREAPI_API DECL_IMPORT
+#endif
+
 /*
  * Direct access to files in Azure blobs
  * Provides Azure Blob Storage implementation for filenames of the form azureblob:<storagePlane>/<containerName>/<path>
@@ -34,6 +40,6 @@ IFile * createAzureBlob(const char * filename);
  * @param parallelConcurrency Number of parallel connections (0 = use config value)
  * @param parallelChunkSize Chunk size in bytes for parallel transfers (0 = use config value)
  */
-void setAzureBlobParallelOptions(unsigned parallelConcurrency, unsigned __int64 parallelChunkSize);
+AZUREAPI_API void setAzureBlobParallelOptions(unsigned parallelConcurrency, unsigned __int64 parallelChunkSize);
 
 #endif
