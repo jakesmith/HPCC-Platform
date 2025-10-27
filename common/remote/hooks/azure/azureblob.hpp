@@ -28,4 +28,12 @@
 
 IFile * createAzureBlob(const char * filename);
 
+/*
+ * Set global overrides for Azure blob parallel transfer options
+ * These override the config settings for all subsequent Azure blob operations
+ * @param parallelConcurrency Number of parallel connections (0 = use config value)
+ * @param parallelChunkSize Chunk size in bytes for parallel transfers (0 = use config value)
+ */
+void setAzureBlobParallelOptions(unsigned parallelConcurrency, unsigned __int64 parallelChunkSize);
+
 #endif

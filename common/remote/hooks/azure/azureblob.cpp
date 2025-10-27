@@ -40,6 +40,10 @@ using namespace std::chrono;
 // Macro for conditional Azure API tracing
 #define AZURE_TRACE if (traceAzureAPI) DBGLOG
 
+// Global override variables for parallel settings (0 = use config values)
+static std::atomic<unsigned> g_parallelConcurrencyOverride{0};
+static std::atomic<unsigned __int64> g_parallelChunkSizeOverride{0};
+
 /*
  * Azure related comments
  *
@@ -657,8 +661,20 @@ AzureBlob::AzureBlob(const char *_azureFileName) : fullName(_azureFileName)
 
     traceAzureAPI = expert->getPropBool("@trace", false);
     parallelThreshold = expert->getPropInt64("@parallelThreshold", parallelThreshold);
-    parallelConcurrency = expert->getPropInt64("@parallelConcurrency", parallelConcurrency);
-    parallelChunkSize = expert->getPropInt64("@parallelChunkSize", parallelChunkSize);
+    
+    // Check for global overrides first, then fall back to config
+    unsigned concurrencyOverride = g_parallelConcurrencyOverride.load();
+    if (concurrencyOverride > 0)
+        parallelConcurrency = concurrencyOverride;
+    else
+        parallelConcurrency = expert->getPropInt64("@parallelConcurrency", parallelConcurrency);
+    
+    unsigned __int64 chunkSizeOverride = g_parallelChunkSizeOverride.load();
+    if (chunkSizeOverride > 0)
+        parallelChunkSize = chunkSizeOverride;
+    else
+        parallelChunkSize = expert->getPropInt64("@parallelChunkSize", parallelChunkSize);
+    
     parallelInitialChunkSize = expert->getPropInt64("@parallelInitialChunkSize", parallelInitialChunkSize);
 
     WARNLOG("trace=%s, parallelThreshold=%llu, parallelConcurrency=%u, parallelChunkSize=%llu, parallelInitialChunkSize=%llu",
@@ -882,6 +898,17 @@ void AzureBlob::setProperties(int64_t _blobSize, Azure::DateTime _lastModified, 
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+
+void setAzureBlobParallelOptions(unsigned parallelConcurrency, unsigned __int64 parallelChunkSize)
+{
+    // Set global overrides for parallel transfer settings
+    // Setting to 0 will use config values
+    g_parallelConcurrencyOverride.store(parallelConcurrency);
+    g_parallelChunkSizeOverride.store(parallelChunkSize);
+    
+    DBGLOG("Azure blob parallel settings override: concurrency=%u, chunkSize=%llu (0=use config)", 
+           parallelConcurrency, parallelChunkSize);
+}
 
 IFile *createAzureBlob(const char *azureFileName)
 {
