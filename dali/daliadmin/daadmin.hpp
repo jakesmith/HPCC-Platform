@@ -100,6 +100,7 @@ extern DALIADMIN_API void cleanJobQueues(bool dryRun);
 extern DALIADMIN_API void cleanGeneratedDlls(bool dryRun, bool backup);
 extern DALIADMIN_API void cleanStaleGroups(const char *groupPattern, bool dryRun);
 
-extern DALIADMIN_API void fileread(const char *srcPath, const char *dstPath, offset_t numBytes, unsigned blockSizeK=0);
+extern DALIADMIN_API void fileread(const char *srcPath, const char *dstPath, offset_t numBytes, unsigned blockSizeK=0,
+                                    unsigned azureConcurrency=0, unsigned __int64 azureChunkSize=0);
 
 } // namespace daadmin

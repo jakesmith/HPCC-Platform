@@ -100,7 +100,9 @@ void usage(const char *exe)
   printf("  coalesce                        -- force transaction coalesce\n");
   printf("  dalilocks [ <ip-pattern> ] [ files ] -- get all locked files/xpaths\n");
   printf("  daliping [ <num> ]              -- time dali server connect\n");
-  printf("  fileread <srcfile> <dstfile> [<bytes>] [<blocksize-KB>] -- read N bytes from source file (any type: local, azureblob:, s3:, etc.) and write to destination with progress\n");
+  printf("  fileread <srcfile> <dstfile> [<bytes>] [<blocksize-KB>] [name=value ...]\n");
+  printf("           Named options: bytes=N, blocksize=N, concurrency=N, chunksize=N\n");
+  printf("           -- read N bytes from source file (any type: local, azureblob:, s3:, etc.) and write to destination with progress\n");
   printf("  getxref <destxmlfile>           -- get all XREF information\n");
   printf("  loadxml <srcxmlfile> [--lowmem[=<true|false]]    -- use lowmem AtomPTree's\n"
          "                       [--parseonly[=<true|false]] -- parse the xml file, don't load it into dali\n"
@@ -252,14 +254,61 @@ int main(int argc, const char* argv[])
                 }
                 else if (strieq(cmd, "fileread"))
                 {
-                    CHECKPARAMS(2, 4);
+                    CHECKPARAMS(2, 20);  // Allow for many optional named parameters
                     offset_t numBytes = 0;
                     unsigned blockSizeK = 0;
-                    if (np > 2)
-                        numBytes = atoi64_l(params.item(3), strlen(params.item(3)));
-                    if (np > 3)
-                        blockSizeK = atoi(params.item(4));
-                    fileread(params.item(1), params.item(2), numBytes, blockSizeK);
+                    unsigned azureConcurrency = 0;
+                    unsigned __int64 azureChunkSize = 0;
+                    
+                    // Process positional parameters (first 2 are required srcfile and dstfile)
+                    unsigned positionalIdx = 3;
+                    
+                    // Third parameter can be bytes (if numeric and doesn't contain '=')
+                    if (np >= 3)
+                    {
+                        const char *param = params.item(3);
+                        if (!strchr(param, '='))
+                        {
+                            numBytes = atoi64_l(param, strlen(param));
+                            positionalIdx = 4;
+                        }
+                    }
+                    
+                    // Fourth parameter can be blocksize (if numeric and doesn't contain '=')
+                    if (np >= positionalIdx && positionalIdx == 4)
+                    {
+                        const char *param = params.item(positionalIdx);
+                        if (!strchr(param, '='))
+                        {
+                            blockSizeK = atoi(param);
+                            positionalIdx++;
+                        }
+                    }
+                    
+                    // Process named parameters (name=value format)
+                    for (unsigned i = positionalIdx; i <= np; i++)
+                    {
+                        const char *param = params.item(i);
+                        const char *eq = strchr(param, '=');
+                        if (eq)
+                        {
+                            StringAttr name(param, eq - param);
+                            const char *value = eq + 1;
+                            
+                            if (strieq(name, "bytes"))
+                                numBytes = atoi64_l(value, strlen(value));
+                            else if (strieq(name, "blocksize"))
+                                blockSizeK = atoi(value);
+                            else if (strieq(name, "azureconcurrency") || strieq(name, "concurrency"))
+                                azureConcurrency = atoi(value);
+                            else if (strieq(name, "azurechunksize") || strieq(name, "chunksize"))
+                                azureChunkSize = atoi64_l(value, strlen(value));
+                            else
+                                UWARNLOG("Unknown parameter: %s", name.str());
+                        }
+                    }
+                    
+                    fileread(params.item(1), params.item(2), numBytes, blockSizeK, azureConcurrency, azureChunkSize);
                 }
                 else
                 {

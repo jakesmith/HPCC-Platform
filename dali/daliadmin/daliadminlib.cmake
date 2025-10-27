@@ -42,6 +42,7 @@ include_directories (
          ${HPCC_SOURCE_DIR}/system/security/shared
          ${HPCC_SOURCE_DIR}/esp/clients/wsdfuaccess
          ${HPCC_SOURCE_DIR}/esp/clients/ws_dfsclient
+         ${HPCC_SOURCE_DIR}/common/remote/hooks/azure
     )
 
 ADD_DEFINITIONS ( -D_USRDLL -DDALIADMIN_API_EXPORTS )
@@ -58,3 +59,7 @@ target_link_libraries ( daliadminlib
          wsdfuaccess
          ws_dfsclient
     )
+
+if(USE_AZURE)
+    target_link_libraries( daliadminlib azurefile )
+endif()

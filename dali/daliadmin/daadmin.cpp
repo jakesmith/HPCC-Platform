@@ -47,6 +47,10 @@
 
 #include "rmtfile.hpp"
 
+#ifdef _USE_AZURE
+#include "azureblob.hpp"
+#endif
+
 #include "workunit.hpp"
 #include "dllserver.hpp"
 #include "seclib.hpp"
@@ -3602,7 +3606,8 @@ void cleanStaleGroups(const char *groupPattern, bool dryRun)
     }
 }
 
-void fileread(const char *srcPath, const char *dstPath, offset_t numBytes, unsigned blockSizeK)
+void fileread(const char *srcPath, const char *dstPath, offset_t numBytes, unsigned blockSizeK, 
+              unsigned azureConcurrency, unsigned __int64 azureChunkSize)
 {
     // Read N bytes from source file and write to destination file
     // Supports any file type (local, Azure blob, S3, etc.)
@@ -3611,6 +3616,17 @@ void fileread(const char *srcPath, const char *dstPath, offset_t numBytes, unsig
     try
     {
         installDefaultFileHooks(getComponentConfigSP());
+        
+#ifdef _USE_AZURE
+        // Set Azure blob parallel options if specified
+        if (azureConcurrency > 0 || azureChunkSize > 0)
+        {
+            setAzureBlobParallelOptions(azureConcurrency, azureChunkSize);
+            PROGLOG("  Azure parallel settings: concurrency=%u, chunkSize=%llu", 
+                   azureConcurrency, azureChunkSize);
+        }
+#endif
+        
         PROGLOG("fileread: Reading from %s", srcPath);
         PROGLOG("  Writing to: %s", dstPath);
         if (numBytes > 0)
