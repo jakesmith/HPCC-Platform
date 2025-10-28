@@ -255,7 +255,7 @@ public:
     unsigned __int64 parallelThreshold = 16 * 1024 * 1024;
     unsigned parallelConcurrency = 16;
     unsigned __int64 parallelChunkSize = 4 * 1024 * 1024;
-    unsigned __int64 parallelInitialChunkSize = 256 * 1024 * 1024;
+    unsigned __int64 parallelInitialChunkSize = parallelChunkSize;
 
 protected:
     std::shared_ptr<StorageSharedKeyCredential> getSharedKeyCredentials() const;
