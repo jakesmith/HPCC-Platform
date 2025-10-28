@@ -3606,6 +3606,16 @@ void cleanStaleGroups(const char *groupPattern, bool dryRun)
     }
 }
 
+
+static bool fileHooksInitialized = false;
+static void ensureFileHooks()
+{
+    if (fileHooksInitialized)
+        return;
+    installDefaultFileHooks(getComponentConfigSP());
+    fileHooksInitialized = true;
+}
+
 void fileread(const char *srcPath, const char *dstPath, offset_t numBytes, unsigned blockSizeK, 
               unsigned azureConcurrency, unsigned __int64 azureChunkSize)
 {
@@ -3615,8 +3625,7 @@ void fileread(const char *srcPath, const char *dstPath, offset_t numBytes, unsig
 
     try
     {
-        installDefaultFileHooks(getComponentConfigSP());
-        
+        ensureFileHooks();
 #ifdef _USE_AZURE
         // Set Azure blob parallel options if specified
         if (azureConcurrency > 0 || azureChunkSize > 0)
@@ -3759,6 +3768,7 @@ void fileread(const char *srcPath, const char *dstPath, offset_t numBytes, unsig
 
 void azurePerfTest(const char *srcPath, const char *dstPath, offset_t numBytes)
 {
+    ensureFileHooks();
 #ifdef _USE_AZURE
     // Test matrix of Azure blob performance configurations
     // Concurrency: 4, 8, 16, 32, 64
