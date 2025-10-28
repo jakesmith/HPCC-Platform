@@ -3801,6 +3801,30 @@ void azurePerfTest(const char *srcPath, const char *dstPath, offset_t numBytes)
     
     unsigned testNum = 0;
     unsigned totalTests = numConcurrencyLevels * numChunkSizes * numBlockSizes;
+
+    // Create the source file object
+    Owned<IFile> srcFile = createIFile(srcPath);
+    if (!srcFile)
+    {
+        UERRLOG("ERROR: Failed to create source file object");
+        return;
+    }
+
+    // Check if source file exists
+    if (!srcFile->exists())
+    {
+        UERRLOG("ERROR: Source file does not exist: %s", srcPath);
+        return;
+    }
+
+    // Get source file size
+    offset_t srcFileSize = srcFile->size();
+    PROGLOG("  Source file size: %" I64F "d bytes", srcFileSize);
+
+    // Determine how many bytes to read
+    offset_t bytesToRead = numBytes;
+    if (bytesToRead == 0 || bytesToRead > srcFileSize)
+        bytesToRead = srcFileSize;
     
     for (unsigned c = 0; c < numConcurrencyLevels; c++)
     {
@@ -3826,25 +3850,20 @@ void azurePerfTest(const char *srcPath, const char *dstPath, offset_t numBytes)
                     CCycleTimer timer;
                     
                     // Call fileread with these specific settings
-                    fileread(srcPath, dstPath, numBytes, blockSizeK, concurrency, chunkSize);
+                    fileread(srcPath, dstPath, bytesToRead, blockSizeK, concurrency, chunkSize);
                     
                     double elapsedSeconds = (double)timer.elapsedMs() / 1000.0;
                     
                     // Get actual bytes read by checking destination file size
-                    Owned<IFile> dstFile = createIFile(dstPath);
-                    offset_t bytesRead = dstFile->size();
-                    double mbRead = (double)bytesRead / (1024.0 * 1024.0);
+                    double mbRead = (double)bytesToRead / (1024.0 * 1024.0);
                     double mbps = elapsedSeconds > 0 ? (mbRead / elapsedSeconds) : 0.0;
                     
                     PROGLOG("RESULT: Concurrency=%u, ChunkSize=%llu KB, BlockSize=%u KB, Bytes=%" I64F "d, Time=%.2f sec, Speed=%.2f MB/s",
-                            concurrency, chunkSize / 1024, blockSizeK, bytesRead, elapsedSeconds, mbps);
+                            concurrency, chunkSize / 1024, blockSizeK, bytesToRead, elapsedSeconds, mbps);
                     
                     // CSV output
                     PROGLOG("%u,%llu,%u,%" I64F "d,%.2f,%.2f,SUCCESS",
-                            concurrency, chunkSize / 1024, blockSizeK, bytesRead, elapsedSeconds, mbps);
-                    
-                    // Clean up destination file for next test
-                    dstFile->remove();
+                            concurrency, chunkSize / 1024, blockSizeK, bytesToRead, elapsedSeconds, mbps);
                 }
                 catch (IException *e)
                 {
