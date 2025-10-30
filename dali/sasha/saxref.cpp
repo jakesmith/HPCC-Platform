@@ -12,6 +12,7 @@
 #include "jfile.hpp"
 #include "jplane.hpp"
 #include "jutil.hpp"
+#include "jsocket.hpp"
 
 #include <memory>
 #include <unordered_map>
