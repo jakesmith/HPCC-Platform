@@ -24,7 +24,6 @@
 #include "jptree.hpp"
 #include "jmisc.hpp"
 #include "jfile.hpp"
-#include "jutil.hpp"
 
 #include "mpcomm.hpp"
 #include "platform.h"
@@ -122,81 +121,12 @@ CXRefNode::CXRefNode(IPropertyTree* pTreeRoot)
         m_XRefTree.set(pTreeRoot);
         rootDir.set(m_XRefTree->queryProp("@rootdir"));
         pTreeRoot->getProp("@name",m_origName);
-        
-        // Check if path metadata is available (new Sasha plane storage)
-        const char *xrefPath = pTreeRoot->queryProp("@xrefPath");
-        if (xrefPath && *xrefPath)
+        //load up our tree with the data.....if there is data
+        MemoryBuffer buff;
+        pTreeRoot->getPropBin("data",buff);
+        if (buff.length())
         {
-            // New path-based storage - load branches from files
-            try
-            {
-                StringBuffer basePath(xrefPath);
-                // Handle file:// URLs
-                if (hasPrefix(basePath, "file://", false))
-                {
-                    // Extract path from file://hostname/path format
-                    const char *pathStart = basePath.str() + 7; // Skip "file://"
-                    // Find the next slash which marks the start of the actual path
-                    const char *pathSep = strchr(pathStart, '/');
-                    if (pathSep)
-                    {
-                        basePath.clear().append(pathSep);
-                    }
-                }
-                
-                // Load each branch from its file
-                const char *branchNames[] = {"Orphans", "Lost", "Found", "Directories", "Messages", nullptr};
-                for (int i = 0; branchNames[i] != nullptr; i++)
-                {
-                    StringBuffer filepath(basePath);
-                    addPathSepChar(filepath).append(branchNames[i]).append(".xml");
-                    
-                    Owned<IFile> file = createIFile(filepath.str());
-                    if (file->exists())
-                    {
-                        Owned<IFileIO> fileIO = file->open(IFOread);
-                        if (fileIO)
-                        {
-                            offset_t fileSize = file->size();
-                            if (fileSize > 0 && fileSize < 0x10000000) // Sanity check: < 256MB
-                            {
-                                StringBuffer xmlContent;
-                                xmlContent.ensureCapacity((size32_t)fileSize);
-                                size32_t bytesRead = fileIO->read(0, (size32_t)fileSize, (void*)xmlContent.reserve((size32_t)fileSize));
-                                if (bytesRead > 0)
-                                {
-                                    Owned<IPropertyTree> branch = createPTreeFromXMLString(xmlContent.str());
-                                    if (branch)
-                                    {
-                                        m_XRefTree->addPropTree(branchNames[i], branch.getClear());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                DBGLOG("XRefNode: Loaded XREF data from path: %s", basePath.str());
-            }
-            catch (IException *e)
-            {
-                StringBuffer errMsg;
-                OWARNLOG("XRefNode: Failed to load from path '%s': %s, falling back to 'data' attribute", 
-                         xrefPath, e->errorMessage(errMsg).str());
-                e->Release();
-                // Fall through to load from data attribute
-            }
-        }
-        
-        // Fall back to loading from "data" attribute if path not available or failed
-        if (!m_XRefTree->hasProp("Orphans") && !m_XRefTree->hasProp("Lost") && 
-            !m_XRefTree->hasProp("Found") && !m_XRefTree->hasProp("Directories"))
-        {
-            MemoryBuffer buff;
-            pTreeRoot->getPropBin("data",buff);
-            if (buff.length())
-            {
-                m_dataStr.append(buff.length(),buff.toByteArray());
-            }
+            m_dataStr.append(buff.length(),buff.toByteArray());
         }
         //lets check to ensure we have the correct children inplace(Orphan,lost,found)
     }
@@ -211,6 +141,56 @@ bool CXRefNode::useSasha()
     if (!m_conn)
         return false;
     return m_conn->queryRoot()->getPropBool("@useSasha");
+}
+
+// Helper to load a branch from xrefPath if available, otherwise leave as-is
+void loadBranchFromPath(IPropertyTree *branch, const char *branchName, const char *xrefPath)
+{
+    if (!xrefPath || !*xrefPath)
+        return; // No xrefPath, branch will use "data" attribute as before
+    
+    // Check if branch already has data attribute (old method)
+    MemoryBuffer testBuf;
+    branch->getPropBin("data", testBuf);
+    if (testBuf.length() > 0)
+        return; // Already has data, don't overwrite
+    
+    try
+    {
+        // Load from file
+        StringBuffer filepath(xrefPath);
+        addPathSepChar(filepath).append(branchName).append(".xml");
+        
+        Owned<IFile> file = createIFile(filepath.str());
+        if (file->exists())
+        {
+            Owned<IFileIO> fileIO = file->open(IFOread);
+            if (fileIO)
+            {
+                offset_t fileSize = file->size();
+                if (fileSize > 0 && fileSize < 0x10000000) // Sanity check: < 256MB
+                {
+                    MemoryBuffer xmlContent;
+                    xmlContent.ensureCapacity((size32_t)fileSize);
+                    size32_t bytesRead = fileIO->read(0, (size32_t)fileSize, xmlContent.reserve((size32_t)fileSize));
+                    if (bytesRead > 0)
+                    {
+                        // Store in the "data" attribute so existing code works
+                        branch->setPropBin("data", bytesRead, xmlContent.toByteArray());
+                        DBGLOG("XRefNode: Loaded branch %s from path: %s", branchName, filepath.str());
+                    }
+                }
+            }
+        }
+    }
+    catch (IException *e)
+    {
+        StringBuffer errMsg;
+        OWARNLOG("XRefNode: Failed to load branch '%s' from path '%s': %s", 
+                 branchName, xrefPath, e->errorMessage(errMsg).str());
+        e->Release();
+        // Branch will fall back to empty if no data attribute
+    }
 }
 
 
@@ -262,6 +242,9 @@ IXRefFilesNode* CXRefNode::getLostFiles()
         if(lostBranch == 0)
         {
             lostBranch = m_XRefTree->addPropTree("Lost",createPTree());
+            // Try to load from xrefPath if available
+            const char *xrefPath = m_XRefTree->queryProp("@xrefPath");
+            loadBranchFromPath(lostBranch, "Lost", xrefPath);
             commit();
         }
         StringBuffer tmpbuf;
@@ -278,6 +261,9 @@ IXRefFilesNode* CXRefNode::getFoundFiles()
         if(foundBranch == 0)
         {
             foundBranch = m_XRefTree->addPropTree("Found",createPTree());
+            // Try to load from xrefPath if available
+            const char *xrefPath = m_XRefTree->queryProp("@xrefPath");
+            loadBranchFromPath(foundBranch, "Found", xrefPath);
             commit();
         }
         StringBuffer tmpbuf;
@@ -294,6 +280,9 @@ IXRefFilesNode* CXRefNode::getOrphanFiles()
         if(orphanBranch == 0)
         {
             orphanBranch = m_XRefTree->addPropTree("Orphans",createPTree());
+            // Try to load from xrefPath if available
+            const char *xrefPath = m_XRefTree->queryProp("@xrefPath");
+            loadBranchFromPath(orphanBranch, "Orphans", xrefPath);
             commit();
         }
         StringBuffer tmpbuf;
@@ -310,6 +299,9 @@ StringBuffer &CXRefNode::serializeMessages(StringBuffer &buf)
         if(messagesBranch == 0)
         {
             messagesBranch = m_XRefTree->addPropTree("Messages",createPTree());
+            // Try to load from xrefPath if available
+            const char *xrefPath = m_XRefTree->queryProp("@xrefPath");
+            loadBranchFromPath(messagesBranch, "Messages", xrefPath);
             commit();
         }
         StringBuffer tmpbuf;
@@ -351,6 +343,9 @@ StringBuffer &CXRefNode::serializeDirectories(StringBuffer &buf)
         if(directoriesBranch == 0)
         {
             directoriesBranch = m_XRefTree->addPropTree("Directories",createPTree());
+            // Try to load from xrefPath if available
+            const char *xrefPath = m_XRefTree->queryProp("@xrefPath");
+            loadBranchFromPath(directoriesBranch, "Directories", xrefPath);
             commit();
         }
         StringBuffer tmpbuf;

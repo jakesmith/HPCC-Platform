@@ -1005,10 +1005,10 @@ public:
         heartbeatTimer.updatePeriod();
     }
 
-    bool saveBranchToSashaPlane(const char *sashaDir, const char *name, IPropertyTree *branch)
+    void saveBranchToSashaPlane(const char *sashaDir, const char *name, IPropertyTree *branch)
     {
         if (!branch)
-            return true;
+            return;
         try
         {
             branch->setProp("Cluster",clustname);
@@ -1022,20 +1022,18 @@ public:
             Owned<IFileIO> fileIO = file->open(IFOcreate);
             if (!fileIO)
             {
-                OERRLOG(LOGPFX "Failed to create file: %s", filepath.str());
-                return false;
+                warn(filepath.str(), "Failed to create file");
+                return;
             }
             fileIO->write(0, datastr.length(), datastr.str());
             fileIO->close();
             PROGLOG(LOGPFX "Saved branch %s to %s", name, filepath.str());
-            return true;
         }
         catch (IException *e)
         {
             StringBuffer errMsg;
-            EXCLOG(e, LOGPFX "Error saving branch to Sasha plane");
+            warn(name, "Error saving branch to Sasha plane: %s", e->errorMessage(errMsg).str());
             e->Release();
-            return false;
         }
     }
 
@@ -1125,65 +1123,62 @@ public:
             ss.appendf("  [%d files]",fnum);
         croot->setProp("@status",ss.str());
         
-        // Try to use Sasha plane for storage
+        // Check if we should use Sasha plane for storage (configurable, default to containerized)
         bool useSashaPlane = false;
         StringBuffer sashaDir;
-        try
-        {
-            if (isContainerized())
-            {
-                StringBuffer planeName;
-                // Look for sasha plane
-                if (getDefaultPlane(planeName, nullptr, "sasha"))
-                {
-                    Owned<const IPropertyTree> sashaPlane = getStoragePlaneConfig(planeName, false);
-                    if (sashaPlane)
-                    {
-                        StringBuffer prefix;
-                        if (sashaPlane->getProp("@prefix", prefix))
-                        {
-                            // Create directory structure: <prefix>/xref/<cluster>/<datestamp>/
-                            sashaDir.append(prefix);
-                            addPathSepChar(sashaDir).append("xref");
-                            addPathSepChar(sashaDir).append(clustname);
-                            
-                            // Create datestamp directory
-                            StringBuffer datestamp;
-                            dt.getDateString(datestamp, false);  // YYYY-MM-DD format
-                            addPathSepChar(sashaDir).append(datestamp);
-                            
-                            // Create the directory
-                            Owned<IFile> dir = createIFile(sashaDir.str());
-                            if (dir->createDirectory())
-                            {
-                                useSashaPlane = true;
-                                PROGLOG(LOGPFX "Using Sasha plane storage at: %s", sashaDir.str());
-                            }
-                            else
-                            {
-                                OWARNLOG(LOGPFX "Failed to create Sasha directory: %s, falling back to Dali storage", sashaDir.str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        catch (IException *e)
-        {
-            StringBuffer errMsg;
-            OWARNLOG(LOGPFX "Exception getting Sasha plane: %s, falling back to Dali storage", e->errorMessage(errMsg).str());
-            e->Release();
-            useSashaPlane = false;
-        }
+        
+        // Read configuration - make this an expert option
+        Owned<IPropertyTree> xrefConfig;
+        if (isContainerized())
+            xrefConfig.setown(getComponentConfig());
+        else
+            xrefConfig.setown(serverConfig->getPropTree("DfuXRef"));
+        
+        if (xrefConfig)
+            useSashaPlane = xrefConfig->getPropBool("@useSashaPlane", isContainerized());
+        else
+            useSashaPlane = isContainerized();
         
         if (useSashaPlane)
         {
+            // Get Sasha plane directory - throw error if it fails
+            if (isContainerized())
+            {
+                StringBuffer planeName;
+                if (!getDefaultPlane(planeName, nullptr, "sasha"))
+                    throw makeStringException(0, LOGPFX "Sasha plane must be configured");
+                
+                Owned<const IPropertyTree> sashaPlane = getStoragePlaneConfig(planeName, true);
+                if (!sashaPlane->getProp("@prefix", sashaDir))
+                    throw makeStringException(0, LOGPFX "Sasha plane has no prefix configured");
+            }
+            else
+            {
+                throw makeStringException(0, LOGPFX "Sasha plane storage only supported in containerized deployments");
+            }
+            
+            // Create directory structure: <prefix>/xref/<cluster>/<datestamp>/
+            addPathSepChar(sashaDir).append("xref");
+            addPathSepChar(sashaDir).append(clustname);
+            
+            // Create datestamp directory
+            StringBuffer datestamp;
+            dt.getDateString(datestamp, false);  // YYYY-MM-DD format
+            addPathSepChar(sashaDir).append(datestamp);
+            
+            // Create the directory structure recursively
+            StringBuffer testFile(sashaDir);
+            addPathSepChar(testFile).append("test.xml");
+            if (!recursiveCreateDirectoryForFile(testFile.str()))
+                throw makeStringException(0, LOGPFX "Failed to create directory: %s", sashaDir.str());
+            
+            PROGLOG(LOGPFX "Using Sasha plane storage at: %s", sashaDir.str());
+            
             // Save branches to Sasha plane files
-            bool saveSuccess = true;
-            saveSuccess = saveBranchToSashaPlane(sashaDir.str(), "Orphans", orphansbranch) && saveSuccess;
-            saveSuccess = saveBranchToSashaPlane(sashaDir.str(), "Lost", lostbranch) && saveSuccess;
-            saveSuccess = saveBranchToSashaPlane(sashaDir.str(), "Found", foundbranch) && saveSuccess;
-            saveSuccess = saveBranchToSashaPlane(sashaDir.str(), "Directories", dirbranch) && saveSuccess;
+            saveBranchToSashaPlane(sashaDir.str(), "Orphans", orphansbranch);
+            saveBranchToSashaPlane(sashaDir.str(), "Lost", lostbranch);
+            saveBranchToSashaPlane(sashaDir.str(), "Found", foundbranch);
+            saveBranchToSashaPlane(sashaDir.str(), "Directories", dirbranch);
             
             // Save Messages
             Owned<IPropertyTree> message = createPTree("Messages");
@@ -1199,37 +1194,15 @@ public:
                 t->addProp("File",item.lname.get());
                 t->addProp("Text",item.msg.get());
             }
-            saveSuccess = saveBranchToSashaPlane(sashaDir.str(), "Messages", message) && saveSuccess;
+            saveBranchToSashaPlane(sashaDir.str(), "Messages", message);
             
-            if (saveSuccess)
-            {
-                // Store path reference in Dali instead of full data
-                // Convert to hostname-based URL if not a local path
-                StringBuffer pathUrl;
-                if (!isAbsolutePath(sashaDir.str()))
-                {
-                    // If not absolute, make it a URL with hostname
-                    StringBuffer hostname;
-                    queryHostIP().getHostText(hostname);
-                    pathUrl.append("file://").append(hostname).append(sashaDir);
-                }
-                else
-                {
-                    pathUrl.append(sashaDir);
-                }
-                croot->setProp("@xrefPath", pathUrl.str());
-                PROGLOG(LOGPFX "Saved XREF data to Sasha plane with path reference: %s", pathUrl.str());
-            }
-            else
-            {
-                OWARNLOG(LOGPFX "Failed to save some branches to Sasha plane, falling back to Dali storage");
-                useSashaPlane = false;
-            }
+            // Store path reference in Dali
+            croot->setProp("@xrefPath", sashaDir.str());
+            PROGLOG(LOGPFX "Saved XREF data to Sasha plane with path: %s", sashaDir.str());
         }
-        
-        if (!useSashaPlane)
+        else
         {
-            // Fall back to traditional Dali storage
+            // Use traditional Dali storage
             addBranch(croot,"Orphans",orphansbranch);
             addBranch(croot,"Lost",lostbranch);
             addBranch(croot,"Found",foundbranch);
