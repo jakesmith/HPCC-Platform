@@ -23,6 +23,8 @@
 #include "jstring.hpp"
 #include "jptree.hpp"
 #include "jmisc.hpp"
+#include "jfile.hpp"
+#include "jutil.hpp"
 
 #include "mpcomm.hpp"
 #include "platform.h"
@@ -120,12 +122,81 @@ CXRefNode::CXRefNode(IPropertyTree* pTreeRoot)
         m_XRefTree.set(pTreeRoot);
         rootDir.set(m_XRefTree->queryProp("@rootdir"));
         pTreeRoot->getProp("@name",m_origName);
-        //load up our tree with the data.....if there is data
-        MemoryBuffer buff;
-        pTreeRoot->getPropBin("data",buff);
-        if (buff.length())
+        
+        // Check if path metadata is available (new Sasha plane storage)
+        const char *xrefPath = pTreeRoot->queryProp("@xrefPath");
+        if (xrefPath && *xrefPath)
         {
-            m_dataStr.append(buff.length(),buff.toByteArray());
+            // New path-based storage - load branches from files
+            try
+            {
+                StringBuffer basePath(xrefPath);
+                // Handle file:// URLs
+                if (hasPrefix(basePath, "file://", false))
+                {
+                    // Extract path from file://hostname/path format
+                    const char *pathStart = basePath.str() + 7; // Skip "file://"
+                    // Find the next slash which marks the start of the actual path
+                    const char *pathSep = strchr(pathStart, '/');
+                    if (pathSep)
+                    {
+                        basePath.clear().append(pathSep);
+                    }
+                }
+                
+                // Load each branch from its file
+                const char *branchNames[] = {"Orphans", "Lost", "Found", "Directories", "Messages", nullptr};
+                for (int i = 0; branchNames[i] != nullptr; i++)
+                {
+                    StringBuffer filepath(basePath);
+                    addPathSepChar(filepath).append(branchNames[i]).append(".xml");
+                    
+                    Owned<IFile> file = createIFile(filepath.str());
+                    if (file->exists())
+                    {
+                        Owned<IFileIO> fileIO = file->open(IFOread);
+                        if (fileIO)
+                        {
+                            offset_t fileSize = file->size();
+                            if (fileSize > 0 && fileSize < 0x10000000) // Sanity check: < 256MB
+                            {
+                                StringBuffer xmlContent;
+                                xmlContent.ensureCapacity((size32_t)fileSize);
+                                size32_t bytesRead = fileIO->read(0, (size32_t)fileSize, (void*)xmlContent.reserve((size32_t)fileSize));
+                                if (bytesRead > 0)
+                                {
+                                    Owned<IPropertyTree> branch = createPTreeFromXMLString(xmlContent.str());
+                                    if (branch)
+                                    {
+                                        m_XRefTree->addPropTree(branchNames[i], branch.getClear());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                DBGLOG("XRefNode: Loaded XREF data from path: %s", basePath.str());
+            }
+            catch (IException *e)
+            {
+                StringBuffer errMsg;
+                OWARNLOG("XRefNode: Failed to load from path '%s': %s, falling back to 'data' attribute", 
+                         xrefPath, e->errorMessage(errMsg).str());
+                e->Release();
+                // Fall through to load from data attribute
+            }
+        }
+        
+        // Fall back to loading from "data" attribute if path not available or failed
+        if (!m_XRefTree->hasProp("Orphans") && !m_XRefTree->hasProp("Lost") && 
+            !m_XRefTree->hasProp("Found") && !m_XRefTree->hasProp("Directories"))
+        {
+            MemoryBuffer buff;
+            pTreeRoot->getPropBin("data",buff);
+            if (buff.length())
+            {
+                m_dataStr.append(buff.length(),buff.toByteArray());
+            }
         }
         //lets check to ensure we have the correct children inplace(Orphan,lost,found)
     }
