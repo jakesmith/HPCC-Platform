@@ -1149,7 +1149,7 @@ public:
                             
                             // Create datestamp directory
                             StringBuffer datestamp;
-                            dt.getDateString(datestamp, false);  // YYYYMMDD format
+                            dt.getDateString(datestamp, false);  // YYYY-MM-DD format
                             addPathSepChar(sashaDir).append(datestamp);
                             
                             // Create the directory
