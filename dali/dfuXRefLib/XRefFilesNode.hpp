@@ -52,6 +52,8 @@ protected:
     MemoryBuffer _data;
     StringBuffer prefixName;
     StringAttr rootdir;
+    StringAttr xrefPath;  // Path for file-based storage
+    StringAttr branchName; // Name of this branch (e.g., "Lost", "Found", "Orphans")
 private:
     IPropertyTree* FindNode(const char* NodeName);
     IPropertyTree& queryDataTree();
@@ -64,6 +66,7 @@ private:
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
     CXRefFilesNode(IPropertyTree& baseNode,const char* cluster, const char *rootdir);
+    void setXRefPath(const char *_xrefPath, const char *_branchName);
     virtual ~CXRefFilesNode(){};
     virtual bool IsChanged() override;
     void Commit() override;
