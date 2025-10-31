@@ -1209,7 +1209,7 @@ public:
     IDistributedFileIterator *getIterator(const char *wildname, bool includesuper,IUserDescriptor *user,bool isPrivilegedUser);
     IDFAttributesIterator *getDFAttributesIterator(const char *wildname, IUserDescriptor *user, bool recursive, bool includesuper,INode *foreigndali,unsigned foreigndalitimeout);
     IPropertyTreeIterator *getDFAttributesTreeIterator(const char *filters, DFUQResultField* localFilters, const char *localFilterBuf,
-        IUserDescriptor *user, bool recursive, bool& allMatchingFilesReceived, unsigned &returnedCount, INode *foreigndali,unsigned foreigndalitimeout);
+        IUserDescriptor *user, bool recursive, byte &returnFlags, unsigned &returnedCount, INode *foreigndali,unsigned foreigndalitimeout);
     IDFAttributesIterator *getForeignDFAttributesIterator(const char *wildname, IUserDescriptor *user, bool recursive=true, bool includesuper=false, const char *foreigndali="", unsigned foreigndalitimeout=FOREIGN_DALI_TIMEOUT)
     {
         Owned<INode> foreign;
@@ -11303,20 +11303,22 @@ public:
         StringArray authScopes;
         CIArrayOf<CFileMatch> matchingFiles;
         start = msTick();
-        bool returnAllMatchingFiles = true;
+        bool returnFlags = 0x2; // signifies that client can use skipN
         try
         {
             scanner.getResults(auth, udesc, matchingFiles, authScopes, count, true, skipRemaining);
+            returnFlags |= 0x1; // didn't hit max, all will be returned
         }
         catch(IException *e)
         {
             if (DFSERR_PassIterateFilesLimit != e->errorCode())
                 throw;
             e->Release();
-            returnAllMatchingFiles = false;
         }
         if (!suppressAllFilesFlag)
-            mb.append(returnAllMatchingFiles);
+        {
+            mb.append(returnFlags);
+        }
 
         tookMs = msTick()-start;
         if (tookMs>100)
@@ -13856,7 +13858,7 @@ IPropertyTreeIterator *deserializeFileAttrIterator(MemoryBuffer& mb, unsigned nu
 }
 
 IPropertyTreeIterator *CDistributedFileDirectory::getDFAttributesTreeIterator(const char* filters, DFUQResultField* localFilters,
-    const char* localFilterBuf, IUserDescriptor* user, bool recursive, bool& allMatchingFilesReceived,
+    const char* localFilterBuf, IUserDescriptor* user, bool recursive, byte &returnFlags,
     unsigned &returnedCount, INode* foreigndali, unsigned foreigndalitimeout)
 {
     CMessageBuffer mb;
@@ -13908,9 +13910,9 @@ IPropertyTreeIterator *CDistributedFileDirectory::getDFAttributesTreeIterator(co
     unsigned numfiles;
     mb.read(numfiles);
     if (legacy)
-        allMatchingFilesReceived = true; // don't know any better
+        returnFlags = 1; // don't know any better
     else
-        mb.read(allMatchingFilesReceived);
+        mb.read(returnFlags); // NB: readFlags must be 1 byte because older server versions serialized a bool (as a byte)
     returnedCount = numfiles;
     return deserializeFileAttrIterator(mb, numfiles, localFilters, localFilterBuf);
 }
@@ -13952,8 +13954,10 @@ IDFAttributesIterator* CDistributedFileDirectory::getLogicalFiles(
         virtual IRemoteConnection* getElements(IArrayOf<IPropertyTree> &elements)
         {
             unsigned noopCount = 0; // i.e. not used
+            byte returnFlags = 0;
             Owned<IPropertyTreeIterator> fi = queryDistributedFileDirectory().getDFAttributesTreeIterator(filters.get(),
-                localFilters, localFilterBuf.get(), udesc, recursive, allMatchingFilesReceived, noopCount);
+                localFilters, localFilterBuf.get(), udesc, recursive, returnFlags, noopCount);
+            allMatchingFilesReceived = (returnFlags & 1);
             StringArray unknownAttributes;
             sortElements(fi, sorted ? sortOrder.get() : NULL, NULL, NULL, unknownAttributes, elements);
             return NULL;

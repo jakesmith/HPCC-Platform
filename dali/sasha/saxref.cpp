@@ -2345,8 +2345,9 @@ public:
 
             bool allMatchingFilesReceived = true;
             unsigned returnedCount = 0;
+            byte returnFlags = 0;
             Owned<IPropertyTreeIterator> iter = queryDistributedFileDirectory().getDFAttributesTreeIterator(pagedFilter.str(),
-                nullptr, nullptr, udesc, true, allMatchingFilesReceived, returnedCount);
+                nullptr, nullptr, udesc, true, returnFlags, returnedCount);
 
             if (!iter || returnedCount == 0)
             {
@@ -2354,13 +2355,12 @@ public:
                 break;
             }
 
-            unsigned dups = 0;
             ForEach(*iter)
             {
                 IPropertyTree &attr = iter->query();
                 const char *name = attr.queryProp("@name");
                 if (dryRun)
-                    PROGLOG("Considering file %s", name ? name : "<unknown>");
+                    PROGLOG(LOGPFX2"Considering file %s", name ? name : "<unknown>");
                 if (!name || !*name)
                     continue;
                 if (attr.hasProp("@expireDays"))
@@ -2383,13 +2383,7 @@ public:
                             expires.adjustTime(60 * 24 * expireDays);
                             if (now.compare(expires, false) > 0)
                             {
-                                if (!dryRun)
-                                {
-                                    if (expiryList.find(name) != expiryList.end())
-                                        dups++;
-                                    else
-                                        expiryList.insert(name);
-                                }
+                                expiryList.insert(name);
                                 StringBuffer expiresStr;
                                 expires.getString(expiresStr);
                                 PROGLOG(LOGPFX2 "%s expired on %s%s", name, expiresStr.str(), dryRun ? " (dry run)" : "");
@@ -2406,17 +2400,13 @@ public:
             }
             iter.clear();
 
-            if (allMatchingFilesReceived)
+            if (returnFlags & 1) // all returned
                 break;
-            if (skipN>0) // IOW, this is not the 1st time
+            if (0 == (returnFlags & 2)) // if not present, skipN is not supported
             {
-                if (dups>=1000) // this is a very crude way to detect that the server did not support skipN
-                {
-                    // NB: we can't tell by Dali serverion alone if skipN is supported because feature introduced between versions.
-                    // Really the server version discovery mechanism should be enhanced to return a list of capabilities
-                    WARNLOG("Sasha expiry was not able to process all the files (too many and skip not supported). File limit hit at: %u", returnedCount);
-                    break;
-                }
+                // Really the server version discovery mechanism should be enhanced to return a list of capabilities
+                WARNLOG(LOGPFX2 "Sasha expiry was not able to process all the files (too many and skip not supported). File limit hit at: %u", returnedCount);
+                break;
             }
             // in theory, some of the previous files have been removed in the interim, therefore we start the next batch
             // from <previous> + <returnedCount> - <fudge-factor>
@@ -2424,7 +2414,12 @@ public:
             if (returnedCount > 10000)
                 skipN -= 1000;
         }
-        PROGLOG("Found %u files to expire", (unsigned)expiryList.size());
+        PROGLOG(LOGPFX2 "Found %u files to expire", (unsigned)expiryList.size());
+        if (dryRun)
+        {
+            PROGLOG(LOGPFX2 "Dry run complete");
+            return;
+        }
         for (const auto& lfn : expiryList)
         {
             if (stopped)

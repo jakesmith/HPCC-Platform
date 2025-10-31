@@ -633,7 +633,7 @@ interface IDistributedFileDirectory: extends IInterface
             // wildname is in form scope/name and may contain wild components for either
     virtual IDFAttributesIterator *getDFAttributesIterator(const char *wildname, IUserDescriptor *user, bool recursive=true, bool includesuper=false, INode *foreigndali=NULL, unsigned foreigndalitimeout=FOREIGN_DALI_TIMEOUT) = 0;
     virtual IPropertyTreeIterator *getDFAttributesTreeIterator(const char *filters, DFUQResultField* localFilters,
-        const char *localFilterBuf, IUserDescriptor *user, bool recursive, bool& allMatchingFilesReceived,
+        const char *localFilterBuf, IUserDescriptor *user, bool recursive, byte &returnFlags,
         unsigned &returnedCount, INode *foreigndali=NULL, unsigned foreigndalitimeout=FOREIGN_DALI_TIMEOUT) = 0;
     virtual IDFAttributesIterator *getForeignDFAttributesIterator(const char *wildname, IUserDescriptor *user, bool recursive=true, bool includesuper=false, const char *foreigndali="", unsigned foreigndalitimeout=FOREIGN_DALI_TIMEOUT) = 0;
 
