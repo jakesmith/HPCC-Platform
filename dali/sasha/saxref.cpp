@@ -2330,6 +2330,8 @@ public:
         filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFsuperowner)).append(DFUQFilterSeparator).append("false").append(DFUQFilterSeparator);
         // hasProp,Attr/@expireDays,"true" - meaning file has @expireDays attribute
         filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFexpiredays)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
+        // hasProp,Attr/@accessed,"true" - meaning file has @accessed attribute
+        filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFaccessed)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
 
         bool skipNSupport = queryDaliServerVersion().compare("3.17") >= 0;
         unsigned skipN = 0;
