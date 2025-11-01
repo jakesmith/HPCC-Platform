@@ -2333,11 +2333,11 @@ public:
         // hasProp,Attr/@accessed,"true" - meaning file has @accessed attribute
         filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFaccessed)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
 
+        // expired filter
         CDateTime now;
         now.setNow();
         StringBuffer nowStr;
         now.getString(nowStr);
-
         filterBuf.append(DFUQFexpired).append(DFUQFilterSeparator).append(nowStr).append(DFUQFilterSeparator);
         filterBuf.append(defaultExpireDays).append(DFUQFilterSeparator);
         filterBuf.append(defaultPersistExpireDays).append(DFUQFilterSeparator);

@@ -9557,7 +9557,70 @@ extern da_decl const char* getDFUQFilterFieldName(DFUQFilterField feild)
     return DFUQFilterFieldNames[feild];
 }
 
-class CDFUSFFilter : public CInterface
+class CDFUSFFilterBase : public CInterface
+{
+    DFUQFilterType filterType;
+
+protected:
+    StringBuffer description;
+public:
+    CDFUSFFilterBase()
+    {
+    }
+    const char *queryDescription() const { return description; }
+    virtual bool checkFilter(const IPropertyTree &file) = 0;
+};
+
+class CDFUSFExpired : public CDFUSFFilterBase
+{
+    unsigned defaultExpireDays, defaultPersistExpireDays;
+    CDateTime time;
+public:
+    CDFUSFExpired(const char *_time, unsigned _defaultExpireDays, unsigned _defaultPersistExpireDays)
+        : defaultExpireDays(_defaultExpireDays), defaultPersistExpireDays(_defaultPersistExpireDays)
+    {
+        time.setString(_time);
+    }
+    virtual bool checkFilter(const IPropertyTree &file) override
+    {
+        const char *name = file.queryProp("@name");
+        if (isEmptyString(name)) // should never happen
+            return false;
+        IPropertyTree *attr = file.queryPropTree("attr");
+        if (!attr)
+            return false;
+        unsigned expireDays = attr->getPropInt("@expireDays", NotFound); // NB: must be present, can be 0
+        if (NotFound != expireDays)
+        {
+            const char *lastAccessed = attr->queryProp("@accessed");
+            if (!isEmptyString(lastAccessed))
+            {
+                if (expireDays == 0)
+                {
+                    bool isPersist = attr->getPropBool("@persistent");
+                    expireDays = isPersist ? defaultPersistExpireDays : defaultExpireDays;
+                }
+                try
+                {
+                    CDateTime expires;
+                    expires.setString(lastAccessed);
+                    expires.adjustTime(60 * 24 * expireDays);
+                    if (time.compare(expires, false) > 0)
+                        return true;
+                }
+                catch (IException *e)
+                {
+                    EXCLOG(e, "Failed comparing accessed time");
+                    e->Release();
+                }
+            }
+
+    }
+};
+
+// JCSMORE: it would be better if this single monolithic filter was broken down with derivites
+// for readibility/maintainability, but probably not worth changing now.
+class CDFUSFFilter : public CDFUSFFilterBase
 {
     DFUQFilterType filterType;
     StringAttr attrPath;
@@ -9573,18 +9636,35 @@ class CDFUSFFilter : public CInterface
     StringAttr sep;
     StringArray filterArray;
 
+    void init()
+    {
+        description.setf("attribute '%f'", attrPath);
+    }
 public:
     CDFUSFFilter(DFUQFilterType _filterType, const char *_attrPath, const char *_filterValue, const char *_filterValueHigh)
-        : filterType(_filterType), attrPath(_attrPath), filterValue(_filterValue), filterValueHigh(_filterValueHigh) {};
+        : filterType(_filterType), attrPath(_attrPath), filterValue(_filterValue), filterValueHigh(_filterValueHigh)
+    {
+        init();
+    }
     CDFUSFFilter(DFUQFilterType _filterType, const char *_attrPath, bool _hasFilter, const int _filterValue, bool _hasFilterHigh, const int _filterValueHigh)
-        : filterType(_filterType), attrPath(_attrPath), hasFilter(_hasFilter), hasFilterHigh(_hasFilterHigh), filterValueInt(_filterValue), filterValueHighInt(_filterValueHigh) {};
+        : filterType(_filterType), attrPath(_attrPath), hasFilter(_hasFilter), hasFilterHigh(_hasFilterHigh), filterValueInt(_filterValue), filterValueHighInt(_filterValueHigh)
+    {
+        init();
+    }        
     CDFUSFFilter(DFUQFilterType _filterType, const char *_attrPath, bool _hasFilter, const __int64 _filterValue, bool _hasFilterHigh, const __int64 _filterValueHigh)
-        : filterType(_filterType), attrPath(_attrPath), hasFilter(_hasFilter), hasFilterHigh(_hasFilterHigh), filterValueInt64(_filterValue), filterValueHighInt64(_filterValueHigh) {};
+        : filterType(_filterType), attrPath(_attrPath), hasFilter(_hasFilter), hasFilterHigh(_hasFilterHigh), filterValueInt64(_filterValue), filterValueHighInt64(_filterValueHigh)
+    {
+        init();
+    }        
     CDFUSFFilter(DFUQFilterType _filterType, const char *_attrPath, bool _filterValue)
-        : filterType(_filterType), attrPath(_attrPath), filterValueBoolean(_filterValue) {};
+        : filterType(_filterType), attrPath(_attrPath), filterValueBoolean(_filterValue)
+    {
+        init();
+    }        
     CDFUSFFilter(DFUQFilterType _filterType, const char *_attrPath, const char *_filterValue, const char *_sep, StringArray& _filterArray)
         : filterType(_filterType), attrPath(_attrPath), filterValue(_filterValue), sep(_sep)
     {
+        init();
         ForEachItemIn(i,_filterArray)
         {
             const char* filter = _filterArray.item(i);
@@ -9593,23 +9673,7 @@ public:
         }
     };
 
-    DFUQFilterType getFilterType() { return filterType;}
-    const char * getAttrPath() { return attrPath.get();}
-    const char * getFilterValue() { return filterValue.get();}
-    const char * getFilterValueHigh() { return filterValueHigh.get();}
-    const int getFilterValueInt() { return filterValueInt;}
-    const int getFilterValueHighInt() { return filterValueHighInt;}
-    const __int64 getFilterValueInt64() { return filterValueInt64;}
-    const __int64 getFilterValueHighInt64() { return filterValueHighInt64;}
-    const bool getFilterValueBoolean() { return filterValueBoolean;}
-    const char * getSep() { return sep.get();}
-    void getFilterArray(StringArray &filters)
-    {
-        ForEachItemIn(c, filterArray)
-            filters.append(filterArray.item(c));
-    }
-
-    bool checkFilter(IPropertyTree &file)
+    virtual bool checkFilter(const IPropertyTree &file) override
     {
         bool match = true;
         switch(filterType)
@@ -9743,7 +9807,6 @@ public:
         return true;
     }
 };
-typedef CIArrayOf<CDFUSFFilter> CDFUSFFilterArray;
 
 class CIterateFileFilterContainer : public CInterface
 {
@@ -9752,7 +9815,7 @@ class CIterateFileFilterContainer : public CInterface
     unsigned maxFilesFilter;
     unsigned skipOffset;
     DFUQFileTypeFilter fileTypeFilter;
-    CIArrayOf<CDFUSFFilter> filters;
+    CIArrayOf<CDFUSFFilterBase> filters;
     //The 'filters' contains the file scan filters other than wildNameFilter and fileTypeFilter. Those filters are used for
     //filtering the files using File Attributes tree and CDFUSFFilter::checkFilter(). The wildNameFilter and fileTypeFilter need
     //special code to filter the files.
@@ -9827,6 +9890,14 @@ class CIterateFileFilterContainer : public CInterface
         StringArray filterArray;
         filterArray.appendListUniq(value, sep);
         filters.append(*new CDFUSFFilter(filterType, attr, value, sep, filterArray));
+    }
+    void addExpiredFilter(const char *time, const char *defaultExpireDaysStr, const char *defaultPersistExpireDaysStr)
+    {
+        unsigned defaultExpireDays = atoi(defaultExpireDaysStr);
+        unsigned defaultPersistExpireDays = atoi(defaultPersistExpireDaysStr);
+        if (0 == defaultExpireDays || 0 == defaultPersistExpireDays) // can't be zero
+            return;
+        filters.append(*new CDFUSFExpired(time, defaultExpireDays, defaultPersistExpireDays));
     }
     void addSpecialFilter(const char* attr, const char* value)
     {
@@ -9939,8 +10010,7 @@ public:
                 break;
             case DFUQFexpired:
                 // NB: because older version of Dali didn't support this, the impl. must consume cmd+3 params
-                
-                // TBD
+                addExpiredFilter(filterStringArray.item(i+1), filterStringArray.item(i+2), filterStringArray.item(i+3));
                 break;
             }
             filterFieldsToRead -= filterSize;
@@ -9956,8 +10026,8 @@ public:
             return true;
         ForEachItemIn(i,filters)
         {
-            CDFUSFFilter &filter = filters.item(i);
-            const char* attrPath = filter.getAttrPath();
+            CDFUSFFilterBase &filter = filters.item(i);
+            const char* filterDescription = filter.queryDescription();
             try
             {
                 if (!filter.checkFilter(file))
@@ -9965,7 +10035,7 @@ public:
             }
             catch (IException *e)
             {
-                VStringBuffer msg("Failed to check filter %s for %s: ", attrPath, name);
+                VStringBuffer msg("Failed to check filter %s for %s: ", filterDescription, name);
                 int code = e->errorCode();
                 e->errorMessage(msg);
                 e->Release();
