@@ -2362,9 +2362,8 @@ public:
 
             bool allMatchingFilesReceived = true;
             unsigned returnedCount = 0;
-            byte returnFlags = 0;
             Owned<IPropertyTreeIterator> iter = queryDistributedFileDirectory().getDFAttributesTreeIterator(pagedFilter.str(),
-                nullptr, nullptr, udesc, true, returnFlags, returnedCount);
+                nullptr, nullptr, udesc, true, allMatchingFilesReceived, returnedCount);
 
             if (!iter || returnedCount == 0)
             {
@@ -2416,7 +2415,7 @@ public:
             }
             iter.clear();
 
-            if (returnFlags & 1) // all returned
+            if (allMatchingFilesReceived)
                 break;
             if (!dfsIterSkipSupport)
             {
