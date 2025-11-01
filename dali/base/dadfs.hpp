@@ -192,7 +192,8 @@ enum DFUQFilterType
     DFUQFTinteger64Range,
     DFUQFTspecial,
     DFUQFTincludeFileAttr,
-    DFUQFTinverseWildcardMatch
+    DFUQFTinverseWildcardMatch,
+    DFUQFexpired
 };
 
 enum DFUQSerializeFileAttrOption

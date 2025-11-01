@@ -9903,6 +9903,8 @@ public:
                 continue;
             if (!isdigit(*filterTypeStr))
                 continue;
+            // daft - default means unknowns will skip cmd+3, which means new commands (that old version don't recognise)
+            // must send 3 params to avoid backward compatibility problems!
             unsigned filterSize = 4;
             DFUQFilterType filterType = (DFUQFilterType) atoi(filterTypeStr);
             switch(filterType)
@@ -9934,6 +9936,11 @@ public:
                 filterSize = 3;
                 if (filterFieldsToRead >= filterSize) //DFUQFilterType | filter name | filter value
                     addSpecialFilter(filterStringArray.item(i+1), (const char*)filterStringArray.item(i+2));
+                break;
+            case DFUQFexpired:
+                // NB: because older version of Dali didn't support this, the impl. must consume cmd+3 params
+                
+                // TBD
                 break;
             }
             filterFieldsToRead -= filterSize;
