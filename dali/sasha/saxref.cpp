@@ -2324,25 +2324,31 @@ public:
         std::unordered_set<std::string> expiryList;
 
         StringBuffer filterBuf;
-        // all non-superfiles
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(DFUQFFTnonsuperfileonly).append(DFUQFilterSeparator);
-        // hasProp,SuperOwner,"false" - meaning not owned by a superfile
-        filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFsuperowner)).append(DFUQFilterSeparator).append("false").append(DFUQFilterSeparator);
-        // hasProp,Attr/@expireDays,"true" - meaning file has @expireDays attribute
-        filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFexpiredays)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
-        // hasProp,Attr/@accessed,"true" - meaning file has @accessed attribute
-        filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFaccessed)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
 
-        // expired filter
-        CDateTime now;
-        now.setNow();
-        StringBuffer nowStr;
-        now.getString(nowStr);
-        filterBuf.append(DFUQFexpired).append(DFUQFilterSeparator).append(nowStr).append(DFUQFilterSeparator);
-        filterBuf.append(defaultExpireDays).append(DFUQFilterSeparator);
-        filterBuf.append(defaultPersistExpireDays).append(DFUQFilterSeparator);
+        bool dfsIterExpiredSupport = querySDS().queryProperties().getPropBool("Client/@dfsIterExpiredSupport");
+        if (dfsIterExpiredSupport)
+        {
+            CDateTime now;
+            now.setNow();
+            StringBuffer nowStr;
+            now.getString(nowStr);
+            filterBuf.append(DFUQFexpired).append(DFUQFilterSeparator).append(nowStr).append(DFUQFilterSeparator);
+            filterBuf.append(defaultExpireDays).append(DFUQFilterSeparator);
+            filterBuf.append(defaultPersistExpireDays).append(DFUQFilterSeparator);
+        }
+        else // talking to older Dali!
+        {
+            // all non-superfiles
+            filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(DFUQFFTnonsuperfileonly).append(DFUQFilterSeparator);
+            // hasProp,SuperOwner,"false" - meaning not owned by a superfile
+            filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFsuperowner)).append(DFUQFilterSeparator).append("false").append(DFUQFilterSeparator);
+            // hasProp,Attr/@expireDays,"true" - meaning file has @expireDays attribute
+            filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFexpiredays)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
+            // hasProp,Attr/@accessed,"true" - meaning file has @accessed attribute
+            filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFaccessed)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
+        }
 
-        bool skipNSupport = queryDaliServerVersion().compare("3.17") >= 0;
+        bool dfsIterSkipSupport = querySDS().queryProperties().getPropBool("Client/@dfsIterSkipSupport");
         unsigned skipN = 0;
         for (;;)
         {
@@ -2374,7 +2380,7 @@ public:
                     PROGLOG(LOGPFX2"Considering file %s", name ? name : "<unknown>");
                 if (!name || !*name)
                     continue;
-                if (attr.hasProp("@expireDays"))
+                if (attr.hasProp("@expireDays")) // NB: filters should have already guaranteed this
                 {
                     unsigned expireDays = attr.getPropInt("@expireDays");
                     const char *lastAccessed = attr.queryProp("@accessed");
@@ -2402,7 +2408,6 @@ public:
                         }
                         catch (IException *e)
                         {
-                            StringBuffer s;
                             EXCLOG(e, LOGPFX2 "setdate");
                             e->Release();
                         }
@@ -2413,14 +2418,13 @@ public:
 
             if (returnFlags & 1) // all returned
                 break;
-            if (0 == (returnFlags & 2)) // if not present, skipN is not supported
+            if (!dfsIterSkipSupport)
             {
-                // Really the server version discovery mechanism should be enhanced to return a list of capabilities
-                WARNLOG(LOGPFX2 "Sasha expiry was not able to process all the files (too many and skip not supported). File limit hit at: %u", returnedCount);
+                WARNLOG(LOGPFX2 "Sasha expiry was not able to process all the files (Dali server too old!). File limit hit at: %u", returnedCount);
                 break;
             }
-            // in theory, some of the previous files have been removed in the interim, therefore we start the next batch
-            // from <previous> + <returnedCount> - <fudge-factor>
+            // A bit of a kludge: in theory, some of the previous files have been removed in the interim,
+            // therefore we start the next batch from <previous> + <returnedCount> - <fudge-factor>
             skipN += returnedCount;
             if (returnedCount > 10000)
                 skipN -= 1000;
