@@ -138,6 +138,7 @@ interface ISessionManagerServer: implements IConnectionMonitor
     virtual void stop() = 0;
     virtual bool queryScopeScansEnabled(IUserDescriptor *udesc, int * err, StringBuffer &retMsg) = 0;
     virtual bool enableScopeScans(IUserDescriptor *udesc, bool enable, int * err, StringBuffer &retMsg) = 0;
+    virtual void waitForClientsToDisconnect(unsigned timeoutMs) = 0;
 };
 
 
@@ -1782,6 +1783,50 @@ protected:
         return processlookup.count();
     }
 
+    void waitForClientsToDisconnect(unsigned timeoutMs)
+    {
+        PROGLOG("Dali shutdown: waiting for clients to disconnect (timeout: %u ms)", timeoutMs);
+        
+        unsigned startTime = msTick();
+        unsigned checkInterval = 1000; // Check every second
+        unsigned lastLogTime = 0;
+        unsigned logInterval = 5000; // Log every 5 seconds
+        
+        while (true)
+        {
+            unsigned clientCount = 0;
+            {
+                CHECKEDCRITICALBLOCK(sessmanagersect,60000);
+                clientCount = processlookup.count();
+            }
+            
+            if (clientCount == 0)
+            {
+                PROGLOG("Dali shutdown: all clients disconnected");
+                break;
+            }
+            
+            unsigned elapsed = msTick() - startTime;
+            if (elapsed >= timeoutMs)
+            {
+                StringBuffer clientList;
+                getClientProcessList(clientList);
+                OWARNLOG("Dali shutdown: timeout reached with %u clients still connected:\n%s", clientCount, clientList.str());
+                break;
+            }
+            
+            // Log progress periodically
+            if (elapsed - lastLogTime >= logInterval)
+            {
+                unsigned remaining = (timeoutMs > elapsed) ? (timeoutMs - elapsed) / 1000 : 0;
+                PROGLOG("Dali shutdown: waiting for %u clients to disconnect (%u seconds remaining)", clientCount, remaining);
+                lastLogTime = elapsed;
+            }
+            
+            Sleep(checkInterval);
+        }
+    }
+
 };
 
 
@@ -1818,6 +1863,18 @@ public:
 
     void suspend()
     {
+        // Get the shutdown grace period from configuration (default 60 seconds)
+        unsigned shutdownGracePeriodSecs = serverConfig->getPropInt("@shutdownGracePeriod", 60);
+        if (shutdownGracePeriodSecs > 0)
+        {
+            CriticalBlock block(sessionCrit);
+            if (SessionManagerServer)
+                SessionManagerServer->waitForClientsToDisconnect(shutdownGracePeriodSecs * 1000);
+        }
+        else
+        {
+            PROGLOG("Dali shutdown: grace period disabled (shutdownGracePeriod=0), proceeding immediately");
+        }
     }
 
     void stop()
