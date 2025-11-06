@@ -1793,12 +1793,11 @@ protected:
         
         PROGLOG("Dali shutdown: waiting for clients to disconnect (timeout: %u ms)", timeoutMs);
         
-        unsigned startTime = msTick();
         unsigned checkInterval = 1000; // Check every second
-        unsigned lastLogTime = 0;
-        unsigned logInterval = 5000; // Log every 5 seconds
+        unsigned logInterval = 5; // Log every 5 iterations (5 seconds)
+        unsigned maxIterations = (timeoutMs + checkInterval - 1) / checkInterval; // Round up
         
-        while (true)
+        for (unsigned iteration = 0; iteration < maxIterations; iteration++)
         {
             unsigned clientCount = 0;
             {
@@ -1812,24 +1811,28 @@ protected:
                 break;
             }
             
-            unsigned elapsed = msTick() - startTime;
-            if (elapsed >= timeoutMs)
-            {
-                StringBuffer clientList;
-                getClientProcessList(clientList);
-                OWARNLOG("Dali shutdown: timeout reached with %u clients still connected:\n%s", clientCount, clientList.str());
-                break;
-            }
-            
             // Log progress periodically
-            if (elapsed - lastLogTime >= logInterval)
+            if (iteration % logInterval == 0)
             {
-                unsigned remaining = (timeoutMs > elapsed) ? (timeoutMs - elapsed) / 1000 : 0;
-                PROGLOG("Dali shutdown: waiting for %u clients to disconnect (%u seconds remaining)", clientCount, remaining);
-                lastLogTime = elapsed;
+                unsigned remainingSecs = ((maxIterations - iteration) * checkInterval) / 1000;
+                PROGLOG("Dali shutdown: waiting for %u clients to disconnect (%u seconds remaining)", clientCount, remainingSecs);
             }
             
             Sleep(checkInterval);
+        }
+        
+        // Final check - if we exited the loop due to timeout, log remaining clients
+        unsigned finalClientCount = 0;
+        {
+            CHECKEDCRITICALBLOCK(sessmanagersect,60000);
+            finalClientCount = processlookup.count();
+        }
+        
+        if (finalClientCount > 0)
+        {
+            StringBuffer clientList;
+            getClientProcessList(clientList);
+            OWARNLOG("Dali shutdown: timeout reached with %u clients still connected:\n%s", finalClientCount, clientList.str());
         }
     }
 
@@ -1871,6 +1874,14 @@ public:
     {
         // Get the shutdown grace period from configuration (default 60 seconds)
         unsigned shutdownGracePeriodSecs = serverConfig->getPropInt("@shutdownGracePeriod", 60);
+        
+        // Sanity check to avoid overflow when converting to milliseconds
+        // Maximum safe value is UINT_MAX / 1000 - 1 = ~4294967 seconds (~49 days)
+        if (shutdownGracePeriodSecs > 86400) // Limit to 1 day (24 hours)
+        {
+            OWARNLOG("shutdownGracePeriod of %u seconds exceeds maximum of 86400 (1 day), using 86400", shutdownGracePeriodSecs);
+            shutdownGracePeriodSecs = 86400;
+        }
         
         CriticalBlock block(sessionCrit);
         if (SessionManagerServer && shutdownGracePeriodSecs > 0)
