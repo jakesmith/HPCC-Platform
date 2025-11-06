@@ -1811,8 +1811,8 @@ protected:
                 break;
             }
             
-            // Log progress periodically
-            if (iteration % logInterval == 0)
+            // Log progress periodically (skip first iteration to avoid logging before any waiting)
+            if (iteration > 0 && iteration % logInterval == 0)
             {
                 unsigned remainingSecs = ((maxIterations - iteration) * checkInterval) / 1000;
                 PROGLOG("Dali shutdown: waiting for %u clients to disconnect (%u seconds remaining)", clientCount, remainingSecs);
@@ -1875,9 +1875,9 @@ public:
         // Get the shutdown grace period from configuration (default 60 seconds)
         unsigned shutdownGracePeriodSecs = serverConfig->getPropInt("@shutdownGracePeriod", 60);
         
-        // Sanity check to avoid overflow when converting to milliseconds
-        // Maximum safe value is UINT_MAX / 1000 - 1 = ~4294967 seconds (~49 days)
-        if (shutdownGracePeriodSecs > 86400) // Limit to 1 day (24 hours)
+        // Cap at 1 day for practical reasons (keeps timeout reasonable for Kubernetes environments)
+        // Technical maximum to avoid overflow is ~4294967 seconds (~49 days) but 1 day is more than sufficient
+        if (shutdownGracePeriodSecs > 86400)
         {
             OWARNLOG("shutdownGracePeriod of %u seconds exceeds maximum of 86400 (1 day), using 86400", shutdownGracePeriodSecs);
             shutdownGracePeriodSecs = 86400;
