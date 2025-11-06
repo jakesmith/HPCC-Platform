@@ -1785,6 +1785,12 @@ protected:
 
     void waitForClientsToDisconnect(unsigned timeoutMs)
     {
+        if (timeoutMs == 0)
+        {
+            PROGLOG("Dali shutdown: grace period is 0, not waiting for clients");
+            return;
+        }
+        
         PROGLOG("Dali shutdown: waiting for clients to disconnect (timeout: %u ms)", timeoutMs);
         
         unsigned startTime = msTick();
@@ -1865,16 +1871,10 @@ public:
     {
         // Get the shutdown grace period from configuration (default 60 seconds)
         unsigned shutdownGracePeriodSecs = serverConfig->getPropInt("@shutdownGracePeriod", 60);
-        if (shutdownGracePeriodSecs > 0)
-        {
-            CriticalBlock block(sessionCrit);
-            if (SessionManagerServer)
-                SessionManagerServer->waitForClientsToDisconnect(shutdownGracePeriodSecs * 1000);
-        }
-        else
-        {
-            PROGLOG("Dali shutdown: grace period disabled (shutdownGracePeriod=0), proceeding immediately");
-        }
+        
+        CriticalBlock block(sessionCrit);
+        if (SessionManagerServer && shutdownGracePeriodSecs > 0)
+            SessionManagerServer->waitForClientsToDisconnect(shutdownGracePeriodSecs * 1000);
     }
 
     void stop()
