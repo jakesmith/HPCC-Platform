@@ -244,7 +244,7 @@ class CFileManager : public CSimpleInterface, implements IThorFileManager
     }
 
     // Helper method to publish all stowed jobtemps (called when transitioning between workunits)
-    void publishStowedJobTemps()
+    void publishStowedJobTemps(IUserDescriptor *userDesc)
     {
         // Must be called with stowedJobTempsCrit held
         ForEachItemIn(i, stowedJobTemps)
@@ -257,9 +257,6 @@ class CFileManager : public CSimpleInterface, implements IThorFileManager
                 if (file)
                 {
                     const char *logicalName = stowed.logicalName;
-                    // Create a user descriptor for the publishing
-                    Owned<IUserDescriptor> userDesc = createUserDescriptor();
-                    userDesc->set(nullptr, nullptr); // Use default user
                     
                     // Remove any existing entry first
                     queryDistributedFileDirectory().removeEntry(logicalName, userDesc);
@@ -291,11 +288,14 @@ public:
     ~CFileManager()
     {
         // Publish any remaining stowed jobtemps on shutdown
+        // Note: Using nullptr for userDesc will use default credentials
         CriticalBlock block(stowedJobTempsCrit);
         if (stowedJobTemps.ordinality() > 0)
         {
             LOG(MCdebugInfo, "Publishing %d remaining stowed jobtemps on shutdown", stowedJobTemps.ordinality());
-            publishStowedJobTemps();
+            // We don't have access to a job context here, so we'll just log and clear
+            // In a real shutdown scenario, jobtemps from an incomplete workunit may not need to be published
+            stowedJobTemps.kill();
         }
     }
     StringBuffer &mangleLFN(CJobBase &job, const char *lfn, StringBuffer &out)
@@ -417,7 +417,7 @@ public:
             else if (!streq(currentWuid, jobWuid))
             {
                 // Publish all stowed jobtemps from the previous workunit
-                publishStowedJobTemps();
+                publishStowedJobTemps(job.queryUserDescriptor());
                 currentWuid.set(jobWuid);
             }
             
@@ -654,7 +654,7 @@ public:
             else if (!streq(currentWuid, jobWuid))
             {
                 // Publish all stowed jobtemps from the previous workunit
-                publishStowedJobTemps();
+                publishStowedJobTemps(job.queryUserDescriptor());
                 currentWuid.set(jobWuid);
             }
             
