@@ -408,8 +408,13 @@ public:
             CriticalBlock block(stowedJobTempsCrit);
             const char *jobWuid = job.queryWuid();
             
+            // Initialize currentWuid on first use
+            if (currentWuid.isEmpty())
+            {
+                currentWuid.set(jobWuid);
+            }
             // Check if we've transitioned to a new workunit
-            if (!currentWuid.isEmpty() && !streq(currentWuid, jobWuid))
+            else if (!streq(currentWuid, jobWuid))
             {
                 // Publish all stowed jobtemps from the previous workunit
                 publishStowedJobTemps();
@@ -638,14 +643,20 @@ public:
             Owned<IDistributedFile> file = queryDistributedFileDirectory().createNew(&fileDesc);
             
             CriticalBlock block(stowedJobTempsCrit);
-            // Check if we've transitioned to a new workunit
             const char *jobWuid = job.queryWuid();
-            if (!currentWuid.isEmpty() && !streq(currentWuid, jobWuid))
+            
+            // Initialize currentWuid on first use
+            if (currentWuid.isEmpty())
+            {
+                currentWuid.set(jobWuid);
+            }
+            // Check if we've transitioned to a new workunit
+            else if (!streq(currentWuid, jobWuid))
             {
                 // Publish all stowed jobtemps from the previous workunit
                 publishStowedJobTemps();
+                currentWuid.set(jobWuid);
             }
-            currentWuid.set(jobWuid);
             
             // Stow the jobtemp
             stowedJobTemps.append(*new StowedJobTemp(logicalName, jobWuid, file));
