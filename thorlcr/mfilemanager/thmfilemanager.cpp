@@ -67,6 +67,7 @@ class CFileManager : public CSimpleInterface, implements IThorFileManager
 {
     OwningStringSuperHashTableOf<CIDistributeFileMapping> fileMap;
     bool replicateOutputs;
+    bool delayJobTempPublish;  // Cached configuration option
     CriticalSection stowedJobTempsCrit;
     CIArrayOf<StowedJobTemp> stowedJobTemps;
     StringAttr currentWuid;  // Track the current workunit
@@ -283,18 +284,16 @@ public:
     CFileManager()
     {
         replicateOutputs = globals->getPropBool("@replicateOutputs");
+        delayJobTempPublish = getComponentConfigSP()->getPropBool("@delayJobTempPublish", false);
     }
     
     ~CFileManager()
     {
-        // Publish any remaining stowed jobtemps on shutdown
-        // Note: Using nullptr for userDesc will use default credentials
+        // Clean up any remaining stowed jobtemps on shutdown
         CriticalBlock block(stowedJobTempsCrit);
         if (stowedJobTemps.ordinality() > 0)
         {
-            LOG(MCdebugInfo, "Publishing %d remaining stowed jobtemps on shutdown", stowedJobTemps.ordinality());
-            // We don't have access to a job context here, so we'll just log and clear
-            // In a real shutdown scenario, jobtemps from an incomplete workunit may not need to be published
+            LOG(MCdebugInfo, "Clearing %d stowed jobtemps on shutdown (not publishing as workunit context is unavailable)", stowedJobTemps.ordinality());
             stowedJobTemps.kill();
         }
     }
@@ -402,7 +401,6 @@ public:
             return &fileMapping->get();
 
         // Check if this is a delayed jobtemp in the stowed set
-        bool delayJobTempPublish = getComponentConfigSP()->getPropBool("@delayJobTempPublish", false);
         if (delayJobTempPublish && temporary)
         {
             CriticalBlock block(stowedJobTempsCrit);
@@ -635,7 +633,6 @@ public:
         IPropertyTree &props = fileDesc.queryProperties();
         bool temporary = props.getPropBool("@temporary");
         bool jobTemp = props.getPropBool("@jobTemp", false);
-        bool delayJobTempPublish = getComponentConfigSP()->getPropBool("@delayJobTempPublish", false);
         
         // If delayJobTempPublish is enabled and this is a jobtemp, stow it instead of publishing
         if (delayJobTempPublish && jobTemp && !job.queryUseCheckpoints())
