@@ -257,9 +257,12 @@ class CFileManager : public CSimpleInterface, implements IThorFileManager
                 if (file)
                 {
                     const char *logicalName = stowed.logicalName;
-                    // Create a temporary userDescriptor for the publishing
+                    // Create a user descriptor for the publishing
                     Owned<IUserDescriptor> userDesc = createUserDescriptor();
                     userDesc->set(nullptr, nullptr); // Use default user
+                    
+                    // Remove any existing entry first
+                    queryDistributedFileDirectory().removeEntry(logicalName, userDesc);
                     
                     // Attach the file to make it published
                     file->attach(logicalName, userDesc);
@@ -283,6 +286,17 @@ public:
     CFileManager()
     {
         replicateOutputs = globals->getPropBool("@replicateOutputs");
+    }
+    
+    ~CFileManager()
+    {
+        // Publish any remaining stowed jobtemps on shutdown
+        CriticalBlock block(stowedJobTempsCrit);
+        if (stowedJobTemps.ordinality() > 0)
+        {
+            LOG(MCdebugInfo, "Publishing %d remaining stowed jobtemps on shutdown", stowedJobTemps.ordinality());
+            publishStowedJobTemps();
+        }
     }
     StringBuffer &mangleLFN(CJobBase &job, const char *lfn, StringBuffer &out)
     {
