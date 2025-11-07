@@ -20,6 +20,7 @@
 #include "jfile.hpp"
 #include "jiface.hpp"
 #include "jprop.hpp"
+#include "jptree.hpp"
 #include "jutil.hpp"
 
 
@@ -48,10 +49,27 @@
 static IThorFileManager *fileManager = NULL;
 
 typedef OwningStringHTMapping<IDistributedFile> CIDistributeFileMapping;
+
+// Structure to track stowed jobtemps
+struct StowedJobTemp
+{
+    StringAttr logicalName;
+    StringAttr wuid;
+    Linked<IDistributedFile> file;
+    
+    StowedJobTemp(const char *_logicalName, const char *_wuid, IDistributedFile *_file)
+        : logicalName(_logicalName), wuid(_wuid), file(_file)
+    {
+    }
+};
+
 class CFileManager : public CSimpleInterface, implements IThorFileManager
 {
     OwningStringSuperHashTableOf<CIDistributeFileMapping> fileMap;
     bool replicateOutputs;
+    CriticalSection stowedJobTempsCrit;
+    CIArrayOf<StowedJobTemp> stowedJobTemps;
+    StringAttr currentWuid;  // Track the current workunit
 
 
     StringBuffer &_getPublishPhysicalName(CJobBase &job, const char *logicalName, unsigned partno, const char *groupName, IGroup *group, StringBuffer &res)
@@ -225,6 +243,40 @@ class CFileManager : public CSimpleInterface, implements IThorFileManager
         }
     }
 
+    // Helper method to publish all stowed jobtemps (called when transitioning between workunits)
+    void publishStowedJobTemps()
+    {
+        // Must be called with stowedJobTempsCrit held
+        ForEachItemIn(i, stowedJobTemps)
+        {
+            StowedJobTemp &stowed = stowedJobTemps.item(i);
+            try
+            {
+                // Publish the stowed file to Dali
+                IDistributedFile *file = stowed.file;
+                if (file)
+                {
+                    const char *logicalName = stowed.logicalName;
+                    // Create a temporary userDescriptor for the publishing
+                    Owned<IUserDescriptor> userDesc = createUserDescriptor();
+                    userDesc->set(nullptr, nullptr); // Use default user
+                    
+                    // Attach the file to make it published
+                    file->attach(logicalName, userDesc);
+                    LOG(MCdebugInfo, "Published stowed jobtemp: %s (wuid: %s)", logicalName, stowed.wuid.get());
+                }
+            }
+            catch (IException *e)
+            {
+                StringBuffer msg;
+                e->errorMessage(msg);
+                LOG(MCwarning, "Failed to publish stowed jobtemp %s: %s", stowed.logicalName.get(), msg.str());
+                e->Release();
+            }
+        }
+        stowedJobTemps.kill();
+    }
+
 public:
     IMPLEMENT_IINTERFACE_USING(CSimpleInterface);
 
@@ -334,6 +386,35 @@ public:
         CIDistributeFileMapping *fileMapping = fileMap.find(scopedName.str());
         if (fileMapping)
             return &fileMapping->get();
+
+        // Check if this is a delayed jobtemp in the stowed set
+        bool delayJobTempPublish = getComponentConfigSP()->getPropBool("@delayJobTempPublish", false);
+        if (delayJobTempPublish && temporary)
+        {
+            CriticalBlock block(stowedJobTempsCrit);
+            const char *jobWuid = job.queryWuid();
+            
+            // Check if we've transitioned to a new workunit
+            if (!currentWuid.isEmpty() && !streq(currentWuid, jobWuid))
+            {
+                // Publish all stowed jobtemps from the previous workunit
+                publishStowedJobTemps();
+                currentWuid.set(jobWuid);
+            }
+            
+            // Look for the file in the stowed set
+            ForEachItemIn(i, stowedJobTemps)
+            {
+                StowedJobTemp &stowed = stowedJobTemps.item(i);
+                if (streq(stowed.logicalName, scopedName.str()) && streq(stowed.wuid, jobWuid))
+                {
+                    // Found in stowed set, remove and return
+                    Owned<IDistributedFile> file = stowed.file.getLink();
+                    stowedJobTemps.remove(i);
+                    return file.getClear();
+                }
+            }
+        }
 
         Owned<IDistributedFile> file = timedLookup(job, scopedName.str(), mode, privilegedUser, job.queryMaxLfnBlockTimeMins() * 60000);
         if (file && 0 == file->numParts())
@@ -451,6 +532,8 @@ public:
             desc.setown(createFileDescriptor());
             if (temporary)
                 desc->queryProperties().setPropBool("@temporary", temporary);
+            if (jobTemp)
+                desc->queryProperties().setPropBool("@jobTemp", jobTemp);
             else
                 desc->setTraceName(logicalName);
             if (persistent)
@@ -532,6 +615,30 @@ public:
     {
         IPropertyTree &props = fileDesc.queryProperties();
         bool temporary = props.getPropBool("@temporary");
+        bool jobTemp = props.getPropBool("@jobTemp", false);
+        bool delayJobTempPublish = getComponentConfigSP()->getPropBool("@delayJobTempPublish", false);
+        
+        // If delayJobTempPublish is enabled and this is a jobtemp, stow it instead of publishing
+        if (delayJobTempPublish && jobTemp && !job.queryUseCheckpoints())
+        {
+            Owned<IDistributedFile> file = queryDistributedFileDirectory().createNew(&fileDesc);
+            
+            CriticalBlock block(stowedJobTempsCrit);
+            // Check if we've transitioned to a new workunit
+            const char *jobWuid = job.queryWuid();
+            if (!currentWuid.isEmpty() && !streq(currentWuid, jobWuid))
+            {
+                // Publish all stowed jobtemps from the previous workunit
+                publishStowedJobTemps();
+            }
+            currentWuid.set(jobWuid);
+            
+            // Stow the jobtemp
+            stowedJobTemps.append(*new StowedJobTemp(logicalName, jobWuid, file));
+            fileMap.replace(*new CIDistributeFileMapping(logicalName, *LINK(file))); // cache for immediate access
+            return;
+        }
+        
         if (!temporary || job.queryUseCheckpoints())
             queryDistributedFileDirectory().removeEntry(logicalName, job.queryUserDescriptor());
         // thor clusters are backed up so if replicateOutputs set *always* assume a replicate
