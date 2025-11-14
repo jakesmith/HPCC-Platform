@@ -319,8 +319,8 @@ int main(int argc, const char* argv[])
                     }
                     else if (strieq(cmd,"set")) {
                         CHECKPARAMS(2,2);
-                        setValue(params.item(1),params.item(2),out);
-                        PROGLOG("Changed %s from '%s' to '%s'",params.item(1),out.str(),params.item(2));
+                        if (setValue(params.item(1),params.item(2),out))
+                            PROGLOG("Changed %s from '%s' to '%s'",params.item(1),out.str(),params.item(2));
                     }
                     else if (strieq(cmd,"get")) {
                         CHECKPARAMS(1,1);
