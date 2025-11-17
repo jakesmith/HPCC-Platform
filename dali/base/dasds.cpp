@@ -1148,6 +1148,7 @@ class CDeltaWriter : implements IThreaded
     std::atomic<bool> aborted = false;
     bool signalWhenAllWritten = false;
     Semaphore allWrittenSem;
+    Semaphore belowLimitsSem; // signaled when queue drops below limits
 
     void validateDeltaBackup()
     {
@@ -1393,6 +1394,7 @@ public:
             aborted = true;
             pendingTransactionsSem.signal();
             allWrittenSem.signal();
+            belowLimitsSem.signal();
             threaded.join();
         }
     }
@@ -1453,6 +1455,11 @@ public:
                     // which will in turn block. This must complete!
                     while (!save(todo)) // if temporarily blocked, wait a bit (blocking window is short)
                         MilliSleep(1000);
+
+                    // After save, check if queue is now below limits and signal waiting threads
+                    size_t items = pending.size();
+                    if ((pendingSz < transactionMaxMem) && (items < transactionQueueLimit))
+                        belowLimitsSem.signal();
                 }
             }
         }
@@ -2290,26 +2297,33 @@ void CDeltaWriter::addToQueue(CTransactionItem *item)
             DISLOG("CDeltaWriter thread was aborted! Dali is compromised. Save, shutdown or restart ASAP.");
 
         ++totalQueueLimitHits;
-        // force a synchronous save
+        // Trigger async save and wait for queue to drop below limits
         CCycleTimer timer;
-        PROGLOG("Forcing synchronous save of %u transactions (pendingSz=%zu)", (unsigned)pending.size(), pendingSz);
+        PROGLOG("Queue limit hit - triggering async save and waiting for queue to drop below limits (pending items=%zu, pendingSz=%zu)", pending.size(), pendingSz);
 
-        // NB: ensure consistent lock ordering of blockedSaveCrit and pendingCrit
-        CHECKEDCRITICALBLOCK(blockedSaveCrit, fakeCritTimeout); // because if Dali is saving state (::blockingSave), it will clear pending
-        CriticalBlock b(pendingCrit);
-        size_t items = pending.size();
-        // NB: items could be 0. It's possible that the delta writer has caught up and flushed pending already
-        if (items && save(pending)) // if temporarily blocked, continue, meaning queue limit will overrun a bit (blocking window is short)
+        // Trigger async write
         {
-            pendingSz = 0;
-            timeThrottled += timer.elapsedCycles();
-            ++throttleCounter;
-            if (timeThrottled >= queryOneSecCycles())
-            {
-                IWARNLOG("Transactions throttled - current items = %u, since last message throttled-time/transactions = { %u ms, %u }, total hard limit hits = %u", (unsigned)items, (unsigned)cycle_to_millisec(timeThrottled), throttleCounter, totalQueueLimitHits);
-                timeThrottled = 0;
-                throttleCounter = 0;
-            }
+            CriticalBlock b(pendingCrit);
+            if (!writeRequested)
+                requestAsyncWrite();
+        }
+
+        // Wait for the writer thread to clear the queue below limits
+        while (!belowLimitsSem.wait(10000))
+        {
+            if (aborted)
+                return;
+            WARNLOG("Waiting on CDeltaWriter to clear queue below limits");
+        }
+
+        timeThrottled += timer.elapsedCycles();
+        ++throttleCounter;
+        if (timeThrottled >= queryOneSecCycles())
+        {
+            CriticalBlock b(pendingCrit);
+            IWARNLOG("Transactions throttled - current items = %zu, since last message throttled-time/transactions = { %u ms, %u }, total hard limit hits = %u", pending.size(), (unsigned)cycle_to_millisec(timeThrottled), throttleCounter, totalQueueLimitHits);
+            timeThrottled = 0;
+            throttleCounter = 0;
         }
     }
 }
