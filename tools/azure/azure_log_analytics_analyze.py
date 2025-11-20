@@ -61,14 +61,14 @@ HPCC_COMPONENT_PATTERNS = {
 
 # Common non-HPCC system pods
 SYSTEM_COMPONENT_PATTERNS = {
-    'kubernetes-system': [r'^kube-.*', r'.*-kube-.*'],
-    'monitoring': [r'.*-prometheus(-.*)?$', r'.*-grafana(-.*)?$', r'.*-alertmanager(-.*)?$'],
-    'logging': [r'.*-fluentd(-.*)?$', r'.*-fluent-bit(-.*)?$', r'.*-elasticsearch(-.*)?$', r'.*-kibana(-.*)?$', r'.*-logstash(-.*)?$'],
+    'azure-system': [r'^aks-.*', r'.*-azuremonitor(-.*)?$', r'^omsagent(-.*)?$', r'.*-omsagent(-.*)?$', r'.*-azuredisk(-.*)?$', r'.*-azurefile(-.*)?$'],
+    'monitoring': [r'^prometheus(-.*)?$', r'.*-prometheus(-.*)?$', r'^grafana(-.*)?$', r'.*-grafana(-.*)?$', r'^alertmanager(-.*)?$', r'.*-alertmanager(-.*)?$'],
+    'logging': [r'^fluentd(-.*)?$', r'.*-fluentd(-.*)?$', r'^fluent-bit(-.*)?$', r'.*-fluent-bit(-.*)?$', r'^elasticsearch(-.*)?$', r'.*-elasticsearch(-.*)?$', r'^kibana(-.*)?$', r'.*-kibana(-.*)?$', r'^logstash(-.*)?$', r'.*-logstash(-.*)?$'],
     'ingress': [r'.*-ingress(-.*)?$', r'.*-nginx(-.*)?$', r'.*-traefik(-.*)?$'],
     'storage': [r'.*-csi(-.*)?$', r'.*-nfs(-.*)?$'],
     'networking': [r'.*-calico(-.*)?$', r'.*-flannel(-.*)?$', r'.*-weave(-.*)?$', r'.*-cilium(-.*)?$'],
     'security': [r'.*-vault(-.*)?$', r'.*-cert-manager(-.*)?$'],
-    'azure-system': [r'^aks-.*', r'.*-azuremonitor(-.*)?$', r'.*-omsagent(-.*)?$', r'.*-azuredisk(-.*)?$', r'.*-azurefile(-.*)?$'],
+    'kubernetes-system': [r'^kube-.*', r'.*-kube-.*', r'^coredns(-.*)?$'],
 }
 
 
