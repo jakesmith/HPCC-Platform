@@ -339,7 +339,7 @@ static void process(IConstWorkUnit &w, IProperties *globals, const StringArray &
                     }
                 }
                 
-                if (oomDetected)
+                if (oomDetected && oomDetails.length() > 0)
                 {
                     // Check if the OOM is related to thorslave or other HPCC processes
                     const char *hpccProcesses[] = { "thorslave", "thormaster", "eclagent", "roxie", nullptr };
@@ -354,30 +354,23 @@ static void process(IConstWorkUnit &w, IProperties *globals, const StringArray &
                         }
                     }
                     
-                    // Add exception to workunit
-                    if (hpccProcessOOM || oomDetails.length() > 0) // Add exception if we found any OOM
-                    {
-                        Owned<IWUException> exception = lw->createException();
-                        exception->setExceptionSource("postmortem");
-                        
-                        StringBuffer exceptionMsg("Process terminated due to Out Of Memory (OOM). ");
-                        if (oomDetails.length() > 0)
-                        {
-                            exceptionMsg.append("Details: ");
-                            exceptionMsg.append(oomDetails);
-                        }
-                        
-                        exception->setExceptionMessage(exceptionMsg.str());
-                        exception->setExceptionCode(0); // Could use a specific error code
-                        exception->setSeverity(SeverityError);
-                        
-                        // Set timestamp to current time
-                        CDateTime dt;
-                        dt.setNow();
-                        StringBuffer timestamp;
-                        dt.getString(timestamp);
-                        exception->setTimeStamp(timestamp.str());
-                    }
+                    // Add exception to workunit if we found any OOM
+                    Owned<IWUException> exception = lw->createException();
+                    exception->setExceptionSource("postmortem");
+                    
+                    StringBuffer exceptionMsg("Process terminated due to Out Of Memory (OOM). Details: ");
+                    exceptionMsg.append(oomDetails);
+                    
+                    exception->setExceptionMessage(exceptionMsg.str());
+                    exception->setExceptionCode(9); // SIGKILL code, commonly used for OOM kills
+                    exception->setSeverity(SeverityError);
+                    
+                    // Set timestamp to current time
+                    CDateTime dt;
+                    dt.setNow();
+                    StringBuffer timestamp;
+                    dt.getString(timestamp);
+                    exception->setTimeStamp(timestamp.str());
                 }
             }
             catch (IException *e)
