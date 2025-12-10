@@ -291,6 +291,103 @@ static void process(IConstWorkUnit &w, IProperties *globals, const StringArray &
         Owned<IWorkUnit> lw = factory->updateWorkUnit(wuid);
         Owned<IWUQuery> query = lw->updateQuery();
         associateLocalFile(query, FileTypePostMortem, postMortemDirectory, "PostMortem", 0);
+        
+        // Check for OOM in dmesg.log
+        StringBuffer dmesgPath(postMortemDirectory);
+        dmesgPath.append("/dmesg.log");
+        if (checkFileExists(dmesgPath.str()))
+        {
+            try
+            {
+                StringBuffer dmesgContent;
+                dmesgContent.loadFile(dmesgPath.str());
+                
+                // Look for OOM patterns in dmesg
+                // Common patterns: "Out of memory: Killed process", "oom-kill:", "Kill process", "Memory cgroup out of memory"
+                const char *oomPatterns[] = {
+                    "Out of memory: Killed process",
+                    "Out of memory: Kill process",
+                    "oom-kill:",
+                    "Killed process",
+                    "Memory cgroup out of memory",
+                    nullptr
+                };
+                
+                bool oomDetected = false;
+                StringBuffer oomDetails;
+                
+                for (const char **pattern = oomPatterns; *pattern != nullptr; pattern++)
+                {
+                    const char *found = strstr(dmesgContent.str(), *pattern);
+                    if (found)
+                    {
+                        oomDetected = true;
+                        
+                        // Extract the line containing the OOM message
+                        const char *lineStart = found;
+                        while (lineStart > dmesgContent.str() && *(lineStart-1) != '\n')
+                            lineStart--;
+                        
+                        const char *lineEnd = found;
+                        while (*lineEnd != '\0' && *lineEnd != '\n')
+                            lineEnd++;
+                        
+                        if (oomDetails.length() > 0)
+                            oomDetails.append("; ");
+                        oomDetails.append(lineEnd - lineStart, lineStart);
+                        break; // Only capture the first OOM occurrence
+                    }
+                }
+                
+                if (oomDetected)
+                {
+                    // Check if the OOM is related to thorslave or other HPCC processes
+                    const char *hpccProcesses[] = { "thorslave", "thormaster", "eclagent", "roxie", nullptr };
+                    bool hpccProcessOOM = false;
+                    
+                    for (const char **process = hpccProcesses; *process != nullptr; process++)
+                    {
+                        if (strstr(oomDetails.str(), *process) != nullptr)
+                        {
+                            hpccProcessOOM = true;
+                            break;
+                        }
+                    }
+                    
+                    // Add exception to workunit
+                    if (hpccProcessOOM || oomDetails.length() > 0) // Add exception if we found any OOM
+                    {
+                        Owned<IWUException> exception = lw->createException();
+                        exception->setExceptionSource("postmortem");
+                        
+                        StringBuffer exceptionMsg("Process terminated due to Out Of Memory (OOM). ");
+                        if (oomDetails.length() > 0)
+                        {
+                            exceptionMsg.append("Details: ");
+                            exceptionMsg.append(oomDetails);
+                        }
+                        
+                        exception->setExceptionMessage(exceptionMsg.str());
+                        exception->setExceptionCode(0); // Could use a specific error code
+                        exception->setSeverity(SeverityError);
+                        
+                        // Set timestamp to current time
+                        CDateTime dt;
+                        dt.setNow();
+                        StringBuffer timestamp;
+                        dt.getString(timestamp);
+                        exception->setTimeStamp(timestamp.str());
+                    }
+                }
+            }
+            catch (IException *e)
+            {
+                // If we can't read or parse the dmesg file, just log and continue
+                StringBuffer msg;
+                printf("Warning: Could not check dmesg.log for OOM: %s\n", e->errorMessage(msg).str());
+                e->Release();
+            }
+        }
     }
     else if (stricmp(action, "archive")==0)
     {
