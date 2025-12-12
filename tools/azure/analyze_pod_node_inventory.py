@@ -131,43 +131,41 @@ def read_inventory(input_source: Optional[str], start_time: Optional[datetime],
     pods = []
     nodes = []
     
-    # Open input source
-    if input_source:
-        f = open(input_source, 'r')
-    else:
-        f = sys.stdin
-    
+    # Open input source with proper error handling
     try:
-        # Skip comment lines
-        lines = [line for line in f if not line.strip().startswith('#')]
-        
-        # Parse CSV
-        reader = csv.DictReader(lines)
-        for row in reader:
-            # Parse timestamp
-            try:
-                timestamp = parse_datetime(row.get('TimeGenerated', ''))
-            except ValueError:
-                continue  # Skip rows with invalid timestamps
-            
-            # Apply time filters
-            if start_time and timestamp < start_time:
-                continue
-            if end_time and timestamp >= end_time:
-                continue
-            
-            # Add timestamp to record
-            row['_timestamp'] = timestamp
-            
-            # Separate pods and nodes
-            record_type = row.get('RecordType', '')
-            if record_type == 'Pod':
-                pods.append(row)
-            elif record_type == 'Node':
-                nodes.append(row)
-    finally:
         if input_source:
-            f.close()
+            with open(input_source, 'r') as f:
+                lines = [line for line in f if not line.strip().startswith('#')]
+        else:
+            lines = [line for line in sys.stdin if not line.strip().startswith('#')]
+    except IOError as e:
+        print(f"Error reading input: {e}", file=sys.stderr)
+        return ([], [])
+    
+    # Parse CSV
+    reader = csv.DictReader(lines)
+    for row in reader:
+        # Parse timestamp
+        try:
+            timestamp = parse_datetime(row.get('TimeGenerated', ''))
+        except ValueError:
+            continue  # Skip rows with invalid timestamps
+        
+        # Apply time filters
+        if start_time and timestamp < start_time:
+            continue
+        if end_time and timestamp >= end_time:
+            continue
+        
+        # Add timestamp to record
+        row['_timestamp'] = timestamp
+        
+        # Separate pods and nodes
+        record_type = row.get('RecordType', '')
+        if record_type == 'Pod':
+            pods.append(row)
+        elif record_type == 'Node':
+            nodes.append(row)
     
     return pods, nodes
 
@@ -464,10 +462,10 @@ Examples:
     # Output
     if args.format == 'csv':
         output_csv(analysis, pods, nodes, start_time, end_time, args)
+        return 0
     else:
         output_text(analysis, pods, nodes, start_time, end_time, args)
-    
-    return 0
+        return 0
 
 
 if __name__ == '__main__':

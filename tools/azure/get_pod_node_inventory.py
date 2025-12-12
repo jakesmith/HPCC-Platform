@@ -238,9 +238,10 @@ let pods = KubePodInventory
 
     # Add namespace filter only if specified
     if namespace:
-        # Validate namespace to prevent KQL injection (alphanumeric, hyphens, dots only)
-        if not all(c.isalnum() or c in '-_.' for c in namespace):
-            raise ValueError(f"Invalid namespace: {namespace}. Only alphanumeric characters, hyphens, underscores, and dots are allowed.")
+        # Validate namespace to prevent KQL injection
+        # Kubernetes namespaces: lowercase letters, numbers, and hyphens only
+        if not all(c.islower() or c.isdigit() or c == '-' for c in namespace):
+            raise ValueError(f"Invalid namespace: {namespace}. Only lowercase letters, numbers, and hyphens are allowed.")
         query += f"| where Namespace == '{namespace}'\n"
 
     query += """| summarize arg_max(TimeGenerated, *) by Name, Computer
