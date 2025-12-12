@@ -1,0 +1,154 @@
+Loaded pricing data: Read=$0.0044/10k ops, Write=$0.065/10k ops
+================================================================================
+FILE ACCESS ANALYSIS REPORT
+================================================================================
+
+SUMMARY
+--------------------------------------------------------------------------------
+Total Records:        1,222,355
+Time Granularity:     24 hour(s)
+Time Buckets:         30
+Component Filter:     Thor
+Action Filter:        CREATED,READ
+LFN Filter:           *::jobtemp::*
+
+COST PARAMETERS
+--------------------------------------------------------------------------------
+Operation Size:       4093 KB (4.0 MB)
+Read Cost:            $0.0044 per 10,000 operations
+Write Cost:           $0.065 per 10,000 operations
+
+Total Operations:     183,587
+Total Data Read:      43.40 PB (48,861,448,094,310,239 bytes)
+Total Data Written:   2.05 PB (2,306,850,888,204,434 bytes)
+Unique Files:         54,838
+Re-read Data Size:    27.14 PB (30,556,375,396,068,337 bytes)
+Re-read Percentage:   62.5%
+
+ESTIMATED COSTS
+--------------------------------------------------------------------------------
+Read Cost:            $5129.5269
+Write Cost:           $3577.5951
+Total Cost:           $8707.1220
+Re-read Cost:         $3207.8408 (potential waste)
+
+BREAKDOWN BY COMPONENT
+--------------------------------------------------------------------------------
+Thor                     183,587 ops         45.45 PB
+
+BREAKDOWN BY ACTION
+--------------------------------------------------------------------------------
+Action                Operations       Total Size  Unique Files
+--------------------------------------------------------------------------------
+CREATED                   54,985          2.05 PB        54,820
+READ                     128,602         43.40 PB        53,541
+
+TOP 10 MOST READ FILES
+--------------------------------------------------------------------------------
+        79  hpccinternal::lwalden::temporary::jobtemp::wf2__w20251120-181742
+        73  hpccinternal::mvenkataswamy::temporary::jobtemp::wf2__w20251120-151517
+        67  hpccinternal::lwalden::temporary::jobtemp::wf2__w20251030-053358
+        67  hpccinternal::lwalden::temporary::jobtemp::wf2__w20251104-100045
+        67  hpccinternal::lwalden::temporary::jobtemp::wf2__w20251110-075131
+        67  hpccinternal::lwalden::temporary::jobtemp::wf2__w20251114-090733
+        67  hpccinternal::lwalden::temporary::jobtemp::wf2__w20251119-073627
+        67  hpccinternal::lwalden::temporary::jobtemp::wf2__w20251119-223311
+        66  hpccinternal::mvenkataswamy::temporary::jobtemp::wf2__w20251120-151555
+        60  hpccinternal::wagnda01::temporary::jobtemp::autoh__w20250620-190801
+
+PER-FILE ACTION STATISTICS
+--------------------------------------------------------------------------------
+
+CREATED:
+  Total unique files: 54,820
+  Operation count distribution:
+      30 operations:     2 files
+      27 operations:     1 files
+      16 operations:     1 files
+      11 operations:     1 files
+       4 operations:     5 files
+       3 operations:     1 files
+       2 operations:    39 files
+       1 operations: 54,770 files
+
+READ:
+  Total unique files: 53,541
+  Operation count distribution:
+      79 operations:     1 files
+      73 operations:     1 files
+      67 operations:     6 files
+      66 operations:     1 files
+      60 operations:     2 files
+      54 operations:     1 files
+      50 operations:     1 files
+      48 operations:    24 files
+      46 operations:     4 files
+      44 operations:    28 files
+    ... 53,472 more files with fewer operations
+
+TIME BUCKET BREAKDOWN
+--------------------------------------------------------------------------------
+Time Bucket          Component       Action            Ops            Size    Files
+--------------------------------------------------------------------------------
+2025-10-22 01:00     Thor            CREATED           918        18.80 TB      918
+2025-10-22 01:00     Thor            READ            2,077       703.34 TB      913
+2025-10-23 01:00     Thor            CREATED         2,253        44.71 TB    2,252
+2025-10-23 01:00     Thor            READ            5,375         1.05 PB    2,223
+2025-10-24 01:00     Thor            CREATED         1,966        57.76 TB    1,962
+2025-10-24 01:00     Thor            READ            4,463         1.09 PB    1,899
+2025-10-25 01:00     Thor            CREATED         1,151        43.03 TB    1,151
+2025-10-25 01:00     Thor            READ            2,612         1.08 PB    1,138
+2025-10-26 01:00     Thor            CREATED           814        19.49 TB      814
+2025-10-26 01:00     Thor            READ            1,543       108.06 TB      792
+2025-10-27 00:00     Thor            CREATED         1,891        67.20 TB    1,891
+2025-10-27 00:00     Thor            READ            4,400         1.02 PB    1,848
+2025-10-28 00:00     Thor            CREATED         2,566       122.78 TB    2,565
+2025-10-28 00:00     Thor            READ            5,963         2.08 PB    2,518
+2025-10-29 00:00     Thor            CREATED         2,137        60.75 TB    2,133
+2025-10-29 00:00     Thor            READ            5,179         1.36 PB    2,086
+2025-10-30 00:00     Thor            CREATED         2,405        56.20 TB    2,405
+2025-10-30 00:00     Thor            READ            5,576         1.55 PB    2,344
+2025-10-31 00:00     Thor            CREATED         2,082        95.98 TB    2,082
+2025-10-31 00:00     Thor            READ            4,888         1.76 PB    2,045
+2025-11-01 00:00     Thor            CREATED         1,277        67.55 TB    1,276
+2025-11-01 00:00     Thor            READ            2,930         1.55 PB    1,265
+2025-11-02 00:00     Thor            CREATED         1,008        27.50 TB    1,008
+2025-11-02 00:00     Thor            READ            2,208       642.42 TB      988
+2025-11-03 00:00     Thor            CREATED         1,461        67.88 TB    1,460
+2025-11-03 00:00     Thor            READ            3,432         1.22 PB    1,411
+2025-11-04 00:00     Thor            CREATED         2,228        67.71 TB    2,228
+2025-11-04 00:00     Thor            READ            5,624         1.84 PB    2,186
+2025-11-05 00:00     Thor            CREATED         2,418        72.40 TB    2,413
+2025-11-05 00:00     Thor            READ            5,926         1.44 PB    2,365
+2025-11-06 00:00     Thor            CREATED         2,167        81.76 TB    2,167
+2025-11-06 00:00     Thor            READ            5,176         1.62 PB    2,127
+2025-11-07 00:00     Thor            CREATED         2,094        76.18 TB    2,094
+2025-11-07 00:00     Thor            READ            4,858         1.74 PB    2,026
+2025-11-08 00:00     Thor            CREATED         1,365        62.40 TB    1,364
+2025-11-08 00:00     Thor            READ            3,162         1.52 PB    1,342
+2025-11-09 00:00     Thor            CREATED           762        16.38 TB      762
+2025-11-09 00:00     Thor            READ            1,768       334.42 TB      749
+2025-11-10 00:00     Thor            CREATED         2,102        97.73 TB    2,102
+2025-11-10 00:00     Thor            READ            5,258         1.80 PB    2,045
+2025-11-11 00:00     Thor            CREATED         1,770       174.02 TB    1,770
+2025-11-11 00:00     Thor            READ            4,092         2.55 PB    1,727
+2025-11-12 00:00     Thor            CREATED         2,145       119.18 TB    2,142
+2025-11-12 00:00     Thor            READ            4,952         1.43 PB    2,090
+2025-11-13 00:00     Thor            CREATED         2,573        59.23 TB    2,568
+2025-11-13 00:00     Thor            READ            5,567         1.47 PB    2,529
+2025-11-14 00:00     Thor            CREATED         2,320        71.96 TB    2,318
+2025-11-14 00:00     Thor            READ            5,756         1.52 PB    2,287
+2025-11-15 00:00     Thor            CREATED         1,256        55.91 TB    1,255
+2025-11-15 00:00     Thor            READ            2,785         1.30 PB    1,232
+2025-11-16 00:00     Thor            CREATED           888        16.87 TB      888
+2025-11-16 00:00     Thor            READ            1,865       310.51 TB      875
+2025-11-17 00:00     Thor            CREATED         1,984        52.64 TB    1,982
+2025-11-17 00:00     Thor            READ            4,605       982.84 TB    1,929
+2025-11-18 00:00     Thor            CREATED         2,233       102.78 TB    2,229
+2025-11-18 00:00     Thor            READ            5,135         1.69 PB    2,173
+2025-11-19 00:00     Thor            CREATED         2,473       122.62 TB    2,473
+2025-11-19 00:00     Thor            READ            6,111         2.08 PB    2,416
+2025-11-20 00:00     Thor            CREATED         2,278        98.66 TB    2,275
+2025-11-20 00:00     Thor            READ            5,316         4.63 PB    2,214
+
+================================================================================
