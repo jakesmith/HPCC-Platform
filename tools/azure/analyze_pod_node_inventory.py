@@ -55,6 +55,27 @@ def parse_datetime(dt_str: str) -> datetime:
     raise ValueError(f"Invalid datetime format: {dt_str}")
 
 
+def extract_thor_cluster_name(parts: List[str]) -> str:
+    """Extract Thor cluster name from pod name parts.
+    
+    Args:
+        parts: Pod name split by '-'
+    
+    Returns:
+        Cluster name or empty string if not found
+    """
+    try:
+        thor_idx = parts.index('thor')
+        # Check if next part is cluster name (not thormanager/thorworker/manager/worker)
+        if thor_idx + 1 < len(parts):
+            next_part = parts[thor_idx + 1]
+            if next_part not in ('thormanager', 'thorworker', 'manager', 'worker'):
+                return next_part
+    except (ValueError, IndexError):
+        pass
+    return ''
+
+
 def identify_component(pod_name: str) -> str:
     """Identify HPCC component from pod name.
     
@@ -90,20 +111,11 @@ def identify_component(pod_name: str) -> str:
         
         # Thor has more complex naming
         elif 'thor' in parts:
+            cluster_name = extract_thor_cluster_name(parts)
             if 'thormanager' in parts or 'manager' in parts:
-                # Extract cluster name if available
-                thor_idx = parts.index('thor')
-                if thor_idx + 1 < len(parts) and 'thormanager' not in parts[thor_idx + 1] and 'manager' not in parts[thor_idx + 1]:
-                    cluster_name = parts[thor_idx + 1]
-                    return f'thor-{cluster_name}'
-                return 'thor'
+                return f'thor-{cluster_name}' if cluster_name else 'thor'
             elif 'thorworker' in parts or 'worker' in parts:
-                # Extract cluster name if available
-                thor_idx = parts.index('thor')
-                if thor_idx + 1 < len(parts) and 'thorworker' not in parts[thor_idx + 1] and 'worker' not in parts[thor_idx + 1]:
-                    cluster_name = parts[thor_idx + 1]
-                    return f'thor-{cluster_name}-worker'
-                return 'thor-worker'
+                return f'thor-{cluster_name}-worker' if cluster_name else 'thor-worker'
             else:
                 return 'thor'
         
@@ -218,8 +230,8 @@ def analyze_component_usage(pods: List[Dict], nodes: List[Dict]) -> Dict:
     }
 
 
-def calculate_durations(pods: List[Dict], start_time: datetime, end_time: datetime) -> Dict:
-    """Calculate how long each component consumed resources.
+def estimate_durations_from_snapshots(pods: List[Dict], start_time: datetime, end_time: datetime) -> Dict:
+    """Estimate how long each component consumed resources based on snapshot data.
     
     IMPORTANT: This function assumes all pods were running for the entire time window.
     This is a simplification based on snapshot data from KubePodInventory. For more
@@ -268,8 +280,8 @@ def output_csv(analysis: Dict, pods: List[Dict], nodes: List[Dict],
     component_pods = analysis['component_pods']
     component_nodes = analysis['component_nodes']
     
-    # Calculate durations
-    duration_info = calculate_durations(pods, start_time, end_time)
+    # Calculate estimated durations from snapshot data
+    duration_info = estimate_durations_from_snapshots(pods, start_time, end_time)
     component_duration = duration_info['component_duration']
     component_pod_hours = duration_info['component_pod_hours']
     
@@ -308,8 +320,8 @@ def output_text(analysis: Dict, pods: List[Dict], nodes: List[Dict],
     component_nodes = analysis['component_nodes']
     pod_to_node = analysis['pod_to_node']
     
-    # Calculate durations
-    duration_info = calculate_durations(pods, start_time, end_time)
+    # Calculate estimated durations from snapshot data
+    duration_info = estimate_durations_from_snapshots(pods, start_time, end_time)
     component_duration = duration_info['component_duration']
     component_pod_hours = duration_info['component_pod_hours']
     
