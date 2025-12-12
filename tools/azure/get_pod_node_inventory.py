@@ -211,8 +211,19 @@ def get_workspace_info(subscription_id, resource_group, cluster_name, verbose=Fa
 
 
 def build_query(namespace, start_time, end_time):
-    """Build the KQL query for pod and node inventory."""
-
+    """Build the KQL query for pod and node inventory.
+    
+    Args:
+        namespace: Kubernetes namespace to filter (None for all namespaces)
+        start_time: Start datetime object
+        end_time: End datetime object
+    """
+    # Validate inputs
+    if not isinstance(start_time, datetime):
+        raise ValueError("start_time must be a datetime object")
+    if not isinstance(end_time, datetime):
+        raise ValueError("end_time must be a datetime object")
+    
     # Format times for KQL
     start_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
     end_str = end_time.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -227,6 +238,9 @@ let pods = KubePodInventory
 
     # Add namespace filter only if specified
     if namespace:
+        # Validate namespace to prevent KQL injection (alphanumeric, hyphens, dots only)
+        if not all(c.isalnum() or c in '-_.' for c in namespace):
+            raise ValueError(f"Invalid namespace: {namespace}. Only alphanumeric characters, hyphens, underscores, and dots are allowed.")
         query += f"| where Namespace == '{namespace}'\n"
 
     query += """| summarize arg_max(TimeGenerated, *) by Name, Computer
@@ -408,9 +422,8 @@ Examples:
     results = query_log_analytics(workspace_id, query, args.verbose)
 
     # Prepare metadata for CSV comments
-    from datetime import datetime as dt_mod
     metadata = {
-        'date_generated': dt_mod.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'date_generated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'command': ' '.join(sys.argv),
         'workspace_id': workspace_id,
         'start_time': start_time.strftime('%Y-%m-%d %H:%M:%S UTC'),

@@ -33,7 +33,7 @@ import argparse
 import csv
 from datetime import datetime
 from collections import defaultdict
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional
 
 
 def parse_datetime(dt_str: str) -> datetime:
@@ -223,6 +223,11 @@ def analyze_component_usage(pods: List[Dict], nodes: List[Dict]) -> Dict:
 def calculate_durations(pods: List[Dict], start_time: datetime, end_time: datetime) -> Dict:
     """Calculate how long each component consumed resources.
     
+    IMPORTANT: This function assumes all pods were running for the entire time window.
+    This is a simplification based on snapshot data from KubePodInventory. For more
+    accurate duration tracking, time-series data would be needed to track pod lifecycle
+    events (start/stop times).
+    
     Returns dict with:
         - component_duration: {component: duration_hours}
         - component_pod_hours: {component: pod_hours}
@@ -241,7 +246,6 @@ def calculate_durations(pods: List[Dict], start_time: datetime, end_time: dateti
         component_pod_count[component] += 1
     
     # Assume all pods were running for the entire time window
-    # (This is a simplification; more accurate would require time-series data)
     for component, count in component_pod_count.items():
         component_pod_hours[component] = count * total_hours
         component_duration[component] = total_hours
