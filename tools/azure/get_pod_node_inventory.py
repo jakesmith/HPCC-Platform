@@ -116,7 +116,6 @@ def query_log_analytics(workspace_id, query, verbose=False):
         sys.exit(1)
     except json.JSONDecodeError as e:
         print(f"Error parsing JSON response: {e}", file=sys.stderr)
-        print(f"Raw stdout: {result.stdout}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -443,7 +442,9 @@ Examples:
 
     # Print output
     print(output)
+    
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
