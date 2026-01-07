@@ -1,0 +1,9 @@
+# Azure Log Analytics Tools - Python Dependencies
+# 
+# Install with: pip install -r requirements.txt
+
+# Azure SDK for authentication
+azure-identity>=1.14.0
+
+# Azure Monitor Query for Log Analytics
+azure-monitor-query>=1.2.0
