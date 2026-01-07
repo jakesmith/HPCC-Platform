@@ -1,0 +1,13 @@
+thor:
+- name: production-thor
+  cluster:
+    instances: 3
+    instanceTemplate: "{name}-az{instance}"
+  numWorkers: 4
+  maxJobs: 9   # 3 per instance
+  maxGraphs: 6 # 2 per instance
+  prefix: thor
+  lingerPeriod: 60
+  # This demonstrates the exact use case from the problem statement
+  # Instead of manually defining 3 Thor instances with divided limits,
+  # we have a single configuration that expands automatically

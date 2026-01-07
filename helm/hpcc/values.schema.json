@@ -2856,6 +2856,24 @@
           "items": { "type": "string" },
           "description": "[Optional] Auxiliary queue names to listen to. Multiple Thor's can listen to the same queue using this mechanism"
         },
+        "cluster": {
+          "type": "object",
+          "description": "[Optional] Logical cluster configuration that generates multiple Thor instances",
+          "properties": {
+            "instances": {
+              "type": "integer",
+              "description": "Number of physical Thor instances to create from this logical configuration",
+              "minimum": 2
+            },
+            "instanceTemplate": {
+              "type": "string",
+              "description": "Template for instance names (e.g., 'thor-az{instance}' generates thor-az1, thor-az2, etc.)",
+              "default": "{name}-{instance}"
+            }
+          },
+          "required": ["instances"],
+          "additionalProperties": false
+        },
         "image": {
           "$ref": "#/definitions/image"
         },

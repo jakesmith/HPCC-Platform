@@ -1331,7 +1331,37 @@ Generate instance queue names
 {{ end -}}
 {{- $stdThorQueues := dict -}}
 {{- $stdThorQueuesWithAux := dict -}}
+{{- /* Expand logical clusters into physical instances */ -}}
+{{- $expandedThors := list -}}
 {{- range $.Values.thor -}}
+ {{- if not .disabled -}}
+  {{- if hasKey . "cluster" -}}
+   {{- $thorConfig := . -}}
+   {{- $cluster := .cluster -}}
+   {{- $instances := $cluster.instances | int -}}
+   {{- $instanceTemplate := $cluster.instanceTemplate | default "{name}-{instance}" -}}
+   
+   {{- /* Calculate divided limits */ -}}
+   {{- $maxJobsPerInstance := div $thorConfig.maxJobs $instances -}}
+   {{- $maxGraphsPerInstance := div $thorConfig.maxGraphs $instances -}}
+   
+   {{- /* Generate each instance */ -}}
+   {{- range $i := untilStep 1 (int (add1 $instances)) 1 -}}
+    {{- $instanceName := $instanceTemplate | replace "{name}" $thorConfig.name | replace "{instance}" (toString $i) -}}
+    {{- $instance := deepCopy $thorConfig -}}
+    {{- $_ := set $instance "name" $instanceName -}}
+    {{- $_ := set $instance "maxJobs" $maxJobsPerInstance -}}
+    {{- $_ := set $instance "maxGraphs" $maxGraphsPerInstance -}}
+    {{- $_ := set $instance "auxQueues" (list $thorConfig.name) -}}
+    {{- $_ := unset $instance "cluster" -}}
+    {{- $expandedThors = append $expandedThors $instance -}}
+   {{- end -}}
+  {{- else -}}
+   {{- $expandedThors = append $expandedThors . -}}
+  {{- end -}}
+ {{- end -}}
+{{- end -}}
+{{- range $expandedThors -}}
  {{- if not .disabled -}}
   {{- $queueItem := dict "name" .name "type" "thor" -}}
   {{- if hasKey . "prefix" -}}
