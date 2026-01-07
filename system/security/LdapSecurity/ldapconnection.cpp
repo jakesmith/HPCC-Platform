@@ -35,6 +35,9 @@
 #include <map>
 #include <string>
 #include <set>
+#include <vector>
+#include <algorithm>
+#include <atomic>
 
 #ifdef _WIN32
 #include <lm.h>
@@ -1631,6 +1634,22 @@ private:
     CIArrayOf<MemoryAttrItem> m_unknownSIDCache;//cache Security Identifier Structure (SID) of previously deleted/orphaned LDAP objects
     bool m_useLegacySuperUserStatusCheck = false;
 
+    // DoS protection for failed authentication attempts
+    struct FailedAuthAttempt
+    {
+        time_t timestamp;
+        FailedAuthAttempt(time_t t) : timestamp(t) {}
+    };
+    
+    CriticalSection m_authFailureLock;
+    std::map<std::string, std::vector<FailedAuthAttempt>> m_failedAuthAttempts;
+    std::map<std::string, time_t> m_blockedAccounts;
+    
+    // DoS protection configuration parameters (seconds)
+    unsigned m_maxFailedAttempts;      // N - max failures allowed
+    unsigned m_failureTimeWindow;      // T - time window to count failures
+    unsigned m_accountBlockDuration;   // B - how long to block account
+
 
 public:
     IMPLEMENT_IINTERFACE
@@ -1646,6 +1665,12 @@ public:
         //m_defaultFileScopePermission = -2;
         //m_defaultWorkunitScopePermission = -2;
         m_domainPwdsNeverExpire = false;
+        
+        // Initialize DoS protection parameters with defaults
+        // N=5 failures, T=300 seconds (5 minutes), B=900 seconds (15 minutes)
+        m_maxFailedAttempts = cfg ? cfg->getPropInt("@authMaxFailedAttempts", 5) : 5;
+        m_failureTimeWindow = cfg ? cfg->getPropInt("@authFailureTimeWindow", 300) : 300;
+        m_accountBlockDuration = cfg ? cfg->getPropInt("@authBlockDuration", 900) : 900;
     }
 
     virtual void init(IPermissionProcessor* pp)
@@ -1774,6 +1799,101 @@ public:
         dt.adjustTime(dt.queryUtcToLocalDelta());
     }
 
+    // DoS protection helper methods
+    bool isAccountBlocked(const char* username)
+    {
+        CriticalBlock block(m_authFailureLock);
+        
+        auto it = m_blockedAccounts.find(username);
+        if (it == m_blockedAccounts.end())
+            return false;
+            
+        time_t now;
+        time(&now);
+        
+        // Check if block has expired
+        if (difftime(now, it->second) >= m_accountBlockDuration)
+        {
+            m_blockedAccounts.erase(it);
+            return false;
+        }
+        
+        return true;
+    }
+    
+    void recordFailedAuth(const char* username)
+    {
+        CriticalBlock block(m_authFailureLock);
+        
+        time_t now;
+        time(&now);
+        
+        // Get or create the failure list for this username
+        auto& failures = m_failedAuthAttempts[username];
+        
+        // Remove old failures outside the time window
+        failures.erase(
+            std::remove_if(failures.begin(), failures.end(),
+                [this, now](const FailedAuthAttempt& attempt) {
+                    return difftime(now, attempt.timestamp) >= m_failureTimeWindow;
+                }),
+            failures.end()
+        );
+        
+        // Add the new failure
+        failures.push_back(FailedAuthAttempt(now));
+        
+        // Check if we've exceeded the threshold
+        if (failures.size() >= m_maxFailedAttempts)
+        {
+            m_blockedAccounts[username] = now;
+            WARNLOG("LDAP DoS Protection: Account '%s' blocked for %u seconds after %u failed authentication attempts within %u seconds",
+                    username, m_accountBlockDuration, (unsigned)failures.size(), m_failureTimeWindow);
+        }
+    }
+    
+    void clearFailedAuth(const char* username)
+    {
+        CriticalBlock block(m_authFailureLock);
+        m_failedAuthAttempts.erase(username);
+        // Note: We don't clear m_blockedAccounts here - a block should remain until it expires
+    }
+    
+    void cleanupOldEntries()
+    {
+        CriticalBlock block(m_authFailureLock);
+        
+        time_t now;
+        time(&now);
+        
+        // Clean up old blocked accounts
+        for (auto it = m_blockedAccounts.begin(); it != m_blockedAccounts.end();)
+        {
+            if (difftime(now, it->second) >= m_accountBlockDuration)
+                it = m_blockedAccounts.erase(it);
+            else
+                ++it;
+        }
+        
+        // Clean up old failed attempts
+        for (auto it = m_failedAuthAttempts.begin(); it != m_failedAuthAttempts.end();)
+        {
+            auto& failures = it->second;
+            failures.erase(
+                std::remove_if(failures.begin(), failures.end(),
+                    [this, now](const FailedAuthAttempt& attempt) {
+                        return difftime(now, attempt.timestamp) >= m_failureTimeWindow;
+                    }),
+                failures.end()
+            );
+            
+            if (failures.empty())
+                it = m_failedAuthAttempts.erase(it);
+            else
+                ++it;
+        }
+    }
+
     virtual bool authenticate(ISecUser& user)
     {
         {
@@ -1784,6 +1904,21 @@ public:
             const char* password = user.credentials().getPassword();
             if(!username || !*username || !password || !*password)
                 return false;
+
+            // DoS Protection: Check if account is blocked
+            if (isAccountBlocked(username))
+            {
+                DBGLOG("LDAP DoS Protection: Authentication blocked for user '%s' due to too many failed attempts", username);
+                user.setAuthenticateStatus(AS_ACCOUNT_LOCKED);
+                return false;
+            }
+            
+            // Periodically clean up old entries to prevent memory leaks
+            static std::atomic<unsigned> authCount{0};
+            if ((++authCount % 100) == 0)  // Clean up every 100 authentications
+            {
+                cleanupOldEntries();
+            }
 
             if (getMaxPwdAge(m_connections,(char*)m_ldapconfig->getBasedn(), m_ldapconfig->getLdapTimeout()) != PWD_NEVER_EXPIRES)
                 m_domainPwdsNeverExpire = false;
@@ -1990,6 +2125,9 @@ public:
             }
             if(rc != LDAP_SUCCESS)
             {
+                // DoS Protection: Record failed authentication attempt
+                recordFailedAuth(username);
+                
                 if (ldap_errstring && *ldap_errstring && strstr(ldap_errstring, " data "))//if extended error strings are available (they are not in windows clients)
                 {
 #ifdef _DEBUG
@@ -2043,6 +2181,10 @@ public:
                 }
                 return false;
             }
+            
+            // DoS Protection: Clear failed attempts on successful authentication
+            clearFailedAuth(username);
+            
             user.setAuthenticateStatus(AS_AUTHENTICATED);
         }
         //Always retrieve user info(SID, UID, fullname, etc) for Active Directory, when the user first logs in.
