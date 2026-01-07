@@ -36,7 +36,7 @@ extern DALIADMIN_API bool exportToXML(const char *path, StringBuffer &out, bool 
 extern DALIADMIN_API bool importFromFile(const char *path, const char *filename, bool add, StringBuffer &out);
 extern DALIADMIN_API bool importFromXML(const char *path, const char *xml, bool add, StringBuffer &out);
 extern DALIADMIN_API bool erase(const char *path, bool backup,StringBuffer &out);
-extern DALIADMIN_API StringBuffer &setValue(const char *path, const char *val, StringBuffer &oldVal);
+extern DALIADMIN_API bool setValue(const char *path, const char *val, StringBuffer &oldVal);
 extern DALIADMIN_API void getValue(const char *path, StringBuffer& out);
 extern DALIADMIN_API void bget(const char *path, const char *outfn);
 extern DALIADMIN_API void wget(const char *path);

@@ -253,7 +253,7 @@ bool erase(const char *path, bool backup, StringBuffer &out)
 
 //=============================================================================
 
-StringBuffer &setValue(const char *path,const char *val,StringBuffer &oldVal)
+bool setValue(const char *path,const char *val,StringBuffer &oldVal)
 {
     StringBuffer head;
     StringBuffer tmp;
@@ -261,14 +261,14 @@ StringBuffer &setValue(const char *path,const char *val,StringBuffer &oldVal)
     Owned<IRemoteConnection> conn = querySDS().connect(head.str(),myProcessSession(),RTM_LOCK_WRITE, daliConnectTimeoutMs);
     if (!conn) {
         UERRLOG("Could not connect to %s",path);
-        return oldVal;
+        return false;
     }
     Owned<IPropertyTree> root = conn->getRoot();
     root->getProp(tail,oldVal);
     root->setProp(tail,val);
     conn->commit();
     conn->close();
-    return oldVal;
+    return true;
 }
 
 //=============================================================================
