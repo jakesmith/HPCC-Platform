@@ -138,6 +138,7 @@ interface ISessionManagerServer: implements IConnectionMonitor
     virtual void stop() = 0;
     virtual bool queryScopeScansEnabled(IUserDescriptor *udesc, int * err, StringBuffer &retMsg) = 0;
     virtual bool enableScopeScans(IUserDescriptor *udesc, bool enable, int * err, StringBuffer &retMsg) = 0;
+    virtual void waitForClientsToDisconnect(unsigned timeoutMs) = 0;
 };
 
 
@@ -1782,6 +1783,59 @@ protected:
         return processlookup.count();
     }
 
+    void waitForClientsToDisconnect(unsigned timeoutMs)
+    {
+        if (timeoutMs == 0)
+        {
+            PROGLOG("Dali shutdown: grace period is 0, not waiting for clients");
+            return;
+        }
+        
+        PROGLOG("Dali shutdown: waiting for clients to disconnect (timeout: %u ms)", timeoutMs);
+        
+        constexpr unsigned checkInterval = 1000; // Check every second
+        constexpr unsigned logInterval = 5; // Log every 5 check intervals (5 seconds)
+        unsigned maxIterations = (timeoutMs + checkInterval - 1) / checkInterval; // Round up
+        
+        for (unsigned iteration = 0; iteration < maxIterations; iteration++)
+        {
+            unsigned clientCount = 0;
+            {
+                CHECKEDCRITICALBLOCK(sessmanagersect,60000);
+                clientCount = processlookup.count();
+            }
+            
+            if (clientCount == 0)
+            {
+                PROGLOG("Dali shutdown: all clients disconnected");
+                break;
+            }
+            
+            // Log progress periodically after some waiting time has elapsed
+            if ((iteration % logInterval == 0) && iteration > 0)
+            {
+                unsigned remainingSecs = ((maxIterations - iteration) * checkInterval) / 1000;
+                PROGLOG("Dali shutdown: waiting for %u clients to disconnect (%u seconds remaining)", clientCount, remainingSecs);
+            }
+            
+            Sleep(checkInterval);
+        }
+        
+        // Final check - if we exited the loop due to timeout, log remaining clients
+        unsigned finalClientCount = 0;
+        {
+            CHECKEDCRITICALBLOCK(sessmanagersect,60000);
+            finalClientCount = processlookup.count();
+        }
+        
+        if (finalClientCount > 0)
+        {
+            StringBuffer clientList;
+            getClientProcessList(clientList);
+            OWARNLOG("Dali shutdown: timeout reached with %u clients still connected:\n%s", finalClientCount, clientList.str());
+        }
+    }
+
 };
 
 
@@ -1818,6 +1872,21 @@ public:
 
     void suspend()
     {
+        // Get the shutdown grace period from configuration (default 60 seconds)
+        unsigned shutdownGracePeriodSecs = serverConfig->getPropInt("@shutdownGracePeriod", 60);
+        
+        // Cap at 1 day for practical reasons (keeps timeout reasonable for Kubernetes environments)
+        // This also prevents overflow: 86400 * 1000 = 86,400,000 ms (well within unsigned int max ~4.2B)
+        // Technical maximum to avoid overflow is ~4294967 seconds (~49 days) but 1 day is more than sufficient
+        if (shutdownGracePeriodSecs > 86400)
+        {
+            OWARNLOG("shutdownGracePeriod of %u seconds exceeds maximum of 86400 (1 day), using 86400", shutdownGracePeriodSecs);
+            shutdownGracePeriodSecs = 86400;
+        }
+        
+        CriticalBlock block(sessionCrit);
+        if (SessionManagerServer && shutdownGracePeriodSecs > 0)
+            SessionManagerServer->waitForClientsToDisconnect(shutdownGracePeriodSecs * 1000);
     }
 
     void stop()
