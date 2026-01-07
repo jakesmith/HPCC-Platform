@@ -1083,14 +1083,15 @@ public:
             slfn.clearForeign();
             srcdali.setown(createINode(ep));
         }
-        Owned<IPropertyTree> ftree = queryDistributedFileDirectory().getFileTree(srclfn,ctx.srcuser,srcdali, FOREIGN_DALI_TIMEOUT, GetFileTreeOpts::appendForeign);
-        if (!ftree.get()) {
+        Owned<IDistributedFile> file = wsdfs::lookup(srclfn, ctx.user, AccessMode::tbdRead, false, false, nullptr, defaultPrivilegedUser, INFINITE);
+       
+        if (!file.get()) {
             StringBuffer s;
             throw MakeStringException(-1,"Source file %s could not be found in Dali %s",slfn.get(),srcdali?srcdali->endpoint().getEndpointHostText(s).str():"(local)");
         }
         // now we can create name
         StringBuffer newroxieprefix;
-        constructDestinationName(dstlfn,ftree->queryProp("Attr/@roxiePrefix"),ctx.superdestination,dlfn,newroxieprefix);
+        constructDestinationName(dstlfn,file->queryAttributes().queryProp("@roxiePrefix"),ctx.superdestination,dlfn,newroxieprefix);
         if (!srcdali.get()||queryCoven().inCoven(srcdali)) {
             // if dali is local and filenames same
             if (strcmp(slfn.get(),dlfn.get())==0) {
@@ -1108,9 +1109,9 @@ public:
             if (!dfile->querySuperFile())
             {
                 if (ctx.superoptions->getIfModified()&&
-                    (ftree->hasProp("Attr/@fileCrc")&&ftree->getPropInt64("Attr/@size")&&
-                    ((unsigned)ftree->getPropInt64("Attr/@fileCrc")==(unsigned)dfile->queryAttributes().getPropInt64("@fileCrc"))&&
-                    (ftree->getPropInt64("Attr/@size")==dfile->getFileSize(false,false)))) {
+                    (file->queryAttributes().hasProp("@fileCrc")&&file->queryAttributes().getPropInt64("@size")&&
+                    ((unsigned)file->queryAttributes().getPropInt64("@fileCrc")==(unsigned)dfile->queryAttributes().getPropInt64("@fileCrc"))&&
+                    (file->queryAttributes().getPropInt64("@size")==dfile->getFileSize(false,false)))) {
                     PROGLOG("File copy of %s not done as file unchanged",srclfn);
                     return;
                 }
@@ -1118,7 +1119,9 @@ public:
             dfile->detach();
             dfile.clear();
         }
-        if (strcmp(ftree->queryName(),queryDfsXmlBranchName(DXB_File))==0) {
+        IDistributedSuperFile *sfile = file->querySuperFile();
+        if (!sfile)
+        {
             StringAttr wuid;
             const char *kind = ftree->queryProp("@kind");
             bool iskey = kind&&(strcmp(kind,"key")==0);
