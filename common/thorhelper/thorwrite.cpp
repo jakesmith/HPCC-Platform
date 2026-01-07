@@ -15,6 +15,7 @@
     limitations under the License.
 ############################################################################## */
 #include "jliball.hpp"
+#include "jptree.hpp"
 
 #include "thorfile.hpp"
 
@@ -176,7 +177,14 @@ void getDefaultWritePlane(StringBuffer & plane, unsigned helperFlags)
 {
     //NB: This can only access TDX flags because it is called from readers and writers
     if (helperFlags & TDXjobtemp)
-        getDefaultJobTempPlane(plane);
+    {
+        // Check if delayJobTempPublish is enabled - if so, use spill plane instead of data plane
+        bool delayJobTempPublish = getComponentConfigSP()->getPropBool("@delayJobTempPublish", false);
+        if (delayJobTempPublish)
+            getDefaultSpillPlane(plane);
+        else
+            getDefaultJobTempPlane(plane);
+    }
     else if (helperFlags & TDXtemporary)
         getDefaultSpillPlane(plane);
     else
