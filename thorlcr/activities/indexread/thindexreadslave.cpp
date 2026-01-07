@@ -19,6 +19,7 @@
 #include "jfile.hpp"
 #include "jtime.hpp"
 #include "jsort.hpp"
+#include <atomic>
 
 #include "rtlkey.hpp"
 #include "jhtree.hpp"
@@ -1273,6 +1274,61 @@ class CIndexCountSlaveActivity : public CIndexReadSlaveBase
     rowcount_t preknownTotalCount = 0;
     bool totalCountKnown = false;
     bool done = false;
+    mptag_t stopTag = TAG_NULL;
+    std::atomic<bool> stopped{false};
+
+    class CStopHandler : public CSimpleInterface, implements IThreaded
+    {
+        CIndexCountSlaveActivity &activity;
+        CThreaded threaded;
+        bool running = false;
+    public:
+        CStopHandler(CIndexCountSlaveActivity &_activity) 
+            : activity(_activity), threaded("CIndexCountSlaveActivity::CStopHandler")
+        {
+        }
+        ~CStopHandler()
+        {
+            stop();
+        }
+        void start()
+        {
+            if (!running && activity.stopTag != TAG_NULL)
+            {
+                running = true;
+                threaded.init(this, false);
+            }
+        }
+        void stop()
+        {
+            if (running)
+            {
+                running = false;
+                activity.container.queryJobChannel().queryJobComm().cancel(0, activity.stopTag);
+                threaded.join();
+            }
+        }
+        virtual void threadmain() override
+        {
+            CMessageBuffer msg;
+            while (running)
+            {
+                if (activity.container.queryJobChannel().queryJobComm().recv(msg, 0, activity.stopTag, nullptr))
+                {
+                    bool stopFlag;
+                    msg.read(stopFlag);
+                    if (stopFlag)
+                    {
+                        activity.stopped.store(true, std::memory_order_release);
+                        break;
+                    }
+                    msg.clear();
+                }
+                else
+                    break; // recv failed or was cancelled
+            }
+        }
+    } stopHandler;
 
     bool checkKeyedLimit()
     {
@@ -1285,11 +1341,22 @@ class CIndexCountSlaveActivity : public CIndexReadSlaveBase
         }
         return true;
     }
+    bool checkStopped()
+    {
+        return stopped.load(std::memory_order_acquire);
+    }
 public:
-    CIndexCountSlaveActivity(CGraphElementBase *_container) : CIndexReadSlaveBase(_container)
+    CIndexCountSlaveActivity(CGraphElementBase *_container) 
+        : CIndexReadSlaveBase(_container), stopHandler(*this)
     {
         helper = static_cast <IHThorIndexCountArg *> (container.queryHelper());
         appendOutputLinked(this);
+    }
+    virtual void init(MemoryBuffer &data, MemoryBuffer &slaveData) override
+    {
+        PARENT::init(data, slaveData);
+        if (!container.queryLocalOrGrouped())
+            data.read(stopTag);
     }
     virtual void prepareManager(IKeyManager *manager) override
     {
@@ -1323,6 +1390,8 @@ public:
             preknownTotalCount = 0;
         }
         done = false;
+        stopped.store(false, std::memory_order_release);
+        stopHandler.start();
     }
 
 // IRowStream
@@ -1371,10 +1440,16 @@ public:
                                 callback.finishedRow();
                             if ((totalCount > choosenLimit))
                                 break;
+                            // Check if master signaled us to stop
+                            if (checkStopped())
+                                break;
                         }
                         if (keyManager)
                             resetManager(keyManager);
                         if ((totalCount > choosenLimit))
+                            break;
+                        // Check if master signaled us to stop
+                        if (checkStopped())
                             break;
                     }
                     if (_currentManager)
@@ -1423,6 +1498,7 @@ public:
     }
     virtual void stop() override
     {
+        stopHandler.stop();
         if (RCMAX != keyedLimit) // NB: will not be true if nextRow() has handled
         {
             keyedLimitCount = sendGetCount(keyedProcessed);
@@ -1433,6 +1509,7 @@ public:
     }
     virtual void abort() override
     {
+        stopHandler.stop();
         CIndexReadSlaveBase::abort();
         cancelReceiveMsg(0, mpTag);
     }
