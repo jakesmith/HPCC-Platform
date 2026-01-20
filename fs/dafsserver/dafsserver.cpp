@@ -1128,14 +1128,7 @@ public:
     CRemoteRequest(int _cursorHandle, OutputFormat _format, ICompressor *_compressor, IExpander *_expander, IRemoteActivity *_activity)
         : cursorHandle(_cursorHandle), format(_format), activity(_activity), compressor(_compressor), expander(_expander)
     {
-        if (outFmt_Binary != format)
-        {
-            responseWriter.setown(createIXmlWriterExt(0, 0, nullptr, outFmt_Xml == format ? WTStandard : WTJSONObject));
-            responseWriter->outputBeginNested("Response", true);
-            if (outFmt_Xml == format)
-                responseWriter->outputCString("urn:hpcc:dfs", "@xmlns:dfs");
-            responseWriter->outputUInt(cursorHandle, sizeof(cursorHandle), "handle");
-        }
+        // responseWriter will be initialized in process() method for each request
     }
 
     ~CRemoteRequest()
@@ -1187,10 +1180,19 @@ public:
         if (requestTree->hasProp("replyLimit"))
             replyLimit = requestTree->getPropInt64("replyLimit", defaultDaFSReplyLimitKB) * 1024;
 
+        // Initialize responseWriter for each request (including continue requests)
         if (outFmt_Binary == format)
+        {
             responseMb.append(cursorHandle);
+        }
         else // outFmt_Xml || outFmt_Json
+        {
+            responseWriter.setown(createIXmlWriterExt(0, 0, nullptr, outFmt_Xml == format ? WTStandard : WTJSONObject));
+            responseWriter->outputBeginNested("Response", true);
+            if (outFmt_Xml == format)
+                responseWriter->outputCString("urn:hpcc:dfs", "@xmlns:dfs");
             responseWriter->outputUInt(cursorHandle, sizeof(cursorHandle), "handle");
+        }
 
         if (requestTree->hasProp("cursorBin")) // use handle if one provided
         {
@@ -6062,6 +6064,7 @@ int setDaliServerTrace(byte flags)
 #ifdef _USE_CPPUNIT
 #include "unittests.hpp"
 #include "rmtfile.hpp"
+#include "rmtclient.hpp"
 
 /* MP_START_PORT -> MP_END_PORT is the MP reserved dynamic port range, and is used here for convenience.
  * MP_START_PORT is used as starting point to find an available port for the temporary dafilesrv service in these unittests.
@@ -6070,6 +6073,88 @@ int setDaliServerTrace(byte flags)
 static unsigned serverPort = MP_START_PORT;
 static StringBuffer basePath;
 static Owned<CSimpleInterface> serverThread;
+
+class CServerThread : public CSimpleInterface, implements IThreaded
+{
+    CThreaded threaded;
+    Owned<CRemoteFileServer> server;
+    Linked<ISocket> socket;
+public:
+    CServerThread(CRemoteFileServer *_server, ISocket *_socket) : threaded("CServerThread"), server(_server), socket(_socket)
+    {
+        threaded.init(this, false);
+    }
+    ~CServerThread()
+    {
+        threaded.join();
+    }
+// IThreaded
+    virtual void threadmain() override
+    {
+        DAFSConnectCfg sslCfg = SSLNone;
+        server->run(nullptr, sslCfg, socket, nullptr, nullptr);
+    }
+};
+
+// Shared server functionality for tests
+static void testStartServer()
+{
+    Owned<ISocket> socket;
+
+    unsigned endPort = MP_END_PORT;
+    while (1)
+    {
+        try
+        {
+            socket.setown(ISocket::create(serverPort));
+            break;
+        }
+        catch (IJSOCK_Exception *e)
+        {
+            if (e->errorCode() != JSOCKERR_port_in_use)
+            {
+                StringBuffer eStr;
+                e->errorMessage(eStr);
+                e->Release();
+                CPPUNIT_ASSERT_MESSAGE(eStr.str(), 0);
+            }
+            else if (serverPort == endPort)
+            {
+                e->Release();
+                CPPUNIT_ASSERT_MESSAGE("Could not find a free port to use for remote file server", 0);
+            }
+        }
+        ++serverPort;
+    }
+
+    basePath.clear().append("//");
+    SocketEndpoint ep(serverPort);
+    ep.getEndpointHostText(basePath);
+
+    char cpath[_MAX_DIR];
+    if (!GetCurrentDirectory(_MAX_DIR, cpath))
+        CPPUNIT_ASSERT_MESSAGE("Current directory path too big", 0);
+    else
+        basePath.append(cpath);
+    addPathSepChar(basePath);
+
+    PROGLOG("basePath = %s", basePath.str());
+
+    Owned<IRemoteFileServer> server = createRemoteFileServer();
+    serverThread.setown(new CServerThread(QUERYINTERFACE(server.getClear(), CRemoteFileServer), socket.getClear()));
+}
+
+static void testStopServer()
+{
+    if (serverThread)
+    {
+        SocketEndpoint ep(serverPort);
+        Owned<ISocket> sock = ISocket::connect_timeout(ep, 60 * 1000);
+        if (sock)
+            stopRemoteServer(sock);
+        serverThread.clear();
+    }
+}
 
 
 class RemoteFileSlowTest : public CppUnit::TestFixture
@@ -6121,70 +6206,7 @@ protected:
     }
     void testStartServer()
     {
-        Owned<ISocket> socket;
-
-        unsigned endPort = MP_END_PORT;
-        while (1)
-        {
-            try
-            {
-                socket.setown(ISocket::create(serverPort));
-                break;
-            }
-            catch (IJSOCK_Exception *e)
-            {
-                if (e->errorCode() != JSOCKERR_port_in_use)
-                {
-                    StringBuffer eStr;
-                    e->errorMessage(eStr);
-                    e->Release();
-                    CPPUNIT_ASSERT_MESSAGE(eStr.str(), 0);
-                }
-                else if (serverPort == endPort)
-                {
-                    e->Release();
-                    CPPUNIT_ASSERT_MESSAGE("Could not find a free port to use for remote file server", 0);
-                }
-            }
-            ++serverPort;
-        }
-
-        basePath.append("//");
-        SocketEndpoint ep(serverPort);
-        ep.getEndpointHostText(basePath);
-
-        char cpath[_MAX_DIR];
-        if (!GetCurrentDirectory(_MAX_DIR, cpath))
-            CPPUNIT_ASSERT_MESSAGE("Current directory path too big", 0);
-        else
-            basePath.append(cpath);
-        addPathSepChar(basePath);
-
-        PROGLOG("basePath = %s", basePath.str());
-
-        class CServerThread : public CSimpleInterface, implements IThreaded
-        {
-            CThreaded threaded;
-            Owned<CRemoteFileServer> server;
-            Linked<ISocket> socket;
-        public:
-            CServerThread(CRemoteFileServer *_server, ISocket *_socket) : threaded("CServerThread"), server(_server), socket(_socket)
-            {
-                threaded.init(this, false);
-            }
-            ~CServerThread()
-            {
-                threaded.join();
-            }
-        // IThreaded
-            virtual void threadmain() override
-            {
-                DAFSConnectCfg sslCfg = SSLNone;
-                server->run(nullptr, sslCfg, socket, nullptr, nullptr);
-            }
-        };
-        Owned<IRemoteFileServer> server = createRemoteFileServer();
-        serverThread.setown(new CServerThread(QUERYINTERFACE(server.getClear(), CRemoteFileServer), socket.getClear()));
+        ::testStartServer();
     }
     void testBasicFunctionality()
     {
@@ -6419,16 +6441,309 @@ protected:
         Owned<IFile> subDirIFile = createIFile(subDirPath);
         CPPUNIT_ASSERT(subDirIFile->remove());
 
-        SocketEndpoint ep(serverPort);
-        Owned<ISocket> sock = ISocket::connect_timeout(ep, 60 * 1000);
-        CPPUNIT_ASSERT(RFEnoerror == stopRemoteServer(sock));
-
-        serverThread.clear();
+        testStopServer();
     }
 };
 
 CPPUNIT_TEST_SUITE_REGISTRATION( RemoteFileSlowTest );
 CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( RemoteFileSlowTest, "RemoteFileSlowTests" );
+
+
+class JsonStreamingTest : public CppUnit::TestFixture
+{
+    CPPUNIT_TEST_SUITE(JsonStreamingTest);
+        CPPUNIT_TEST(testStartServer);
+        CPPUNIT_TEST(testJsonStreamingBasic);
+        CPPUNIT_TEST(testJsonContinuation);
+        CPPUNIT_TEST(testStopServer);
+    CPPUNIT_TEST_SUITE_END();
+
+protected:
+    void testStartServer()
+    {
+        ::testStartServer();
+    }
+
+    void testStopServer()
+    {
+        ::testStopServer();
+    }
+
+    void testJsonStreamingBasic()
+    {
+        // Test basic JSON streaming functionality by connecting to the server
+        VStringBuffer filePath("%s%s", basePath.str(), "jsontest_file.csv");
+        
+        // Create a test file with CSV data
+        Owned<IFile> iFile = createIFile(filePath);
+        CPPUNIT_ASSERT(iFile);
+        Owned<IFileIO> iFileIO = iFile->open(IFOcreate);
+        CPPUNIT_ASSERT(iFileIO);
+
+        // Write CSV test data with multiple rows
+        StringBuffer csvData;
+        csvData.append("name,age,city\n");
+        csvData.append("John,25,New York\n");
+        csvData.append("Jane,30,London\n");
+        csvData.append("Bob,35,Paris\n");
+        csvData.append("Alice,28,Tokyo\n");
+        
+        size32_t csvDataLen = csvData.length();
+        size32_t sz = iFileIO->write(0, csvDataLen, csvData.str());
+        CPPUNIT_ASSERT(sz == csvDataLen);
+        iFileIO.clear();
+
+        try
+        {
+            // Connect to the server
+            SocketEndpoint ep(serverPort);
+            Owned<ISocket> sock = ISocket::connect_timeout(ep, 60 * 1000);
+            CPPUNIT_ASSERT(sock);
+
+            // Test basic JSON newstream request
+            MemoryBuffer sendBuf, replyBuf;
+            initSendBuffer(sendBuf);
+            sendBuf.append((RemoteFileCommandType)RFCStreamReadJSON);
+
+            // Create JSON request for newstream
+            StringBuffer jsonRequest;
+            jsonRequest.append("{\n");
+            jsonRequest.append("  \"command\": \"newstream\",\n");
+            jsonRequest.append("  \"format\": \"json\",\n");
+            jsonRequest.append("  \"replyLimit\": 1024,\n");
+            jsonRequest.append("  \"node\": {\n");
+            jsonRequest.appendf("    \"fileName\": \"%s\",\n", filePath.str());
+            jsonRequest.append("    \"kind\": \"diskread\"\n");
+            jsonRequest.append("  }\n");
+            jsonRequest.append("}\n");
+
+            sendBuf.append(jsonRequest.str());
+            
+            // Send request and get response
+            sock->write(sendBuf.bufferBase(), sendBuf.length());
+            
+            // Read response header
+            unsigned replyLen;
+            sock->read(&replyLen, sizeof(replyLen));
+            replyLen = _BSWAP32(replyLen);
+            
+            replyBuf.setEndian(__BIG_ENDIAN);
+            replyBuf.reserveTruncate(replyLen);
+            sock->read(replyBuf.bufferBase(), replyLen);
+            
+            // Check error code
+            unsigned errorCode;
+            replyBuf.read(errorCode);
+            CPPUNIT_ASSERT(errorCode == RFEnoerror);
+            
+            // Read JSON response
+            size32_t remaining = replyBuf.remaining();
+            const char* jsonResponse = (const char*)replyBuf.readDirect(remaining);
+            
+            PROGLOG("JSON Response: %.*s", remaining, jsonResponse);
+            
+            // Verify it's valid JSON and contains expected structure
+            StringBuffer responseStr;
+            responseStr.append(remaining, jsonResponse);
+            CPPUNIT_ASSERT(responseStr.length() > 0);
+            CPPUNIT_ASSERT(strstr(responseStr.str(), "Response") != nullptr);
+            CPPUNIT_ASSERT(strstr(responseStr.str(), "handle") != nullptr);
+            CPPUNIT_ASSERT(strstr(responseStr.str(), "Row") != nullptr);
+            
+            // Verify no duplicate handle fields
+            const char* firstHandle = strstr(responseStr.str(), "\"handle\"");
+            CPPUNIT_ASSERT(firstHandle != nullptr);
+            const char* secondHandle = strstr(firstHandle + 8, "\"handle\"");
+            CPPUNIT_ASSERT_MESSAGE("Found duplicate handle field in JSON response", secondHandle == nullptr);
+            
+            sock.clear();
+        }
+        catch (IException* e)
+        {
+            StringBuffer errMsg;
+            e->errorMessage(errMsg);
+            e->Release();
+            CPPUNIT_ASSERT_MESSAGE(errMsg.str(), false);
+        }
+        
+        // Cleanup
+        CPPUNIT_ASSERT(iFile->remove());
+        PROGLOG("Basic JSON streaming test completed - verified no duplicate handle fields");
+    }
+
+    void testJsonContinuation()
+    {
+        // Test JSON continuation functionality - the core fix
+        VStringBuffer filePath("%s%s", basePath.str(), "jsontest_continue.csv");
+        
+        // Create test file with more data for pagination
+        Owned<IFile> iFile = createIFile(filePath);
+        CPPUNIT_ASSERT(iFile);
+        Owned<IFileIO> iFileIO = iFile->open(IFOcreate);
+        CPPUNIT_ASSERT(iFileIO);
+
+        // Write multiple rows of CSV data
+        StringBuffer csvData;
+        csvData.append("id,name,value\n");
+        for (int i = 1; i <= 20; i++)
+        {
+            csvData.appendf("%d,row%d,value%d\n", i, i, i * 10);
+        }
+        
+        size32_t csvDataLen = csvData.length();
+        size32_t sz = iFileIO->write(0, csvDataLen, csvData.str());
+        CPPUNIT_ASSERT(sz == csvDataLen);
+        iFileIO.clear();
+
+        try
+        {
+            // Connect to the server
+            SocketEndpoint ep(serverPort);
+            Owned<ISocket> sock = ISocket::connect_timeout(ep, 60 * 1000);
+            CPPUNIT_ASSERT(sock);
+
+            StringBuffer cursorBin;
+            int handle = 0;
+
+            // First request - newstream with small reply limit for pagination
+            {
+                MemoryBuffer sendBuf, replyBuf;
+                initSendBuffer(sendBuf);
+                sendBuf.append((RemoteFileCommandType)RFCStreamReadJSON);
+
+                StringBuffer jsonRequest;
+                jsonRequest.append("{\n");
+                jsonRequest.append("  \"command\": \"newstream\",\n");
+                jsonRequest.append("  \"format\": \"json\",\n");
+                jsonRequest.append("  \"replyLimit\": 200,\n");  // Small limit to force pagination
+                jsonRequest.append("  \"node\": {\n");
+                jsonRequest.appendf("    \"fileName\": \"%s\",\n", filePath.str());
+                jsonRequest.append("    \"kind\": \"diskread\"\n");
+                jsonRequest.append("  }\n");
+                jsonRequest.append("}\n");
+
+                sendBuf.append(jsonRequest.str());
+                sock->write(sendBuf.bufferBase(), sendBuf.length());
+                
+                // Read first response
+                unsigned replyLen;
+                sock->read(&replyLen, sizeof(replyLen));
+                replyLen = _BSWAP32(replyLen);
+                
+                replyBuf.setEndian(__BIG_ENDIAN);
+                replyBuf.reserveTruncate(replyLen);
+                sock->read(replyBuf.bufferBase(), replyLen);
+                
+                unsigned errorCode;
+                replyBuf.read(errorCode);
+                CPPUNIT_ASSERT(errorCode == RFEnoerror);
+                
+                size32_t remaining = replyBuf.remaining();
+                const char* jsonResponse = (const char*)replyBuf.readDirect(remaining);
+                StringBuffer firstResponse;
+                firstResponse.append(remaining, jsonResponse);
+                
+                PROGLOG("First JSON Response: %s", firstResponse.str());
+                
+                // Verify no duplicate handle fields in first response
+                const char* firstHandle = strstr(firstResponse.str(), "\"handle\"");
+                CPPUNIT_ASSERT(firstHandle != nullptr);
+                const char* secondHandle = strstr(firstHandle + 8, "\"handle\"");
+                CPPUNIT_ASSERT_MESSAGE("Found duplicate handle field in first JSON response", secondHandle == nullptr);
+                
+                // Extract handle and cursor for continue request
+                // Simple parsing - in real test this would use proper JSON parser
+                const char* handleStart = strstr(firstResponse.str(), "\"handle\":");
+                CPPUNIT_ASSERT(handleStart != nullptr);
+                handle = atoi(handleStart + 9);
+                CPPUNIT_ASSERT(handle > 0);
+                
+                const char* cursorStart = strstr(firstResponse.str(), "\"cursorBin\":\"");
+                if (cursorStart)
+                {
+                    cursorStart += 13; // Skip to cursor value
+                    const char* cursorEnd = strchr(cursorStart, '"');
+                    CPPUNIT_ASSERT(cursorEnd != nullptr);
+                    cursorBin.append(cursorEnd - cursorStart, cursorStart);
+                }
+            }
+
+            // Second request - continue
+            if (cursorBin.length() > 0)
+            {
+                MemoryBuffer sendBuf, replyBuf;
+                initSendBuffer(sendBuf);
+                sendBuf.append((RemoteFileCommandType)RFCStreamReadJSON);
+
+                StringBuffer jsonRequest;
+                jsonRequest.append("{\n");
+                jsonRequest.append("  \"command\": \"continue\",\n");
+                jsonRequest.append("  \"format\": \"json\",\n");
+                jsonRequest.appendf("  \"handle\": %d,\n", handle);
+                jsonRequest.appendf("  \"cursorBin\": \"%s\"\n", cursorBin.str());
+                jsonRequest.append("}\n");
+
+                sendBuf.append(jsonRequest.str());
+                sock->write(sendBuf.bufferBase(), sendBuf.length());
+                
+                // Read continue response
+                unsigned replyLen;
+                sock->read(&replyLen, sizeof(replyLen));
+                replyLen = _BSWAP32(replyLen);
+                
+                replyBuf.setEndian(__BIG_ENDIAN);
+                replyBuf.reserveTruncate(replyLen);
+                sock->read(replyBuf.bufferBase(), replyLen);
+                
+                unsigned errorCode;
+                replyBuf.read(errorCode);
+                CPPUNIT_ASSERT(errorCode == RFEnoerror);
+                
+                size32_t remaining = replyBuf.remaining();
+                const char* jsonResponse = (const char*)replyBuf.readDirect(remaining);
+                StringBuffer continueResponse;
+                continueResponse.append(remaining, jsonResponse);
+                
+                PROGLOG("Continue JSON Response: %s", continueResponse.str());
+                
+                // Verify continue response has proper structure (THE KEY TEST)
+                CPPUNIT_ASSERT(continueResponse.length() > 0);
+                CPPUNIT_ASSERT(strstr(continueResponse.str(), "Response") != nullptr);
+                
+                // Verify no duplicate handle fields in continue response
+                const char* firstHandle = strstr(continueResponse.str(), "\"handle\"");
+                CPPUNIT_ASSERT(firstHandle != nullptr);
+                const char* secondHandle = strstr(firstHandle + 8, "\"handle\"");
+                CPPUNIT_ASSERT_MESSAGE("Found duplicate handle field in continue JSON response", secondHandle == nullptr);
+                
+                // Verify it's a well-formed single JSON object (not malformed structure)
+                int braceCount = 0;
+                for (const char* p = continueResponse.str(); *p; p++)
+                {
+                    if (*p == '{') braceCount++;
+                    else if (*p == '}') braceCount--;
+                }
+                CPPUNIT_ASSERT_MESSAGE("Malformed JSON structure in continue response", braceCount == 0);
+            }
+
+            sock.clear();
+        }
+        catch (IException* e)
+        {
+            StringBuffer errMsg;
+            e->errorMessage(errMsg);
+            e->Release();
+            CPPUNIT_ASSERT_MESSAGE(errMsg.str(), false);
+        }
+        
+        // Cleanup
+        CPPUNIT_ASSERT(iFile->remove());
+        PROGLOG("JSON continuation test completed - verified fix prevents duplicate handle fields and malformed structure");
+    }
+};
+
+CPPUNIT_TEST_SUITE_REGISTRATION( JsonStreamingTest );
+CPPUNIT_TEST_SUITE_NAMED_REGISTRATION( JsonStreamingTest, "JsonStreamingTests" );
 
 
 #endif // _USE_CPPUNIT
