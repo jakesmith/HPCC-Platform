@@ -404,6 +404,18 @@ public:
             // scheduling and hasn't had a chance to update the workunit, then the agent will see the k8s job exception
             // here, but does not know which wuid to update (because the k8s instance will have processed an
             // arbitrary number of jobs since launch). See HPCC-35523
+
+            // There's another case where this should update...
+            // If the job is scheduled, but has not got to the point of setting the workunit state to running,
+            // and the thormanager job never starts up, or starts, but never gets to the point of being ready
+            // then this should still set an error condition.
+            // So if at this point, and still state==WuStateBlocked, and/or there is 0 <Process> information for
+            // this jobName (jobName includes pod hash - it is based off my-pod-name)
+            // i.e. if  "thormanager-job-thor400-75f477d85d-sl9q8-215" isn't in workunit, then this never
+            // succeeded in fully starting it, so issue an exception to it.
+            // BUT: will there even be an 'exception' at this point, since the thormanager job could be scheduled
+            // and could have started, just didn't get very far..
+            // I think need to check this even when there is no 'exception' ..
             if (!sharedK8sJob || !wasScheduled)
             {
                 Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
