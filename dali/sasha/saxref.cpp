@@ -3090,6 +3090,7 @@ public:
         PROGLOG(LOGPFX2 "Started");
         unsigned defaultExpireDays = props->getPropInt("@expiryDefault", DEFAULT_EXPIRYDAYS);
         unsigned defaultPersistExpireDays = props->getPropInt("@persistExpiryDefault", DEFAULT_PERSISTEXPIRYDAYS);
+        unsigned maxFileLimit = props->getPropInt("@maxFileLimit", UINT_MAX);
         StringArray expirylist;
 
         StringBuffer filterBuf;
@@ -3099,12 +3100,17 @@ public:
         filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFsuperowner)).append(DFUQFilterSeparator).append("false").append(DFUQFilterSeparator);
         // hasProp,Attr/@expireDays,"true" - meaning file has @expireDays attribute
         filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFexpiredays)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
+        if (UINT_MAX != maxFileLimit)
+            filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFMaxFiles).append(DFUQFilterSeparator).append(maxFileLimit);
 
         std::vector<DFUQResultField> selectiveFields = {DFUQResultField::expireDays, DFUQResultField::accessed, DFUQResultField::persistent, DFUQResultField::term};
 
         bool allMatchingFilesReceived;
+        unsigned total = 0;
         Owned<IPropertyTreeIterator> iter = queryDistributedFileDirectory().getDFAttributesFilteredIterator(filterBuf,
-            nullptr, selectiveFields.data(), udesc, true, allMatchingFilesReceived);
+            nullptr, selectiveFields.data(), udesc, true, allMatchingFilesReceived, &total);
+        if (!allMatchingFilesReceived)
+            OWARNLOG(LOGPFX2 "Exceeded maximum retrievable files (fetched: %u)", total);
         ForEach(*iter)
         {
             IPropertyTree &attr=iter->query();
