@@ -3091,49 +3091,179 @@ public:
         unsigned defaultExpireDays = props->getPropInt("@expiryDefault", DEFAULT_EXPIRYDAYS);
         unsigned defaultPersistExpireDays = props->getPropInt("@persistExpiryDefault", DEFAULT_PERSISTEXPIRYDAYS);
         unsigned maxFileLimit = props->getPropInt("@maxFileLimit", UINT_MAX);
-        StringArray expirylist;
 
-        StringBuffer filterBuf;
-        // all non-superfiles
-        filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(DFUQFFTnonsuperfileonly).append(DFUQFilterSeparator);
-        // hasProp,SuperOwner,"false" - meaning not owned by a superfile
-        filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFsuperowner)).append(DFUQFilterSeparator).append("false").append(DFUQFilterSeparator);
-        // hasProp,Attr/@expireDays,"true" - meaning file has @expireDays attribute
-        filterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFexpiredays)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
-        if (UINT_MAX != maxFileLimit)
-            filterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFMaxFiles).append(DFUQFilterSeparator).append(maxFileLimit);
+        // Determine the effective limit for adaptive windowing
+        unsigned effectiveLimit = (UINT_MAX != maxFileLimit) ? maxFileLimit : 100000; // 100k is server default
+        unsigned lowWaterMark = effectiveLimit / 5; // 20% threshold for expanding window
 
         std::vector<DFUQResultField> selectiveFields = {DFUQResultField::expireDays, DFUQResultField::accessed, DFUQResultField::persistent, DFUQResultField::term};
 
+        CDateTime now;
+        now.setNow();
+        
+        unsigned totalProcessed = 0;
+        unsigned totalDeleted = 0;
+        
+        // Try fetching all files first (no time filter)
         bool allMatchingFilesReceived;
-        unsigned total = 0;
+        unsigned fetchCount = 0;
+        
+        StringBuffer baseFilterBuf;
+        // all non-superfiles
+        baseFilterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFFileType).append(DFUQFilterSeparator).append(DFUQFFTnonsuperfileonly).append(DFUQFilterSeparator);
+        // hasProp,SuperOwner,"false" - meaning not owned by a superfile
+        baseFilterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFsuperowner)).append(DFUQFilterSeparator).append("false").append(DFUQFilterSeparator);
+        // hasProp,Attr/@expireDays,"true" - meaning file has @expireDays attribute
+        baseFilterBuf.append(DFUQFThasProp).append(DFUQFilterSeparator).append(getDFUQFilterFieldName(DFUQFFexpiredays)).append(DFUQFilterSeparator).append("true").append(DFUQFilterSeparator);
+        if (UINT_MAX != maxFileLimit)
+            baseFilterBuf.append(DFUQFTspecial).append(DFUQFilterSeparator).append(DFUQSFMaxFiles).append(DFUQFilterSeparator).append(maxFileLimit);
+
+        StringBuffer filterBuf(baseFilterBuf);
         Owned<IPropertyTreeIterator> iter = queryDistributedFileDirectory().getDFAttributesFilteredIterator(filterBuf,
-            nullptr, selectiveFields.data(), udesc, true, allMatchingFilesReceived, &total);
-        if (!allMatchingFilesReceived)
-            OWARNLOG(LOGPFX2 "Exceeded maximum retrievable files (fetched: %u)", total);
+            nullptr, selectiveFields.data(), udesc, true, allMatchingFilesReceived, &fetchCount);
+        
+        if (allMatchingFilesReceived)
+        {
+            PROGLOG(LOGPFX2 "Fetched all %u matching files in single query", fetchCount);
+            unsigned deleted = processExpiryBatch(iter, now, defaultExpireDays, defaultPersistExpireDays);
+            totalProcessed += fetchCount;
+            totalDeleted += deleted;
+        }
+        else
+        {
+            // Need to use time-windowing approach
+            OWARNLOG(LOGPFX2 "Exceeded maximum retrievable files (fetched: %u), using time-windowed approach", fetchCount);
+            
+            // Start with 1 year window, working from oldest files
+            unsigned windowDays = 365;
+            CDateTime windowEnd = now;
+            bool done = false;
+            unsigned windowIteration = 0;
+            
+            while (!done && !stopped)
+            {
+                windowIteration++;
+                CDateTime windowStart = windowEnd;
+                windowStart.adjustTime(-60*24*windowDays);
+                
+                StringBuffer startStr, endStr;
+                windowStart.getString(startStr);
+                windowEnd.getString(endStr);
+                
+                // Build filter with time range: modified < windowEnd (processing oldest files first)
+                filterBuf.clear().append(baseFilterBuf);
+                filterBuf.append(DFUQFTstringRange).append(DFUQFilterSeparator);
+                filterBuf.append(getDFUQFilterFieldName(DFUQFFtimemodified)).append(DFUQFilterSeparator);
+                filterBuf.append(DFUQFilterSeparator); // empty 'from' means unbounded (oldest)
+                filterBuf.append(endStr).append(DFUQFilterSeparator);
+                
+                fetchCount = 0;
+                try
+                {
+                    iter.setown(queryDistributedFileDirectory().getDFAttributesFilteredIterator(filterBuf,
+                        nullptr, selectiveFields.data(), udesc, true, allMatchingFilesReceived, &fetchCount);
+                    
+                    // Always process the batch we received, regardless of whether we hit the limit
+                    PROGLOG(LOGPFX2 "Window iteration %u: Fetched %u files (modified < %s)", 
+                        windowIteration, fetchCount, endStr.str());
+                    
+                    unsigned deleted = processExpiryBatch(iter, now, defaultExpireDays, defaultPersistExpireDays);
+                    totalProcessed += fetchCount;
+                    totalDeleted += deleted;
+                    
+                    if (!allMatchingFilesReceived)
+                    {
+                        // Exceeded limit - reduce window and retry same time period
+                        if (windowDays > 7)
+                        {
+                            windowDays /= 2;
+                            PROGLOG(LOGPFX2 "Exceeded limit, reducing window to %u days and retrying time period", windowDays);
+                            continue; // Retry same time period with smaller window
+                        }
+                        else
+                        {
+                            // Window at minimum, move to next window
+                            OERRLOG(LOGPFX2 "Window already at minimum 7 days but still exceeding limit, moving to next time period");
+                            windowEnd = windowStart;
+                            windowDays = 365; // Reset to 1 year for next window
+                            
+                            // Check if we've gone back far enough (e.g., 10 years)
+                            CDateTime tenYearsAgo = now;
+                            tenYearsAgo.adjustTime(-60*24*365*10);
+                            if (windowEnd.compare(tenYearsAgo, false) <= 0)
+                            {
+                                OWARNLOG(LOGPFX2 "Reached 10 years back in time, stopping time-windowed processing");
+                                done = true;
+                            }
+                            continue;
+                        }
+                    }
+                    
+                    // Optimize window size for next iteration
+                    if (fetchCount < lowWaterMark && windowDays < 365*2)
+                    {
+                        // Too few files, double the window for next time (max 2 years)
+                        windowDays = (windowDays * 2 > 365*2) ? 365*2 : windowDays * 2;
+                        PROGLOG(LOGPFX2 "Low file count (%u < %u), expanding next window to %u days", 
+                            fetchCount, lowWaterMark, windowDays);
+                    }
+                    
+                    // Move to next window (going backwards in time)
+                    windowEnd = windowStart;
+                    
+                    // Check if we've gone back far enough (e.g., 10 years)
+                    CDateTime tenYearsAgo = now;
+                    tenYearsAgo.adjustTime(-60*24*365*10);
+                    if (windowEnd.compare(tenYearsAgo, false) <= 0)
+                    {
+                        PROGLOG(LOGPFX2 "Reached 10 years back in time, stopping time-windowed processing");
+                        done = true;
+                    }
+                }
+                catch (IException *e)
+                {
+                    OWARNLOG(e, LOGPFX2 "Window iteration failed, continuing with next window");
+                    e->Release();
+                    
+                    // Move to next window despite error
+                    windowEnd = windowStart;
+                }
+            }
+        }
+        
+        PROGLOG(LOGPFX2 "%s - Processed %u files, deleted %u", 
+            stopped ? "Stopped" : "Done", totalProcessed, totalDeleted);
+    }
+
+    unsigned processExpiryBatch(IPropertyTreeIterator *iter, const CDateTime &now, 
+        unsigned defaultExpireDays, unsigned defaultPersistExpireDays)
+    {
+        StringArray expirylist;
+        
         ForEach(*iter)
         {
-            IPropertyTree &attr=iter->query();
+            if (stopped)
+                break;
+                
+            IPropertyTree &attr = iter->query();
             if (attr.hasProp("@expireDays"))
             {
                 unsigned expireDays = attr.getPropInt("@expireDays");
-                const char * name = attr.queryProp("@name");
+                const char *name = attr.queryProp("@name");
                 const char *lastAccessed = attr.queryProp("@accessed");
-                if (lastAccessed && name&&*name)
+                if (lastAccessed && name && *name)
                 {
                     if (0 == expireDays)
                     {
                         bool isPersist = attr.getPropBool("@persistent");
                         expireDays = isPersist ? defaultPersistExpireDays : defaultExpireDays;
                     }
-                    CDateTime now;
-                    now.setNow();
                     CDateTime expires;
                     try
                     {
                         expires.setString(lastAccessed);
                         expires.adjustTime(60*24*expireDays);
-                        if (now.compare(expires,false)>0)
+                        if (now.compare(expires, false) > 0)
                         {
                             expirylist.append(name);
                             StringBuffer expiresStr;
@@ -3143,15 +3273,15 @@ public:
                     }
                     catch (IException *e)
                     {
-                        StringBuffer s;
                         EXCLOG(e, LOGPFX2 "setdate");
                         e->Release();
                     }
                 }
             }
         }
-        iter.clear();
-        ForEachItemIn(i,expirylist)
+        
+        unsigned deleted = 0;
+        ForEachItemIn(i, expirylist)
         {
             if (stopped)
                 break;
@@ -3162,15 +3292,17 @@ public:
                  * If the file is locked, it implies it is being accessed.
                  */
                 queryDistributedFileDirectory().removeEntry(lfn, udesc, NULL, 0, true);
-                PROGLOG(LOGPFX2 "Deleted %s",lfn);
+                PROGLOG(LOGPFX2 "Deleted %s", lfn);
+                deleted++;
             }
-            catch (IException *e) // may want to just detach if fails
+            catch (IException *e)
             {
                 OWARNLOG(e, LOGPFX2 "remove");
                 e->Release();
             }
         }
-        PROGLOG(LOGPFX2 "%s",stopped?"Stopped":"Done");
+        
+        return deleted;
     }
 
     int run()
