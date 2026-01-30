@@ -4165,6 +4165,75 @@ bool CWsDfuEx::onAddRemote(IEspContext &context, IEspAddRemoteRequest &req, IEsp
     return true;
 }
 
+bool CWsDfuEx::onDFSFileRename(IEspContext &context, IEspDFSFileRenameRequest &req, IEspDFSFileRenameResponse &resp)
+{
+    try
+    {
+        context.ensureFeatureAccess(FEATURE_URL, SecAccess_Write, ECLWATCH_DFU_ACCESS_DENIED, "WsDfu::DFSFileRename: Permission denied.");
+
+        StringBuffer username;
+        context.getUserID(username);
+        Owned<IUserDescriptor> userdesc;
+        if(username.length() > 0)
+        {
+            userdesc.setown(createUserDescriptor());
+            userdesc->set(username.str(), context.queryPassword(), context.querySignature());
+        }
+
+        IArrayOf<IConstDFSFileRenameItem>& items = req.getFileRenames();
+        if (items.ordinality() == 0)
+            throw MakeStringException(ECLWATCH_MISSING_PARAMS, "No files specified for rename.");
+
+        IArrayOf<IEspDFSFileRenameResult> results;
+        IDistributedFileDirectory &fdir = queryDistributedFileDirectory();
+
+        ForEachItemIn(i, items)
+        {
+            IConstDFSFileRenameItem& item = items.item(i);
+            const char* oldname = item.getOldName();
+            const char* newname = item.getNewName();
+
+            Owned<IEspDFSFileRenameResult> result = createDFSFileRenameResult();
+            result->setOldName(oldname);
+            result->setNewName(newname);
+
+            try
+            {
+                if (isEmptyString(oldname))
+                    throw MakeStringException(ECLWATCH_INVALID_INPUT, "Old file name cannot be empty.");
+                if (isEmptyString(newname))
+                    throw MakeStringException(ECLWATCH_INVALID_INPUT, "New file name cannot be empty.");
+
+                PROGLOG("DFSFileRename: Renaming %s to %s", oldname, newname);
+
+                // Use renamePhysical to rename both logical entry and physical files
+                fdir.renamePhysical(oldname, newname, userdesc.get(), nullptr);
+
+                result->setSuccess(true);
+                result->setMessage("Successfully renamed.");
+            }
+            catch(IException* e)
+            {
+                StringBuffer msg;
+                e->errorMessage(msg);
+                ERRLOG("DFSFileRename failed for %s to %s: %s", oldname, newname, msg.str());
+                result->setSuccess(false);
+                result->setMessage(msg.str());
+                e->Release();
+            }
+
+            results.append(*result.getClear());
+        }
+
+        resp.setResults(results);
+    }
+    catch(IException* e)
+    {
+        FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
+    }
+    return true;
+}
+
 const int INTEGELSIZE = 20;
 const int REALSIZE = 32;
 const int STRINGSIZE = 128;

@@ -53,6 +53,7 @@ private:
     int copy();
     int remove();
     int rename();
+    int dfsrename();
     int list();
     int recover();
     int superfile(const char* action);
