@@ -31,7 +31,7 @@ void handleSyntax()
 
     out.append("Usage:\n");
     out.append("    dfuplus [-v|--version] | action=[spray|replicate|despray|copy|remove|rename|\n");
-    out.append("                                     list|addsuper|removesuper|listsuper|\n");
+    out.append("                                     dfsrename|list|addsuper|removesuper|listsuper|\n");
     out.append("                                     copysuper|dafilesrv|savexml|add|status|\n");
     out.append("                                     abort|resubmit|monitor] {<options>}\n\n");
     out.append("        -v | --version  -- display version info\n\n");
@@ -131,6 +131,15 @@ void handleSyntax()
     out.append("    rename options:\n");
     out.append("        srcname=<source-logical-name>\n");
     out.append("        dstname=<destination-logical-name>\n");
+    out.append("    dfsrename options:\n");
+    out.append("        oldname=<old-logical-name>\n");
+    out.append("        newname=<new-logical-name>\n");
+    out.append("        oldname1=<old-logical-name-1>\n");
+    out.append("        newname1=<new-logical-name-1>\n");
+    out.append("        ...\n");
+    out.append("        oldnameN=<old-logical-name-N>\n");
+    out.append("        newnameN=<new-logical-name-N>\n");
+    out.append("            -- Efficiently rename one or more files using direct filesystem operations\n");
     out.append("    list options:\n");
     out.append("        name=<logical-name-mask>\n");
     out.append("        saveto=<path and file name to save the result>\n");

@@ -316,6 +316,8 @@ int CDfuPlusHelper::doit()
         return remove();
     else if(stricmp(action, "rename") == 0)
         return rename();
+    else if(stricmp(action, "dfsrename") == 0)
+        return dfsrename();
     else if(stricmp(action, "list") == 0)
         return list();
     else if(stricmp(action, "recover") == 0)
@@ -1248,6 +1250,89 @@ int CDfuPlusHelper::rename()
     }
 
     return 0;
+}
+
+int CDfuPlusHelper::dfsrename()
+{
+    // Collect all oldname/newname pairs from the globals
+    IArrayOf<IEspDFSFileRenameItem> renameItems;
+    
+    // First, check for simple oldname/newname pair
+    const char* oldname = globals->queryProp("oldname");
+    const char* newname = globals->queryProp("newname");
+    if (oldname && newname)
+    {
+        Owned<IEspDFSFileRenameItem> item = createDFSFileRenameItem();
+        item->setOldName(oldname);
+        item->setNewName(newname);
+        renameItems.append(*item.getClear());
+    }
+    
+    // Then check for numbered oldname1/newname1, oldname2/newname2, etc.
+    for (int i = 1; i < 1000; i++)  // reasonable limit
+    {
+        StringBuffer oldnameProp, newnameProp;
+        oldnameProp.appendf("oldname%d", i);
+        newnameProp.appendf("newname%d", i);
+        
+        const char* oldnameN = globals->queryProp(oldnameProp.str());
+        const char* newnameN = globals->queryProp(newnameProp.str());
+        
+        if (oldnameN && newnameN)
+        {
+            Owned<IEspDFSFileRenameItem> item = createDFSFileRenameItem();
+            item->setOldName(oldnameN);
+            item->setNewName(newnameN);
+            renameItems.append(*item.getClear());
+        }
+        else if (oldnameN || newnameN)
+        {
+            throw MakeStringException(-1, "Both oldname%d and newname%d must be specified", i, i);
+        }
+        else
+        {
+            break;  // No more numbered pairs
+        }
+    }
+    
+    if (renameItems.ordinality() == 0)
+        throw MakeStringException(-1, "No files specified for rename. Use oldname=/newname= or oldname1=/newname1=, etc.");
+    
+    info("\nRenaming %d file(s)\n", renameItems.ordinality());
+    
+    Owned<IClientDFSFileRenameRequest> req = dfuclient->createDFSFileRenameRequest();
+    setMtlsSecret(req->rpc());
+    req->setFileRenames(renameItems);
+    
+    Owned<IClientDFSFileRenameResponse> result = dfuclient->DFSFileRename(req);
+    
+    // Check for general exceptions
+    if (outputServiceCallExceptions(result))
+        return -1;
+    
+    // Display results for each rename
+    IArrayOf<IConstDFSFileRenameResult>& results = result->getResults();
+    int successCount = 0;
+    int failCount = 0;
+    
+    ForEachItemIn(i, results)
+    {
+        IConstDFSFileRenameResult& res = results.item(i);
+        if (res.getSuccess())
+        {
+            info("Successfully renamed: %s -> %s\n", res.getOldName(), res.getNewName());
+            successCount++;
+        }
+        else
+        {
+            error("Failed to rename: %s -> %s: %s\n", res.getOldName(), res.getNewName(), res.getMessage());
+            failCount++;
+        }
+    }
+    
+    info("\nRename Summary: %d succeeded, %d failed\n", successCount, failCount);
+    
+    return (failCount > 0) ? -1 : 0;
 }
 
 
