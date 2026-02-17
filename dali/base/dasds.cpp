@@ -5062,9 +5062,12 @@ class CLightCoalesceThread : implements ICoalesce, public CInterface
     unsigned lastSaveWriteTransactions = 0;
     unsigned lastWarning = 0;
     unsigned idlePeriodSecs, minimumSecsBetweenSaves, idleRate;
+    unsigned storeNotSavedWarningPeriodHours;
+    offset_t minDeltaSizeWarningThresholdKB;
     Owned<IJlibDateTime> quietStartTime, quietEndTime;
     CheckedCriticalSection crit;
     IStoreHelper *iStoreHelper;
+    const StringAttr dataPath;
 
     class CThreaded : public Thread
     {
@@ -5076,11 +5079,13 @@ class CLightCoalesceThread : implements ICoalesce, public CInterface
     } threaded;
 public:
     IMPLEMENT_IINTERFACE;
-    CLightCoalesceThread(const IPropertyTree &config, IStoreHelper *_iStoreHelper) : iStoreHelper(_iStoreHelper)
+    CLightCoalesceThread(const IPropertyTree &config, IStoreHelper *_iStoreHelper, const char *_dataPath) : iStoreHelper(_iStoreHelper), dataPath(_dataPath)
     {
         idlePeriodSecs = config.getPropInt("@lCIdlePeriod", DEFAULT_LCIDLE_PERIOD);
         minimumSecsBetweenSaves = config.getPropInt("@lCMinTime", DEFAULT_LCMIN_TIME);
         idleRate = config.getPropInt("@lCIdleRate", DEFAULT_LCIDLE_RATE);
+        storeNotSavedWarningPeriodHours = config.getPropInt("@storeNotSavedWarningPeriod", STORENOTSAVE_WARNING_PERIOD);
+        minDeltaSizeWarningThresholdKB = config.getPropInt64("@minDeltaSizeWarningThreshold", 50000); // 50MB default
         char const *quietStartTimeStr = config.queryProp("@lCQuietStartTime");
         if (quietStartTimeStr)
         {
@@ -5191,9 +5196,29 @@ public:
                         else
                         {
                             t += idlePeriodSecs;
-                            if (t/3600 >= STORENOTSAVE_WARNING_PERIOD && ((t-lastWarning)/3600>(STORENOTSAVE_WARNING_PERIOD/2)))
+                            if (t/3600 >= storeNotSavedWarningPeriodHours && ((t-lastWarning)/3600>(storeNotSavedWarningPeriodHours/2)))
                             {
-                                OERRLOG("Store has not been saved for %d hours", t/3600);
+                                // Check if delta file size exceeds the threshold
+                                StringBuffer deltaFilename(dataPath);
+                                iStoreHelper->getCurrentDeltaFilename(deltaFilename);
+                                OwnedIFile deltaIFile = createIFile(deltaFilename.str());
+                                offset_t deltaSizeKB = 0;
+                                if (deltaIFile->exists())
+                                    deltaSizeKB = deltaIFile->size() / 1024;
+                                
+                                if (deltaSizeKB >= minDeltaSizeWarningThresholdKB)
+                                {
+                                    // Issue critical operator error
+                                    VStringBuffer msg("Store has not been saved for %u hours and delta file has grown to %" I64F "u KB (threshold: %" I64F "u KB). "
+                                                      "This indicates the sasha-coalescer may not be functioning properly. "
+                                                      "The delta file will continue to grow until the store is saved.",
+                                                      t/3600, deltaSizeKB, minDeltaSizeWarningThresholdKB);
+                                    LOG(MCoperatorError, "%s", msg.str());
+                                }
+                                else
+                                {
+                                    OERRLOG("Store has not been saved for %u hours (delta file size: %" I64F "u KB)", t/3600, deltaSizeKB);
+                                }
                                 lastWarning = t;
                             }
                         }
@@ -6321,7 +6346,7 @@ CCovenSDSManager::CCovenSDSManager(ICoven &_coven, const char *_dataPath, const 
     iStoreHelper = createStoreHelper(storeBase, dataPath, remoteBackupLocation, configFlags, keepLastN, 100, &server.queryStopped(), saveBinary, saveAsync);
     doTimeComparison = false;
     if (config->getPropBool("@lightweightCoalesce", true))
-        coalesce.setown(new CLightCoalesceThread(*config, iStoreHelper));
+        coalesce.setown(new CLightCoalesceThread(*config, iStoreHelper, dataPath));
 
     // if enabled (default), ensure the ext cache size is bigger than the pending delta writer cache
     // to ensure that when the ext cache is full, there are transaction items to flush that aren't still
