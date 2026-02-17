@@ -288,6 +288,20 @@
         </xs:appinfo>
       </xs:annotation>
     </xs:attribute>
+    <xs:attribute name="storeNotSavedWarningPeriod" type="xs:nonNegativeInteger" use="optional" default="72">
+      <xs:annotation>
+        <xs:appinfo>
+          <tooltip>Number of hours after which a critical operator error is issued if the store has not been saved</tooltip>
+        </xs:appinfo>
+      </xs:annotation>
+    </xs:attribute>
+    <xs:attribute name="minDeltaSizeWarningThreshold" type="xs:nonNegativeInteger" use="optional" default="50000">
+      <xs:annotation>
+        <xs:appinfo>
+          <tooltip>Minimum delta file size (in KB) to trigger critical operator error when combined with storeNotSavedWarningPeriod</tooltip>
+        </xs:appinfo>
+      </xs:annotation>
+    </xs:attribute>
     <xs:attribute name="deltaSaveThresholdSecs" type="xs:nonNegativeInteger" use="optional" default="0">
       <xs:annotation>
         <xs:appinfo>
