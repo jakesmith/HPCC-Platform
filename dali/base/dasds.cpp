@@ -5067,7 +5067,7 @@ class CLightCoalesceThread : implements ICoalesce, public CInterface
     Owned<IJlibDateTime> quietStartTime, quietEndTime;
     CheckedCriticalSection crit;
     IStoreHelper *iStoreHelper;
-    StringAttr dataPath;
+    const StringAttr dataPath;
 
     class CThreaded : public Thread
     {
@@ -5209,7 +5209,7 @@ public:
                                 if (deltaSizeKB >= minDeltaSizeWarningThresholdKB)
                                 {
                                     // Issue critical operator error
-                                    VStringBuffer msg("CRITICAL: Store has not been saved for %u hours and delta file has grown to %" I64F "u KB (threshold: %" I64F "u KB). "
+                                    VStringBuffer msg("Store has not been saved for %u hours and delta file has grown to %" I64F "u KB (threshold: %" I64F "u KB). "
                                                       "This indicates the sasha-coalescer may not be functioning properly. "
                                                       "The delta file will continue to grow until the store is saved.",
                                                       t/3600, deltaSizeKB, minDeltaSizeWarningThresholdKB);
