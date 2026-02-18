@@ -4899,6 +4899,16 @@ public:
             // add back any relationships with new name
             parent->renameFileRelationships(prevname.str(),_logicalname,reliter,user);
         }
+        
+        // Emit audit log after successful rename
+        if (prevname.length() && queryDFSAuditContext())
+        {
+            // Create extras property tree with the new name
+            Owned<IPropertyTree> extras = createPTree("extras");
+            extras->setProp("newName", _logicalname);
+            emitDFSAuditLog("RENAMED", queryDFSAuditContext(), prevname.str(),
+                          0, 0, nullptr, extras);
+        }
     }
 
 
@@ -9140,6 +9150,28 @@ IDistributedFile *CDistributedFileDirectory::lookup(CDfsLogicalFileName &logical
     // Restricted access is currently designed to stop users viewing sensitive information. It is not designed to stop users deleting or overwriting existing restricted files
     if (!isWrite(accessMode) && distributedFile && distributedFile->isRestrictedAccess() && !privilegedUser)
         throw new CDFS_Exception(DFSERR_RestrictedFileAccessDenied,logicalname.get());
+    
+    // Emit audit log for content access (not metadata-only)
+    if (distributedFile && queryDFSAuditContext())
+    {
+        // Only audit if this is a content access (not just metadata lookup)
+        // AccessMode::readMeta is for metadata-only access, skip audit for those
+        bool isContentAccess = (accessMode != AccessMode::readMeta) && !isWrite(accessMode);
+        if (isContentAccess)
+        {
+            offset_t uncompressedSize = distributedFile->getFileSize(false, false);
+            offset_t compressedSize = distributedFile->getDiskSize(false, false);
+            
+            // Get cluster name if available
+            StringBuffer cluster;
+            if (distributedFile->numClusters() > 0)
+                distributedFile->getClusterName(0, cluster);
+            
+            emitDFSAuditLog("READ", queryDFSAuditContext(), logicalname.get(),
+                          compressedSize, uncompressedSize, cluster.str(), nullptr);
+        }
+    }
+    
     return distributedFile.getClear();
 }
 
@@ -9767,6 +9799,13 @@ bool CDistributedFileDirectory::removeEntry(const char *name, IUserDescriptor *u
     try
     {
         localtrans->autoCommit();
+        
+        // Emit audit log after successful deletion
+        if (queryDFSAuditContext())
+        {
+            emitDFSAuditLog("DELETED", queryDFSAuditContext(), logicalname.get(),
+                          0, 0, nullptr, nullptr);
+        }
     }
     catch (IException *e)
     {
@@ -9817,6 +9856,16 @@ void CDistributedFileDirectory::renamePhysical(const char *oldname,const char *n
     CRenameFileAction *action = new CRenameFileAction(this, user, oldname, newname);
     localtrans->addAction(action); // takes ownership
     localtrans->autoCommit();
+    
+    // Emit audit log after successful rename
+    if (queryDFSAuditContext())
+    {
+        // Create extras property tree with the new name
+        Owned<IPropertyTree> extras = createPTree("extras");
+        extras->setProp("newName", newname);
+        emitDFSAuditLog("RENAMED", queryDFSAuditContext(), oldname,
+                      0, 0, nullptr, extras);
+    }
 }
 
 void CDistributedFileDirectory::fixDates(IDistributedFile *file)
