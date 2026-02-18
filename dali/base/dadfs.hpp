@@ -56,6 +56,37 @@ typedef __int64 DistributedLockID;
 interface IPropertyTree;
 interface IUserDescriptor;
 
+/**
+ * Audit context for DFS file access operations.
+ * Provides required and optional metadata for audit logging.
+ */
+interface IDFSAuditContext : public IInterface
+{
+    // Required fields
+    virtual const char *queryUser() const = 0;              // Authenticated user identity
+    virtual const char *queryPeer() const = 0;              // Caller IP address or endpoint identifier
+    virtual const char *queryComponent() const = 0;         // Component name (e.g., "WS_DFU", "Thor", "Roxie")
+    virtual const char *queryInstance() const = 0;          // Component instance identifier
+
+    // Optional fields
+    virtual const char *queryWuid() const = 0;              // Workunit ID (may be NULL)
+    virtual const char *queryGraph() const = 0;             // Graph name (may be NULL)
+    virtual const char *queryJobId() const = 0;             // Job ID (may be NULL)
+
+    // Per-call metadata (key-value pairs)
+    virtual IPropertyTree *queryExtras() const = 0;         // Additional per-call metadata (may be NULL)
+};
+
+extern da_decl IDFSAuditContext *createDFSAuditContext(
+    const char *user,
+    const char *peer,
+    const char *component,
+    const char *instance,
+    const char *wuid = nullptr,
+    const char *graph = nullptr,
+    const char *jobId = nullptr
+);
+
 #define S_LINK_RELATIONSHIP_KIND "link"
 #define S_VIEW_RELATIONSHIP_KIND "view"
 

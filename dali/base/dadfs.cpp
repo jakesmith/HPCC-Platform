@@ -95,6 +95,157 @@ static CriticalSection physicalChange;
 
 #define MDFS_GET_FILE_TREE_V2 ((unsigned)1)
 
+// =====================================================================================
+// DFS Audit Context Implementation
+// =====================================================================================
+
+class CDFSAuditContext : public CInterfaceOf<IDFSAuditContext>
+{
+private:
+    StringAttr user;
+    StringAttr peer;
+    StringAttr component;
+    StringAttr instance;
+    StringAttr wuid;
+    StringAttr graph;
+    StringAttr jobId;
+    Owned<IPropertyTree> extras;
+
+public:
+    CDFSAuditContext(const char *_user, const char *_peer, const char *_component, const char *_instance,
+                     const char *_wuid, const char *_graph, const char *_jobId)
+        : user(_user), peer(_peer), component(_component), instance(_instance),
+          wuid(_wuid), graph(_graph), jobId(_jobId)
+    {
+    }
+
+    virtual const char *queryUser() const override { return user.get(); }
+    virtual const char *queryPeer() const override { return peer.get(); }
+    virtual const char *queryComponent() const override { return component.get(); }
+    virtual const char *queryInstance() const override { return instance.get(); }
+    virtual const char *queryWuid() const override { return wuid.get(); }
+    virtual const char *queryGraph() const override { return graph.get(); }
+    virtual const char *queryJobId() const override { return jobId.get(); }
+    virtual IPropertyTree *queryExtras() const override { return extras.get(); }
+
+    void setExtras(IPropertyTree *_extras)
+    {
+        extras.setown(_extras);
+    }
+};
+
+IDFSAuditContext *createDFSAuditContext(
+    const char *user,
+    const char *peer,
+    const char *component,
+    const char *instance,
+    const char *wuid,
+    const char *graph,
+    const char *jobId)
+{
+    return new CDFSAuditContext(user, peer, component, instance, wuid, graph, jobId);
+}
+
+// =====================================================================================
+// DFS Audit Logging Helper Functions
+// =====================================================================================
+
+static void emitDFSAuditLog(
+    const char *action,
+    IDFSAuditContext *auditContext,
+    const char *logicalName,
+    offset_t compressedSize = 0,
+    offset_t uncompressedSize = 0,
+    const char *cluster = nullptr,
+    IPropertyTree *extras = nullptr)
+{
+    if (!auditContext)
+        return; // No audit context, skip logging
+
+    // Build JSON Lines format audit record
+    StringBuffer json;
+    json.append("{");
+    
+    // Standard prefix
+    json.append("\"type\":\"FileAccess\"");
+    
+    // Action
+    if (!isEmptyString(action))
+        json.appendf(",\"action\":\"%s\"", action);
+    
+    // Required context fields
+    if (!isEmptyString(auditContext->queryComponent()))
+        json.appendf(",\"component\":\"%s\"", auditContext->queryComponent());
+    
+    if (!isEmptyString(auditContext->queryInstance()))
+        json.appendf(",\"instance\":\"%s\"", auditContext->queryInstance());
+        
+    if (!isEmptyString(auditContext->queryUser()))
+        json.appendf(",\"user\":\"%s\"", auditContext->queryUser());
+    
+    if (!isEmptyString(auditContext->queryPeer()))
+        json.appendf(",\"peer\":\"%s\"", auditContext->queryPeer());
+    
+    // Optional context fields
+    if (!isEmptyString(auditContext->queryWuid()))
+        json.appendf(",\"wuid\":\"%s\"", auditContext->queryWuid());
+    
+    if (!isEmptyString(auditContext->queryGraph()))
+        json.appendf(",\"graph\":\"%s\"", auditContext->queryGraph());
+    
+    if (!isEmptyString(auditContext->queryJobId()))
+        json.appendf(",\"jobId\":\"%s\"", auditContext->queryJobId());
+    
+    // File-specific fields
+    if (!isEmptyString(logicalName))
+        json.appendf(",\"logicalName\":\"%s\"", logicalName);
+    
+    if (!isEmptyString(cluster))
+        json.appendf(",\"cluster\":\"%s\"", cluster);
+    
+    if (compressedSize > 0)
+        json.appendf(",\"compressedSize\":%" I64F "d", compressedSize);
+    
+    if (uncompressedSize > 0)
+        json.appendf(",\"uncompressedSize\":%" I64F "d", uncompressedSize);
+    
+    // Add any extras from context
+    IPropertyTree *contextExtras = auditContext->queryExtras();
+    if (contextExtras)
+    {
+        Owned<IPropertyTreeIterator> iter = contextExtras->getElements("*");
+        ForEach(*iter)
+        {
+            IPropertyTree &prop = iter->query();
+            const char *name = prop.queryName();
+            const char *value = prop.queryProp(nullptr);
+            if (name && value)
+                json.appendf(",\"%s\":\"%s\"", name, value);
+        }
+    }
+    
+    // Add any per-call extras
+    if (extras)
+    {
+        Owned<IPropertyTreeIterator> iter = extras->getElements("*");
+        ForEach(*iter)
+        {
+            IPropertyTree &prop = iter->query();
+            const char *name = prop.queryName();
+            const char *value = prop.queryProp(nullptr);
+            if (name && value)
+                json.appendf(",\"%s\":\"%s\"", name, value);
+        }
+    }
+    
+    json.append("}");
+    
+    // Emit audit log using MCauditInfo
+    LOG(MCauditInfo, "%s", json.str());
+}
+
+// =====================================================================================
+
 static int strcompare(const void * left, const void * right)
 {
     const char * l = (const char *)left;
