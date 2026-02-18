@@ -144,7 +144,7 @@ test6 := MODULE
     EXPORT name := 'Test 6: Record count range (100 <= rowcount < 1000)';
     EXPORT verify := SEQUENTIAL(
         OUTPUT(result.count, NAMED('Test6_Count')),
-        OUTPUT(result.count = 5, NAMED('Test6_ExpectedCount')), // Should match: file1(100), file2(200), file3(500), testfile1(300), testfile2(400)
+        OUTPUT(result.count = 6, NAMED('Test6_ExpectedCount')), // Should match: file1(100), file2(200), file3(500), testfile1(300), testfile2(400), super1(300)
         OUTPUT(COUNT(result.files), NAMED('Test6_FileCount'))
     );
 END;
@@ -156,19 +156,19 @@ test7 := MODULE
     EXPORT name := 'Test 7: Combined filters (200 <= rowcount <= 500 AND normal files)';
     EXPORT verify := SEQUENTIAL(
         OUTPUT(result.count, NAMED('Test7_Count')),
-        OUTPUT(result.count = 3, NAMED('Test7_ExpectedCount')), // Should match: file2(200), file3(500), testfile1(300), testfile2(400) = 4, but super1 excluded
+        OUTPUT(result.count = 4, NAMED('Test7_ExpectedCount')), // Should match: file2(200), file3(500), testfile1(300), testfile2(400) = 4, but super1 excluded
         OUTPUT(COUNT(result.files), NAMED('Test7_FileCount'))
     );
 END;
 
 // Test 8: Filter - date range excludes all recent files (proves date filtering works)
 test8 := MODULE
-    EXPORT filters := 'modified<2026-02-12';
+    EXPORT filters := 'modified<=' + Std.Date.DateToString(Std.Date.Today() - 1, '%Y-%m-%d');
     EXPORT result := Std.File.LogicalFileListFiltered(prefix + '*', filters := filters);
-    EXPORT name := 'Test 8: Modified before 2026-02-12 (should exclude all test files)';
+    EXPORT name := 'Test 8: Modified <= <YESTERDAY> (should exclude all test files)';
     EXPORT verify := SEQUENTIAL(
         OUTPUT(result.count, NAMED('Test8_Count')),
-        OUTPUT(result.count = 0, NAMED('Test8_ExpectedZero')), // All test files created in 2026, so none match
+        OUTPUT(result.count = 0, NAMED('Test8_ExpectedZero')), // All test files created before yesterday, so none match
         OUTPUT(COUNT(result.files), NAMED('Test8_FileCount'))
     );
 END;

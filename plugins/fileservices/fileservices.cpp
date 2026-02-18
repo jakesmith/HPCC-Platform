@@ -2406,8 +2406,7 @@ private:
 
 public:
     FileListResultFieldSource(unsigned _count, bool _limitBreached, IPropertyTreeIterator *_iter, bool _unknownsZero)
-        : count(_count), limitBreached(_limitBreached), iter(_iter), unknownsZero(_unknownsZero),
-          currentFile(nullptr)
+        : count(_count), limitBreached(_limitBreached), iter(_iter), currentFile(nullptr), unknownsZero(_unknownsZero)
     {
         dbgassertex(iter);
     }
@@ -2683,8 +2682,6 @@ static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internal
                 throw makeStringException(-1, "Invalid filter syntax: '!' must be followed by a filter term");
         }
 
-        bool matched = false;
-
         // Parse has:property
         if (strncmp(term, "has:", 4) == 0)
         {
@@ -2703,7 +2700,6 @@ static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internal
                 DFUQFThasProp, DFUQFilterSeparator,
                 attrName.str(), DFUQFilterSeparator,
                 negate ? "false" : "true", DFUQFilterSeparator);
-            matched = true;
         }
         // Parse is:filetype
         else if (strncmp(term, "is:", 3) == 0)
@@ -2715,33 +2711,25 @@ static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internal
             if (isEmptyString(fileType))
                 throw makeStringException(-1, "Invalid filter syntax: 'is:' requires a file type (superfile, normal, or any)");
 
-            if (stricmp(fileType, "superfile") == 0)
-            {
-                internalFilter.appendf("%u%c2%c2%c",
-                    DFUQFTspecial, DFUQFilterSeparator,
-                    DFUQFilterSeparator, DFUQFilterSeparator);
-                matched = true;
-            }
-            else if (stricmp(fileType, "normal") == 0)
-            {
-                internalFilter.appendf("%u%c2%c3%c",
-                    DFUQFTspecial, DFUQFilterSeparator,
-                    DFUQFilterSeparator, DFUQFilterSeparator);
-                matched = true;
-            }
-            else if (stricmp(fileType, "any") == 0)
-            {
-                internalFilter.appendf("%u%c2%c1%c",
-                    DFUQFTspecial, DFUQFilterSeparator,
-                    DFUQFilterSeparator, DFUQFilterSeparator);
-                matched = true;
-            }
+            DFUQFileTypeFilter fileTypeFilter = DFUQFFTall;
+            if (strieq(fileType, "any"))
+                fileTypeFilter = DFUQFFTall;
+            else if (strieq(fileType, "superfile"))
+                fileTypeFilter = DFUQFFTsuperfileonly;
+            else if (strieq(fileType, "normal"))
+                fileTypeFilter = DFUQFFTnonsuperfileonly;
             else
                 throw makeStringExceptionV(-1, "Invalid filter syntax: 'is:%s' - must be superfile, normal, or any", fileType);
+
+            internalFilter.appendf("%u%c%u%c%u%c",
+                DFUQFTspecial, DFUQFilterSeparator, (char)DFUQSFFileType,
+                DFUQFilterSeparator, (char)fileTypeFilter, DFUQFilterSeparator);
         }
         // Parse field:value (wildcard match)
         else if (const char *colon = strchr(term, ':'))
         {
+            if (negate)
+                throw makeStringExceptionV(-1, "Invalid filter syntax: negating field:value filters is not supported");
             StringBuffer fieldName;
             fieldName.append(colon - term, term).trim();
             StringBuffer valueStr(colon + 1);
@@ -2764,11 +2752,12 @@ static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internal
                 DFUQFTwildcardMatch, DFUQFilterSeparator,
                 attrName.str(), DFUQFilterSeparator,
                 value, DFUQFilterSeparator);
-            matched = true;
         }
         // Parse field>value, field<value, field>=value, field<=value
         else if (const char *op = strpbrk(term, "><"))
         {
+            if (negate)
+                throw makeStringExceptionV(-1, "Invalid filter syntax: negating comparison filters is not supported");
             StringBuffer fieldName;
             fieldName.append(op - term, term).trim();
 
@@ -2801,7 +2790,11 @@ static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internal
                 if (op[0] == '>')
                 {
                     // field > value or field >= value
-                    __int64 minVal = _atoi64(value);
+                    char *endptr;
+                    __int64 minVal = (__int64) strtoll(value, &endptr, 10);
+                    if (!isEmptyString(endptr))
+                        throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - value '%s' must be an integer", originalTerm, value);
+
                     if (!hasEquals)
                     {
                         if (minVal == I64C(0x7FFFFFFFFFFFFFFF))
@@ -2816,7 +2809,10 @@ static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internal
                 else // op[0] == '<'
                 {
                     // field < value or field <= value
-                    __int64 maxVal = _atoi64(value);
+                    char *endptr;
+                    __int64 maxVal = (__int64) strtoll(value, &endptr, 10);
+                    if (!isEmptyString(endptr))
+                        throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - value '%s' must be an integer", originalTerm, value);
                     if (!hasEquals)
                     {
                         if (maxVal == (-I64C(0x7FFFFFFFFFFFFFFF) - 1))
@@ -2832,8 +2828,12 @@ static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internal
             else
             {
                 // Parse string range (for dates, text, etc.)
+                // String range filter only supports inclusive bounds (>=, <=)
+                // since the filter uses standard string comparison
                 if (op[0] == '>')
                 {
+                    if (!hasEquals)
+                        throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - exclusive comparison (>) is not supported for string fields; use >= instead", originalTerm);
                     internalFilter.appendf("%u%c%s%c%s%c~~~~~~~~~~%c",
                         DFUQFTstringRange, DFUQFilterSeparator,
                         attrName.str(), DFUQFilterSeparator,
@@ -2841,17 +2841,20 @@ static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internal
                 }
                 else // op[0] == '<'
                 {
+                    if (!hasEquals)
+                        throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - exclusive comparison (<) is not supported for string fields; use <= instead", originalTerm);
                     internalFilter.appendf("%u%c%s%c%c%s%c",
                         DFUQFTstringRange, DFUQFilterSeparator,
                         attrName.str(), DFUQFilterSeparator,
                         DFUQFilterSeparator, value, DFUQFilterSeparator);
                 }
             }
-            matched = true;
         }
         // Parse field=value as exact range match
         else if (const char *eq = strchr(term, '='))
         {
+            if (negate)
+                throw makeStringExceptionV(-1, "Invalid filter syntax: negating equality filters is not supported");
             StringBuffer fieldName;
             fieldName.append(eq - term, term).trim();
             StringBuffer valueStr(eq + 1);
@@ -2874,13 +2877,21 @@ static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internal
             bool isNumeric = (fieldType == DFUQResultFieldType::numericType);
             bool isFloat = (fieldType == DFUQResultFieldType::floatType);
 
-            if (isNumeric || isFloat)
+            if (isNumeric)
             {
                 __int64 val = _atoi64(value);
                 internalFilter.appendf("%u%c%s%c%lld%c%lld%c",
                     DFUQFTinteger64Range, DFUQFilterSeparator,
                     attrName.str(), DFUQFilterSeparator,
                     val, DFUQFilterSeparator, val, DFUQFilterSeparator);
+            }
+            else if (isFloat)
+            {
+                // Exact string match via range for floating values
+                internalFilter.appendf("%u%c%s%c%s%c%s%c",
+                    DFUQFTstringRange, DFUQFilterSeparator,
+                    attrName.str(), DFUQFilterSeparator,
+                    value, DFUQFilterSeparator, value, DFUQFilterSeparator);
             }
             else
             {
@@ -2890,16 +2901,16 @@ static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internal
                     attrName.str(), DFUQFilterSeparator,
                     value, DFUQFilterSeparator, value, DFUQFilterSeparator);
             }
-            matched = true;
         }
-
-        // If nothing matched, throw an error
-        if (!matched)
+        else
+        {
+            // If nothing matched, throw an error
             throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - unrecognized filter format. Use field:value, field>value, field=value, has:property, or is:filetype", originalTerm);
+        }
     }
 }
 
-FILESERVICES_API const byte * FILESERVICES_CALL fsLogicalFileListFiltered(ICodeContext *ctx, IEngineRowAllocator *_rowAllocator, const char *mask, const char *filters, const char *requestedFields, bool unknownszero, const char *foreigndali, __int64 maxFileLimit)
+FILESERVICES_API const byte * FILESERVICES_CALL fsLogicalFileListFiltered(ICodeContext *ctx, IEngineRowAllocator *_rowAllocator, const char *mask, const char *filters, const char *requestedFields, bool unknownszero, const char *remoteDfs, __int64 maxFileLimit)
 {
     IEngineContext *engineCtx = ctx->queryEngineContext();
     if (engineCtx && !engineCtx->allowDaliAccess())
@@ -2925,12 +2936,9 @@ FILESERVICES_API const byte * FILESERVICES_CALL fsLogicalFileListFiltered(ICodeC
     StringBuffer masklower(mask);
     masklower.toLowerCase();
 
-    Owned<INode> foreignNode;
-    if (!isEmptyString(foreigndali))
-    {
-        SocketEndpoint ep(foreigndali);
-        foreignNode.setown(createINode(ep));
-    }
+    if (!isEmptyString(remoteDfs))
+        throw makeStringException(-1, "FileServices.LogicalFileListFiltered: remoteDfs is not supported yet");
+
 
     // Build filter string - translate user-friendly syntax to internal format
     StringBuffer filterBuf;
@@ -2973,16 +2981,7 @@ FILESERVICES_API const byte * FILESERVICES_CALL fsLogicalFileListFiltered(ICodeC
         requestedFieldNames.appendList(requestedFields, ",");
 
         // Ensure "name" is always included (required field)
-        bool hasName = false;
-        ForEachItemIn(idx, requestedFieldNames)
-        {
-            if (stricmp(requestedFieldNames.item(idx), "name") == 0)
-            {
-                hasName = true;
-                break;
-            }
-        }
-        if (!hasName)
+        if (!requestedFieldNames.contains("name", true))
             requestedFieldNames.append("name");
     }
 
@@ -3022,8 +3021,7 @@ FILESERVICES_API const byte * FILESERVICES_CALL fsLogicalFileListFiltered(ICodeC
         ctx->queryUserDescriptor(),
         true,                       // recursive
         allMatchingFilesReceived,
-        &count,
-        foreignNode
+        &count
     );
 
     // Build result row using IFieldSource pattern

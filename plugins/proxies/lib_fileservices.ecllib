@@ -96,7 +96,7 @@ export FileServices := SERVICE : plugin('fileservices'), time
   SetFileDescription(const varstring lfn,const varstring val) : c,action,context,entrypoint='fsSetFileDescription';
   dataset(FsFilenameRecord) RemoteDirectory(const varstring machineIP,const varstring dir,const varstring mask='*',boolean sub=false,const varstring planeName='') : c,context,entrypoint='fsRemoteDirectory_v2';
   dataset(FsLogicalFileInfoRecord) LogicalFileList(const varstring namepattern='*',boolean includenormal=true,boolean includesuper=false,boolean unknownszero=false,const varstring foreigndali='') : c,context,entrypoint='fsLogicalFileList';
-  _linkcounted_ ROW(FsLogicalFileListResult) LogicalFileListFiltered(const varstring namepattern='*',const varstring filters='',const varstring fields='',boolean unknownszero=false,const varstring foreigndali='',integer8 maxFileLimit=-1) : c,context,entrypoint='fsLogicalFileListFiltered';
+  _linkcounted_ ROW(FsLogicalFileListResult) LogicalFileListFiltered(const varstring namepattern='*',const varstring filters='',const varstring fields='',boolean unknownszero=false,const varstring remoteDfs='',integer8 maxFileLimit=-1) : c,context,entrypoint='fsLogicalFileListFiltered';
   dataset(FsLogicalFileNameRecord) SuperFileContents(const varstring lsuperfn,boolean recurse=false) : c,context,entrypoint='fsSuperFileContents';
   dataset(FsLogicalFileNameRecord) LogicalFileSuperOwners(const varstring lfn) : c,context,entrypoint='fsLogicalFileSuperOwners';
   varstring ExternalLogicalFileName(const varstring location, const varstring path,boolean abspath=true) : c,entrypoint='fsExternalLogicalFileName';

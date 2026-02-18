@@ -79,7 +79,7 @@
  <Row><Test6_Count>6</Test6_Count></Row>
 </Dataset>
 <Dataset name='Test6_ExpectedCount'>
- <Row><Test6_ExpectedCount>false</Test6_ExpectedCount></Row>
+ <Row><Test6_ExpectedCount>true</Test6_ExpectedCount></Row>
 </Dataset>
 <Dataset name='Test6_FileCount'>
  <Row><Test6_FileCount>6</Test6_FileCount></Row>
@@ -91,13 +91,13 @@
  <Row><Test7_Count>4</Test7_Count></Row>
 </Dataset>
 <Dataset name='Test7_ExpectedCount'>
- <Row><Test7_ExpectedCount>false</Test7_ExpectedCount></Row>
+ <Row><Test7_ExpectedCount>true</Test7_ExpectedCount></Row>
 </Dataset>
 <Dataset name='Test7_FileCount'>
  <Row><Test7_FileCount>4</Test7_FileCount></Row>
 </Dataset>
 <Dataset name='Result 36'>
- <Row><Result_36>Test 8: Modified before 2026-02-12 (should exclude all test files)</Result_36></Row>
+ <Row><Result_36>Test 8: Modified &lt;= &lt;YESTERDAY&gt; (should exclude all test files)</Result_36></Row>
 </Dataset>
 <Dataset name='Test8_Count'>
  <Row><Test8_Count>0</Test8_Count></Row>

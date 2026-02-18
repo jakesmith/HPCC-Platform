@@ -234,7 +234,7 @@ EXPORT dataset(FsLogicalFileInfoRecord) LogicalFileList(varstring namepattern='*
  *
  * @param namepattern   The mask of the files to list. Defaults to '*' (all files).
  * @param filters       Filter string using search-like syntax for complex queries. Defaults to blank.
- *                      Multiple filters separated by spaces. Supports:
+ *                      Multiple filters separated by commas. Supports:
  *
  *                      Field matching:
  *                        field:value          - Exact wildcard match (owner:jsmith, name:*test*)
@@ -260,7 +260,7 @@ EXPORT dataset(FsLogicalFileInfoRecord) LogicalFileList(varstring namepattern='*
  *                        is:normal            - Normal files only
  *                        is:any               - All file types (default)
  *
- *                      Common fields: owner, group, name, size, recordcount, modified, recordsize, numparts
+ *                      Common fields: owner, cluster, name, size, recordcount, modified, recordsize, numparts
  *
  *                      Examples:
  *                        'owner:jsmith'                         - Files owned by jsmith
@@ -273,15 +273,15 @@ EXPORT dataset(FsLogicalFileInfoRecord) LogicalFileList(varstring namepattern='*
  *                        'modified>2024-01-01 is:normal'        - Recent normal files
  * @param fields        Comma-separated list of field names to include in the result. Defaults to blank (all default fields).
  *                      When blank or empty, returns default fields: name, modified, size, rowcount, cluster, superfile, owner.
- *                      Available fields: name, modified, size, rowcount, cluster, superfile, owner, group, recordsize, numparts.
+ *                      Available fields: name, modified, size, rowcount, cluster, superfile, owner, recordsize, numparts.
  *                      Note: 'name' field is always included regardless of specification.
  *                      Examples:
  *                        ''                   - Default fields (backward compatible)
  *                        'name,size'          - Only name and size
  *                        'name,superfile,owner' - Name, superfile flag, and owner
  * @param unknownszero  Whether to set file sizes that are unknown to zero(0) instead of minus-one (-1). Defaults to FALSE.
- * @param foreigndali   The IP address of the foreign dali used to resolve the file.  If blank then the file is resolved
- *                      locally.  Defaults to blank.
+ * @param remoteDfs     The name of the remote DFS service to perform the lookup on. If blank then the list is
+ *                      resolved locally. Defaults to blank. (Not yet supported; specifying this will raise an error.)
  * @param maxFileLimit  Maximum number of files to return. Set to -1 to use server default limit (100,000).
  *                      Maximum client-side limit is 1,000,000. Defaults to -1.
  * @return              A record containing:
@@ -304,13 +304,13 @@ EXPORT dataset(FsLogicalFileInfoRecord) LogicalFileList(varstring namepattern='*
  *   result3 := Std.File.LogicalFileListFiltered(filters := 'size>100000000');
  *
  *   // List superfiles owned by jsmith
- *   result4 := Std.File.LogicalFileListFiltered(filters := 'owner:jsmith is:superfile');
+ *   result4 := Std.File.LogicalFileListFiltered(filters := 'owner:jsmith,is:superfile');
  *
  *   // List normal files without description, modified recently
- *   result5 := Std.File.LogicalFileListFiltered(filters := 'is:normal !has:description modified>2024-01-01');
+ *   result5 := Std.File.LogicalFileListFiltered(filters := 'is:normal,!has:description,modified>2024-01-01');
  */
-EXPORT lib_fileservices.FsLogicalFileListResult LogicalFileListFiltered(varstring namepattern='*', varstring filters='', varstring fields='', boolean unknownszero=FALSE, varstring foreigndali='', integer8 maxFileLimit=-1) :=
-    lib_fileservices.FileServices.LogicalFileListFiltered(namepattern, filters, fields, unknownszero, foreigndali, maxFileLimit);
+EXPORT lib_fileservices.FsLogicalFileListResult LogicalFileListFiltered(varstring namepattern='*', varstring filters='', varstring fields='', boolean unknownszero=FALSE, varstring remoteDfs='', integer8 maxFileLimit=-1) :=
+    lib_fileservices.FileServices.LogicalFileListFiltered(namepattern, filters, fields, unknownszero, remoteDfs, maxFileLimit);
 
 /**
  * Compares two files, and returns a result indicating how well they match.

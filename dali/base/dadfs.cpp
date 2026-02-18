@@ -2463,7 +2463,7 @@ struct SerializeFileAttrOptions
                     fieldsList[static_cast<unsigned>(field)] = additive;
                     if (additive)
                     {
-                        // The client uses these to decide if compresed or not.
+                        // The client uses these to decide if compressed or not.
                         fieldsList[static_cast<unsigned>(DFUQResultField::kind)] = true;
                         fieldsList[static_cast<unsigned>(DFUQResultField::blockCompressed)] = true;
                     }
