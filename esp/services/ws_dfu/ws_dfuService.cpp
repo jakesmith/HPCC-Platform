@@ -1305,8 +1305,9 @@ bool CWsDfuEx::DFUDeleteFiles(IEspContext &context, IEspDFUArrayActionRequest &r
     {
         IEspContext &context;
         Owned<IUserDescriptor> userdesc;
+        Owned<IDFSAuditContext> auditCtx;
         IArrayOf<IEspDFUActionInfo> actionResults;
-        StringBuffer returnStr, auditStr;
+        StringBuffer returnStr;
         StringAttr espProcess;
 
         void deleteFile(const char *fn)
@@ -1322,9 +1323,12 @@ bool CWsDfuEx::DFUDeleteFiles(IEspContext &context, IEspDFUArrayActionRequest &r
             try
             {
                 PROGLOG("Deleting %s", fn);
+                
+                // Set audit context for this operation
+                DFSAuditScope auditScope(LINK(auditCtx));
                 queryDistributedFileDirectory().removeEntry(fn, userdesc, nullptr, REMOVE_FILE_SDS_CONNECT_TIMEOUT, true);
-
-                LOG(MCauditInfo, "%s,%s", auditStr.str(), fn);
+                
+                // Audit logging is now handled by DFS via audit context
                 VStringBuffer message("File %s deleted.", fn);
                 addResult(dfsLFN.get(), group, false, message);
             }
@@ -1374,12 +1378,18 @@ bool CWsDfuEx::DFUDeleteFiles(IEspContext &context, IEspDFUArrayActionRequest &r
                 userdesc->set(user, context.queryPassword(), context.querySignature());
             }
 
-            auditStr.set(",FileAccess,WsDfu,DELETED,");
-            auditStr.append(espProcess.get());
-            auditStr.append(',');
-            if (!isEmptyString(user))
-                auditStr.append(user).append('@');
-            context.getPeer(auditStr);
+            // Create audit context for DFS operations
+            StringBuffer peer;
+            context.getPeer(peer);
+            auditCtx.setown(createDFSAuditContext(
+                user,               // user
+                peer.str(),         // peer
+                "WS_DFU",           // component
+                espProcess.get(),   // instance
+                nullptr,            // wuid
+                nullptr,            // graph
+                nullptr             // jobId
+            ));
         }
 
         const char *getReturnStr() const { return returnStr.str(); }
@@ -6165,6 +6175,20 @@ void CWsDfuEx::dFUFileAccessCommon(IEspContext &context, const CDfsLogicalFileNa
 
     checkLogicalName(fileName, userDesc, true, false, false, nullptr); // check for read permissions
 
+    // Create audit context for DFS operations
+    StringBuffer peer;
+    context.getPeer(peer);
+    Owned<IDFSAuditContext> auditCtx = createDFSAuditContext(
+        userID.str(),           // user
+        peer.str(),             // peer
+        "WS_DFU",               // component
+        "EspProcess",           // instance
+        nullptr,                // wuid
+        nullptr,                // graph
+        requestId               // jobId
+    );
+    DFSAuditScope auditScope(auditCtx.getClear());
+
     Owned<IDistributedFile> df = queryDistributedFileDirectory().lookup(fileName, userDesc, AccessMode::tbdRead, false, true, nullptr, defaultPrivilegedUser, lockTimeoutMs); // lock super-owners
     if (!df)
         throw MakeStringException(ECLWATCH_FILE_NOT_EXIST,"Cannot find file '%s'.", fileName.str());
@@ -6252,8 +6276,8 @@ void CWsDfuEx::dFUFileAccessCommon(IEspContext &context, const CDfsLogicalFileNa
     resp.setType(kind);
 
     df->setAccessed();
-
-    LOG(MCauditInfo,",FileAccess,EspProcess,READ,%s,%s,%s,jobid=%s,expirySecs=%d", cluster.str(), userID.str(), fileName.str(), requestId, expirySecs);
+    
+    // Audit logging is now handled by DFS via audit context
 }
 
 // NB: deprecated from ver >= 1.50
@@ -6647,6 +6671,21 @@ bool CWsDfuEx::onDFUFilePublish(IEspContext &context, IEspDFUFilePublishRequest 
     bool newFileAttached = false;
     try
     {
+        // Create audit context for DFS operations
+        StringBuffer userID, peer;
+        context.getUserID(userID);
+        context.getPeer(peer);
+        Owned<IDFSAuditContext> auditCtx = createDFSAuditContext(
+            userID.str(),           // user
+            peer.str(),             // peer
+            "WS_DFU",               // component
+            "EspProcess",           // instance
+            nullptr,                // wuid
+            nullptr,                // graph
+            nullptr                 // jobId
+        );
+        DFSAuditScope auditScope(auditCtx.getClear());
+        
         const char *fileId = req.getFileId();
         if (isEmptyString(fileId))
              throw makeStringException(ECLWATCH_INVALID_INPUT, "DFUFilePublish: No FileId defined.");
@@ -6780,8 +6819,8 @@ bool CWsDfuEx::onDFUFilePublish(IEspContext &context, IEspDFUFilePublishRequest 
             throw makeStringExceptionV(ECLWATCH_FILE_NOT_EXIST, "DFUFilePublish: Failed in renamePhysicalPartFiles %s.", newFileName.str());
 
         newFile->rename(newFileName, userDesc);
-
-        LOG(MCauditInfo,",FileAccess,EspProcess,CREATED,%s,%s,%s", groupName, userId.str(), newFileName.str());
+        
+        // Audit logging is now handled by DFS via audit context
     }
     catch (IException *e)
     {

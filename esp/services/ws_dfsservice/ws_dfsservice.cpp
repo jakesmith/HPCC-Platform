@@ -193,6 +193,20 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
 
         unsigned timeoutSecs = req.getRequestTimeout();
         unsigned __int64 leaseId = req.getLeaseId();
+        
+        // Create audit context for DFS operations
+        StringBuffer peer;
+        context.getPeer(peer);
+        Owned<IDFSAuditContext> auditCtx = createDFSAuditContext(
+            userID.str(),           // user
+            peer.str(),             // peer
+            "WS_DFSService",        // component
+            "EspProcess",           // instance
+            nullptr,                // wuid
+            nullptr,                // graph
+            nullptr                 // jobId
+        );
+        DFSAuditScope auditScope(auditCtx.getClear());
 
         // populate file meta data and lock id's
         LfnMetaOpts opts = LfnMOptNone;
@@ -226,8 +240,8 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
             CDateTime dt;
             dt.setNow();
             queryDistributedFileDirectory().setFileAccessed(userDesc, logicalName, dt);
-
-            LOG(MCauditInfo,",FileAccess,EspProcess,READ,%s,%u,%s", logicalName, timeoutSecs, userID.str());
+            
+            // Audit logging is now handled by DFS via audit context
         }
     }
     catch (IException *e)

@@ -95,6 +95,175 @@ static CriticalSection physicalChange;
 
 #define MDFS_GET_FILE_TREE_V2 ((unsigned)1)
 
+// =====================================================================================
+// DFS Audit Context Implementation
+// =====================================================================================
+
+// Thread-local storage for audit context
+static __thread IDFSAuditContext *tls_auditContext = nullptr;
+
+class CDFSAuditContext : public CInterfaceOf<IDFSAuditContext>
+{
+private:
+    StringAttr user;
+    StringAttr peer;
+    StringAttr component;
+    StringAttr instance;
+    StringAttr wuid;
+    StringAttr graph;
+    StringAttr jobId;
+    Owned<IPropertyTree> extras;
+
+public:
+    CDFSAuditContext(const char *_user, const char *_peer, const char *_component, const char *_instance,
+                     const char *_wuid, const char *_graph, const char *_jobId)
+        : user(_user), peer(_peer), component(_component), instance(_instance),
+          wuid(_wuid), graph(_graph), jobId(_jobId)
+    {
+    }
+
+    virtual const char *queryUser() const override { return user.get(); }
+    virtual const char *queryPeer() const override { return peer.get(); }
+    virtual const char *queryComponent() const override { return component.get(); }
+    virtual const char *queryInstance() const override { return instance.get(); }
+    virtual const char *queryWuid() const override { return wuid.get(); }
+    virtual const char *queryGraph() const override { return graph.get(); }
+    virtual const char *queryJobId() const override { return jobId.get(); }
+    virtual IPropertyTree *queryExtras() const override { return extras.get(); }
+
+    void setExtras(IPropertyTree *_extras)
+    {
+        extras.setown(_extras);
+    }
+};
+
+IDFSAuditContext *createDFSAuditContext(
+    const char *user,
+    const char *peer,
+    const char *component,
+    const char *instance,
+    const char *wuid,
+    const char *graph,
+    const char *jobId)
+{
+    return new CDFSAuditContext(user, peer, component, instance, wuid, graph, jobId);
+}
+
+void setDFSAuditContext(IDFSAuditContext *context)
+{
+    tls_auditContext = context; // No need to link/release as caller owns it
+}
+
+void clearDFSAuditContext()
+{
+    tls_auditContext = nullptr;
+}
+
+IDFSAuditContext *queryDFSAuditContext()
+{
+    return tls_auditContext;
+}
+
+// =====================================================================================
+// DFS Audit Logging Helper Functions
+// =====================================================================================
+
+void emitDFSAuditLog(
+    const char *action,
+    IDFSAuditContext *auditContext,
+    const char *logicalName,
+    offset_t compressedSize,
+    offset_t uncompressedSize,
+    const char *cluster,
+    IPropertyTree *extras)
+{
+    if (!auditContext)
+        return; // No audit context, skip logging
+
+    // Build JSON Lines format audit record
+    StringBuffer json;
+    json.append("{");
+    
+    // Standard prefix
+    json.append("\"type\":\"FileAccess\"");
+    
+    // Action
+    if (!isEmptyString(action))
+        json.appendf(",\"action\":\"%s\"", action);
+    
+    // Required context fields
+    if (!isEmptyString(auditContext->queryComponent()))
+        json.appendf(",\"component\":\"%s\"", auditContext->queryComponent());
+    
+    if (!isEmptyString(auditContext->queryInstance()))
+        json.appendf(",\"instance\":\"%s\"", auditContext->queryInstance());
+        
+    if (!isEmptyString(auditContext->queryUser()))
+        json.appendf(",\"user\":\"%s\"", auditContext->queryUser());
+    
+    if (!isEmptyString(auditContext->queryPeer()))
+        json.appendf(",\"peer\":\"%s\"", auditContext->queryPeer());
+    
+    // Optional context fields
+    if (!isEmptyString(auditContext->queryWuid()))
+        json.appendf(",\"wuid\":\"%s\"", auditContext->queryWuid());
+    
+    if (!isEmptyString(auditContext->queryGraph()))
+        json.appendf(",\"graph\":\"%s\"", auditContext->queryGraph());
+    
+    if (!isEmptyString(auditContext->queryJobId()))
+        json.appendf(",\"jobId\":\"%s\"", auditContext->queryJobId());
+    
+    // File-specific fields
+    if (!isEmptyString(logicalName))
+        json.appendf(",\"logicalName\":\"%s\"", logicalName);
+    
+    if (!isEmptyString(cluster))
+        json.appendf(",\"cluster\":\"%s\"", cluster);
+    
+    if (compressedSize > 0)
+        json.appendf(",\"compressedSize\":%" I64F "d", compressedSize);
+    
+    if (uncompressedSize > 0)
+        json.appendf(",\"uncompressedSize\":%" I64F "d", uncompressedSize);
+    
+    // Add any extras from context
+    IPropertyTree *contextExtras = auditContext->queryExtras();
+    if (contextExtras)
+    {
+        Owned<IPropertyTreeIterator> iter = contextExtras->getElements("*");
+        ForEach(*iter)
+        {
+            IPropertyTree &prop = iter->query();
+            const char *name = prop.queryName();
+            const char *value = prop.queryProp(nullptr);
+            if (name && value)
+                json.appendf(",\"%s\":\"%s\"", name, value);
+        }
+    }
+    
+    // Add any per-call extras
+    if (extras)
+    {
+        Owned<IPropertyTreeIterator> iter = extras->getElements("*");
+        ForEach(*iter)
+        {
+            IPropertyTree &prop = iter->query();
+            const char *name = prop.queryName();
+            const char *value = prop.queryProp(nullptr);
+            if (name && value)
+                json.appendf(",\"%s\":\"%s\"", name, value);
+        }
+    }
+    
+    json.append("}");
+    
+    // Emit audit log using MCauditInfo
+    LOG(MCauditInfo, "%s", json.str());
+}
+
+// =====================================================================================
+
 static int strcompare(const void * left, const void * right)
 {
     const char * l = (const char *)left;
@@ -4730,6 +4899,16 @@ public:
             // add back any relationships with new name
             parent->renameFileRelationships(prevname.str(),_logicalname,reliter,user);
         }
+        
+        // Emit audit log after successful rename
+        if (prevname.length() && queryDFSAuditContext())
+        {
+            // Create extras property tree with the new name
+            Owned<IPropertyTree> extras = createPTree("extras");
+            extras->setProp("newName", _logicalname);
+            emitDFSAuditLog("RENAMED", queryDFSAuditContext(), prevname.str(),
+                          0, 0, nullptr, extras);
+        }
     }
 
 
@@ -8971,6 +9150,28 @@ IDistributedFile *CDistributedFileDirectory::lookup(CDfsLogicalFileName &logical
     // Restricted access is currently designed to stop users viewing sensitive information. It is not designed to stop users deleting or overwriting existing restricted files
     if (!isWrite(accessMode) && distributedFile && distributedFile->isRestrictedAccess() && !privilegedUser)
         throw new CDFS_Exception(DFSERR_RestrictedFileAccessDenied,logicalname.get());
+    
+    // Emit audit log for content access (not metadata-only)
+    if (distributedFile && queryDFSAuditContext())
+    {
+        // Only audit if this is a content access (not just metadata lookup)
+        // AccessMode::readMeta is for metadata-only access, skip audit for those
+        bool isContentAccess = (accessMode != AccessMode::readMeta) && !isWrite(accessMode);
+        if (isContentAccess)
+        {
+            offset_t uncompressedSize = distributedFile->getFileSize(false, false);
+            offset_t compressedSize = distributedFile->getDiskSize(false, false);
+            
+            // Get cluster name if available
+            StringBuffer cluster;
+            if (distributedFile->numClusters() > 0)
+                distributedFile->getClusterName(0, cluster);
+            
+            emitDFSAuditLog("READ", queryDFSAuditContext(), logicalname.get(),
+                          compressedSize, uncompressedSize, cluster.str(), nullptr);
+        }
+    }
+    
     return distributedFile.getClear();
 }
 
@@ -9598,6 +9799,13 @@ bool CDistributedFileDirectory::removeEntry(const char *name, IUserDescriptor *u
     try
     {
         localtrans->autoCommit();
+        
+        // Emit audit log after successful deletion
+        if (queryDFSAuditContext())
+        {
+            emitDFSAuditLog("DELETED", queryDFSAuditContext(), logicalname.get(),
+                          0, 0, nullptr, nullptr);
+        }
     }
     catch (IException *e)
     {
@@ -9648,6 +9856,16 @@ void CDistributedFileDirectory::renamePhysical(const char *oldname,const char *n
     CRenameFileAction *action = new CRenameFileAction(this, user, oldname, newname);
     localtrans->addAction(action); // takes ownership
     localtrans->autoCommit();
+    
+    // Emit audit log after successful rename
+    if (queryDFSAuditContext())
+    {
+        // Create extras property tree with the new name
+        Owned<IPropertyTree> extras = createPTree("extras");
+        extras->setProp("newName", newname);
+        emitDFSAuditLog("RENAMED", queryDFSAuditContext(), oldname,
+                      0, 0, nullptr, extras);
+    }
 }
 
 void CDistributedFileDirectory::fixDates(IDistributedFile *file)
