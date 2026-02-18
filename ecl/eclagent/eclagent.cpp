@@ -1331,15 +1331,24 @@ char * EclAgent::resolveName(const char *in, char *out, unsigned outlen)
 void EclAgent::logFileAccess(IDistributedFile * file, char const * component, char const * type, EclGraph & activeGraph)
 {
     const char * cluster = clusterNames.item(clusterNames.length()-1);
-    LOG(MCauditInfo,
-        ",FileAccess,%s,%s,%s,%s,%s,%s,%s",
-        component,
-        type,
-        ensureText(cluster),
-        ensureText(userid.get()),
-        file->queryLogicalName(),
-        wuid.get(),
-        activeGraph.queryGraphName());
+    
+    Owned<IDFSAuditContext> auditCtx = createDFSAuditContext(
+        ensureText(userid.get()),   // user
+        "",                         // peer (ECL Agent doesn't have client IP)
+        component,                  // component
+        "Agent",                    // instance
+        wuid.get(),                 // wuid
+        activeGraph.queryGraphName(), // graph
+        nullptr                     // jobId
+    );
+    
+    // Get file sizes
+    offset_t uncompressedSize = file->getFileSize(false, false);
+    offset_t compressedSize = file->getDiskSize(false, false);
+    
+    // Emit audit log
+    emitDFSAuditLog(type, auditCtx, file->queryLogicalName(),
+                  compressedSize, uncompressedSize, ensureText(cluster), nullptr);
 }
 
 bool EclAgent::expandLogicalName(StringBuffer & fullname, const char * logicalName)

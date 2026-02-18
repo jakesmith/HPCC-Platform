@@ -89,19 +89,32 @@ class CDFUengine: public CInterface, implements IDFUengine
     {
         SocketEndpoint ep;
         ep.setLocalHost(0);
-        StringBuffer aln;
-        aln.append(",FileAccess,DfuPlus,").append(func).append(',');
-        ep.getEndpointHostText(aln);
-        aln.append(',');
+        StringBuffer peer, userName;
+        ep.getEndpointHostText(peer);
+        
         if (userdesc)
-            userdesc->getUserName(aln);
-        if (lfn1&&*lfn1) {
-            aln.append(',').append(lfn1);
-            if (lfn2&&*lfn2) {
-                aln.append(',').append(lfn2);
-            }
+            userdesc->getUserName(userName);
+        
+        Owned<IDFSAuditContext> auditCtx = createDFSAuditContext(
+            userName.str(),         // user
+            peer.str(),             // peer
+            "DfuPlus",              // component
+            "CLI",                  // instance
+            nullptr,                // wuid
+            nullptr,                // graph
+            nullptr                 // jobId
+        );
+        
+        // Add function-specific extras
+        Owned<IPropertyTree> extras;
+        if (lfn2 && *lfn2)
+        {
+            extras.setown(createPTree("extras"));
+            extras->setProp("secondaryFile", lfn2);
         }
-        LOG(MCauditInfo,"%s",aln.str());
+        
+        // Emit audit log
+        emitDFSAuditLog(func, auditCtx, lfn1, 0, 0, nullptr, extras);
     }
 
 
