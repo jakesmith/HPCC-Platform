@@ -338,21 +338,35 @@ static void AuditMessage(ICodeContext *ctx,
                          const char *lfn1,
                          const char *lfn2=NULL)
 {
-    // FileServices,WUID,user,function,LFN1,LFN2
+    // Create audit context for FileServices operations
     Linked<IUserDescriptor> udesc = ctx->queryUserDescriptor();
-    StringBuffer aln;
+    StringBuffer userName;
     StringAttr wuid;
     wuid.setown(ctx->getWuid());
-    aln.append(",FileAccess,FileServices,").append(func).append(',').append(wuid).append(',');
+    
     if (udesc)
-        udesc->getUserName(aln);
-    if (lfn1&&*lfn1) {
-        aln.append(',').append(lfn1);
-        if (lfn2&&*lfn2) {
-            aln.append(',').append(lfn2);
-        }
+        udesc->getUserName(userName);
+    
+    Owned<IDFSAuditContext> auditCtx = createDFSAuditContext(
+        userName.str(),         // user
+        "",                     // peer (FileServices doesn't have client IP)
+        "FileServices",         // component
+        "ECL",                  // instance
+        wuid.get(),             // wuid
+        nullptr,                // graph
+        nullptr                 // jobId
+    );
+    
+    // Add function-specific extras
+    Owned<IPropertyTree> extras;
+    if (lfn2 && *lfn2)
+    {
+        extras.setown(createPTree("extras"));
+        extras->setProp("secondaryFile", lfn2);
     }
-    LOG(MCauditInfo,"%s",aln.str());
+    
+    // Emit audit log - use function name as action
+    emitDFSAuditLog(func, auditCtx, lfn1, 0, 0, nullptr, extras);
 }
 
 

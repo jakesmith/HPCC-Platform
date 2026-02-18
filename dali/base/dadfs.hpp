@@ -96,6 +96,17 @@ extern da_decl void clearDFSAuditContext();
 // Query current thread's audit context
 extern da_decl IDFSAuditContext *queryDFSAuditContext();
 
+// Emit DFS audit log (for callers that need to emit audit logs directly)
+extern da_decl void emitDFSAuditLog(
+    const char *action,
+    IDFSAuditContext *auditContext,
+    const char *logicalName,
+    offset_t compressedSize = 0,
+    offset_t uncompressedSize = 0,
+    const char *cluster = nullptr,
+    IPropertyTree *extras = nullptr
+);
+
 /**
  * RAII helper for setting audit context for a scope
  */

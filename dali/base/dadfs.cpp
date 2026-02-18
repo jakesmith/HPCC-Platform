@@ -168,14 +168,14 @@ IDFSAuditContext *queryDFSAuditContext()
 // DFS Audit Logging Helper Functions
 // =====================================================================================
 
-static void emitDFSAuditLog(
+void emitDFSAuditLog(
     const char *action,
     IDFSAuditContext *auditContext,
     const char *logicalName,
-    offset_t compressedSize = 0,
-    offset_t uncompressedSize = 0,
-    const char *cluster = nullptr,
-    IPropertyTree *extras = nullptr)
+    offset_t compressedSize,
+    offset_t uncompressedSize,
+    const char *cluster,
+    IPropertyTree *extras)
 {
     if (!auditContext)
         return; // No audit context, skip logging
