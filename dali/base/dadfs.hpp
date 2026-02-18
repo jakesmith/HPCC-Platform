@@ -87,6 +87,35 @@ extern da_decl IDFSAuditContext *createDFSAuditContext(
     const char *jobId = nullptr
 );
 
+// Set audit context for current thread (caller retains ownership)
+extern da_decl void setDFSAuditContext(IDFSAuditContext *context);
+
+// Clear audit context for current thread
+extern da_decl void clearDFSAuditContext();
+
+// Query current thread's audit context
+extern da_decl IDFSAuditContext *queryDFSAuditContext();
+
+/**
+ * RAII helper for setting audit context for a scope
+ */
+class da_decl DFSAuditScope
+{
+    Owned<IDFSAuditContext> context;
+    IDFSAuditContext *prevContext;
+public:
+    DFSAuditScope(IDFSAuditContext *ctx) : prevContext(queryDFSAuditContext())
+    {
+        context.setown(ctx);
+        setDFSAuditContext(context);
+    }
+    
+    ~DFSAuditScope()
+    {
+        setDFSAuditContext(prevContext);
+    }
+};
+
 #define S_LINK_RELATIONSHIP_KIND "link"
 #define S_VIEW_RELATIONSHIP_KIND "view"
 

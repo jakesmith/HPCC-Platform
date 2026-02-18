@@ -99,6 +99,9 @@ static CriticalSection physicalChange;
 // DFS Audit Context Implementation
 // =====================================================================================
 
+// Thread-local storage for audit context
+static __thread IDFSAuditContext *tls_auditContext = nullptr;
+
 class CDFSAuditContext : public CInterfaceOf<IDFSAuditContext>
 {
 private:
@@ -144,6 +147,21 @@ IDFSAuditContext *createDFSAuditContext(
     const char *jobId)
 {
     return new CDFSAuditContext(user, peer, component, instance, wuid, graph, jobId);
+}
+
+void setDFSAuditContext(IDFSAuditContext *context)
+{
+    tls_auditContext = context; // No need to link/release as caller owns it
+}
+
+void clearDFSAuditContext()
+{
+    tls_auditContext = nullptr;
+}
+
+IDFSAuditContext *queryDFSAuditContext()
+{
+    return tls_auditContext;
 }
 
 // =====================================================================================
