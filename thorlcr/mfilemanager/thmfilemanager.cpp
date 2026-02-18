@@ -207,6 +207,18 @@ class CFileManager : public CSimpleInterface, implements IThorFileManager
         file.getLogicalName(lfn);
         CDfsLogicalFileName dlfn;
         dlfn.set(lfn.str());
+        
+        // Create audit context for file deletion
+        Owned<IDFSAuditContext> auditCtx = createDFSAuditContext(
+            job.queryUser(),            // user
+            "",                         // peer (Thor doesn't have client IP)
+            "Thor",                     // component
+            globals->queryProp("@nodeGroup"),  // instance
+            job.queryWuid(),            // wuid
+            job.queryGraphName(),       // graph
+            nullptr                     // jobId
+        );
+        
         if (dlfn.isExternal())
         {
             RemoteFilename rfn;
@@ -220,6 +232,7 @@ class CFileManager : public CSimpleInterface, implements IThorFileManager
         else
         {
             VStringBuffer blockedMsg("delete file '%s'", file.queryLogicalName());
+            DFSAuditScope auditScope(auditCtx.getClear());
             auto func = [&file](unsigned timeout){ file.detach(timeout); return true; };
             blockReportFunc<bool>(job, func, timeout, blockedMsg);
         }
@@ -281,23 +294,44 @@ public:
         Owned<IWorkUnit> wu = &job.queryWorkUnit().lock();
         wu->noteFileRead(file);
 
+        // Create audit context for file read operations
+        const char *user = job.queryUser();
+        const char *wuid = job.queryWuid();
+        const char *graphName = job.queryGraphName();
+        const char *nodeGroup = globals->queryProp("@nodeGroup");
+        
+        Owned<IDFSAuditContext> auditCtx = createDFSAuditContext(
+            user,               // user
+            "",                 // peer (Thor doesn't have client IP)
+            "Thor",             // component
+            nodeGroup,          // instance
+            wuid,               // wuid
+            graphName,          // graph
+            nullptr             // jobId
+        );
+        
+        // Gather file metadata
+        offset_t uncompressedSize = file->getFileSize(false, false);
+        offset_t compressedSize = file->getDiskSize(false, false);
+        
         StringArray clusters;
         file->getClusterNames(clusters);
-        StringBuffer outs;
-        outs.appendf(",FileAccess,Thor,%s,%s,%s,%s,%s,%s,%" I64F "d,%" I64F "d,%d",
-                        extended?"EXTEND":"READ",
-                        globals->queryProp("@nodeGroup"),
-                        job.queryUser(),
-                        file->queryLogicalName(),
-                        job.queryWuid(),
-                        job.queryGraphName(),
-                        file->getFileSize(false, false),
-                        file->getDiskSize(false, false),
-                        clusters.ordinality());
-        ForEachItemIn(i,clusters) {
-            outs.append(',').append(clusters.item(i));
+        
+        // Add cluster information as extras
+        Owned<IPropertyTree> extras = createPTree("extras");
+        extras->setPropInt("numClusters", clusters.ordinality());
+        ForEachItemIn(i, clusters)
+        {
+            VStringBuffer clusterKey("cluster%d", i);
+            extras->setProp(clusterKey.str(), clusters.item(i));
         }
-        LOG(MCauditInfo,"%s",outs.str());
+        
+        // Emit audit log
+        const char *action = extended ? "EXTEND" : "READ";
+        emitDFSAuditLog(action, auditCtx, file->queryLogicalName(),
+                      compressedSize, uncompressedSize, 
+                      clusters.ordinality() > 0 ? clusters.item(0) : nullptr,
+                      extras);
     }
 
     IDistributedFile *timedLookup(CJobBase &job, CDfsLogicalFileName &lfn, AccessMode accessMode, bool privilegedUser=false, unsigned timeout=INFINITE)
@@ -432,18 +466,7 @@ public:
                 remove(job, *efile, job.queryMaxLfnBlockTimeMins() * 60000);
                 efile.clear();
                 efile.setown(timedLookup(job, dlfn, AccessMode::tbdWrite, true, job.queryMaxLfnBlockTimeMins() * 60000));
-                if (!efile.get())
-                {
-                    ForEachItemIn(c, clusters)
-                    {
-                        LOG(MCauditInfo,",FileAccess,Thor,DELETED,%s,%s,%s,%s,%s,%" I64F "d,%" I64F "d,%s",
-                                        globals->queryProp("@name"),
-                                        userStr.str(),
-                                        logicalName,
-                                        wuidStr.str(),
-                                        job.queryGraphName(),fs,ds,clusters.item(c));
-                    }
-                }
+                // Audit logging for DELETED is now handled by DFS via audit context
             }
         }
         Owned<IFileDescriptor> desc;
@@ -535,8 +558,23 @@ public:
     {
         IPropertyTree &props = fileDesc.queryProperties();
         bool temporary = props.getPropBool("@temporary");
+        
+        // Create audit context for file operations
+        Owned<IDFSAuditContext> auditCtx = createDFSAuditContext(
+            job.queryUser(),            // user
+            "",                         // peer (Thor doesn't have client IP)
+            "Thor",                     // component
+            globals->queryProp("@nodeGroup"),  // instance
+            job.queryWuid(),            // wuid
+            job.queryGraphName(),       // graph
+            nullptr                     // jobId
+        );
+        
         if (!temporary || job.queryUseCheckpoints())
+        {
+            DFSAuditScope auditScope(LINK(auditCtx));
             queryDistributedFileDirectory().removeEntry(logicalName, job.queryUserDescriptor());
+        }
         // thor clusters are backed up so if replicateOutputs set *always* assume a replicate
         if (replicateOutputs && (!temporary || job.queryUseCheckpoints()))
         {
@@ -554,18 +592,14 @@ public:
         if (publishedFile)
             publishedFile->set(file);
         file->attach(logicalName, job.queryUserDescriptor());
-        unsigned c=0;
-        for (; c<fileDesc.numClusters(); c++)
+        
+        // Emit CREATED audit logs for each cluster
+        for (unsigned c=0; c<fileDesc.numClusters(); c++)
         {
             StringBuffer clusterName;
             fileDesc.getClusterGroupName(c, clusterName, &queryNamedGroupStore());
-            LOG(MCauditInfo,",FileAccess,Thor,CREATED,%s,%s,%s,%s,%s,%" I64F "d,%" I64F "d,%s",
-                            globals->queryProp("@nodeGroup"),
-                            job.queryUser(),
-                            file->queryLogicalName(),
-                            job.queryWuid(),
-                            job.queryGraphName(),
-                            fs,ds,clusterName.str());
+            emitDFSAuditLog("CREATED", auditCtx, file->queryLogicalName(),
+                          ds, fs, clusterName.str(), nullptr);
         }
     }
 
