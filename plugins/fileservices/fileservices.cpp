@@ -2936,8 +2936,43 @@ FILESERVICES_API const byte * FILESERVICES_CALL fsLogicalFileListFiltered(ICodeC
     StringBuffer masklower(mask);
     masklower.toLowerCase();
 
+    // Handle remote DFS
     if (!isEmptyString(remoteDfs))
-        throw makeStringException(-1, "FileServices.LogicalFileListFiltered: remoteDfs is not supported yet");
+    {
+        // Call remote DFS service to get file list
+        Owned<IPropertyTree> resultTree = wsdfs::listFilteredDFSFiles(
+            mask,
+            filters,
+            requestedFields,
+            unknownszero,
+            remoteDfs,
+            maxFileLimit,
+            300,  // timeout secs
+            wsdfs::keepAliveExpiryFrequency,
+            ctx->queryUserDescriptor()
+        );
+
+        // Extract results from remote response
+        unsigned count = resultTree->getPropInt("@count", 0);
+        bool allMatchingFilesReceived = resultTree->getPropBool("@allMatchingFilesReceived", true);
+
+        // Get iterator over Files/File elements
+        IPropertyTree *filesTree = resultTree->queryPropTree("Files");
+        if (!filesTree)
+            filesTree = resultTree; // fallback if no Files wrapper
+
+        Owned<IPropertyTreeIterator> iter = filesTree->getElements("File");
+
+        // Build result row using IFieldSource pattern
+        RtlDynamicRowBuilder resultBuilder(*_rowAllocator);
+        Owned<FileListResultFieldSource> fieldSource = new FileListResultFieldSource(count, !allMatchingFilesReceived, iter.getClear(), unknownszero);
+
+        const RtlTypeInfo *typeInfo = _rowAllocator->queryOutputMeta()->queryTypeInfo();
+        RtlFieldStrInfo dummyField("<row>", NULL, typeInfo);
+        size32_t len = typeInfo->build(resultBuilder, 0, &dummyField, *fieldSource);
+
+        return (const byte *)resultBuilder.finalizeRowClear(len);
+    }
 
 
     // Build filter string - translate user-friendly syntax to internal format
