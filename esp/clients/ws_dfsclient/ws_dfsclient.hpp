@@ -50,6 +50,7 @@ interface IDFSFile : extends IInterface
 WS_DFSCLIENT_API IDFSFile *lookupDFSFile(const char *logicalName, AccessMode accessMode, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
 WS_DFSCLIENT_API IDistributedFile *createLegacyDFSFile(IDFSFile *dfsFile);
 WS_DFSCLIENT_API IDistributedFile *lookupLegacyDFSFile(const char *logicalName, AccessMode accessMode, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
+WS_DFSCLIENT_API IPropertyTree *listFilteredDFSFiles(const char *mask, const char *filters, const char *requestedFields, bool unknownszero, const char *remoteDfs, __int64 maxFileLimit, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc);
 
 WS_DFSCLIENT_API IDistributedFile *lookup(CDfsLogicalFileName &lfn, IUserDescriptor *user, AccessMode accessMode, bool hold, bool lockSuperOwner, IDistributedFileTransaction *transaction, bool priviledged, unsigned timeout);
 WS_DFSCLIENT_API IDistributedFile *lookup(const char *logicalFilename, IUserDescriptor *user, AccessMode accessMode, bool hold, bool lockSuperOwner, IDistributedFileTransaction *transaction, bool priviledged, unsigned timeout);

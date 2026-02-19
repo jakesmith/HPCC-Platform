@@ -841,6 +841,99 @@ IDFSFile *lookupDFSFile(const char *logicalName, AccessMode accessMode, unsigned
     throw makeStringExceptionV(0, "DFSFileLookup timed out: file=%s, timeoutSecs=%u", logicalName, timeoutSecs);
 }
 
+IPropertyTree *listFilteredDFSFiles(const char *mask, const char *filters, const char *requestedFields, bool unknownszero, const char *remoteDfs, __int64 maxFileLimit, unsigned timeoutSecs, unsigned keepAliveExpiryFrequency, IUserDescriptor *userDesc)
+{
+    if (isEmptyString(remoteDfs))
+        throw makeStringException(-1, "ws_dfsclient::listFilteredDFSFiles: remoteDfs parameter is required");
+
+    StringBuffer serviceUrl;
+    StringBuffer serviceSecret;
+    bool secretProvided = false;
+    bool useDafilesrv = false;
+
+    // Get remote storage configuration
+    Owned<IPropertyTree> remoteStorage = getRemoteStorage(remoteDfs);
+    if (!remoteStorage)
+        throw makeStringExceptionV(0, "Remote storage '%s' not found", remoteDfs);
+    
+    serviceUrl.set(remoteStorage->queryProp("@service"));
+    
+    if (startsWith(serviceUrl, "https"))
+    {
+        // NB: standard configuration should not supply a secret, the secret name will be auto-generated based on the URL
+        // If a manual secret name is defined, it will be used to connect to the DFS service
+        // A blank secret name can be defined to support connecting to bare-metal DFS services that do not support client certificates.
+        if (remoteStorage->hasProp("@secret"))
+        {
+            secretProvided = true;
+            serviceSecret.set(remoteStorage->queryProp("@secret"));
+        }
+    }
+
+    bool useSSL = startsWith(serviceUrl, "https");
+    if (useSSL && !secretProvided)
+        generateDynamicUrlSecretName(serviceSecret, serviceUrl, nullptr);
+
+    DBGLOG("Listing filtered files on '%s'", serviceUrl.str());
+    Owned<IClientWsDfs> dfsClient = getDfsClient(serviceUrl, userDesc);
+
+    unsigned __int64 clientLeaseId = ensureClientLease(dfsClient, serviceUrl, serviceSecret, userDesc);
+
+    Owned<IClientDFSListFilteredResponse> dfsResp;
+    Owned<IClientDFSListFilteredRequest> dfsReq = dfsClient->createDFSListFilteredRequest();
+    if (useSSL && serviceSecret.length())
+        configureClientSSL(dfsReq->rpc(), serviceSecret.str());
+    
+    // Set request parameters - send human-readable forms
+    dfsReq->setMask(mask);
+    dfsReq->setFilters(filters);
+    dfsReq->setRequestedFields(requestedFields);
+    dfsReq->setUnknownSizeZero(unknownszero);
+    dfsReq->setMaxFileLimit(maxFileLimit);
+    dfsReq->setLeaseId(clientLeaseId);
+    dfsReq->setRequestTimeout(timeoutSecs);
+
+    CTimeMon tm(timeoutSecs*1000); // NB: this timeout loop is to cater for *a* esp disappearing (e.g. if behind load balancer)
+    while (true)
+    {
+        try
+        {
+            unsigned remaining;
+            if (tm.timedout(&remaining))
+                break;
+            dfsReq->setRequestTimeout(remaining/1000);
+            dfsResp.setown(dfsClient->DFSListFiltered(dfsReq));
+
+            const IMultiException *excep = &dfsResp->getExceptions(); // NB: warning despite getXX name, this does not Link
+            if (excep->ordinality() > 0)
+                throw LINK((IMultiException *)excep); // NB - const IException.. not caught in general..
+
+            const char *base64Resp = dfsResp->getResult();
+            MemoryBuffer compressedRespMb;
+            JBASE64_Decode(base64Resp, compressedRespMb);
+            MemoryBuffer decompressedRespMb;
+            fastLZDecompressToBuffer(decompressedRespMb, compressedRespMb);
+            Owned<IPropertyTree> resultTree = createPTree(decompressedRespMb);
+            
+            return resultTree.getClear();
+        }
+        catch (IException *e)
+        {
+            /* NB: there should really be a different IException class and a specific error code
+             * The server knows it's an unsupported method.
+             */
+            if (SOAP_SERVER_ERROR != e->errorCode())
+                throw;
+            e->Release();
+        }
+
+        if (tm.timedout())
+            break;
+        Sleep(5000); // sanity sleep
+    }
+    throw makeStringExceptionV(0, "DFSListFiltered timed out: timeoutSecs=%u", timeoutSecs);
+}
+
 IDistributedFile *createLegacyDFSFile(IDFSFile *dfsFile)
 {
     if (dfsFile->queryFileMeta()->getPropBool("@isSuper"))

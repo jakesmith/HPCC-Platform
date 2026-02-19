@@ -31,6 +31,10 @@
 #include "ws_dfsclient.hpp"
 #include "ws_dfsservice.hpp"
 
+#include <algorithm>
+#include <unordered_map>
+#include <vector>
+
 using namespace wsdfs;
 
 // all fake for now
@@ -236,4 +240,404 @@ bool CWsDfsEx::onDFSFileLookup(IEspContext &context, IEspDFSFileLookupRequest &r
     }
     return true;
 }
+
+// Helper functions for DFSListFiltered
+
+// Case-insensitive string hash and comparison for field aliases
+struct CaseInsensitiveHash
+{
+    size_t operator()(const std::string &s) const
+    {
+        std::string lower = s;
+        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        return std::hash<std::string>()(lower);
+    }
+};
+
+struct CaseInsensitiveEqual
+{
+    bool operator()(const std::string &a, const std::string &b) const
+    {
+        return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+            [](char ca, char cb) { return tolower(ca) == tolower(cb); });
+    }
+};
+
+static bool validateFileField(const char *requestedField, StringBuffer &attrName, DFUQResultField &fieldEnum, DFUQResultFieldType &fieldType)
+{
+    // Map of ECL field name aliases to canonical internal field names
+    // This handles user-friendly names and their mappings
+    static const std::unordered_map<std::string, const char*, CaseInsensitiveHash, CaseInsensitiveEqual> fieldAliases =
+    {
+        {"superfile", "numsubfiles"},  // Derived from numsubfiles
+        {"rowcount", "recordcount"},   // ECL field name is "rowcount" but internal attribute is "recordCount"
+        {"cluster", "group"}           // ECL field name is "cluster" but internal attribute is "group"
+    };
+
+    // Trim whitespace
+    StringBuffer fieldName(requestedField);
+    fieldName.trim();
+    if (isEmptyString(fieldName))
+        return false;
+
+    auto it = fieldAliases.find(fieldName.str());
+    if (it != fieldAliases.end())
+        fieldName.set(it->second);
+
+    return getFileAttributePath(fieldName, attrName, fieldEnum, fieldType);
+}
+
+static void parseUserFilterSyntax(const char *userFilter, StringBuffer &internalFilter)
+{
+    if (isEmptyString(userFilter))
+        return;
+
+    StringArray terms;
+    terms.appendList(userFilter, ",");
+
+    ForEachItemIn(i, terms)
+    {
+        const char *term = terms.item(i);
+        if (isEmptyString(term))
+            continue;
+
+        // Save original term for error messages
+        const char *originalTerm = term;
+
+        // Check for negation prefix
+        bool negate = (term[0] == '!');
+        if (negate)
+        {
+            term++;
+            if (isEmptyString(term))
+                throw makeStringException(-1, "Invalid filter syntax: '!' must be followed by a filter term");
+        }
+
+        // Parse has:property
+        if (strncmp(term, "has:", 4) == 0)
+        {
+            const char *prop = term + 4;
+            if (isEmptyString(prop))
+                throw makeStringException(-1, "Invalid filter syntax: 'has:' requires a property name (e.g., 'has:description')");
+
+            // Validate and convert field name
+            StringBuffer attrName;
+            DFUQResultField field;
+            DFUQResultFieldType fieldType;
+            if (!validateFileField(prop, attrName, field, fieldType))
+                throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - unknown field name '%s'", originalTerm, prop);
+
+            internalFilter.appendf("%u%c%s%c%s%c",
+                DFUQFThasProp, DFUQFilterSeparator,
+                attrName.str(), DFUQFilterSeparator,
+                negate ? "false" : "true", DFUQFilterSeparator);
+        }
+        // Parse is:filetype
+        else if (strncmp(term, "is:", 3) == 0)
+        {
+            if (negate)
+                throw makeStringExceptionV(-1, "Invalid filter syntax: negating 'is:' is not supported");
+
+            const char *fileType = term + 3;
+            if (isEmptyString(fileType))
+                throw makeStringException(-1, "Invalid filter syntax: 'is:' requires a file type (superfile, normal, or any)");
+
+            DFUQFileTypeFilter fileTypeFilter = DFUQFFTall;
+            if (strieq(fileType, "any"))
+                fileTypeFilter = DFUQFFTall;
+            else if (strieq(fileType, "superfile"))
+                fileTypeFilter = DFUQFFTsuperfileonly;
+            else if (strieq(fileType, "normal"))
+                fileTypeFilter = DFUQFFTnonsuperfileonly;
+            else
+                throw makeStringExceptionV(-1, "Invalid filter syntax: 'is:%s' - must be superfile, normal, or any", fileType);
+
+            internalFilter.appendf("%u%c%u%c%u%c",
+                DFUQFTspecial, DFUQFilterSeparator, (char)DFUQSFFileType,
+                DFUQFilterSeparator, (char)fileTypeFilter, DFUQFilterSeparator);
+        }
+        // Parse field:value (wildcard match)
+        else if (const char *colon = strchr(term, ':'))
+        {
+            if (negate)
+                throw makeStringExceptionV(-1, "Invalid filter syntax: negating field:value filters is not supported");
+            StringBuffer fieldName;
+            fieldName.append(colon - term, term).trim();
+            StringBuffer valueStr(colon + 1);
+            valueStr.trim();
+            const char *value = valueStr.str();
+
+            if (fieldName.length() == 0)
+                throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - field name required before ':'", originalTerm);
+            if (isEmptyString(value))
+                throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - value required after ':'", originalTerm);
+
+            // Validate and convert field name
+            StringBuffer attrName;
+            DFUQResultField field;
+            DFUQResultFieldType fieldType;
+            if (!validateFileField(fieldName.str(), attrName, field, fieldType))
+                throw makeStringException(-1, VStringBuffer("Invalid filter syntax: '%s' - unknown field name '%s'", originalTerm, fieldName.str()).str());
+
+            internalFilter.appendf("%u%c%s%c%s%c",
+                DFUQFTwildcardMatch, DFUQFilterSeparator,
+                attrName.str(), DFUQFilterSeparator,
+                value, DFUQFilterSeparator);
+        }
+        // Parse field>value, field<value, field>=value, field<=value
+        else if (const char *op = strpbrk(term, "><"))
+        {
+            if (negate)
+                throw makeStringExceptionV(-1, "Invalid filter syntax: negating comparison filters is not supported");
+            StringBuffer fieldName;
+            fieldName.append(op - term, term).trim();
+
+            if (fieldName.length() == 0)
+                throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - field name required before comparison operator", originalTerm);
+
+            // Validate and convert field name
+            StringBuffer attrName;
+            DFUQResultField field;
+            DFUQResultFieldType fieldType;
+            if (!validateFileField(fieldName.str(), attrName, field, fieldType))
+                throw makeStringException(-1, VStringBuffer("Invalid filter syntax: '%s' - unknown field name '%s'", originalTerm, fieldName.str()).str());
+
+            // Determine operator
+            bool hasEquals = (op[1] == '=');
+            StringBuffer valueStr(hasEquals ? (op + 2) : (op + 1));
+            valueStr.trim();
+            const char *value = valueStr.str();
+
+            if (isEmptyString(value))
+                throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - value required after comparison operator", originalTerm);
+
+            // Check if field is numeric/float type
+            bool isNumeric = (fieldType == DFUQResultFieldType::numericType);
+            bool isFloat = (fieldType == DFUQResultFieldType::floatType);
+
+            if (isNumeric || isFloat)
+            {
+                // Parse numeric range
+                if (op[0] == '>')
+                {
+                    // field > value or field >= value
+                    char *endptr;
+                    __int64 minVal = (__int64) strtoll(value, &endptr, 10);
+                    if (!isEmptyString(endptr))
+                        throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - value '%s' must be an integer", originalTerm, value);
+
+                    if (!hasEquals)
+                    {
+                        if (minVal == I64C(0x7FFFFFFFFFFFFFFF))
+                            throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - value too large for > comparison (would overflow)", originalTerm);
+                        minVal++;
+                    }
+                    internalFilter.appendf("%u%c%s%c%lld%c%lld%c",
+                        DFUQFTinteger64Range, DFUQFilterSeparator,
+                        attrName.str(), DFUQFilterSeparator,
+                        minVal, DFUQFilterSeparator, I64C(0x7FFFFFFFFFFFFFFF), DFUQFilterSeparator);
+                }
+                else // op[0] == '<'
+                {
+                    // field < value or field <= value
+                    char *endptr;
+                    __int64 maxVal = (__int64) strtoll(value, &endptr, 10);
+                    if (!isEmptyString(endptr))
+                        throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - value '%s' must be an integer", originalTerm, value);
+                    if (!hasEquals)
+                    {
+                        if (maxVal == (-I64C(0x7FFFFFFFFFFFFFFF) - 1))
+                            throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - value too small for < comparison (would underflow)", originalTerm);
+                        maxVal--;
+                    }
+                    internalFilter.appendf("%u%c%s%c0%c%lld%c",
+                        DFUQFTinteger64Range, DFUQFilterSeparator,
+                        attrName.str(), DFUQFilterSeparator,
+                        DFUQFilterSeparator, maxVal, DFUQFilterSeparator);
+                }
+            }
+            else
+            {
+                // Parse string range (for dates, text, etc.)
+                // String range filter only supports inclusive bounds (>=, <=)
+                // since the filter uses standard string comparison
+                if (op[0] == '>')
+                {
+                    if (!hasEquals)
+                        throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - exclusive comparison (>) is not supported for string fields; use >= instead", originalTerm);
+                    internalFilter.appendf("%u%c%s%c%s%c~~~~~~~~~~%c",
+                        DFUQFTstringRange, DFUQFilterSeparator,
+                        attrName.str(), DFUQFilterSeparator,
+                        value, DFUQFilterSeparator, DFUQFilterSeparator);
+                }
+                else // op[0] == '<'
+                {
+                    if (!hasEquals)
+                        throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - exclusive comparison (<) is not supported for string fields; use <= instead", originalTerm);
+                    internalFilter.appendf("%u%c%s%c%c%s%c",
+                        DFUQFTstringRange, DFUQFilterSeparator,
+                        attrName.str(), DFUQFilterSeparator,
+                        DFUQFilterSeparator, value, DFUQFilterSeparator);
+                }
+            }
+        }
+        else
+        {
+            // Unknown filter format
+            throw makeStringExceptionV(-1, "Invalid filter syntax: '%s' - unrecognized format", originalTerm);
+        }
+    }
+}
+
+bool CWsDfsEx::onDFSListFiltered(IEspContext &context, IEspDFSListFilteredRequest &req, IEspDFSListFilteredResponse &resp)
+{
+    try
+    {
+        const char *mask = req.getMask();
+        const char *filters = req.getFilters();
+        const char *requestedFields = req.getRequestedFields();
+        bool unknownszero = req.getUnknownSizeZero();
+        __int64 maxFileLimit = req.getMaxFileLimit();
+
+        StringBuffer userID;
+        context.getUserID(userID);
+        Owned<IUserDescriptor> userDesc;
+        if (!userID.isEmpty())
+        {
+            userDesc.setown(createUserDescriptor());
+            userDesc->set(userID.str(), context.queryPassword(), context.querySignature());
+        }
+
+        // Validate server-side max limit (10 million)
+        constexpr __int64 SERVER_MAX_LIMIT = 10000000;
+        if (maxFileLimit > SERVER_MAX_LIMIT)
+        {
+            throw makeStringExceptionV(-1, "WsDfs.DFSListFiltered: maxFileLimit (%lld) exceeds server maximum of %lld", maxFileLimit, SERVER_MAX_LIMIT);
+        }
+
+        if (isEmptyString(mask))
+            mask = "*";
+        else if (*mask == '~')
+            mask++; // Strip leading ~ if present, as internal APIs expect it without
+        StringBuffer masklower(mask);
+        masklower.toLowerCase();
+
+        // Build filter string - translate user-friendly syntax to internal format
+        StringBuffer filterBuf;
+
+        // Parse user-provided filters (using friendly syntax like "owner:jsmith size>1000")
+        parseUserFilterSyntax(filters, filterBuf);
+
+        // Append system filters: name pattern and max files limit
+        filterBuf.appendf("%u%c%u%c%s%c",
+            DFUQFTspecial, DFUQFilterSeparator,
+            DFUQSFFileNameWithPrefix, DFUQFilterSeparator,
+            masklower.str(), DFUQFilterSeparator);
+
+        // Add max files limit if specified (and not -1 which means use server default)
+        if (maxFileLimit > 0)
+        {
+            filterBuf.appendf("%u%c%u%c%lld%c",
+                DFUQFTspecial, DFUQFilterSeparator,
+                DFUQSFMaxFiles, DFUQFilterSeparator,
+                maxFileLimit, DFUQFilterSeparator);
+        }
+
+        // Parse and validate requested fields
+        std::vector<DFUQResultField> fields;
+        StringArray requestedFieldNames;
+
+        if (isEmptyString(requestedFields))
+        {
+            requestedFieldNames.append("name");
+            requestedFieldNames.append("superfile");
+            requestedFieldNames.append("size");
+            requestedFieldNames.append("rowcount");
+            requestedFieldNames.append("modified");
+            requestedFieldNames.append("owner");
+            requestedFieldNames.append("cluster");
+        }
+        else
+        {
+            // Parse comma-separated field list
+            requestedFieldNames.appendList(requestedFields, ",");
+
+            // Ensure "name" is always included (required field)
+            if (!requestedFieldNames.contains("name", true))
+                requestedFieldNames.append("name");
+        }
+
+        // Validate field names and build field list for getDFAttributesFilteredIterator
+        ForEachItemIn(idx, requestedFieldNames)
+        {
+            // Trim whitespace
+            const char *fieldName = requestedFieldNames.item(idx);
+            if (isEmptyString(fieldName))
+                continue;
+
+            // Validate field name using existing validation function
+            StringBuffer attrPath;
+            DFUQResultField field;
+            DFUQResultFieldType fieldType;
+            if (!validateFileField(fieldName, attrPath, field, fieldType))
+                throw makeStringExceptionV(-1, "WsDfs.DFSListFiltered: Invalid field name '%s'", fieldName);
+
+            // Add field to list if not already present
+            if (std::find(fields.begin(), fields.end(), field) == fields.end())
+                fields.push_back(field);
+        }
+
+        // Always include numsubfiles for superfile detection
+        if (std::find(fields.begin(), fields.end(), DFUQResultField::numsubfiles) == fields.end())
+            fields.push_back(DFUQResultField::numsubfiles);
+
+        // Add terminator
+        fields.push_back(DFUQResultField::term);
+
+        bool allMatchingFilesReceived = false;
+        unsigned count = 0;
+        Owned<IPropertyTreeIterator> iter = queryDistributedFileDirectory().getDFAttributesFilteredIterator(
+            filterBuf.str(),
+            nullptr,                    // no local filters
+            fields.data(),              // requested fields
+            userDesc,
+            true,                       // recursive
+            allMatchingFilesReceived,
+            &count
+        );
+
+        // Build result tree
+        Owned<IPropertyTree> resultTree = createPTree();
+        resultTree->setPropInt("@count", count);
+        resultTree->setPropBool("@allMatchingFilesReceived", allMatchingFilesReceived);
+
+        // Add files to result
+        IPropertyTree *filesTree = resultTree->addPropTree("Files");
+        ForEach(*iter)
+        {
+            IPropertyTree &file = iter->query();
+            IPropertyTree *fileTree = filesTree->addPropTree("File", &file);
+            
+            // Handle unknownszero flag for size field
+            if (unknownszero && !fileTree->hasProp("@size"))
+                fileTree->setPropInt64("@size", 0);
+        }
+
+        // Serialize response
+        MemoryBuffer respMb, compressedRespMb;
+        resultTree->serialize(respMb);
+        fastLZCompressToBuffer(compressedRespMb, respMb.length(), respMb.bytes());
+        StringBuffer respStr;
+        JBASE64_Encode(compressedRespMb.bytes(), compressedRespMb.length(), respStr, false);
+        resp.setResult(respStr.str());
+
+        LOG(MCauditInfo,",FileList,EspProcess,READ,%s,%s,%u,%s", mask, filters?filters:"", count, userID.str());
+    }
+    catch (IException *e)
+    {
+        FORWARDEXCEPTION(context, e,  ECLWATCH_INTERNAL_ERROR);
+    }
+    return true;
+}
+
 
