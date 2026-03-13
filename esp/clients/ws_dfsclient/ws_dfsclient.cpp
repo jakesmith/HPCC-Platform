@@ -444,6 +444,7 @@ public:
 
                     // need to rename Cluster/@name too, because local plane will be referenced e.g. for numStripedDevices
                     cluster->setProp("@name", localMappedPlaneName);
+                    file->setProp("@group", localMappedPlaneName);
 
                     const char *dir = file->queryProp("@directory");
                     assertex(startsWith(dir, filePlanePrefix));
