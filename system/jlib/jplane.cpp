@@ -33,7 +33,7 @@
 static unsigned jPlaneHookId = 0;
 
 // Declare the array with an anonymous struct
-enum PlaneAttrType { boolean, integer };
+enum PlaneAttrType { boolean, integer, string };
 struct PlaneAttributeInfo
 {
     PlaneAttrType type;
@@ -48,6 +48,7 @@ static const std::array<PlaneAttributeInfo, PlaneAttributeCount> planeAttributeI
     { PlaneAttrType::boolean, 0, true, "concurrentWriteSupport" },// enum PlaneAttributeType::ConcurrentWriteSupport {3}
     { PlaneAttrType::integer, 1, false, "writeSyncMarginMs" },    // enum PlaneAttributeType::WriteSyncMarginMs      {4}
     { PlaneAttrType::boolean, 0, true, "renameSupported" },       // enum PlaneAttributeType::RenameSupported        {5}
+    { PlaneAttrType::string, 0, false, "compression" },           // enum PlaneAttributeType::FileCompressionType    {6}
 }};
 
 static constexpr unsigned __int64 unsetPlaneAttrValue = 0xFFFFFFFF00000000;
@@ -214,6 +215,15 @@ public:
                     attributeValues[propNum] = value;
                     break;
                 }
+                case PlaneAttrType::string:
+                {
+                    const char *value = plane.queryProp(prop.c_str());
+                    if (!value)
+                        value = defaults->queryProp(prop.c_str());
+                    if (value)
+                        stringAttributeValues[propNum].set(value);
+                    break;
+                }
                 default:
                     throwUnexpected();
             }
@@ -228,10 +238,8 @@ public:
         ForEachItemIn(h, planeHosts)
             hosts.emplace_back(planeHosts.item(h));
 
-        compression.set(config->queryProp("@compression", defaults->queryProp("@compression")));
-
         bool defaultCompressed = defaults->getPropBool("@compressLogicalFiles");
-        compressed = compression || config->getPropBool("@compressLogicalFiles", defaultCompressed);
+        compressed = getStringAttribute(FileCompressionType, nullptr) || config->getPropBool("@compressLogicalFiles", defaultCompressed);
     }
 
     virtual const char * queryPrefix() const override { return prefix.c_str(); }
@@ -358,6 +366,14 @@ public:
         return value;
     }
 
+    virtual const char * getStringAttribute(PlaneAttributeType attr, const char * defaultValue) const override
+    {
+        assertex(attr < PlaneAttributeCount);
+        if (stringAttributeValues[attr].isEmpty())
+            return defaultValue;
+        return stringAttributeValues[attr].get();
+    }
+
     const char * queryName() const { return name.c_str(); }
 
     virtual const IPropertyTree * queryConfig() const { return config; }
@@ -371,7 +387,7 @@ public:
 
     virtual const char * queryCompression() const
     {
-        return compression;
+        return getStringAttribute(FileCompressionType, nullptr);
     }
 
     virtual unsigned queryDefaultCopies() const override
@@ -384,9 +400,9 @@ private:
     std::string prefix;
     StringAttr mirrorPrefix; // can be null
     std::string category;
-    StringAttr compression;
     unsigned devices{1};
-    std::array<unsigned __int64, PlaneAttributeCount> attributeValues;
+    std::array<unsigned __int64, PlaneAttributeCount> attributeValues; // NB: index properties that are strings will be used/left as unsetPlaneAttrValue,
+    std::array<StringAttr, PlaneAttributeCount> stringAttributeValues; // NB: index properties that are integers will be used/left empty.
     Linked<const IPropertyTree> config;
     Linked<const IPropertyTree> defaults;
     std::vector<Owned<IStoragePlaneAlias>> aliases;
@@ -615,6 +631,30 @@ unsigned __int64 getPlaneAttributeValue(const char *planeName, PlaneAttributeTyp
         return it->second->getAttribute(planeAttrType, defaultValue);
 
     return defaultValue;
+}
+
+bool getPlaneAttributeStringValue(const char *planeName, PlaneAttributeType planeAttrType, const char *defaultValue, StringBuffer &result)
+{
+    if (!planeName)
+    {
+        if (defaultValue)
+            result.append(defaultValue);
+        return false;
+    }
+    assertex(planeAttrType < PlaneAttributeCount);
+    CriticalBlock b(storagePlaneMapCrit);
+    auto it = storagePlaneMap.find(planeName);
+    if (it != storagePlaneMap.end())
+    {
+        const char *value = it->second->getStringAttribute(planeAttrType, defaultValue);
+        if (value)
+            result.append(value);
+        return true;
+    }
+
+    if (defaultValue)
+        result.append(defaultValue);
+    return false;
 }
 
 const char *findPlaneFromPath(const char *filePath, StringBuffer &result)

@@ -42,11 +42,13 @@ enum PlaneAttributeType // remember to update planeAttributeInfo in jplane.cpp
     ConcurrentWriteSupport,
     WriteSyncMarginMs,
     RenameSupported,
+    FileCompressionType,
     PlaneAttributeCount
 };
 
 extern jlib_decl const char *getPlaneAttributeString(PlaneAttributeType attr);
 extern jlib_decl unsigned __int64 getPlaneAttributeValue(const char *planeName, PlaneAttributeType planeAttrType, unsigned __int64 defaultValue);
+extern jlib_decl bool getPlaneAttributeStringValue(const char *planeName, PlaneAttributeType planeAttrType, const char *defaultValue, StringBuffer &result);
 extern jlib_decl const char *findPlaneFromPath(const char *filePath, StringBuffer &result);
 //returns true if plane exists, fills resultValue with defaultValue if attribute is unset
 extern jlib_decl bool findPlaneAttrFromPath(const char *filePath, PlaneAttributeType planeAttrType, unsigned __int64 defaultValue, unsigned __int64 &resultValue);
@@ -115,6 +117,7 @@ interface IStoragePlane: extends IInterface
     virtual bool isAccessible() const = 0;
     virtual bool isStriped() const = 0;
     virtual unsigned __int64 getAttribute(PlaneAttributeType attr, unsigned __int64 defaultValue) const = 0;
+    virtual const char * getStringAttribute(PlaneAttributeType attr, const char * defaultValue) const = 0;
     virtual bool isAnyDeviceLocal() const = 0;
     virtual bool compressOnWrite() const = 0;
     virtual const char * queryCompression() const = 0;
