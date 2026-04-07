@@ -1450,7 +1450,6 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
 
         enableForceRemoteReads(); // forces file reads to be remote reads if they match environment setting 'forceRemotePattern' pattern.
 
-        bool disableQueuePriority = getComponentConfigSP()->getPropBool("expert/@disableQueuePriority");
         Owned<CJobManager> jobManager = new CJobManager(logHandler);
         const char * thorname = globals->queryProp("@name");
         double thorRate = getThorRate(queryNodeClusterWidth());  // This doesn't feel quite right to call a global function to get the width, but ok for now.
@@ -1469,11 +1468,6 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
 
                 StringBuffer queueNames;
                 getClusterThorQueueName(queueNames, globals->queryProp("@name"));
-                if (disableQueuePriority)
-                {
-                    queueNames.append(",");
-                    getClusterLingerThorQueueName(queueNames, globals->queryProp("@name"));
-                }
                 PROGLOG("Thor queue names: %s", queueNames.str());
                 thorQueue.setown(createJobQueue(queueNames));
                 thorQueue->connect(false);
@@ -1614,7 +1608,7 @@ void thorMain(ILogMsgHandler *logHandler, const char *wuid, const char *graphNam
 
                     StringBuffer nextJob;
                     CCycleTimer waitTimer;
-                    unsigned __int64 priority = disableQueuePriority ? 0 : getTimeStampNowValue();
+                    unsigned __int64 priority = getTimeStampNowValue();
                     do
                     {
                         StringBuffer wuid;

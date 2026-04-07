@@ -46,14 +46,10 @@ private:
     const char *daliServers;
     const char *apptype;
     Owned<IJobQueue> queue;
-    Owned<IJobQueue> lingerQueue; // used for thor agent linger queue support
     Linked<IPropertyTree> config;
     Owned<IThreadPool> pool; // for containerized only
     std::atomic<bool> running = { false };
     bool isThorAgent = false;
-    bool disableQueuePriority = false; // temporary JIC, while new client priority queuing beds in.
-
-friend class WaitThread;
 };
 
 //---------------------------------------------------------------------------------
@@ -81,8 +77,6 @@ CEclAgentExecutionServer::CEclAgentExecutionServer(IPropertyTree *_config) : con
         isThorAgent = streq("thor", apptype);
     else
         apptype = "hthor";
-    disableQueuePriority = getComponentConfigSP()->getPropBool("expert/@disableQueuePriority");
-
     StatisticCreatorType ctype = SCThthor;
     if (strieq(apptype, "roxie"))
         ctype = SCTroxie;
@@ -127,15 +121,6 @@ int CEclAgentExecutionServer::run()
         if (isThorAgent)
         {
             getClusterThorQueueName(queueNames, agentName);
-            if (disableQueuePriority)
-            {
-                // old mechanism used to test a separate queue that only Thor instances listened to (<name>.lingerthor)
-                // by queuing to it for a short period, and if not pulled off, launching a new instance. (see queueJobIfQueueWaiting)
-                // In new client priority implementation, the agent will not pull it off the queue in the 1st place.
-                StringBuffer lingerQueueName;
-                getClusterLingerThorQueueName(lingerQueueName, agentName);
-                lingerQueue.setown(createJobQueue(lingerQueueName));
-            }
         }
         else
         {
@@ -220,7 +205,7 @@ int CEclAgentExecutionServer::run()
             // one over the other, and theoretically could introduce some unexpected behaviour, like a skew of local disk usage.
             // That will requirement will also change, if we have automatic horizontal scaling in place. Then we would want to prioritize the agents that have
             // recently been in use.
-            if (!disableQueuePriority && isThorAgent)
+            if (isThorAgent)
                 priority = getTimeStampNowValue();
         }
         DBGLOG("Closing down");
@@ -255,8 +240,8 @@ static std::atomic<unsigned> nextInstanceNumber{0};
 class WaitThread : public CInterfaceOf<IPooledThread>
 {
 public:
-    WaitThread(CEclAgentExecutionServer &_owner, const char *_dali, const char *_apptype, const char *_queue)
-        : owner(_owner), dali(_dali), apptype(_apptype), queue(_queue)
+    WaitThread(const char *_dali, const char *_apptype, const char *_queue)
+        : dali(_dali), apptype(_apptype), queue(_queue)
     {
         isThorAgent = streq("thor", apptype);
         // nextInstanceNumber always increases
@@ -299,68 +284,63 @@ public:
             }
             if (isContainerized() && !useChildProcesses)
             {
-                constexpr unsigned queueWaitingCheckPeriodMs = 1000;
-                // NB: queueJobIfQueueWaiting is a legacy mechanism (should be deleted), for now only used if disableQueuePriority=true
-                if (!owner.lingerQueue || !queueJobIfQueueWaiting(owner.lingerQueue, item, queueWaitingCheckPeriodMs, queueWaitingCheckPeriodMs))
+                std::list<std::pair<std::string, std::string>> params = { };
+                if (compConfig->getPropBool("@useThorQueue", true))
+                    params.push_back({ "queue", queue.get() });
+                StringBuffer jobName;
+                if (isThorAgent)
                 {
-                    std::list<std::pair<std::string, std::string>> params = { };
-                    if (compConfig->getPropBool("@useThorQueue", true))
-                        params.push_back({ "queue", queue.get() });
-                    StringBuffer jobName;
-                    if (isThorAgent)
-                    {
-                        params.push_back({ "graphName", graphName.get() });
-                        params.push_back({ "wfid", std::to_string(wfid) });
+                    params.push_back({ "graphName", graphName.get() });
+                    params.push_back({ "wfid", std::to_string(wfid) });
 
-                        const char *targetName = compConfig->queryProp("@targetName");
-                        if (targetName)
+                    const char *targetName = compConfig->queryProp("@targetName");
+                    if (targetName)
+                    {
+                        jobName.append(targetName).append('-');
+                        StringBuffer instanceName;
+                        const char *podSuffix = k8s::queryPodSuffix();
+                        if (podSuffix)
                         {
-                            jobName.append(targetName).append('-');
-                            StringBuffer instanceName;
-                            const char *podSuffix = k8s::queryPodSuffix();
-                            if (podSuffix)
-                            {
-                                instanceName.append(podSuffix).append('-');
-                                jobName.append(instanceName);
-                            }
-                            jobName.append(myInstanceNumber);
-                            instanceName.append(myInstanceNumber);
-                            params.push_back({ "instanceName", instanceName.str() });
+                            instanceName.append(podSuffix).append('-');
+                            jobName.append(instanceName);
                         }
-                        else
-                            jobName.append(wuid).append('-').append(graphName);
+                        jobName.append(myInstanceNumber);
+                        instanceName.append(myInstanceNumber);
+                        params.push_back({ "instanceName", instanceName.str() });
                     }
                     else
-                        jobName.append(wuid);
+                        jobName.append(wuid).append('-').append(graphName);
+                }
+                else
+                    jobName.append(wuid);
 
-                    SCMStringBuffer optPlatformVersion;
+                SCMStringBuffer optPlatformVersion;
+                {
+                    Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
+                    Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid);
+                    if (!cw)
                     {
-                        Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
-                        Owned<IConstWorkUnit> cw = factory->openWorkUnit(wuid);
-                        if (!cw)
+                        WARNLOG("Queued wuid does not exist: %s", wuid.str());
+                        return; // exit pooled thread
+                    }
+                    if (isThorAgent)
+                    {
+                        SessionId agentSessionID = cw->getAgentSession();
+                        if ((agentSessionID <= 0) || querySessionManager().sessionStopped(agentSessionID, 0))
                         {
-                            WARNLOG("Queued wuid does not exist: %s", wuid.str());
+                            WARNLOG("Discarding agentless queued Thor job: %s", wuid.str());
                             return; // exit pooled thread
                         }
-                        if (isThorAgent)
-                        {
-                            SessionId agentSessionID = cw->getAgentSession();
-                            if ((agentSessionID <= 0) || querySessionManager().sessionStopped(agentSessionID, 0))
-                            {
-                                WARNLOG("Discarding agentless queued Thor job: %s", wuid.str());
-                                return; // exit pooled thread
-                            }
-                        }
-                        cw->getDebugValue("platformVersion", optPlatformVersion);
-                        if (optPlatformVersion.length())
-                            params.push_back({ "_HPCC_JOB_VERSION_", optPlatformVersion.str() });
-
-                        Owned<IWorkUnit> workunit = &cw->lock();
-                        workunit->setContainerizedProcessInfo("AgentExec", compConfig->queryProp("@name"), k8s::queryMyPodName(), k8s::queryMyContainerName(), graphName, nullptr);
-                        addTimeStamp(workunit, wfid, graphName, StWhenK8sLaunched);
                     }
-                    k8s::runJob(jobSpecName, wuid, jobName, params, wasScheduled);
+                    cw->getDebugValue("platformVersion", optPlatformVersion);
+                    if (optPlatformVersion.length())
+                        params.push_back({ "_HPCC_JOB_VERSION_", optPlatformVersion.str() });
+
+                    Owned<IWorkUnit> workunit = &cw->lock();
+                    workunit->setContainerizedProcessInfo("AgentExec", compConfig->queryProp("@name"), k8s::queryMyPodName(), k8s::queryMyContainerName(), graphName, nullptr);
+                    addTimeStamp(workunit, wfid, graphName, StWhenK8sLaunched);
                 }
+                k8s::runJob(jobSpecName, wuid, jobName, params, wasScheduled);
             }
             else
             {
@@ -436,7 +416,6 @@ public:
         }
     }
 private:
-    CEclAgentExecutionServer &owner;
     unsigned wfid = 0;
     StringAttr wuid;
     StringAttr graphName;
@@ -453,7 +432,7 @@ IPooledThread *CEclAgentExecutionServer::createNew()
 {
     if (nullptr == pool)
         throwUnexpected();
-    return new WaitThread(*this, daliServers, apptype, agentName);
+    return new WaitThread(daliServers, apptype, agentName);
 }
 
 bool CEclAgentExecutionServer::onAbort()
