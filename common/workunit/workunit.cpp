@@ -14481,13 +14481,12 @@ void executeThorGraph(const char * graphName, IConstWorkUnit &workunit, const IP
         w->setState(WUStateBlocked);
     }
 
-    WUState state = WUStateUnknown;
-    if (config.hasProp("@queue"))
     {
         CCycleTimer elapsedTimer;
 
         bool thisThor = true;
         const char *queue = config.queryProp("@queue");
+        dbgassertex(queue);
         const char *tgt = workunit.queryClusterName();
         if (!isEmptyString(tgt)) // don't think should ever happen
         {
@@ -14550,21 +14549,6 @@ void executeThorGraph(const char * graphName, IConstWorkUnit &workunit, const IP
         }
         Owned<IWorkUnit> w = &workunit.lock();
         updateWorkunitStat(w, SSTgraph, graphName, StTimeBlocked, nullptr, blockedTime, wfid);
-    }
-    else
-    {
-        std::list<std::pair<std::string, std::string>> params = { };
-        params.push_back({ "graphName", graphName });
-        params.push_back({ "wfid", std::to_string(wfid) });
-
-        SCMStringBuffer optPlatformVersion;
-        workunit.getDebugValue("platformVersion", optPlatformVersion);
-        if (optPlatformVersion.length())
-            params.push_back({ "_HPCC_JOB_VERSION_", optPlatformVersion.str() });
-
-        VStringBuffer job("%s-%s", wuid.str(), graphName);
-        bool wasScheduled = false;
-        k8s::runJob("thormanager", wuid, job, params, wasScheduled);
     }
 
     /* In k8s, Thor feeds back the terminating exception via the workunit.

@@ -285,8 +285,7 @@ public:
             if (isContainerized() && !useChildProcesses)
             {
                 std::list<std::pair<std::string, std::string>> params = { };
-                if (compConfig->getPropBool("@useThorQueue", true))
-                    params.push_back({ "queue", queue.get() });
+                params.push_back({ "queue", queue.get() });
                 StringBuffer jobName;
                 if (isThorAgent)
                 {
@@ -357,8 +356,7 @@ public:
                     exec.append(" --config=");
                     compConfig->getProp("@config", exec);
                 }
-                if (compConfig->getPropBool("@useThorQueue", true))
-                    exec.append(" --queue=").append(queue);
+                exec.append(" --queue=").append(queue);
                 if (isThorAgent)
                     exec.appendf(" --graphName=%s", graphName.get());
                 Owned<IPipeProcess> pipe = createPipeProcess();
