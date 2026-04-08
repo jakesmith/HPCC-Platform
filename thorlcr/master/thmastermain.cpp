@@ -1034,7 +1034,6 @@ int main( int argc, const char *argv[]  )
             StringBuffer thorEpStr;
             PROGLOG("ThorManager version %d.%d, Started on %s", THOR_VERSION_MAJOR,THOR_VERSION_MINOR,thorEp.getEndpointHostText(thorEpStr).str());
 
-            SCMStringBuffer optPlatformVersion;
             unsigned numWorkersPerPod = 1;
             if (!globals->hasProp("@numWorkers"))
                 throw makeStringException(0, "Default number of workers not defined (numWorkers)");
@@ -1051,17 +1050,13 @@ int main( int argc, const char *argv[]  )
                     numWorkers = globals->getPropInt("@numWorkers", 0);
                 if (0 == numWorkers)
                     throw makeStringException(0, "Number of workers must be > 0 (numWorkers)");
-                if (wuRead->hasDebugValue("numWorkersPerPod"))
-                    numWorkersPerPod = wuRead->getDebugValueInt("numWorkersPerPod", 1);
-                else
-                    numWorkersPerPod = globals->getPropInt("@numWorkersPerPod", 1); // default to 1
+                numWorkersPerPod = globals->getPropInt("@numWorkersPerPod", 1); // default to 1
                 if (numWorkersPerPod < 1)
                     throw makeStringException(0, "Number of workers per pod must be > 0 (numWorkersPerPod)");
                 if ((numWorkers % numWorkersPerPod) != 0)
                     throw makeStringExceptionV(0, "numWorkersPerPod must be a factor of numWorkers. (numWorkers=%u, numWorkersPerPod=%u)", numWorkers, numWorkersPerPod);
 
                 workerProvisionTracker.noteWaiting(numWorkers);
-                wuRead->getDebugValue("platformVersion", optPlatformVersion);
                 Owned<IWorkUnit> workunit = &wuRead->lock();
                 addTimeStamp(workunit, wfid, graphName, StWhenK8sStarted);
             }
@@ -1082,8 +1077,6 @@ int main( int argc, const char *argv[]  )
             k8s::KeepJobs keepJob = k8s::translateKeepJobs(globals->queryProp("@keepJobs"));
 
             std::list<std::pair<std::string, std::string>> params = { { "graphName", graphName}, { "master", myEp.str() }, { "_HPCC_NUM_WORKERS_", std::to_string(numWorkers/numWorkersPerPod)} };
-            if (optPlatformVersion.length())
-                params.push_back({ "_HPCC_JOB_VERSION_", optPlatformVersion.str() });
             if (!k8s::applyYaml("thorworker", workunit, cloudJobName, "job", params, false, k8s::KeepJobs::none == keepJob))
                 throw makeStringException(TE_AbortException, "Failed to apply worker job manifest");
         }
