@@ -395,15 +395,7 @@ public:
         }
 
         if (isContainerized())
-        {
-            unsigned wfid = globals->getPropInt("@wfid");
-            const char *wuid = globals->queryProp("@workunit");
-            const char *graphName = globals->queryProp("@graphName");
-            Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
-            Owned<IWorkUnit> workunit = factory->updateWorkUnit(wuid);
-            addTimeStamp(workunit, wfid, graphName, StWhenK8sReady);
-            publishPodNames(workunit, graphName, &connectedWorkers);
-        }
+            setConnectedWorkers(connectedWorkers);
 
         //Check that nothing has caused the global configuration to be refreshed - otherwise inconsistent values may be used by the slave
         assertex(globals == getComponentConfigSP());
@@ -718,9 +710,6 @@ int main( int argc, const char *argv[]  )
 
     installDefaultFileHooks(globals);
     ILogMsgHandler *logHandler;
-    unsigned wfid = 0;
-    const char *workunit = nullptr;
-    const char *graphName = nullptr;
     IPropertyTree *managerMemory = ensurePTree(globals, "managerMemory");
     IPropertyTree *workerMemory = ensurePTree(globals, "workerMemory");
 
@@ -897,17 +886,7 @@ int main( int argc, const char *argv[]  )
         if (l) { thorPath[l] = PATHSEPCHAR; thorPath[l+1] = '\0'; }
         globals->setProp("@thorPath", thorPath);
 
-        if (isContainerized())
-        {
-            wfid = globals->getPropInt("@wfid");
-            workunit = globals->queryProp("@workunit");
-            graphName = globals->queryProp("@graphName");
-            if (isEmptyString(workunit))
-                throw makeStringException(0, "missing --workunit");
-            if (isEmptyString(graphName))
-                throw makeStringException(0, "missing --graphName");
-        }
-        else
+        if (!isContainerized())
         {
             const char * overrideBaseDirectory = globals->queryProp("@thorDataDirectory");
             const char * overrideReplicateDirectory = globals->queryProp("@thorReplicateDirectory");
@@ -1026,40 +1005,24 @@ int main( int argc, const char *argv[]  )
         auditThorSystemEvent("Initializing");
         CCycleTimer workerStartTimer;
         unsigned numWorkers = 0;
+        unsigned __int64 k8sStartedTs = 0;
         if (isContainerized())
         {
-            saveWuidToFile(workunit);
-            JobNameScope activeJobName(workunit);
-
             StringBuffer thorEpStr;
             PROGLOG("ThorManager version %d.%d, Started on %s", THOR_VERSION_MAJOR,THOR_VERSION_MINOR,thorEp.getEndpointHostText(thorEpStr).str());
 
             unsigned numWorkersPerPod = 1;
-            if (!globals->hasProp("@numWorkers"))
-                throw makeStringException(0, "Default number of workers not defined (numWorkers)");
-            else
-            {
-                // check 'numWorkers' workunit option.
-                Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
-                Owned<IConstWorkUnit> wuRead = factory->openWorkUnit(workunit);
-                if (!wuRead)
-                    throw makeStringExceptionV(0, "Cannot open workunit: %s", workunit);
-                if (wuRead->hasDebugValue("numWorkers"))
-                    numWorkers = wuRead->getDebugValueInt("numWorkers", 0);
-                else
-                    numWorkers = globals->getPropInt("@numWorkers", 0);
-                if (0 == numWorkers)
-                    throw makeStringException(0, "Number of workers must be > 0 (numWorkers)");
-                numWorkersPerPod = globals->getPropInt("@numWorkersPerPod", 1); // default to 1
-                if (numWorkersPerPod < 1)
-                    throw makeStringException(0, "Number of workers per pod must be > 0 (numWorkersPerPod)");
-                if ((numWorkers % numWorkersPerPod) != 0)
-                    throw makeStringExceptionV(0, "numWorkersPerPod must be a factor of numWorkers. (numWorkers=%u, numWorkersPerPod=%u)", numWorkers, numWorkersPerPod);
+            numWorkers = globals->getPropInt("@numWorkers", 0);
+            if (0 == numWorkers)
+                throw makeStringException(0, "Number of workers must be > 0 (numWorkers)");
+            numWorkersPerPod = globals->getPropInt("@numWorkersPerPod", 1);
+            if (numWorkersPerPod < 1)
+                throw makeStringException(0, "Number of workers per pod must be > 0 (numWorkersPerPod)");
+            if ((numWorkers % numWorkersPerPod) != 0)
+                throw makeStringExceptionV(0, "numWorkersPerPod must be a factor of numWorkers. (numWorkers=%u, numWorkersPerPod=%u)", numWorkers, numWorkersPerPod);
 
-                workerProvisionTracker.noteWaiting(numWorkers);
-                Owned<IWorkUnit> workunit = &wuRead->lock();
-                addTimeStamp(workunit, wfid, graphName, StWhenK8sStarted);
-            }
+            workerProvisionTracker.noteWaiting(numWorkers);
+            k8sStartedTs = getTimeStampNowValue();
 
             if (globals->hasProp("@instanceName"))
             {
@@ -1067,17 +1030,21 @@ int main( int argc, const char *argv[]  )
                 globals->getProp("@instanceName", cloudJobName);
             }
             else
-                cloudJobName.appendf("%s-%s", workunit, graphName);
+                cloudJobName.append(thorName);
 
             StringBuffer myEp;
             getRemoteAccessibleHostText(myEp, queryMyNode()->endpoint());
 
-            if (!k8s::applyYaml("thorworker", workunit, cloudJobName, "networkpolicy", { }, false, true))
+            if (!k8s::applyYaml("thorworker", nullptr, cloudJobName, "networkpolicy", { }, false, true))
                 throw makeStringException(TE_AbortException, "Failed to apply worker networkpolicy manifest");
             k8s::KeepJobs keepJob = k8s::translateKeepJobs(globals->queryProp("@keepJobs"));
 
-            std::list<std::pair<std::string, std::string>> params = { { "graphName", graphName}, { "master", myEp.str() }, { "_HPCC_NUM_WORKERS_", std::to_string(numWorkers/numWorkersPerPod)} };
-            if (!k8s::applyYaml("thorworker", workunit, cloudJobName, "job", params, false, k8s::KeepJobs::none == keepJob))
+            std::list<std::pair<std::string, std::string>> params = { { "master", myEp.str() }, { "_HPCC_NUM_WORKERS_", std::to_string(numWorkers/numWorkersPerPod)} };
+            const char *runtimeImageVersion = getenv("runtimeImageVersion");
+            const char *baseImageVersion = getenv("baseImageVersion");
+            if (!isEmptyString(runtimeImageVersion) && !isEmptyString(baseImageVersion) && !streq(runtimeImageVersion, baseImageVersion))
+                params.push_back({ "_HPCC_JOB_VERSION_", runtimeImageVersion });
+            if (!k8s::applyYaml("thorworker", nullptr, cloudJobName, "job", params, false, k8s::KeepJobs::none == keepJob))
                 throw makeStringException(TE_AbortException, "Failed to apply worker job manifest");
         }
         else
@@ -1103,6 +1070,8 @@ int main( int argc, const char *argv[]  )
         }
 
         registry->connect(numWorkers);
+        if (isContainerized())
+            setK8sResourceTimestamps(k8sStartedTs, getTimeStampNowValue());
         if (!isContainerized())
         {
             // bare-metal - check health of dafilesrv's on the Thor cluster.
@@ -1158,8 +1127,7 @@ int main( int argc, const char *argv[]  )
         cost_type costStart = money2cost_type(expenseStart);
         recordGlobalMetrics("Queue", { {"component", "thor" }, { "name", thorName } }, { StNumStarts, StTimeProvision, StTimeStart, StCostStart }, { 1ULL, workerProvisionTimeNs, startupElapsedTimeNs, costStart });
 
-        // NB: workunit/graphName only set in one-shot mode (if isCloud())
-        thorMain(logHandler, workunit, graphName);
+        thorMain(logHandler);
         auditThorSystemEvent("Terminate");
         DBGLOG("ThorManager terminated OK");
     }
@@ -1174,15 +1142,7 @@ int main( int argc, const char *argv[]  )
         if (!cloudJobName.isEmpty())
         {
             if (exception)
-            {
-                Owned<IWorkUnitFactory> factory = getWorkUnitFactory();
-                Owned<IConstWorkUnit> wu = factory->openWorkUnit(workunit);
-                if (wu)
-                {
-                    relayWuidException(wu, exception);
-                    retCode = 0; // if successfully reported, suppress thormanager exit failure that would trigger another exception
-                }
-            }
+                IERRLOG(exception, "ThorManager exception during shutdown");
             if (workerJobInstalled)
             {
                 try

@@ -26,7 +26,7 @@ interface IException;
 CSDSServerStatus &queryServerStatus();
 CSDSServerStatus &openThorServerStatus();
 void closeThorServerStatus();
-void thorMain(ILogMsgHandler *logHandler, const char *workunit, const char *graphName);
+void thorMain(ILogMsgHandler *logHandler);
 
 enum ThorExitCodes { TEC_Clean, TEC_CtrlC, TEC_Idle, TEC_Watchdog, TEC_WorkerInit, TEC_Swap, TEC_DaliDown, TEC_Exception };
 
@@ -49,6 +49,8 @@ struct CConnectedWorkerDetail
 
 };
 void publishPodNames(IWorkUnit *workunit, const char *graphName, const std::vector<CConnectedWorkerDetail> *connectedWorkers);
+void setConnectedWorkers(const std::vector<CConnectedWorkerDetail> &workers);
+void setK8sResourceTimestamps(unsigned __int64 startedTs, unsigned __int64 readyTs);
 void relayWuidException(IConstWorkUnit *wu, const IException *exception);
 void auditThorSystemEvent(const char *eventName);
 void auditThorSystemEvent(const char *eventName, std::initializer_list<const char*> args);

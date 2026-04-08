@@ -178,6 +178,16 @@ int CEclAgentExecutionServer::run()
             if (item.get())
             {
                 PROGLOG("AgentExec: Dequeued workunit request '%s'", item->queryWUID());
+                if (isThorAgent && isContainerized())
+                {
+                    StringBuffer internalQueueName;
+                    getClusterThorInternalQueueName(internalQueueName, agentName);
+                    Owned<IJobQueue> internalQueue = createJobQueue(internalQueueName);
+                    Owned<IJobQueueItem> internalItem = createJobQueueItem(item->queryWUID());
+                    internalItem->setOwner(item->queryOwner());
+                    internalItem->setPriority(item->getPriority());
+                    internalQueue->enqueue(internalItem.getClear());
+                }
                 try
                 {
                     executeWorkunit(item);
@@ -284,14 +294,43 @@ public:
             }
             if (isContainerized() && !useChildProcesses)
             {
+                if (isThorAgent)
+                {
+                    StringBuffer internalQueueName;
+                    getClusterThorInternalQueueName(internalQueueName, queue);
+                    Owned<IJobQueue> internalQueue = createJobQueue(internalQueueName);
+
+                    VStringBuffer jobStr("%u/%s/%s", wfid, wuid.str(), graphName.str());
+                    unsigned lingerCheckDelayMs = compConfig->getPropInt("expert/@lingerCheckDelay", 2000);
+                    constexpr unsigned lingerCheckIntervalMs = 500;
+                    CTimeMon tm(lingerCheckDelayMs);
+                    bool consumed = false;
+                    while (true)
+                    {
+                        unsigned remainingMs;
+                        if (tm.timedout(&remainingMs))
+                            break;
+                        unsigned pauseMs = remainingMs > lingerCheckIntervalMs ? lingerCheckIntervalMs : remainingMs;
+                        MilliSleep(pauseMs);
+                        if (!internalQueue->find(jobStr))
+                        {
+                            consumed = true;
+                            break;
+                        }
+                    }
+                    if (consumed)
+                    {
+                        PROGLOG("Lingering Thor consumed job %s from internal queue, skipping k8s launch", jobStr.str());
+                        return;
+                    }
+                    PROGLOG("No lingering Thor consumed job %s, launching new k8s instance", jobStr.str());
+                }
+
                 std::list<std::pair<std::string, std::string>> params = { };
                 params.push_back({ "queue", queue.get() });
                 StringBuffer jobName;
                 if (isThorAgent)
                 {
-                    params.push_back({ "graphName", graphName.get() });
-                    params.push_back({ "wfid", std::to_string(wfid) });
-
                     const char *targetName = compConfig->queryProp("@targetName");
                     if (targetName)
                     {
@@ -335,7 +374,7 @@ public:
                     workunit->setContainerizedProcessInfo("AgentExec", compConfig->queryProp("@name"), k8s::queryMyPodName(), k8s::queryMyContainerName(), graphName, nullptr);
                     addTimeStamp(workunit, wfid, graphName, StWhenK8sLaunched);
                 }
-                k8s::runJob(jobSpecName, wuid, jobName, params, wasScheduled);
+                k8s::runJob(jobSpecName, isThorAgent ? nullptr : wuid.str(), jobName, params, wasScheduled);
             }
             else
             {

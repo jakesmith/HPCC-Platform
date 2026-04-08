@@ -28,6 +28,7 @@
 
 #define ROXIE_QUEUE_EXT ".roxie"
 #define THOR_QUEUE_EXT ".thor"
+#define THOR_INTERNAL_QUEUE_EXT ".thor.internal"
 #define ECLCCSERVER_QUEUE_EXT ".eclserver"
 #define ECLCCSERVER_COMPILE_QUEUE_EXT ".eclserver.compile"
 #define ECLSERVER_QUEUE_EXT ECLCCSERVER_QUEUE_EXT
@@ -66,6 +67,11 @@ inline StringBuffer &getClusterEclAgentQueueName(StringBuffer &ret, const char *
 inline StringBuffer &getClusterThorQueueName(StringBuffer &ret, const char *cluster)
 {
     return ret.append(cluster).append(THOR_QUEUE_EXT);
+}
+
+inline StringBuffer &getClusterThorInternalQueueName(StringBuffer &ret, const char *cluster)
+{
+    return ret.append(cluster).append(THOR_INTERNAL_QUEUE_EXT);
 }
 
 inline StringBuffer &getDfuQueueName(StringBuffer &ret, const char *name)
