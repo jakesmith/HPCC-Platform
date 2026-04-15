@@ -77,6 +77,8 @@ class TopNSlaveActivity : public CSlaveActivity
     Owned<IRowStream> out;
     IHThorTopNArg *helper;
     rowidx_t topNLimit;
+    rowidx_t groupedOutputPos;
+    rowidx_t groupedOutputCount;
     Owned<IRowServer> rowServer;
     MemoryBuffer topology;
 
@@ -87,6 +89,7 @@ public:
         assertex(!(global && grouped));
         helper = (IHThorTopNArg *) queryHelper();
         eog = eos = false;
+        groupedOutputPos = groupedOutputCount = 0;
         if (container.queryLocalOrGrouped())
             setRequireInitData(false);
         appendOutputLinked(this);
@@ -109,10 +112,13 @@ public:
             topology.append(tSz, data.readDirect(tSz));
         }
     }
-    IRowStream *getNextSortGroup(IRowStream *input)
+    rowidx_t collectNextGroupTopN(IRowStream *input)
     {
-        if (inputStopped) return NULL; // JCSMORE - should not be possible. getNextSortGroup() is called from nextRow() and should never be called after stop()
+        if (inputStopped)
+            return 0;
+
         sortedRows.clearRows(); // NB: In a child query, this will mean the rows ptr will remain at high-water mark
+
         for (;;)
         {
             OwnedConstThorRow row = input->nextRow();
@@ -124,6 +130,7 @@ public:
                 if (!row)
                     break;
             }
+
             if (sortedRows.ordinality() < topNLimit)
                 sortedRows.binaryInsert(row.getClear(), *compare);
             else
@@ -134,7 +141,23 @@ public:
                 // else had enough and out of range
             }
         }
-        rowidx_t sortedCount = sortedRows.ordinality();
+
+        return sortedRows.ordinality();
+    }
+    bool loadNextGroupedOutput(IRowStream *input)
+    {
+        groupedOutputPos = 0;
+        groupedOutputCount = collectNextGroupTopN(input);
+        if (0 == groupedOutputCount)
+        {
+            PARENT::stopInput(0);
+            return false;
+        }
+        return true;
+    }
+    IRowStream *getNextSortGroup(IRowStream *input)
+    {
+        rowidx_t sortedCount = collectNextGroupTopN(input);
         Owned<IRowStream> retStream;
         if (global || sortedCount)
         {
@@ -197,8 +220,18 @@ public:
         }
         else
         {
-            out.setown(getNextSortGroup(inputStream));
-            eos = false;
+            if (grouped)
+            {
+                if (loadNextGroupedOutput(inputStream))
+                    eos = false;
+                else
+                    eos = true;
+            }
+            else
+            {
+                out.setown(getNextSortGroup(inputStream));
+                eos = false;
+            }
         }
         eog = false;
     }
@@ -214,7 +247,7 @@ public:
         ActivityTimer t(slaveTimerStats, timeActivities);
         if (abortSoon || eos)
             return NULL;
-        if (NULL == out)
+        if (!grouped && NULL == out)
         {
             out.setown(getNextSortGroup(inputStream));
             if (NULL == out)
@@ -225,9 +258,10 @@ public:
         }
         if (grouped)
         {
-            OwnedConstThorRow row = out->nextRow();
-            if (row)
+            if (groupedOutputPos < groupedOutputCount)
             {
+                OwnedConstThorRow row = sortedRows.getClear(groupedOutputPos++);
+                verifyex(row);
                 eog = false;
                 dataLinkIncrement();
                 return row.getClear();
@@ -236,12 +270,11 @@ public:
             {
                 if (eog)
                 {
-                    out.setown(getNextSortGroup(inputStream));
-                    if (NULL == out)
+                    if (!loadNextGroupedOutput(inputStream))
                         eos = true;
                     else
                     {
-                        OwnedConstThorRow row = out->nextRow();
+                        OwnedConstThorRow row = sortedRows.getClear(groupedOutputPos++);
                         verifyex(row);
                         eog = false;
                         dataLinkIncrement();
@@ -251,8 +284,7 @@ public:
                 else
                 {
                     eog = true;
-                    out.setown(getNextSortGroup(inputStream));
-                    if (NULL == out)
+                    if (!loadNextGroupedOutput(inputStream))
                         eos = true;
                 }
             }
