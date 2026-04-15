@@ -119,6 +119,7 @@ public:
 
         sortedRows.clearRows(); // NB: In a child query, this will mean the rows ptr will remain at high-water mark
 
+        bool appendThenSort = grouped;
         for (;;)
         {
             OwnedConstThorRow row = input->nextRow();
@@ -131,6 +132,17 @@ public:
                     break;
             }
 
+            if (appendThenSort)
+            {
+                if (sortedRows.ordinality() < topNLimit)
+                {
+                    sortedRows.append(row.getClear());
+                    continue;
+                }
+                sortedRows.sort(*compare, 1);
+                appendThenSort = false;
+            }
+
             if (sortedRows.ordinality() < topNLimit)
                 sortedRows.binaryInsert(row.getClear(), *compare);
             else
@@ -141,6 +153,9 @@ public:
                 // else had enough and out of range
             }
         }
+
+        if (appendThenSort && sortedRows.ordinality() > 1)
+            sortedRows.sort(*compare, 1);
 
         return sortedRows.ordinality();
     }
