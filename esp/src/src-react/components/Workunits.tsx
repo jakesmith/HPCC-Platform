@@ -141,6 +141,10 @@ export const Workunits: React.FunctionComponent<WorkunitsProps> = ({
                 label: nlsHPCC.TotalClusterTime, width: 120,
                 justify: "right",
             },
+            WallRunTime: {
+                label: nlsHPCC.WallRunTime, width: 120,
+                justify: "right",
+            },
             "Compile Cost": {
                 label: nlsHPCC.CompileCost, width: 100,
                 justify: "right",

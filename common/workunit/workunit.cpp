@@ -3780,6 +3780,7 @@ public:
     }
 
     virtual unsigned getTotalThorTime() const { return totalThorTime; };
+    virtual unsigned getWallRunTime() const { return 0; };
     virtual IConstWUAppValueIterator & getApplicationValues() const { return *new CArrayIteratorOf<IConstWUAppValue,IConstWUAppValueIterator> (appvalues, 0, (IConstWorkUnitInfo *) this); };
 protected:
     StringAttr wuid, user, jobName, clusterName, timeScheduled, wuscope;
@@ -4433,6 +4434,8 @@ public:
             { return c->getProcesses(type, instance); }
     virtual unsigned getTotalThorTime() const
             { return c->getTotalThorTime(); }
+    virtual unsigned getWallRunTime() const
+            { return c->getWallRunTime(); }
     virtual WUGraphState queryGraphState(const char *graphName) const
             { return c->queryGraphState(graphName); }
     virtual WUGraphState queryNodeState(const char *graphName, WUGraphIDType nodeId) const
@@ -7516,6 +7519,14 @@ unsigned CLocalWorkUnit::getTotalThorTime() const
     StatsAggregation summary;
     aggregateStatistic(summary, (IConstWorkUnit *)this, filter, StTimeElapsed);
     return (unsigned)nanoToMilli(summary.getSum());
+}
+
+unsigned CLocalWorkUnit::getWallRunTime() const
+{
+    CriticalBlock block(crit);
+    if (p->hasProp("@wallRunTime"))
+        return (unsigned)nanoToMilli(extractTimeCollatable(p->queryProp("@wallRunTime"), nullptr));
+    return 0;
 }
 
 void CLocalWorkUnit::setDebugAgentListenerPort(unsigned port)

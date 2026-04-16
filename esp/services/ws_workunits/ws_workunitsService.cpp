@@ -2007,6 +2007,16 @@ void doWUQueryWithSort(IEspContext &context, IEspWUQueryRequest & req, IEspWUQue
             info->setTotalClusterTime(totalThorTimeStr.str());
         else
             info->setTotalThorTime(totalThorTimeStr.str());
+        if (version >= 2.06)
+        {
+            unsigned wallRunTimeMS = cw.getWallRunTime();
+            if (wallRunTimeMS)
+            {
+                StringBuffer wallRunTimeStr;
+                formatDuration(wallRunTimeStr, wallRunTimeMS);
+                info->setWallRunTime(wallRunTimeStr.str());
+            }
+        }
         //if (cw->isPausing())
         //    info.setIsPausing(true);
         // getEventScheduleFlag(info);
@@ -2210,6 +2220,8 @@ void doWULightWeightQueryWithSort(IEspContext &context, IEspWULightWeightQueryRe
         info->setPriorityLevel(cw.getPriorityLevel());
         info->setPriorityDesc(cw.queryPriorityDesc());
         info->setTotalClusterTime(cw.getTotalThorTime());
+        if (version >= 2.06)
+            info->setWallRunTime(cw.getWallRunTime());
 
         WsWuDateTime dt;
         cw.getTimeScheduled(dt);

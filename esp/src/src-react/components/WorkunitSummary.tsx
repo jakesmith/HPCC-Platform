@@ -305,6 +305,7 @@ export const WorkunitSummary: React.FunctionComponent<WorkunitSummaryProps> = ({
                                 "protected": { label: nlsHPCC.Protected, type: "checkbox", value: wuProtected },
                                 "cluster": { label: nlsHPCC.Cluster, type: "string", value: workunit?.Cluster, readonly: true },
                                 "totalClusterTime": { label: nlsHPCC.TotalClusterTime, type: "string", value: workunit?.TotalClusterTime ? workunit?.TotalClusterTime : "0.00", readonly: true },
+                                "wallRunTime": { label: nlsHPCC.WallRunTime, type: "string", value: workunit?.WallRunTime ?? "", readonly: true },
                                 "abortedBy": { label: nlsHPCC.AbortedBy, type: "string", value: workunit?.AbortBy, readonly: true },
                                 "abortedTime": { label: nlsHPCC.AbortedTime, type: "string", value: workunit?.AbortTime, readonly: true },
                                 "ServiceNamesCustom": { label: nlsHPCC.Services, type: "string", value: serviceNames, readonly: true, multiline: true },

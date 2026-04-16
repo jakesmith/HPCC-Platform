@@ -1241,6 +1241,7 @@ interface IConstWorkUnitInfo : extends IInterface
     virtual IJlibDateTime & getTimeScheduled(IJlibDateTime & val) const = 0;
 
     virtual unsigned getTotalThorTime() const = 0;
+    virtual unsigned getWallRunTime() const = 0;
     virtual IConstWUAppValueIterator & getApplicationValues() const = 0;
 };
 

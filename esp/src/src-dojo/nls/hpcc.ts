@@ -1141,6 +1141,7 @@ export = {
         TotalParts: "Total Parts",
         TotalSize: "Total Size",
         TotalClusterTime: "Total Cluster Time",
+        WallRunTime: "Wall Run Time",
         ToTime: "To Time",
         Trace: "Trace",
         TransferRate: "Transfer Rate",

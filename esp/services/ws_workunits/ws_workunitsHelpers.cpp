@@ -1394,6 +1394,16 @@ void WsWuInfo::getCommon(IEspECLWorkunit &info, unsigned long flags)
         info.setCompileCost(cost_type2money(cw->getCompileCost()));
     if (version>=2.03)
         info.setCostSavingPotential(cost_type2money(cw->getCostSavingPotential()));
+    if (version>=2.06)
+    {
+        unsigned wallRunTimeMS = cw->getWallRunTime();
+        if (wallRunTimeMS)
+        {
+            StringBuffer wallRunTimeStr;
+            formatDuration(wallRunTimeStr, wallRunTimeMS);
+            info.setWallRunTime(wallRunTimeStr.str());
+        }
+    }
 }
 
 void WsWuInfo::setWUAbortTime(IEspECLWorkunit &info, unsigned __int64 abortTS)

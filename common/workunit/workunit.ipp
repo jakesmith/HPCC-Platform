@@ -307,6 +307,7 @@ public:
     virtual unsigned getDebugAgentListenerPort() const;
     virtual IStringVal & getDebugAgentListenerIP(IStringVal &ip) const;
     virtual unsigned getTotalThorTime() const;
+    virtual unsigned getWallRunTime() const;
     virtual IStringVal & getAbortBy(IStringVal & str) const;
     virtual unsigned __int64 getAbortTimeStamp() const;
     virtual cost_type getExecuteCost() const;
